@@ -83,7 +83,11 @@ public class MainActivity extends Activity implements TouchController.Listener {
     @Override
     protected void onResume() {
         super.onResume();
-        if (!core.isCreated() || audio != null) return;
+        // Guard against double-start: a timed-out pause join can leave the
+        // previous thread still running inside the native core; starting a
+        // second AudioThread on the same core would race nes_run_frames.
+        // Only start fresh when the previous thread is confirmed dead.
+        if (!core.isCreated() || (audio != null && audio.isAlive())) return;
 
         // Restore the previous session BEFORE powering frames.
         byte[] state = readAutosave();
@@ -105,10 +109,30 @@ public class MainActivity extends Activity implements TouchController.Listener {
         // Stop the audio-master clock first so the core is quiescent, then snapshot.
         if (audio != null) {
             audio.stopLoop();
+            // Bounded loop-join: a single 500 ms join can TIME OUT while the
+            // thread is still inside a blocking AudioTrack.write() (or a slow
+            // runFrames); proceeding afterwards would run saveState()/destroy()
+            // concurrently with nes_run_frames — a data race, and a
+            // use-after-free if destroy lands first. Loop until the thread is
+            // truly dead, with a generous 5 s overall cap.
+            long deadline = System.currentTimeMillis() + 5000;
+            boolean dead = false;
             try {
-                audio.join(500);
+                while (audio.isAlive() && System.currentTimeMillis() < deadline) {
+                    audio.join(50);
+                }
+                dead = !audio.isAlive();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+            }
+            if (!dead) {
+                // Safety valve: the thread is STILL inside the native core
+                // after the cap. Never save/destroy while it runs — skip the
+                // autosave, keep the `audio` reference so onResume()/onDestroy()
+                // can see the live thread, and let the native core leak at
+                // process death rather than crash with a use-after-free.
+                Log.w(TAG, "audio thread still alive after 5 s; skipping autosave, core kept alive");
+                return;
             }
             audio = null;
         }
@@ -123,6 +147,14 @@ public class MainActivity extends Activity implements TouchController.Listener {
     protected void onDestroy() {
         super.onDestroy();
         stopRendering();
+        // Never destroy the native core while the audio thread might still be
+        // inside nes_run_frames (use-after-free). If the pause-time join cap
+        // was exceeded the thread is still referenced and alive — leak the
+        // core at process death instead of crashing.
+        if (audio != null && audio.isAlive()) {
+            Log.w(TAG, "audio thread still alive; leaking native core instead of destroying");
+            return;
+        }
         core.destroy();
     }
 
