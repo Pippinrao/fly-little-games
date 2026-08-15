@@ -1,0 +1,3 @@
+[submodule "core/vendor/nestopiaue"]
+	path = core/vendor/nestopiaue
+	url = https://github.com/0ldsk00l/nestopia.git
