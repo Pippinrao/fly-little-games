@@ -1,6 +1,7 @@
 /*
  * core/src/nes_core.cpp — NestopiaUE C ABI 实现: 生命周期 + ROM 加载 + 流适配器 (Task 3)
  *                                            + 帧循环/视频/音频格式 (Task 4)
+ *                                            + 即时存档/金手指/内存 (Task 5)
  *
  * 权威签名: core/include/nes/nes.h (Task 2 最终版)
  * 映射依据: docs/nes-arch-review/t2b-c-abi-draft.md §2(逐函数映射) §3(phase0 清单) §4(适配器)
@@ -10,13 +11,18 @@
  *   - nes_load_rom / nes_unload / nes_power / nes_reset
  *   - nes_set_log_callback / nes_set_file_io_callback / nes_set_event_callback / nes_set_question_callback
  *   - nes_load_rom_patched → NES_ERR_NOT_IMPLEMENTED (phase 1)
- *   - 其余头文件符号全部以 NES_ERR_NOT_IMPLEMENTED stub 占位 (Task 4/5 填充),
- *     例外: nes_get_rom_info 在此真实实现 (nes_load_rom(info_out) 需要)。
+ *   - nes_get_rom_info 真实实现 (nes_load_rom(info_out) 需要)。
  *
  * Task 4 覆盖 (t2b §2 运行节 + 视频/音频格式节 + 输入桥):
  *   - nes_run_frames (音频主时钟帧循环) / nes_set_video_format / nes_get_video_frame
  *   - nes_set_audio_format (phase0 mono) / nes_set_input / nes_clear_input (Task 3 已实现)
- *   - 其余 stub (state/cheats/mem/FDS) 留给 Task 5/阶段2, 本文件不触碰。
+ *
+ * Task 5 覆盖 (t2b §2 即时存档/金手指/内存节):
+ *   - nes_save_state / nes_load_state (MemOStream/MemIStream + Machine::Save/LoadState)
+ *   - nes_cheat_add/remove/clear/count/encode/decode (GG + Pro-Action Rocky)
+ *   - nes_get_cpu_ram (Cheats::GetRam, 2KB 只读)
+ *   - 保持 NOT_IMPLEMENTED: nes_battery_flush (无干净内核 API), nes_mem_read/write
+ *     (内核无总线 peek/poke), FDS 系列, nes_load_rom_patched (阶段1/2)。
  */
 #include "nes/nes.h"
 #include "nes_stream.hpp"
@@ -758,7 +764,7 @@ NES_API int nes_set_question_callback(nes_t* nes, nes_question_fn fn, void* user
 }
 
 // ======================================================================
-// 以下为 Task 5 的占位 stub (state/cheats/mem/FDS; 符号必须全部定义, 签名与 nes.h 一致)
+// 即时存档 / 电池 (Task 5, t2b §2)
 // ======================================================================
 
 // ======================================================================
@@ -921,16 +927,65 @@ NES_API void nes_clear_input(nes_t* nes)
 		b.store(0, std::memory_order_relaxed);
 }
 
+/*
+ * nes_save_state — Machine::SaveState(ostream, USE_COMPRESSION) (t2b §2)。
+ * MemOStream 直接写调用方 out[0..cap); 超容时置 overflowed 标志、不拷贝整块并累计
+ * *needed (t2b §4.3)。Nestopia 的 Stream::Out::Write 遇 badbit 抛
+ * RESULT_ERR_CORRUPT_FILE (NstStream.cpp:299-300), Machine::SaveState 捕获后返回,
+ * 壳层以 MemOStream::overflowed() 为准映射 NES_ERR_BUFFER_TOO_SMALL,
+ * 宿主按 *needed 扩容重试 (每轮 needed 单调增长, 迭代收敛)。
+ * out==NULL 仅允许 cap==0 的「探测所需大小」用法; 超容时 *written 为已写入前缀字节数。
+ */
 NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed)
 {
-	(void)nes; (void)out; (void)cap; (void)written; (void)needed;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5 (MemOStream 已就绪)
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+	if (!written || !needed)
+		return NES_ERR_INVALID_PARAM;
+	if (cap > 0 && !out)
+		return NES_ERR_INVALID_PARAM;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+
+	size_t w = 0, n = 0;
+	nes_stream::MemOStream stream(out, cap, &w, &n);
+	const Nes::Result result = ctx->machine.SaveState(stream.stream(), Nes::Api::Machine::USE_COMPRESSION);
+
+	if (stream.overflowed())
+	{
+		*written = w; // 已写入的(可能被截断的)前缀字节数
+		*needed  = n; // 完整存档的真实字节需求 (尝试写入总量)
+		return NES_ERR_BUFFER_TOO_SMALL;
+	}
+
+	*written = w;
+	*needed  = w;
+	// 正值为警告 (RESULT_NOP 等) 照常返回, 负值透传 Nestopia Result (与 nes_err 同值)
+	return static_cast<int>(result);
 }
 
+/*
+ * nes_load_state — Machine::LoadState(istream) (t2b §2)。
+ * Result 与 nes_err 同值直接透传: RESULT_ERR_INVALID_CRC(-7) 即 NES_ERR_INVALID_CRC。
+ * 若注册了 questionCallback, CRC 不匹配时内核可能抛
+ * QUESTION_NST_PRG_CRC_FAIL_CONTINUE, 由宿主回调决定继续/中止 (on_question 已桥接)。
+ */
 NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size)
 {
-	(void)nes; (void)in; (void)size;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+	if (!in || size == 0)
+		return NES_ERR_INVALID_PARAM;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+
+	nes_stream::MemIStream stream(in, size);
+	const Nes::Result result = ctx->machine.LoadState(stream.stream());
+	return static_cast<int>(result);
 }
 
 NES_API int nes_battery_flush(nes_t* nes)
@@ -940,45 +995,115 @@ NES_API int nes_battery_flush(nes_t* nes)
 	return NES_ERR_NOT_IMPLEMENTED;
 }
 
+// ======================================================================
+// 金手指 (Task 5, t2b §2)
+// ======================================================================
+
+/*
+ * nes_cheat_add — Cheats::SetCode(Code(addr,value,compare,useCompare))。
+ * 同地址已有码会被替换 (NstApiCheats.hpp:101)。
+ */
 NES_API int nes_cheat_add(nes_t* nes, uint16_t addr, uint8_t value, uint8_t compare, int use_compare)
 {
-	(void)nes; (void)addr; (void)value; (void)compare; (void)use_compare;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	const Nes::Api::Cheats::Code code(addr, value, compare, use_compare != 0);
+	return static_cast<int>(ctx->cheats.SetCode(code));
 }
 
 NES_API int nes_cheat_remove(nes_t* nes, uint32_t index)
 {
-	(void)nes; (void)index;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	return static_cast<int>(ctx->cheats.DeleteCode(index));
 }
 
 NES_API int nes_cheat_clear(nes_t* nes)
 {
-	(void)nes;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	return static_cast<int>(ctx->cheats.ClearCodes());
 }
 
 NES_API int nes_cheat_count(const nes_t* nes, uint32_t* count)
 {
-	(void)nes; (void)count;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	if (!nes || !count)
+		return NES_ERR_INVALID_PARAM;
+
+	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
+	*count = static_cast<uint32_t>(ctx->cheats.NumCodes());
+	return NES_OK;
 }
 
+/*
+ * nes_cheat_encode — 静态编解码 (NstApiCheats.hpp:173/191), 不依赖实例状态。
+ * GG/PAR 输出均 ≤ 8 字符 + NUL (char[9]); cap < 9 → NES_ERR_BUFFER_TOO_SMALL。
+ */
 NES_API int nes_cheat_encode(nes_t* nes, nes_cheat_format fmt,
                              uint16_t addr, uint8_t value, uint8_t compare, int use_compare,
                              char* out, size_t cap)
 {
-	(void)nes; (void)fmt; (void)addr; (void)value; (void)compare; (void)use_compare;
-	(void)out; (void)cap;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	(void)nes; // 静态编解码, 无需实例
+	if (fmt != NES_CHEAT_GAME_GENIE && fmt != NES_CHEAT_PRO_ACTION_ROCKY)
+		return NES_ERR_INVALID_PARAM;
+	if (!out)
+		return NES_ERR_INVALID_PARAM;
+	if (cap < 9) // 8 字符 + NUL
+		return NES_ERR_BUFFER_TOO_SMALL;
+
+	const Nes::Api::Cheats::Code code(addr, value, compare, use_compare != 0);
+	char buf[9];
+	const Nes::Result result = (fmt == NES_CHEAT_GAME_GENIE)
+		? Nes::Api::Cheats::GameGenieEncode(code, buf)
+		: Nes::Api::Cheats::ProActionRockyEncode(code, buf);
+	if (NES_FAILED(result))
+		return static_cast<int>(result);
+
+	std::memcpy(out, buf, sizeof(buf)); // 含 NUL
+	return NES_OK;
 }
 
+/*
+ * nes_cheat_decode — code 为 NUL 结尾字符串; 输出指针可传 NULL 跳过对应字段。
+ */
 NES_API int nes_cheat_decode(nes_t* nes, nes_cheat_format fmt, const char* code,
                              uint16_t* addr, uint8_t* value, uint8_t* compare, int* use_compare)
 {
-	(void)nes; (void)fmt; (void)code; (void)addr; (void)value; (void)compare; (void)use_compare;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5
+	(void)nes; // 静态编解码, 无需实例
+	if (fmt != NES_CHEAT_GAME_GENIE && fmt != NES_CHEAT_PRO_ACTION_ROCKY)
+		return NES_ERR_INVALID_PARAM;
+	if (!code)
+		return NES_ERR_INVALID_PARAM;
+
+	Nes::Api::Cheats::Code decoded;
+	const Nes::Result result = (fmt == NES_CHEAT_GAME_GENIE)
+		? Nes::Api::Cheats::GameGenieDecode(code, decoded)
+		: Nes::Api::Cheats::ProActionRockyDecode(code, decoded);
+	if (NES_FAILED(result))
+		return static_cast<int>(result);
+
+	if (addr)        *addr        = decoded.address;
+	if (value)       *value       = decoded.value;
+	if (compare)     *compare     = decoded.compare;
+	if (use_compare) *use_compare = decoded.useCompare ? 1 : 0;
+	return NES_OK;
 }
+
+// ======================================================================
+// 内存 (Task 5, t2b §2)
+// ======================================================================
 
 NES_API int nes_mem_read(nes_t* nes, uint16_t addr, uint8_t* out)
 {
@@ -993,10 +1118,20 @@ NES_API int nes_mem_write(nes_t* nes, uint16_t addr, uint8_t value)
 	return NES_ERR_NOT_IMPLEMENTED;
 }
 
+/*
+ * nes_get_cpu_ram — Cheats::GetRam() (NstApiCheats.hpp:164) 只读 2KB CPU RAM
+ * (0x0000-0x1FFF 内部映射)。CPU 对象在 Emulator 构造时即存在, 无卡带也可查。
+ */
 NES_API int nes_get_cpu_ram(const nes_t* nes, const uint8_t** ram, size_t* size)
 {
-	(void)nes; (void)ram; (void)size;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 5 (Cheats::GetRam)
+	if (!nes || !ram || !size)
+		return NES_ERR_INVALID_PARAM;
+
+	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
+	Nes::Api::Cheats::Ram ram_ref = ctx->cheats.GetRam(); // const uchar (&)[0x800]
+	*ram  = static_cast<const uint8_t*>(ram_ref);
+	*size = Nes::Api::Cheats::RAM_SIZE; // 0x800 (2KB)
+	return NES_OK;
 }
 
 NES_API int nes_get_rom_info(const nes_t* nes, nes_rom_info* info)
