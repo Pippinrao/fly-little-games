@@ -1,3 +1,27 @@
 cmake_minimum_required(VERSION 3.22)
 project(nescore CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Reuse the core's static library targets (nes_abi -> nestopia).
+add_subdirectory(${NES_CORE_DIR} ${CMAKE_BINARY_DIR}/core)
+
 add_library(nescore SHARED nes_jni.cpp)
+target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
+target_link_libraries(nescore nes_abi nestopia)
+
+# Safety net: zlib is required by NstZlib.cpp (compressed save states).
+# It propagates PUBLIC through nestopia -> nes_abi, but link it explicitly
+# in case the propagation ever changes.
+find_library(ZLIB_LIB z)
+if(ZLIB_LIB)
+    target_link_libraries(nescore ${ZLIB_LIB})
+endif()
+
+# ANativeWindow_* (native_window.h) live in libandroid, which is not linked
+# by default on Android.
+find_library(ANDROID_LIB android)
+if(ANDROID_LIB)
+    target_link_libraries(nescore ${ANDROID_LIB})
+endif()
