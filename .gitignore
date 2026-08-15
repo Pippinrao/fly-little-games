@@ -1,0 +1,30 @@
+# Build outputs
+/build/
+/app/build/
+/core/build/
+*.apk
+*.aab
+*.so
+*.o
+*.obj
+
+# Android / Gradle
+.gradle/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Native
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# AgentTeams runtime state (ephemeral)
+.agent-teams/
+
+# OS
+.DS_Store
+Thumbs.db
