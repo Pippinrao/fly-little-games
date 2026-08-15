@@ -166,6 +166,13 @@ assets/SAF → 字节[] → `nes_load_rom(bytes, len)`（流适配器藏 C++ 内
 - **ABI 稳定性测试**：导出符号表 diff / 结构体布局 golden。
 - **CI**：多 ABI 构建矩阵 + macOS 编译门禁 + 1 小时跑机泄漏/GC 压测。
 - **量化 DOD（示例值，可调）**：中端机稳定 60fps、单核 CPU < 15%、亮屏连续游玩 ≥ 6h、包体 ≤ 30MB；「连续 10 分钟无爆音无漂移」为内核集成硬验收。
+- **阶段0 验收记录 (2026-08-15) — PASS**：device=`MIT_Phone_API35`（x86_64, API 35 模拟器, `-gpu swiftshader_indirect`, 2340x1080 横屏）。
+  - 安装/启动：`app/build/outputs/apk/debug/app-debug.apk`（11.1MB，含 arm64-v8a + x86_64 `libnescore.so` 与内置 `roms/from_below.nes`）安装成功；启动 `com.flynes.emu/.MainActivity`，log 见 `I/FlyNES: ROM loaded (rc=0), render scale=4x`，AudioTrack 活跃。
+  - 渲染证据：截图 `app/build/acceptance-screen.png`（标题画面 154KB）与 `app/build/acceptance-screen-4.png`（开始游戏后画面 81KB）；SurfaceFlinger 实测 125 帧帧间隔 avg 16.7ms（60fps，min 14.0ms / max 18.8ms）；输入驱动验证：右半屏长按 START 进入游戏（34.4% 像素变化），d-pad DOWN 驱动鱼移动（局部 10282 像素变化）。
+  - 5 分钟稳定性（300s，15 次采样）：进程 PID 全程存活；`logcat -d` 全量 3971 行 0 崩溃 / 0 ANR / 0 FATAL（含 `am_crash` / `am_anr` 扫描）。
+  - CPU 观察：`top` 采样 42.3~50.0% 单核（均值 ~45%），未满核；模拟器 + swiftshader 环境偏高，真机 DOD（单核 <15%）留待阶段 1 量化。
+  - gfxinfo：仅 2 帧 HWUI 统计（SurfaceView 原生 blit 不走 HWUI 管线），帧率以 SurfaceFlinger 帧间隔为准。
+  - Glitches：无崩溃/ANR/黑屏；AudioTrack 弃用告警与 InteractionJankMonitor 无权限告警均为良性。
 
 ---
 
