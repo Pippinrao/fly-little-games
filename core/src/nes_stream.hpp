@@ -14,11 +14,15 @@
  *     RESULT_ERR_OUT_OF_MEMORY, 把坏流写抛为 RESULT_ERR_CORRUPT_FILE);
  *   - 非阻塞、不得重入 nes_*。
  *
- * 注意: t2b §4.2 曾断言「顺序读、不需要 seek」, 但真实源码
- * (NstCartridgeInes.cpp / NstCartridgeUnif.cpp / NstCartridgeRomset.cpp) 在
- * iNES/UNIF 加载时会调用 stream.Seek()/stream.Length() (即 seekg/tellg),
- * 因此 MemIStream 必须实现 seekoff/seekpos, 否则带 trainer 的 iNES 或
- * romset 校验会以 RESULT_ERR_CORRUPT_FILE 失败。
+ * 注意: t2b §4.2 曾断言「顺序读、不需要 seek」, 但真实源码并非如此:
+ *   - iNES/UNIF 加载 (NstCartridgeInes.cpp / NstCartridgeUnif.cpp /
+ *     NstCartridgeRomset.cpp) 会调用 stream.Seek()/stream.Length()
+ *     (即 seekg/tellg) → MemIStream 必须实现 seekoff/seekpos;
+ *   - 状态存档器 (NstState.cpp Saver::End) 每个 chunk 结束后用
+ *     stream.Seek(...) (即 ostream::seekp) 回填 chunk 长度, 然后再 Seek 回来
+ *     → MemOStream 同样必须实现 seekoff/seekpos, 否则 Machine::SaveState
+ *     在第一个 End() 处抛 RESULT_ERR_CORRUPT_FILE (NstStream.cpp
+ *     Stream::Out::Seek), 使 nes_save_state 恒失败。
  *
  * 命名: 不用 namespace nes —— nes.h 的 C 句柄标签 `struct nes` 与之冲突。
  */
@@ -61,7 +65,12 @@ namespace nes_stream
 	//   - 超容时置 overflowed 标志, xsputn 返回 0 / overflow 返回 eof,
 	//     使 std::ostream 进入 badbit (Nestopia 的 Stream::Out::Write
 	//     会因此抛 RESULT_ERR_CORRUPT_FILE, 壳层据此映射 NES_ERR_BUFFER_TOO_SMALL);
-	//   - *written 累计实际写入字节数, *needed 累计真实需求(写入尝试总量)。
+	//   - 内部以写游标 cur_ + 已写范围 end_ 建模, 实现 seekoff/seekpos
+	//     (状态存档器在 Saver::End 回填 chunk 长度时需要 seekp);
+	//   - written(): 缓冲内有效字节数 (end_, 超容时即已写入前缀);
+	//   - needed(): 真实需求下界 = end_ + 首次失败写「本会扩展流」的字节数
+	//     (Nestopia 在首次写失败处立即中止, 剩余大小未知, 故只是下界;
+	//     成功完整写出后 == written() == 最终流长度)。
 	// ------------------------------------------------------------------
 	class MemOStream
 	{
@@ -69,6 +78,8 @@ namespace nes_stream
 		MemOStream(uint8_t* buf, size_t cap, size_t* written, size_t* needed);
 		std::ostream& stream() { return out_; }
 		bool overflowed() const { return overflowed_; }
+		size_t written() const { return buf_.end_; }
+		size_t needed() const { return buf_.needed_total_; }
 
 	private:
 		struct Buf : std::streambuf
@@ -76,11 +87,18 @@ namespace nes_stream
 			Buf(uint8_t* buf, size_t cap, size_t* written, size_t* needed, bool* overflowed);
 			int_type overflow(int_type c) override;
 			std::streamsize xsputn(const char* s, std::streamsize n) override;
+			pos_type seekoff(off_type off, std::ios_base::seekdir dir,
+			                 std::ios_base::openmode which) override;
+			pos_type seekpos(pos_type pos, std::ios_base::openmode which) override;
+			int sync() override;
 
 			uint8_t* buf_;
 			size_t cap_;
-			size_t* written_;
-			size_t* needed_;
+			size_t cur_;            // 当前写游标 (seekp 的目标)
+			size_t end_;            // 已写最大范围 = 缓冲内有效字节数 (成功时即最终流长度)
+			size_t needed_total_;   // 真实需求下界 (end_ + 首次失败写超出 end_ 的字节)
+			size_t* written_;       // 镜像 end_
+			size_t* needed_;        // 镜像 needed_total_
 			bool* overflowed_;
 		};
 

@@ -929,12 +929,28 @@ NES_API void nes_clear_input(nes_t* nes)
 
 /*
  * nes_save_state — Machine::SaveState(ostream, USE_COMPRESSION) (t2b §2)。
- * MemOStream 直接写调用方 out[0..cap); 超容时置 overflowed 标志、不拷贝整块并累计
- * *needed (t2b §4.3)。Nestopia 的 Stream::Out::Write 遇 badbit 抛
- * RESULT_ERR_CORRUPT_FILE (NstStream.cpp:299-300), Machine::SaveState 捕获后返回,
- * 壳层以 MemOStream::overflowed() 为准映射 NES_ERR_BUFFER_TOO_SMALL,
- * 宿主按 *needed 扩容重试 (每轮 needed 单调增长, 迭代收敛)。
- * out==NULL 仅允许 cap==0 的「探测所需大小」用法; 超容时 *written 为已写入前缀字节数。
+ * MemOStream 实现 seekp (状态存档器在 NstState.cpp Saver::End 里回填 chunk
+ * 长度, 没有 seek 的话首个 End() 就会抛 RESULT_ERR_CORRUPT_FILE) 并直接写
+ * 调用方 out[0..cap)。
+ *
+ * 返回语义:
+ *   - 成功: *written = *needed = 最终流长度; 返回 SaveState 的 Result
+ *     (0 或正值警告照常返回, 负值透传 —— 未超容时的 CORRUPT_FILE 只可能
+ *     来自非缓冲原因, 不在此映射)。
+ *   - 超容 (Nestopia 在首次写失败处中止, Stream::Out::Write 抛
+ *     RESULT_ERR_CORRUPT_FILE, NstStream.cpp:299-300): 映射
+ *     NES_ERR_BUFFER_TOO_SMALL; *written = 已写入缓冲的前缀字节数,
+ *     *needed = 需求下界 = 已写入 + 首次失败写本会扩展流的字节数
+ *     (真实存档必然更长, 因为 Nestopia 中止后剩余 chunk 未知)。
+ *
+ * 宿主扩缓冲策略: *needed 只是下界、不是精确大小 —— 若按它精确分配,
+ * 下一轮仍可能超容 (下界 ≠ 最终长度)。建议按 *needed 至少加倍后重试,
+ * 直到返回成功; 每轮 *needed 单调增长, 迭代收敛。
+ *
+ * 大小探测 (out==NULL && cap==0): 合法, 立即超容, 返回
+ * NES_ERR_BUFFER_TOO_SMALL, *written = 0, *needed = 首个写块大小
+ * (通常 4 字节, 下界)。它不能当作精确大小, 只适合做起始猜测, 之后仍要
+ * 走「加倍重试」循环。
  */
 NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed)
 {
@@ -955,13 +971,13 @@ NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written
 
 	if (stream.overflowed())
 	{
-		*written = w; // 已写入的(可能被截断的)前缀字节数
-		*needed  = n; // 完整存档的真实字节需求 (尝试写入总量)
+		*written = stream.written(); // 已写入缓冲的(前缀)字节数
+		*needed  = stream.needed();  // 下界: 真实存档 ≥ 已写入 + 首次失败块
 		return NES_ERR_BUFFER_TOO_SMALL;
 	}
 
-	*written = w;
-	*needed  = w;
+	*written = stream.written();
+	*needed  = stream.written(); // 成功完整写出: end_ 即最终流长度
 	// 正值为警告 (RESULT_NOP 等) 照常返回, 负值透传 Nestopia Result (与 nes_err 同值)
 	return static_cast<int>(result);
 }
