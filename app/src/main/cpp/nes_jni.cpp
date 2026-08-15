@@ -111,17 +111,24 @@ Java_com_flynes_emu_NesCore_nativeRunFrames(JNIEnv* env, jclass, jlong handle,
     nes_t* ctx = reinterpret_cast<nes_t*>(handle);
     if (!ctx)
         return static_cast<jint>(NES_ERR_INVALID_PARAM);
+    // Null/address-less buffer: nothing can be written — return 0 (idle) rather
+    // than an error so the audio loop treats it as "no output this round".
     if (audioBuf == nullptr)
-        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+        return 0;
 
     int16_t* dst = reinterpret_cast<int16_t*>(env->GetDirectBufferAddress(audioBuf));
     if (!dst)
-        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+        return 0;
 
-    // Clamp to the actual direct-buffer capacity as a safety net.
-    const jlong capacity = env->GetDirectBufferCapacity(audioBuf);
-    if (capacity > 0 && static_cast<jlong>(capSamples) > capacity)
-        capSamples = static_cast<jint>(capacity);
+    // GetDirectBufferCapacity returns BYTES; capSamples is in int16 samples, so
+    // clamp against capacity/2 (clamping against raw bytes would allow 2x the
+    // real buffer and overflow it).
+    const jlong capacityBytes = env->GetDirectBufferCapacity(audioBuf);
+    if (capacityBytes <= 0 || capSamples <= 0)
+        return 0; // zero/unknown capacity or non-positive cap: write nothing
+    const jlong capacitySamples = capacityBytes / 2;
+    if (static_cast<jlong>(capSamples) > capacitySamples)
+        capSamples = static_cast<jint>(capacitySamples);
 
     uint32_t frames_run = 0;
     uint32_t samples_written = 0;
