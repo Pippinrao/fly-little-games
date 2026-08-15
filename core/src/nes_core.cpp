@@ -1,5 +1,6 @@
 /*
  * core/src/nes_core.cpp — NestopiaUE C ABI 实现: 生命周期 + ROM 加载 + 流适配器 (Task 3)
+ *                                            + 帧循环/视频/音频格式 (Task 4)
  *
  * 权威签名: core/include/nes/nes.h (Task 2 最终版)
  * 映射依据: docs/nes-arch-review/t2b-c-abi-draft.md §2(逐函数映射) §3(phase0 清单) §4(适配器)
@@ -11,6 +12,11 @@
  *   - nes_load_rom_patched → NES_ERR_NOT_IMPLEMENTED (phase 1)
  *   - 其余头文件符号全部以 NES_ERR_NOT_IMPLEMENTED stub 占位 (Task 4/5 填充),
  *     例外: nes_get_rom_info 在此真实实现 (nes_load_rom(info_out) 需要)。
+ *
+ * Task 4 覆盖 (t2b §2 运行节 + 视频/音频格式节 + 输入桥):
+ *   - nes_run_frames (音频主时钟帧循环) / nes_set_video_format / nes_get_video_frame
+ *   - nes_set_audio_format (phase0 mono) / nes_set_input / nes_clear_input (Task 3 已实现)
+ *   - 其余 stub (state/cheats/mem/FDS) 留给 Task 5/阶段2, 本文件不触碰。
  */
 #include "nes/nes.h"
 #include "nes_stream.hpp"
@@ -156,7 +162,9 @@ namespace
 		Nes::Api::Cheats cheats;
 		Nes::Api::Fds fds;
 
-		uint8_t* framebuffer;                 // 256*240*bpp (Task 3 仅 RGB565)
+		uint8_t* framebuffer;                 // 256*240*bpp
+		size_t framebuffer_size;              // 当前帧缓冲分配字节数 (Task 4: set_video_format 同步重分配)
+		nes_video_frame video_frame;          // nes_get_video_frame 返回的描述符 (Task 4)
 		nes_config cfg;                       // favored_system / sample_rate / pixfmt
 
 		// 推式输入 → 拉式回调 (Pad::callback) 的桥 (t2b §0 #0)
@@ -185,6 +193,8 @@ namespace
 			  cheats(emulator),
 			  fds(emulator),
 			  framebuffer(nullptr),
+			  framebuffer_size(0),
+			  video_frame{},
 			  cfg{},
 			  log_cb(nullptr),
 			  log_userdata(nullptr),
@@ -197,6 +207,9 @@ namespace
 		{
 			for (auto& b : input_buttons)
 				b.store(0, std::memory_order_relaxed);
+
+			video_frame.struct_size = sizeof(nes_video_frame);
+			video_frame.version     = NES_STRUCT_VERSION;
 		}
 
 		~nes_ctx()
@@ -399,6 +412,16 @@ namespace
 		ctx->video.SetRenderState(rs);
 	}
 
+	// 帧描述符同步 (pixels/pitch 随帧缓冲与 pixfmt 变化; struct_size/version 在 ctor 已定)
+	void update_video_frame(nes_ctx* ctx)
+	{
+		ctx->video_frame.width  = kScreenWidth;
+		ctx->video_frame.height = kScreenHeight;
+		ctx->video_frame.format = ctx->cfg.pixfmt;
+		ctx->video_frame.pitch  = static_cast<int32_t>(kScreenWidth * pixfmt_bpp(ctx->cfg.pixfmt));
+		ctx->video_frame.pixels = ctx->framebuffer;
+	}
+
 	void apply_audio_config(nes_ctx* ctx)
 	{
 		ctx->sound.SetSampleRate(ctx->cfg.sample_rate);
@@ -506,6 +529,8 @@ NES_API nes_t* nes_create(const nes_config* cfg)
 		delete ctx;
 		return nullptr;
 	}
+	ctx->framebuffer_size = kScreenWidth * kScreenHeight * pixfmt_bpp(ctx->cfg.pixfmt);
+	update_video_frame(ctx);
 
 	apply_render_state(ctx);
 	apply_audio_config(ctx);
@@ -733,34 +758,149 @@ NES_API int nes_set_question_callback(nes_t* nes, nes_question_fn fn, void* user
 }
 
 // ======================================================================
-// 以下为 Task 4/5 的占位 stub (符号必须全部定义; 签名与 nes.h 完全一致)
+// 以下为 Task 5 的占位 stub (state/cheats/mem/FDS; 符号必须全部定义, 签名与 nes.h 一致)
 // ======================================================================
 
+// ======================================================================
+// 运行 (帧循环) / 视频 / 音频 格式 (Task 4, t2b §2)
+// ======================================================================
+
+/*
+ * nes_run_frames — 核心时序点: 音频是主时钟 (spec §7.2)。
+ * 宿主按 AudioTrack 消费量反推 max_frames, 本函数只「跑至多 N 帧 + 交还样本」,
+ * 不 sleep / busy-wait (阻塞发生在宿主 AudioTrack.write)。
+ *
+ * 每帧样本数 per_frame = sample_rate / 帧率 (NTSC 60.0988 / PAL 50.0070, 取整)。
+ * 内核保证写满请求的 length[0] (NstApu.cpp streamed = length[0]+length[1]),
+ * 不足/超额样本由内核内部缓冲累积 (NstApiSound.hpp:73-79)。
+ */
 NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
                            int16_t* audio_out, uint32_t audio_cap_samples,
                            uint32_t* frames_run, uint32_t* samples_written)
 {
-	(void)nes; (void)max_frames; (void)audio_out; (void)audio_cap_samples;
-	(void)frames_run; (void)samples_written;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 4
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+	if (!audio_out || audio_cap_samples == 0)
+		return NES_ERR_INVALID_PARAM;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+
+	if (frames_run)      *frames_run = 0;
+	if (samples_written) *samples_written = 0;
+
+	// 模式正确帧率 (PAL 用 50.0070, 否则按 NTSC 60.0988; 用错会漂移)
+	const double fps = (ctx->machine.GetMode() == Nes::Api::Machine::PAL) ? 50.0070 : 60.0988;
+	const uint32_t per_frame = static_cast<uint32_t>(ctx->cfg.sample_rate / fps);
+	if (per_frame == 0)
+		return NES_ERR_INVALID_PARAM;
+
+	// 视频输出: 正 pitch、自顶向下; 不设 lock/unlock 回调
+	// (Output::Locker 无回调时仅要求 pixels && pitch, NstApiVideo.hpp:122-128)
+	Nes::Core::Video::Output vo(
+		ctx->framebuffer,
+		static_cast<long>(kScreenWidth * pixfmt_bpp(ctx->cfg.pixfmt)));
+
+	// 输入: Pad::callback 已在 nes_create 注册 (推→拉桥), 此处只传对象;
+	// Controllers 默认构造为空, 设备状态 (Pad::state 等) 持在核心 Device 内, 每帧重建无副作用
+	Nes::Core::Input::Controllers pads;
+
+	// 音频输出: 无环形缓冲 (samples[1]/length[1] = 0)
+	Nes::Core::Sound::Output so(audio_out, per_frame);
+	so.samples[1] = nullptr;
+	so.length[1]  = 0;
+
+	uint32_t written = 0;
+	uint32_t i = 0;
+	Nes::Result last = Nes::RESULT_OK;
+
+	for (i = 0; i < max_frames; ++i)
+	{
+		// 音频缓冲满 → 提前停止 (写成 - written 避免 uint32 溢出)
+		if (per_frame > audio_cap_samples - written)
+			break;
+
+		// 每帧把输出位置重新指到当前写入偏移 (内核写你给的位置)
+		so.samples[0] = audio_out + written;
+		so.length[0]  = per_frame;
+
+		const Nes::Result r = ctx->emulator.Execute(&vo, &so, &pads);
+		if (r != Nes::RESULT_OK)
+			last = r;
+		written += so.length[0];
+	}
+
+	if (frames_run)      *frames_run = i;
+	if (samples_written) *samples_written = written;
+
+	return NES_FAILED(last) ? static_cast<int>(last) : NES_OK;
 }
 
 NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter filter)
 {
-	(void)nes; (void)format; (void)filter;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 4
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+
+	// phase0: 仅 RGB565 + FILTER_NONE (t2b §3); NTSC 滤波/其他 pixfmt 阶段后再开
+	if (format != NES_PIXFMT_RGB565 || filter != NES_FILTER_NONE)
+		return NES_ERR_NOT_IMPLEMENTED;
+
+	// 先同步重分配后缓冲 (尺寸不变则复用; realloc 失败旧缓冲仍有效, 状态不变)
+	const size_t fb_size = kScreenWidth * kScreenHeight * pixfmt_bpp(format);
+	if (fb_size != ctx->framebuffer_size)
+	{
+		uint8_t* fb = static_cast<uint8_t*>(std::realloc(ctx->framebuffer, fb_size));
+		if (!fb)
+			return NES_ERR_OUT_OF_MEMORY;
+		ctx->framebuffer = fb;
+		ctx->framebuffer_size = fb_size;
+	}
+
+	ctx->cfg.pixfmt = format;
+	apply_render_state(ctx); // bits.count=16, r=0xF800 g=0x07E0 b=0x001F, 256x240, FILTER_NONE
+	update_video_frame(ctx);
+
+	return NES_OK;
 }
 
 NES_API const nes_video_frame* nes_get_video_frame(const nes_t* nes)
 {
-	(void)nes;
-	return nullptr; // Task 4
+	if (!nes)
+		return nullptr;
+	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
+	return &ctx->video_frame;
 }
 
 NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo)
 {
-	(void)nes; (void)sample_rate; (void)stereo;
-	return NES_ERR_NOT_IMPLEMENTED; // Task 4
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+
+	// phase0 仅 mono (t2b §3); stereo 返回 NOT_IMPLEMENTED
+	if (stereo != 0)
+		return NES_ERR_NOT_IMPLEMENTED;
+
+	// 内核合法范围 44100–96000 (NstApiSound.hpp SetSampleRate)
+	if (sample_rate < 44100 || sample_rate > 96000)
+		return NES_ERR_INVALID_PARAM;
+
+	const Nes::Result r = ctx->sound.SetSampleRate(sample_rate);
+	if (NES_FAILED(r))
+		return static_cast<int>(r);
+
+	ctx->cfg.sample_rate = sample_rate;
+	ctx->sound.SetSpeaker(Nes::Api::Sound::SPEAKER_MONO); // 保持 mono
+
+	return NES_OK;
 }
 
 NES_API void nes_set_input(nes_t* nes, uint32_t port, uint32_t buttons)
