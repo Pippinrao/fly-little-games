@@ -25,3 +25,9 @@ find_library(ANDROID_LIB android)
 if(ANDROID_LIB)
     target_link_libraries(nescore ${ANDROID_LIB})
 endif()
+
+# __android_log_print (android/log.h) lives in liblog.
+find_library(LOG_LIB log)
+if(LOG_LIB)
+    target_link_libraries(nescore ${LOG_LIB})
+endif()

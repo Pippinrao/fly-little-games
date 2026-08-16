@@ -166,10 +166,6 @@ Java_com_flynes_emu_NesCore_nativeRunFrames(JNIEnv* env, jclass, jlong handle,
     return static_cast<jint>(samples_written);
 }
 
-// ---------------------------------------------------------------------------
-// Input / audio format
-// ---------------------------------------------------------------------------
-
 JNIEXPORT void JNICALL
 Java_com_flynes_emu_NesCore_nativeSetInput(JNIEnv*, jclass, jlong handle, jint buttons)
 {

@@ -112,3 +112,15 @@ typedef enum nes_video_filter {
 
 - 设置页：滤镜选择（NONE/HQ2X/HQ4X/NTSC）、亮度/饱和度（Renderer 已支持 `SetBrightness` 等）、按钮布局自定义。
 - xBR/2xSaI 滤镜放开（枚举已在 RenderState 中，仅需 nes.h 扩展 + 实现放开）。
+
+### 验收记录（模拟器 MIT_Phone_API35, 2026-08-17）
+
+- **核心修复**（排查中发现并修复的渲染 bug）：`Renderer::FilterHqX::Check` 要求 `RenderState.width/height == 放大后输出尺寸`（HQ4X→1024×960），原实现传 256×240 导致 filter 创建失败 → 黑屏。修正 `apply_render_state` 按 `filter_scale` 传放大尺寸，并透传 `SetRenderState` 返回值（失败返回错误码而非静默 NES_OK）。
+- **宿主测试**：HQ4X→1024×960 非黑（94%）、HQ2X→512×480、NONE→256×240、NTSC→-200，全 PASS。
+- **模拟器验证**：
+  - hq4x 画面渲染正常（`fb sample nonzero=64/64`，blit 1:1 1024×960，SurfaceFlinger scale 1.125 等比显示）。
+  - 画质对比：像素块一致性 94.5%（nearest-4x）→ 83.8%（hq4x），马赛克明显减少。
+  - 输入响应正常（画面随摇杆变化），暂停菜单/换游戏回归通过。
+  - 游戏库新界面：渐变背景（#11222A→#3F5760 平滑过渡）、标题栏、圆角搜索框、胶囊排序（选中蓝色 #4A90D9 1935px 确认）、圆角列表卡片，全部渲染正常；排序切换/返回/暂停菜单无崩溃。
+- **环境注记**：模拟器 letterbox（view 宽 2072 居中，偏移 +134px）与导航栏（右侧 132px）不影响真机；真机全屏时 4:3 surface 自动居中。
+- **待真机**：hq4x 性能（帧率）、游戏库竖屏观感、实际画面观感由用户确认。

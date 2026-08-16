@@ -418,7 +418,7 @@ namespace
 	// 视频 / 音频 配置
 	// ------------------------------------------------------------------
 
-	void apply_render_state(nes_ctx* ctx)
+	int apply_render_state(nes_ctx* ctx)
 	{
 		Nes::Api::Video::RenderState rs;
 		switch (ctx->cfg.pixfmt)
@@ -443,12 +443,15 @@ namespace
 				rs.bits.mask.b = 0x001F;
 				break;
 		}
-		rs.width  = static_cast<ushort>(kScreenWidth);
-		rs.height = static_cast<ushort>(kScreenHeight);
+		// RenderState.width/height = OUTPUT (post-filter) size: FilterHqX::Check
+		// requires HQ4X -> 1024x960 etc. (NstVideoFilterHqX.cpp:440-452).
+		const int scale = filter_scale(ctx->filter);
+		rs.width  = static_cast<ushort>(kScreenWidth  * scale);
+		rs.height = static_cast<ushort>(kScreenHeight * scale);
 		const int rf = filter_to_render(ctx->filter);
 		rs.filter = rf >= 0 ? static_cast<Nes::Api::Video::RenderState::Filter>(rf)
 		                    : Nes::Api::Video::RenderState::FILTER_NONE;
-		ctx->video.SetRenderState(rs);
+		return ctx->video.SetRenderState(rs);
 	}
 
 	// 帧描述符同步 (pixels/pitch 随帧缓冲与 pixfmt/filter 变化; struct_size/version 在 ctor 已定)
@@ -926,7 +929,9 @@ NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter
 	}
 
 	ctx->cfg.pixfmt = format;
-	apply_render_state(ctx); // bits.count=16, 256x240, filter per ctx->filter
+	const int rs_rc = apply_render_state(ctx); // bits.count=16, output size per filter, filter per ctx->filter
+	if (NES_FAILED(rs_rc))
+		return rs_rc;
 	update_video_frame(ctx);
 
 	return NES_OK;

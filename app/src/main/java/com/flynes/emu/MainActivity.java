@@ -107,8 +107,6 @@ public class MainActivity extends Activity {
             return;
         }
         core.setAudioFormat(AUDIO_SAMPLE_RATE, 0);
-        // HQ4X smooth filter: the core scales 256x240 -> 1024x960; blit 1:1.
-        core.setVideoFilter(NesCore.FILTER_HQ4X);
 
         // Load the bundled NstDatabase.xml before any ROM so profiles resolve.
         // A failure must not block the game: the database only refines rom_info.
@@ -288,6 +286,9 @@ public class MainActivity extends Activity {
         }
         currentRomHash = romHash(rom);
         scale = computeScale();
+        // HQ4X after load: Machine::Load/Power can rebuild renderer state, so
+        // the filter must be (re)applied once the ROM is in place.
+        core.setVideoFilter(NesCore.FILTER_HQ4X);
         Log.i(TAG, "ROM loaded (rc=" + rc + "), render scale=" + scale + "x");
         return rc;
     }

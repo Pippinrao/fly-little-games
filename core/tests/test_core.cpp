@@ -251,6 +251,32 @@ int main(int argc, char** argv)
 		std::snprintf(buf, sizeof(buf), "HQ4X: 2 frames rc=%d fr=%u", rc4, fr4);
 		check(rc4 >= 0 && fr4 == 2, buf);
 
+		// HQ4X frame must contain non-black content (not a black screen).
+		uint64_t nb4 = 0;
+		uint64_t nb4_orig_zone = 0; // first 256x240 (would-be leftover zone)
+		{
+			const uint16_t* px = static_cast<const uint16_t*>(f4->pixels);
+			const size_t row_bytes = static_cast<size_t>(f4->pitch);
+			const size_t px_per_row = row_bytes / sizeof(uint16_t);
+			for (uint32_t y = 0; y < f4->height; ++y)
+			{
+				const uint16_t* row = px + static_cast<size_t>(y) * px_per_row;
+				for (uint32_t x = 0; x < f4->width; ++x)
+				{
+					if (row[x] != 0)
+					{
+						++nb4;
+						if (y < 240 && x < 256) ++nb4_orig_zone;
+					}
+				}
+			}
+		}
+		std::snprintf(buf, sizeof(buf),
+		              "HQ4X frame non-black pixels (got %llu/%u; 256x240 zone %llu)",
+		              static_cast<unsigned long long>(nb4), f4->width * f4->height,
+		              static_cast<unsigned long long>(nb4_orig_zone));
+		check(nb4 > 0, buf);
+
 		// hq2x: 512x480.
 		rc = nes_set_video_format(nes, NES_PIXFMT_RGB565, NES_FILTER_HQ2X);
 		std::snprintf(buf, sizeof(buf), "set_video_format(HQ2X) rc=%d", rc);
