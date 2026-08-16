@@ -1,12 +1,17 @@
 package com.flynes.emu;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Choreographer;
+import android.view.Gravity;
 import android.view.Surface;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
@@ -56,7 +61,32 @@ public class MainActivity extends Activity implements TouchController.Listener {
         TouchController touch = new TouchController();
         touch.setListener(this);
         view.setOnTouchListener(touch);
-        setContentView(view);
+
+        // Corner "about/licenses" button overlaid on the top-right; it only
+        // covers a small corner so the touch/play area stays unobstructed.
+        float density = getResources().getDisplayMetrics().density;
+        FrameLayout root = new FrameLayout(this);
+        root.addView(view, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView infoButton = new TextView(this);
+        infoButton.setText("ℹ️");
+        infoButton.setTextSize(20f);
+        infoButton.setTextColor(0xFFFFFFFF);
+        infoButton.setBackgroundColor(0x66000000);
+        infoButton.setPadding(Math.round(14 * density), Math.round(6 * density),
+                Math.round(14 * density), Math.round(6 * density));
+        infoButton.setOnClickListener(v ->
+                startActivity(new Intent(this, LicensesActivity.class)));
+        FrameLayout.LayoutParams infoLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        infoLp.setMargins(0, Math.round(20 * density), Math.round(20 * density), 0);
+        root.addView(infoButton, infoLp);
+
+        setContentView(root);
 
         if (!core.create()) {
             toastAndFinish("Failed to create emulator core");
