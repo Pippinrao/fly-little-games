@@ -41,6 +41,7 @@ public final class NesCore {
     private static native int nativeRunFrames(long h, int maxFrames, ByteBuffer audio, int capSamples);
     private static native void nativeSetInput(long h, int buttons);
     private static native void nativeSetAudioFormat(long h, int rate, int stereo);
+    private static native void nativeSetVideoFilter(long h, int filter);
     private static native int nativeSaveState(long h, byte[] out);
     private static native int nativeLoadState(long h, byte[] in);
     private static native void nativeBlit(long h, Surface surface, int scale);
@@ -102,6 +103,22 @@ public final class NesCore {
     /** @param stereo 0 = mono (the only mode the core supports in phase 0). */
     public void setAudioFormat(int rate, int stereo) {
         if (handle != 0) nativeSetAudioFormat(handle, rate, stereo);
+    }
+
+    /** Video filter constants (match core/include/nes/nes.h nes_video_filter). */
+    public static final int FILTER_NONE = 0;
+    public static final int FILTER_HQ2X = 2;
+    public static final int FILTER_HQ3X = 3;
+    public static final int FILTER_HQ4X = 4;
+
+    /**
+     * Sets the core video filter (scales the framebuffer 1x/2x/3x/4x).
+     *
+     * @param filter one of {@link #FILTER_NONE} / {@link #FILTER_HQ2X} /
+     *               {@link #FILTER_HQ3X} / {@link #FILTER_HQ4X}.
+     */
+    public void setVideoFilter(int filter) {
+        if (handle != 0) nativeSetVideoFilter(handle, filter);
     }
 
     /**

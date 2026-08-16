@@ -187,6 +187,14 @@ Java_com_flynes_emu_NesCore_nativeSetAudioFormat(JNIEnv*, jclass, jlong handle,
         nes_set_audio_format(ctx, static_cast<uint32_t>(rate), stereo);
 }
 
+JNIEXPORT void JNICALL
+Java_com_flynes_emu_NesCore_nativeSetVideoFilter(JNIEnv*, jclass, jlong handle, jint filter)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (ctx)
+        nes_set_video_format(ctx, NES_PIXFMT_RGB565, static_cast<nes_video_filter>(filter));
+}
+
 // ---------------------------------------------------------------------------
 // Save / load state
 // ---------------------------------------------------------------------------
