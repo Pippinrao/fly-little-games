@@ -64,6 +64,13 @@ public class MainActivity extends Activity implements TouchController.Listener {
         }
         core.setAudioFormat(AUDIO_SAMPLE_RATE, 0);
 
+        // Load the bundled NstDatabase.xml before any ROM so profiles resolve.
+        // A failure must not block the game: the database only refines rom_info.
+        byte[] db = readAsset("NstDatabase.xml");
+        if (db != null && core.loadDatabase(db) < 0) {
+            Log.w(TAG, "database load failed");
+        }
+
         byte[] rom = readAsset(ROM_ASSET);
         if (rom == null) {
             toastAndFinish("Missing ROM asset: " + ROM_ASSET);

@@ -84,8 +84,10 @@ namespace
 int main(int argc, char** argv)
 {
 	const char* rom_path = (argc > 1) ? argv[1] : "core/tests/fixtures/from_below.nes";
+	const char* db_path  = (argc > 2) ? argv[2] : "core/tests/fixtures/NstDatabase.xml";
 	std::printf("=== FlyNES headless smoke test (Task 6) ===\n");
 	std::printf("ROM path: %s\n", rom_path);
+	std::printf("DB  path: %s\n", db_path);
 	std::printf("core version: %s, api version: %u.%u.%u\n",
 	            nes_core_version(),
 	            (nes_api_version() >> 16) & 0xFFu,
@@ -101,7 +103,25 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	// ---- 2. read ROM + validate + load ----------------------------------
+	// ---- 2. load database (NstDatabase.xml, before ROM) -----------------
+	// The bundled DB refines ROM profiles; it must load (and reload) cleanly.
+	std::vector<uint8_t> db;
+	check(read_file(db_path, db), "read NstDatabase.xml fixture");
+	if (db.empty())
+	{
+		std::printf("FAIL: cannot continue without the database fixture\n");
+		nes_destroy(nes);
+		return 1;
+	}
+	const int db_rc1 = nes_load_database(nes, db.data(), db.size());
+	check(db_rc1 >= 0, "nes_load_database returns NES_OK or positive warning");
+	std::printf("  database: rc=%d (%s), %zu bytes\n", db_rc1, err_str(db_rc1), db.size());
+	// Idempotence: reloading the same DB must not fail (Load resets state).
+	const int db_rc2 = nes_load_database(nes, db.data(), db.size());
+	check(db_rc2 >= 0, "nes_load_database is idempotent (2nd load >= 0)");
+	std::printf("  database: 2nd load rc=%d (%s)\n", db_rc2, err_str(db_rc2));
+
+	// ---- 3. read ROM + validate + load ----------------------------------
 	std::vector<uint8_t> rom;
 	check(read_file(rom_path, rom), "read ROM file");
 	if (rom.size() < 16)
@@ -147,11 +167,11 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	// ---- 3. audio format -------------------------------------------------
+	// ---- 4. audio format -------------------------------------------------
 	const int af_rc = nes_set_audio_format(nes, 48000, 0);
 	check(af_rc == NES_OK, "nes_set_audio_format(48000, mono) returns NES_OK");
 
-	// ---- 4. run 60 frames ------------------------------------------------
+	// ---- 5. run 60 frames ------------------------------------------------
 	const uint32_t kFrames     = 60;
 	const uint32_t kAudioCap   = kFrames * 1024; // ~1.25s @48kHz mono, plenty
 	std::vector<int16_t> audio(kAudioCap);
@@ -170,7 +190,7 @@ int main(int argc, char** argv)
 		check(samples_written > 0, buf);
 	}
 
-	// ---- 5. video check --------------------------------------------------
+	// ---- 6. video check --------------------------------------------------
 	const nes_video_frame* vf = nes_get_video_frame(nes);
 	bool vf_ok = false;
 	{
@@ -211,7 +231,7 @@ int main(int argc, char** argv)
 		vf_ok = true;
 	}
 
-	// ---- 6. audio check --------------------------------------------------
+	// ---- 7. audio check --------------------------------------------------
 	// From Below's intro is silent for several seconds (verified empirically:
 	// sound first appears ~frame 440 without input, ~frame 130 with START).
 	// So the non-silence assertion is checked over a tolerance window of up to
@@ -257,8 +277,8 @@ int main(int argc, char** argv)
 		check(audio_nonzero_total > 0, buf);
 	}
 
-	// ---- 7. save-state round-trip ----------------------------------------
-	// 7a. save state #1 (validates MemOStream seek back-patching; a broken
+	// ---- 8. save-state round-trip ----------------------------------------
+	// 8a. save state #1 (validates MemOStream seek back-patching; a broken
 	//     seek fails the first SaveState with CORRUPT_FILE).
 	const size_t kStateCap = 4u * 1024u * 1024u;
 	std::vector<uint8_t> buf1(kStateCap);
@@ -271,7 +291,7 @@ int main(int argc, char** argv)
 		check(written1 > 0, buf);
 	}
 
-	// 7b. mutate the game state (30 more frames).
+	// 8b. mutate the game state (30 more frames).
 	{
 		std::vector<int16_t> audio2(30 * 1024);
 		uint32_t fr2 = 0, sw2 = 0;
@@ -282,13 +302,13 @@ int main(int argc, char** argv)
 		check(rc == NES_OK && fr2 == 30, buf);
 	}
 
-	// 7c. reload the saved state; must be accepted (CRC validates the blob,
+	// 8c. reload the saved state; must be accepted (CRC validates the blob,
 	//     so a NES_OK here also proves the back-patched chunk lengths were
 	//     written correctly).
 	const int load_rc2 = nes_load_state(nes, buf1.data(), written1);
 	check(load_rc2 == NES_OK, "nes_load_state #1 returns NES_OK");
 
-	// 7d. determinism: save again right after reload without running frames —
+	// 8d. determinism: save again right after reload without running frames —
 	//     identical machine state must serialize to identical bytes. This is
 	//     the strongest proof that load_state restores exactly.
 	{
@@ -304,7 +324,7 @@ int main(int argc, char** argv)
 		check(same, buf);
 	}
 
-	// 7e. as specified: run 1 frame after reload, save to buf2, compare with
+	// 8e. as specified: run 1 frame after reload, save to buf2, compare with
 	//     buf1. Frame advancement mutates state, so exact equality is not
 	//     guaranteed (internal counters); both saves must still succeed.
 	{

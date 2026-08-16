@@ -254,6 +254,9 @@ NES_API int nes_fds_change_side(nes_t* nes);
 NES_API int nes_fds_eject_disk(nes_t* nes);
 NES_API int nes_fds_disk_count(const nes_t* nes, uint32_t* disks, uint32_t* sides);
 
+/* ---------------- 数据库（NstDatabase.xml 随包分发，加载于 load_rom 前） ---------------- */
+NES_API int nes_load_database(nes_t* nes, const uint8_t* xml, size_t size);
+
 /* ---------------- 回调注册 (进程级单例) ---------------- */
 NES_API int nes_set_log_callback(nes_t* nes, nes_log_fn fn, void* userdata);
 NES_API int nes_set_file_io_callback(nes_t* nes, nes_file_io_fn fn, void* userdata);

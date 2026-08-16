@@ -28,6 +28,7 @@ public final class NesCore {
     private static native long nativeCreate();
     private static native void nativeDestroy(long h);
     private static native int nativeLoadRom(long h, byte[] rom, byte[] patch);
+    private static native int nativeLoadDatabase(long h, byte[] xml);
     private static native int nativeRunFrames(long h, int maxFrames, ByteBuffer audio, int capSamples);
     private static native void nativeSetInput(long h, int buttons);
     private static native void nativeSetAudioFormat(long h, int rate, int stereo);
@@ -60,6 +61,18 @@ public final class NesCore {
     public int loadRom(byte[] rom, byte[] patch) {
         if (handle == 0) return -3; // NES_ERR_NOT_READY
         return nativeLoadRom(handle, rom, patch);
+    }
+
+    /**
+     * Loads the bundled NstDatabase.xml into the core so ROM loading can
+     * resolve profiles. Must be called before {@link #loadRom}; reloading is
+     * idempotent.
+     *
+     * @return 0/positive on success (positive = warnings), negative on failure.
+     */
+    public int loadDatabase(byte[] xml) {
+        if (handle == 0) return -3; // NES_ERR_NOT_READY
+        return nativeLoadDatabase(handle, xml);
     }
 
     /**

@@ -631,6 +631,23 @@ NES_API int nes_get_capabilities(const nes_t* nes, nes_caps* caps)
 // ROM 加载 / 电源 / 复位
 // ======================================================================
 
+NES_API int nes_load_database(nes_t* nes, const uint8_t* xml, size_t size)
+{
+	if (!nes)
+		return NES_ERR_INVALID_PARAM;
+	if (in_callback())
+		return NES_ERR_REENTRANT;
+	if (!xml || size == 0)
+		return NES_ERR_INVALID_PARAM;
+
+	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+
+	// 内存字节 → std::istream → ImageDatabase::Load (供 load_rom 查 profile)
+	nes_stream::MemIStream stream(xml, size);
+	Nes::Api::Cartridge::Database db = ctx->cartridge.GetDatabase();
+	return static_cast<int>(db.Load(stream.stream()));
+}
+
 NES_API int nes_load_rom(nes_t* nes, const uint8_t* data, size_t size, nes_rom_info* info_out)
 {
 	if (!nes)

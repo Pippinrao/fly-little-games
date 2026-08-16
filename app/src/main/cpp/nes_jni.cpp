@@ -100,6 +100,31 @@ Java_com_flynes_emu_NesCore_nativeLoadRom(JNIEnv* env, jclass, jlong handle,
 }
 
 // ---------------------------------------------------------------------------
+// Database (NstDatabase.xml is bundled as an asset; load before any ROM)
+// ---------------------------------------------------------------------------
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NesCore_nativeLoadDatabase(JNIEnv* env, jclass, jlong handle,
+                                               jbyteArray xml)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (!ctx)
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+    if (xml == nullptr)
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+
+    const jsize len = env->GetArrayLength(xml);
+    jbyte* bytes = env->GetByteArrayElements(xml, nullptr);
+    if (!bytes)
+        return static_cast<jint>(NES_ERR_OUT_OF_MEMORY);
+
+    const int rc = nes_load_database(ctx, reinterpret_cast<const uint8_t*>(bytes),
+                                     static_cast<size_t>(len));
+    env->ReleaseByteArrayElements(xml, bytes, JNI_ABORT);
+    return static_cast<jint>(rc);
+}
+
+// ---------------------------------------------------------------------------
 // Frame loop (audio-master clock: the Java side paces via AudioTrack.write)
 // ---------------------------------------------------------------------------
 
