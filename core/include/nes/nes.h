@@ -79,7 +79,10 @@ typedef enum nes_pixfmt {
 
 typedef enum nes_video_filter {
     NES_FILTER_NONE = 0,        /* Nes::Api::Video::RenderState::FILTER_NONE */
-    NES_FILTER_NTSC = 1         /* phase0 不实现，仅占位 */
+    NES_FILTER_NTSC = 1,        /* 保留（后续放开，本次不实现） */
+    NES_FILTER_HQ2X = 2,        /* RenderState::FILTER_HQ2X */
+    NES_FILTER_HQ3X = 3,        /* RenderState::FILTER_HQ3X */
+    NES_FILTER_HQ4X = 4         /* RenderState::FILTER_HQ4X */
 } nes_video_filter;
 
 typedef enum nes_cheat_format {

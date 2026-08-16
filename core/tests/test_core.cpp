@@ -234,6 +234,45 @@ int main(int argc, char** argv)
 		vf_ok = true;
 	}
 
+	// ---- 6b. video filter scaling ---------------------------------------
+	{
+		char buf[160];
+		// hq4x: framebuffer scales to 1024x960, frames still run.
+		int rc = nes_set_video_format(nes, NES_PIXFMT_RGB565, NES_FILTER_HQ4X);
+		std::snprintf(buf, sizeof(buf), "set_video_format(HQ4X) rc=%d", rc);
+		check(rc >= 0, buf);
+		const nes_video_frame* f4 = nes_get_video_frame(nes);
+		check(f4 != NULL && f4->width == 1024 && f4->height == 960,
+		      "HQ4X frame is 1024x960");
+		check(f4 != NULL && f4->pixels != NULL && f4->pitch == 1024 * 2,
+		      "HQ4X frame has a 1024-px pitch buffer");
+		uint32_t fr4 = 0, sw4 = 0;
+		const int rc4 = nes_run_frames(nes, 2, audio.data(), kAudioCap, &fr4, &sw4);
+		std::snprintf(buf, sizeof(buf), "HQ4X: 2 frames rc=%d fr=%u", rc4, fr4);
+		check(rc4 >= 0 && fr4 == 2, buf);
+
+		// hq2x: 512x480.
+		rc = nes_set_video_format(nes, NES_PIXFMT_RGB565, NES_FILTER_HQ2X);
+		std::snprintf(buf, sizeof(buf), "set_video_format(HQ2X) rc=%d", rc);
+		check(rc >= 0, buf);
+		const nes_video_frame* f2 = nes_get_video_frame(nes);
+		check(f2 != NULL && f2->width == 512 && f2->height == 480,
+		      "HQ2X frame is 512x480");
+
+		// Back to NONE: 256x240 restored.
+		rc = nes_set_video_format(nes, NES_PIXFMT_RGB565, NES_FILTER_NONE);
+		std::snprintf(buf, sizeof(buf), "set_video_format(NONE) rc=%d", rc);
+		check(rc >= 0, buf);
+		const nes_video_frame* f0 = nes_get_video_frame(nes);
+		check(f0 != NULL && f0->width == 256 && f0->height == 240,
+		      "NONE frame is 256x240");
+
+		// NTSC is not implemented yet -> NOT_IMPLEMENTED.
+		rc = nes_set_video_format(nes, NES_PIXFMT_RGB565, NES_FILTER_NTSC);
+		std::snprintf(buf, sizeof(buf), "set_video_format(NTSC) rc=%d", rc);
+		check(rc == NES_ERR_NOT_IMPLEMENTED, buf);
+	}
+
 	// ---- 7. audio check --------------------------------------------------
 	// From Below's intro is silent for several seconds (verified empirically:
 	// sound first appears ~frame 440 without input, ~frame 130 with START).

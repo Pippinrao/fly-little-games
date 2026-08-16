@@ -134,6 +134,34 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
+	// 视频滤镜 → 输出倍率 (NONE=1, HQ2X=2, HQ3X=3, HQ4X=4)
+	// ------------------------------------------------------------------
+	int filter_scale(nes_video_filter filter)
+	{
+		switch (filter)
+		{
+			case NES_FILTER_HQ2X: return 2;
+			case NES_FILTER_HQ3X: return 3;
+			case NES_FILTER_HQ4X: return 4;
+			case NES_FILTER_NONE:
+			default:              return 1;
+		}
+	}
+
+	// nes_video_filter → RenderState::Filter; 不支持(NTSC)返回 -1
+	int filter_to_render(nes_video_filter filter)
+	{
+		switch (filter)
+		{
+			case NES_FILTER_NONE: return Nes::Api::Video::RenderState::FILTER_NONE;
+			case NES_FILTER_HQ2X: return Nes::Api::Video::RenderState::FILTER_HQ2X;
+			case NES_FILTER_HQ3X: return Nes::Api::Video::RenderState::FILTER_HQ3X;
+			case NES_FILTER_HQ4X: return Nes::Api::Video::RenderState::FILTER_HQ4X;
+			default:              return -1;
+		}
+	}
+
+	// ------------------------------------------------------------------
 	// File::Action (NstApiUser.hpp) → ABI nes_io_action。
 	// 两套枚举值不同 (EEPROM/FDS 顺序互换), 必须显式翻译, 不能直接强转。
 	// 返回 0 表示 phase0 不支持的 action (TAPE/TURBOFILE/SAMPLE...)。
@@ -169,10 +197,11 @@ namespace
 		Nes::Api::Cheats cheats;
 		Nes::Api::Fds fds;
 
-		uint8_t* framebuffer;                 // 256*240*bpp
-		size_t framebuffer_size;              // 当前帧缓冲分配字节数 (Task 4: set_video_format 同步重分配)
-		nes_video_frame video_frame;          // nes_get_video_frame 返回的描述符 (Task 4)
+		uint8_t* framebuffer;                 // 256*scale x 240*scale x bpp
+		size_t framebuffer_size;              // 当前帧缓冲分配字节数 (set_video_format 同步重分配)
+		nes_video_frame video_frame;          // nes_get_video_frame 返回的描述符
 		nes_config cfg;                       // favored_system / sample_rate / pixfmt
+		nes_video_filter filter;              // 运行时滤镜 (nes_set_video_format 设置, 缺省 NONE)
 
 		// 推式输入 → 拉式回调 (Pad::callback) 的桥 (t2b §0 #0)
 		std::atomic<uint32_t> input_buttons[NES_PORT_MAX];
@@ -203,6 +232,7 @@ namespace
 			  framebuffer_size(0),
 			  video_frame{},
 			  cfg{},
+			  filter(NES_FILTER_NONE),
 			  log_cb(nullptr),
 			  log_userdata(nullptr),
 			  file_io_cb(nullptr),
@@ -415,17 +445,20 @@ namespace
 		}
 		rs.width  = static_cast<ushort>(kScreenWidth);
 		rs.height = static_cast<ushort>(kScreenHeight);
-		rs.filter = Nes::Api::Video::RenderState::FILTER_NONE;
+		const int rf = filter_to_render(ctx->filter);
+		rs.filter = rf >= 0 ? static_cast<Nes::Api::Video::RenderState::Filter>(rf)
+		                    : Nes::Api::Video::RenderState::FILTER_NONE;
 		ctx->video.SetRenderState(rs);
 	}
 
-	// 帧描述符同步 (pixels/pitch 随帧缓冲与 pixfmt 变化; struct_size/version 在 ctor 已定)
+	// 帧描述符同步 (pixels/pitch 随帧缓冲与 pixfmt/filter 变化; struct_size/version 在 ctor 已定)
 	void update_video_frame(nes_ctx* ctx)
 	{
-		ctx->video_frame.width  = kScreenWidth;
-		ctx->video_frame.height = kScreenHeight;
+		const int scale = filter_scale(ctx->filter);
+		ctx->video_frame.width  = static_cast<uint32_t>(kScreenWidth  * scale);
+		ctx->video_frame.height = static_cast<uint32_t>(kScreenHeight * scale);
 		ctx->video_frame.format = ctx->cfg.pixfmt;
-		ctx->video_frame.pitch  = static_cast<int32_t>(kScreenWidth * pixfmt_bpp(ctx->cfg.pixfmt));
+		ctx->video_frame.pitch  = static_cast<int32_t>(ctx->video_frame.width * pixfmt_bpp(ctx->cfg.pixfmt));
 		ctx->video_frame.pixels = ctx->framebuffer;
 	}
 
@@ -822,9 +855,11 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 
 	// 视频输出: 正 pitch、自顶向下; 不设 lock/unlock 回调
 	// (Output::Locker 无回调时仅要求 pixels && pitch, NstApiVideo.hpp:122-128)
+	// pitch 必须按滤镜放大后的行宽 (hq4x=1024 像素), 否则滤镜写出错位
+	const int scale = filter_scale(ctx->filter);
 	Nes::Core::Video::Output vo(
 		ctx->framebuffer,
-		static_cast<long>(kScreenWidth * pixfmt_bpp(ctx->cfg.pixfmt)));
+		static_cast<long>(kScreenWidth * scale * pixfmt_bpp(ctx->cfg.pixfmt)));
 
 	// 输入: Pad::callback 已在 nes_create 注册 (推→拉桥), 此处只传对象;
 	// Controllers 默认构造为空, 设备状态 (Pad::state 等) 持在核心 Device 内, 每帧重建无副作用
@@ -870,12 +905,17 @@ NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
-	// phase0: 仅 RGB565 + FILTER_NONE (t2b §3); NTSC 滤波/其他 pixfmt 阶段后再开
-	if (format != NES_PIXFMT_RGB565 || filter != NES_FILTER_NONE)
+	// 仅 RGB565 + NONE/HQ 系列 (NTSC 未实现); 非法组合返回 NOT_IMPLEMENTED
+	const int scale = filter_scale(filter);
+	if (format != NES_PIXFMT_RGB565 || filter_to_render(filter) < 0)
 		return NES_ERR_NOT_IMPLEMENTED;
 
+	ctx->filter = filter;
+
 	// 先同步重分配后缓冲 (尺寸不变则复用; realloc 失败旧缓冲仍有效, 状态不变)
-	const size_t fb_size = kScreenWidth * kScreenHeight * pixfmt_bpp(format);
+	const size_t fb_size = static_cast<size_t>(kScreenWidth  * scale)
+	                     * static_cast<size_t>(kScreenHeight * scale)
+	                     * pixfmt_bpp(format);
 	if (fb_size != ctx->framebuffer_size)
 	{
 		uint8_t* fb = static_cast<uint8_t*>(std::realloc(ctx->framebuffer, fb_size));
@@ -886,7 +926,7 @@ NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter
 	}
 
 	ctx->cfg.pixfmt = format;
-	apply_render_state(ctx); // bits.count=16, r=0xF800 g=0x07E0 b=0x001F, 256x240, FILTER_NONE
+	apply_render_state(ctx); // bits.count=16, 256x240, filter per ctx->filter
 	update_video_frame(ctx);
 
 	return NES_OK;
