@@ -1,17 +1,18 @@
 package com.flynes.emu;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Choreographer;
-import android.view.Gravity;
 import android.view.Surface;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
@@ -26,7 +27,7 @@ import java.io.InputStream;
  * Choreographer blits, play audio via the audio-master-clock thread, accept
  * touch input, and auto-save on pause.
  */
-public class MainActivity extends Activity implements TouchController.Listener {
+public class MainActivity extends Activity {
 
     private static final String TAG = "FlyNES";
     private static final String ROM_ASSET = "roms/from_below.nes";
@@ -41,6 +42,7 @@ public class MainActivity extends Activity implements TouchController.Listener {
 
     private final NesCore core = new NesCore();
     private EmuView view;
+    private GamepadView gamepad;
     private AudioThread audio;
     private int scale = 2;
     private boolean rendering = false;
@@ -67,52 +69,30 @@ public class MainActivity extends Activity implements TouchController.Listener {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         view = new EmuView(this);
-        TouchController touch = new TouchController();
-        touch.setListener(this);
-        view.setOnTouchListener(touch);
+        gamepad = new GamepadView(this);
+        gamepad.setListener(new GamepadView.Listener() {
+            @Override
+            public void onButtons(int buttons) {
+                // Debug aid: the adb-injection verification asserts these lines.
+                Log.d(TAG, "input=0x" + Integer.toHexString(buttons));
+                core.setInput(buttons);
+            }
 
-        // Corner "about/licenses" button overlaid on the top-right; it only
-        // covers a small corner so the touch/play area stays unobstructed.
-        float density = getResources().getDisplayMetrics().density;
+            @Override
+            public void onPauseMenu() {
+                showPauseMenu();
+            }
+        });
+
         FrameLayout root = new FrameLayout(this);
         root.addView(view, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        TextView infoButton = new TextView(this);
-        infoButton.setText("ℹ️");
-        infoButton.setTextSize(20f);
-        infoButton.setTextColor(0xFFFFFFFF);
-        infoButton.setBackgroundColor(0x66000000);
-        infoButton.setPadding(Math.round(14 * density), Math.round(6 * density),
-                Math.round(14 * density), Math.round(6 * density));
-        infoButton.setOnClickListener(v ->
-                startActivity(new Intent(this, LicensesActivity.class)));
-        FrameLayout.LayoutParams infoLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.END);
-        infoLp.setMargins(0, Math.round(20 * density), Math.round(20 * density), 0);
-        root.addView(infoButton, infoLp);
-
-        // "Game library" button overlaid on the top-left, mirroring the
-        // info button; opens the library which hands back ROM bytes via
-        // NesCore.sPendingRom (byte[] cannot cross an Intent extra).
-        TextView libraryButton = new TextView(this);
-        libraryButton.setText("📚");
-        libraryButton.setTextSize(20f);
-        libraryButton.setTextColor(0xFFFFFFFF);
-        libraryButton.setBackgroundColor(0x66000000);
-        libraryButton.setPadding(Math.round(14 * density), Math.round(6 * density),
-                Math.round(14 * density), Math.round(6 * density));
-        libraryButton.setOnClickListener(v -> startActivityForResult(
-                new Intent(this, GameLibraryActivity.class), REQ_LIBRARY));
-        FrameLayout.LayoutParams libraryLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.START);
-        libraryLp.setMargins(Math.round(20 * density), Math.round(20 * density), 0, 0);
-        root.addView(libraryButton, libraryLp);
+        // Gamepad overlay sits above the game surface and owns all touch input.
+        root.addView(gamepad, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(root);
 
@@ -199,6 +179,7 @@ public class MainActivity extends Activity implements TouchController.Listener {
     protected void onPause() {
         super.onPause();
         stopRendering();
+        gamepad.reset();
 
         // Stop the audio-master clock first so the core is quiescent, then snapshot.
         if (!stopAudioThread()) {
@@ -226,6 +207,7 @@ public class MainActivity extends Activity implements TouchController.Listener {
     protected void onDestroy() {
         super.onDestroy();
         stopRendering();
+        gamepad.reset();
         // Never destroy the native core while the audio thread might still be
         // inside nes_run_frames (use-after-free). If the pause-time join cap
         // was exceeded the thread is still referenced and alive — leak the
@@ -237,9 +219,44 @@ public class MainActivity extends Activity implements TouchController.Listener {
         core.destroy();
     }
 
-    @Override
-    public void onButtons(int buttons) {
-        core.setInput(buttons);
+    // ------------------------------------------------------------------
+    // Pause menu (opened by the gamepad START key)
+    // ------------------------------------------------------------------
+
+    private void showPauseMenu() {
+        if (isFinishing() || gamepad == null) return;
+        new AlertDialog.Builder(this)
+                .setTitle("FlyNES")
+                .setItems(new String[]{"继续游戏", "游戏库", "许可信息", "取消"}, (d, which) -> {
+                    switch (which) {
+                        case 0:
+                            d.dismiss();
+                            pressStart();
+                            break;
+                        case 1:
+                            d.dismiss();
+                            startActivityForResult(new Intent(this, GameLibraryActivity.class), REQ_LIBRARY);
+                            break;
+                        case 2:
+                            d.dismiss();
+                            startActivity(new Intent(this, LicensesActivity.class));
+                            break;
+                        default:
+                            d.dismiss();
+                            break;
+                    }
+                })
+                .setOnCancelListener(d -> {
+                    // Back / outside-tap dismiss: stay paused in-game, user's choice.
+                })
+                .show();
+    }
+
+    /** Sends one START pulse to resume from the NES game's own pause state. */
+    private void pressStart() {
+        core.setInput(GamepadView.START);
+        new Handler(Looper.getMainLooper()).postDelayed(
+                () -> core.setInput(gamepad.buttons()), 50);
     }
 
     // ------------------------------------------------------------------
