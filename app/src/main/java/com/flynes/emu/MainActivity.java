@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Choreographer;
+import android.view.Gravity;
 import android.view.Surface;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -85,9 +86,14 @@ public class MainActivity extends Activity {
         });
 
         FrameLayout root = new FrameLayout(this);
-        root.addView(view, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+        // Game surface: fixed 4:3 view sized to fit the screen and centered —
+        // a MATCH_PARENT surface would stretch the 1024x960 (hq4x) buffer
+        // non-uniformly on wide screens (the "stretched picture" complaint).
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        float aspect = 1024f / 960f; // core framebuffer ratio under hq4x
+        int vh = dm.heightPixels;
+        int vw = Math.min(dm.widthPixels, Math.round(vh * aspect));
+        root.addView(view, new FrameLayout.LayoutParams(vw, vh, Gravity.CENTER));
 
         // Gamepad overlay sits above the game surface and owns all touch input.
         root.addView(gamepad, new FrameLayout.LayoutParams(
@@ -101,6 +107,8 @@ public class MainActivity extends Activity {
             return;
         }
         core.setAudioFormat(AUDIO_SAMPLE_RATE, 0);
+        // HQ4X smooth filter: the core scales 256x240 -> 1024x960; blit 1:1.
+        core.setVideoFilter(NesCore.FILTER_HQ4X);
 
         // Load the bundled NstDatabase.xml before any ROM so profiles resolve.
         // A failure must not block the game: the database only refines rom_info.
@@ -334,9 +342,9 @@ public class MainActivity extends Activity {
     }
 
     private int computeScale() {
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int s = Math.min(dm.widthPixels / 256, dm.heightPixels / 240);
-        return Math.max(1, s);
+        // The core framebuffer is already filter-scaled (hq4x = 1024x960);
+        // blit 1:1 and let the SurfaceView geometry fit the window.
+        return 1;
     }
 
     // ------------------------------------------------------------------
