@@ -1,0 +1,55 @@
+# FlyNES CI gate — stage 0 (Task S1-4).
+#
+# Two lean gates, both run on every push / pull_request:
+#   host-test : build the platform-independent core + host smoke test on Ubuntu
+#               (exercises the zero-platform-dependency core with zlib, GCC).
+#   bare-core : macOS clang gate — the C ABI header + a minimal consumer must
+#               compile WITHOUT any Android/NDK/platform headers, proving the
+#               core layer carries no platform dependency.
+#
+# phase 1.5: add an `abi-diff` job here (build the core for linux/android,
+# extract nes_* symbols from libnes_abi.a and diff against
+# scripts/abi_symbols.golden.txt — missing symbol = fail, new symbol = warn).
+name: stage0
+
+on: [push, pull_request]
+
+jobs:
+  host-test:
+    name: host-test (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # NestopiaUE is a git submodule (core/vendor/nestopiaue)
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev cmake g++
+      - name: Configure
+        run: cmake -S core -B build -DNES_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --target nes_core_test -j
+      - name: Run host smoke test
+        # The test resolves its fixtures relative to the repo root, so run from $GITHUB_WORKSPACE.
+        run: ./build/nes_core_test
+
+  bare-core:
+    name: bare-core (macos clang, no platform headers)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Syntax-check the ABI header with clang++: proves it is self-contained
+      # (only <stddef.h>/<stdint.h>) and clang-clean.
+      - name: Syntax-check ABI header
+        run: clang++ -std=c++17 -I core/include -x c++ -fsyntax-only core/include/nes/nes.h
+      # Compile a minimal consumer that includes only stdint/stddef + the ABI
+      # header — no Android/NDK headers anywhere. Link step is intentionally
+      # skipped; a header-only compile is enough for this gate.
+      - name: Compile minimal consumer
+        run: |
+          cat > /tmp/nes_min_consumer.cpp <<'EOF'
+          #include <stdint.h>
+          #include <stddef.h>
+          #include <nes/nes.h>
+          int main() { nes_t* nes = nes_create(0); if (nes) nes_destroy(nes); return 0; }
+          EOF
+          clang++ -std=c++17 -I core/include -c /tmp/nes_min_consumer.cpp -o /tmp/nes_min_consumer.o
