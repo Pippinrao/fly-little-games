@@ -178,4 +178,80 @@ namespace nes_stream
 		: buf_(buf, cap, written, needed, &overflowed_), out_(&buf_), overflowed_(false)
 	{
 	}
+
+	// ------------------------------------------------------------------
+	// GrowableOStream (S1-2)
+	//
+	// vector 后端、无 cap: overflow/xsputn 在 cur_ 触及末尾时自动扩容;
+	// 游标模型同 MemOStream —— cur_ = 写游标, data_.size() = 高水位
+	// (= 完整写出后的最终流长度)。seekp 只移动 cur_, 回填写入原地覆盖
+	// [cur_, cur_+n), 供状态存档器的 chunk 长度回填使用。
+	// ------------------------------------------------------------------
+
+	GrowableOStream::Buf::Buf(std::vector<uint8_t>* data)
+		: data_(data), cur_(0)
+	{
+	}
+
+	GrowableOStream::Buf::int_type GrowableOStream::Buf::overflow(int_type c)
+	{
+		if (c == traits_type::eof())
+			return traits_type::eof();
+
+		if (cur_ >= data_->size())
+			data_->resize(cur_ + 1);
+		(*data_)[cur_++] = traits_type::to_char_type(c);
+		return c;
+	}
+
+	std::streamsize GrowableOStream::Buf::xsputn(const char* s, std::streamsize n)
+	{
+		if (n <= 0)
+			return 0;
+
+		if (cur_ + static_cast<size_t>(n) > data_->size())
+			data_->resize(cur_ + static_cast<size_t>(n));
+		std::memcpy(data_->data() + cur_, s, static_cast<size_t>(n));
+		cur_ += static_cast<size_t>(n);
+		return n;
+	}
+
+	GrowableOStream::Buf::pos_type GrowableOStream::Buf::seekoff(off_type off,
+	                                                             std::ios_base::seekdir dir,
+	                                                             std::ios_base::openmode which)
+	{
+		if (!(which & std::ios_base::out))
+			return pos_type(off_type(-1));
+
+		off_type pos;
+		switch (dir)
+		{
+			case std::ios_base::beg: pos = off; break;
+			case std::ios_base::cur: pos = off + static_cast<off_type>(cur_); break;
+			case std::ios_base::end: pos = off + static_cast<off_type>(data_->size()); break;
+			default: return pos_type(off_type(-1));
+		}
+
+		if (pos < 0 || pos > static_cast<off_type>(data_->size()))
+			return pos_type(off_type(-1));
+
+		cur_ = static_cast<size_t>(pos);
+		return pos_type(pos);
+	}
+
+	GrowableOStream::Buf::pos_type GrowableOStream::Buf::seekpos(pos_type pos,
+	                                                             std::ios_base::openmode which)
+	{
+		return seekoff(off_type(pos), std::ios_base::beg, which);
+	}
+
+	int GrowableOStream::Buf::sync()
+	{
+		return 0; // 内存缓冲无待 flush 内容
+	}
+
+	GrowableOStream::GrowableOStream()
+		: buf_(&data_), out_(&buf_)
+	{
+	}
 }

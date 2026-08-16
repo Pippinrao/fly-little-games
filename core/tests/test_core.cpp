@@ -70,12 +70,15 @@ namespace
 		case NES_ERR_CORRUPT_FILE:        return "NES_ERR_CORRUPT_FILE";
 		case NES_ERR_INVALID_CRC:         return "NES_ERR_INVALID_CRC";
 		case NES_ERR_UNSUPPORTED:         return "NES_ERR_UNSUPPORTED";
+		case NES_ERR_UNSUPPORTED_VER:     return "NES_ERR_UNSUPPORTED_VER";
+		case NES_ERR_UNSUPPORTED_VSSYSTEM:return "NES_ERR_UNSUPPORTED_VSSYSTEM";
 		case NES_ERR_UNSUPPORTED_MAPPER:  return "NES_ERR_UNSUPPORTED_MAPPER";
 		case NES_ERR_MISSING_BIOS:        return "NES_ERR_MISSING_BIOS";
 		case NES_ERR_WRONG_MODE:          return "NES_ERR_WRONG_MODE";
 		case NES_ERR_BUFFER_TOO_SMALL:    return "NES_ERR_BUFFER_TOO_SMALL";
 		case NES_ERR_NOT_IMPLEMENTED:     return "NES_ERR_NOT_IMPLEMENTED";
 		case NES_ERR_REENTRANT:           return "NES_ERR_REENTRANT";
+		case NES_ERR_STATE_ROM_MISMATCH:  return "NES_ERR_STATE_ROM_MISMATCH";
 		default:                          return "unknown";
 		}
 	}
@@ -350,6 +353,70 @@ int main(int argc, char** argv)
 			// Allowed fallback: both saves succeeded and load_state was NES_OK.
 			check(save2_rc == NES_OK && written2 > 0, buf);
 		}
+	}
+
+	// 8f. FLYNST1 wrapper: tamper / version / sha1 / legacy-compat.
+	// All wrapper tests below slice buf1[0..written1) and poke individual
+	// bytes; they need the payload (past the 81-byte header) to exist.
+	if (written1 > 81)
+	{
+		// f1. tamper: flipping one payload byte must be caught by the
+		//     wrapper's CRC32 (payload covers offset 81..).
+		{
+			std::vector<uint8_t> tampered(buf1.begin(), buf1.begin() + written1);
+			tampered[81] ^= 0xFF; // first payload byte
+			const int rc = nes_load_state(nes, tampered.data(), tampered.size());
+			char buf[192];
+			std::snprintf(buf, sizeof(buf),
+			              "tampered payload -> load fails (rc=%d %s, expected NES_ERR_INVALID_CRC)",
+			              rc, err_str(rc));
+			check(rc == NES_ERR_INVALID_CRC, buf);
+		}
+
+		// f2. version: setting version (u32 LE at offset 8) to 2 must be
+		//     rejected as an unknown wrapper format.
+		{
+			std::vector<uint8_t> v2(buf1.begin(), buf1.begin() + written1);
+			v2[8] = 2; v2[9] = 0; v2[10] = 0; v2[11] = 0;
+			const int rc = nes_load_state(nes, v2.data(), v2.size());
+			char buf[192];
+			std::snprintf(buf, sizeof(buf),
+			              "version=2 -> load fails (rc=%d %s, expected NES_ERR_UNSUPPORTED_VER)",
+			              rc, err_str(rc));
+			check(rc == NES_ERR_UNSUPPORTED_VER, buf);
+		}
+
+		// f3. sha1: altering one hex char of rom_sha1 (offset 28) must be
+		//     rejected even though the CRC32 is still valid (it covers only
+		//     the payload, not the header).
+		{
+			std::vector<uint8_t> other_rom(buf1.begin(), buf1.begin() + written1);
+			other_rom[28] = (other_rom[28] == 'F') ? '0' : 'F'; // guarantee a change
+			const int rc = nes_load_state(nes, other_rom.data(), other_rom.size());
+			char buf[192];
+			std::snprintf(buf, sizeof(buf),
+			              "rom_sha1 altered -> load fails (rc=%d %s, expected NES_ERR_STATE_ROM_MISMATCH)",
+			              rc, err_str(rc));
+			check(rc == NES_ERR_STATE_ROM_MISMATCH, buf);
+		}
+
+		// f4. legacy compat: the bytes past the header are the raw NST
+		//     stream; feeding them directly (as old saves were stored) must
+		//     still load. Runs after the ROM is loaded, so the payload is
+		//     meaningful for the current machine.
+		{
+			std::vector<uint8_t> legacy(buf1.begin() + 81, buf1.begin() + written1);
+			const int rc = nes_load_state(nes, legacy.data(), legacy.size());
+			char buf[192];
+			std::snprintf(buf, sizeof(buf),
+			              "legacy raw NST (header stripped) loads (rc=%d %s, expected >= 0)",
+			              rc, err_str(rc));
+			check(rc >= 0, buf);
+		}
+	}
+	else
+	{
+		check(false, "wrapper tests skipped: save #1 not larger than the 81-byte header");
 	}
 
 	nes_destroy(nes);

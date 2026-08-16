@@ -59,7 +59,8 @@ typedef enum nes_err {
     /* ABI 专有扩展 (不与 Nestopia Result 冲突) */
     NES_ERR_BUFFER_TOO_SMALL     = -100,
     NES_ERR_NOT_IMPLEMENTED      = -200,
-    NES_ERR_REENTRANT            = -201   /* 回调内重入 nes_* 被拒 */
+    NES_ERR_REENTRANT            = -201,  /* 回调内重入 nes_* 被拒 */
+    NES_ERR_STATE_ROM_MISMATCH   = -202   /* 存档与当前 ROM 的 SHA1 不匹配 */
 } nes_err;
 
 /* ---------------- 基础枚举 ---------------- */

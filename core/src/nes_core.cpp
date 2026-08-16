@@ -25,6 +25,7 @@
  *     (内核无总线 peek/poke), FDS 系列, nes_load_rom_patched (阶段1/2)。
  */
 #include "nes/nes.h"
+#include "nes_state.hpp"
 #include "nes_stream.hpp"
 
 #include <atomic>
@@ -945,29 +946,22 @@ NES_API void nes_clear_input(nes_t* nes)
 }
 
 /*
- * nes_save_state — Machine::SaveState(ostream, USE_COMPRESSION) (t2b §2)。
- * MemOStream 实现 seekp (状态存档器在 NstState.cpp Saver::End 里回填 chunk
- * 长度, 没有 seek 的话首个 End() 就会抛 RESULT_ERR_CORRUPT_FILE) 并直接写
- * 调用方 out[0..cap)。
+ * nes_save_state — Machine::SaveState(ostream, USE_COMPRESSION) (t2b §2) + S1-2 包装。
+ * 先经 nes_stream::GrowableOStream 全量产出裸 NST 字节, 再套 FLYNST1 安全包装头
+ * (magic+version+core_version+rom_sha1+payload_len+crc32) 拷进调用方 out[0..cap)。
+ * GrowableOStream 与 MemOStream 一样实现 seekp (状态存档器在 NstState.cpp
+ * Saver::End 里回填 chunk 长度, 没有 seek 的话首个 End() 就抛 CORRUPT_FILE)。
  *
  * 返回语义:
- *   - 成功: *written = *needed = 最终流长度; 返回 SaveState 的 Result
- *     (0 或正值警告照常返回, 负值透传 —— 未超容时的 CORRUPT_FILE 只可能
- *     来自非缓冲原因, 不在此映射)。
- *   - 超容 (Nestopia 在首次写失败处中止, Stream::Out::Write 抛
- *     RESULT_ERR_CORRUPT_FILE, NstStream.cpp:299-300): 映射
- *     NES_ERR_BUFFER_TOO_SMALL; *written = 已写入缓冲的前缀字节数,
- *     *needed = 需求下界 = 已写入 + 首次失败写本会扩展流的字节数
- *     (真实存档必然更长, 因为 Nestopia 中止后剩余 chunk 未知)。
+ *   - 成功: *written = *needed = 81 + 裸 NST 长度; 返回 NES_OK。
+ *   - 裸 NST 产出失败 (未上电等): 透传 SaveState 的 Result (与 nes_err 同值,
+ *     负值或警告照原样返回), *written = *needed = 0。
+ *   - cap 不足: NES_ERR_BUFFER_TOO_SMALL; *written = 0, *needed = 81 + 裸长度。
+ *     由于包装前已全量产出, *needed 是精确大小 (旧版 MemOStream 直写调用方
+ *     缓冲时只是下界), 宿主按 *needed 精确分配一次即可重试成功。
  *
- * 宿主扩缓冲策略: *needed 只是下界、不是精确大小 —— 若按它精确分配,
- * 下一轮仍可能超容 (下界 ≠ 最终长度)。建议按 *needed 至少加倍后重试,
- * 直到返回成功; 每轮 *needed 单调增长, 迭代收敛。
- *
- * 大小探测 (out==NULL && cap==0): 合法, 立即超容, 返回
- * NES_ERR_BUFFER_TOO_SMALL, *written = 0, *needed = 首个写块大小
- * (通常 4 字节, 下界)。它不能当作精确大小, 只适合做起始猜测, 之后仍要
- * 走「加倍重试」循环。
+ * 大小探测 (out==NULL && cap==0): 合法, 照常全量产出后返回 BUFFER_TOO_SMALL,
+ * *needed 即精确大小 —— 比旧版「下界 + 加倍重试」更适合一次性分配。
  */
 NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed)
 {
@@ -982,28 +976,44 @@ NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
-	size_t w = 0, n = 0;
-	nes_stream::MemOStream stream(out, cap, &w, &n);
-	const Nes::Result result = ctx->machine.SaveState(stream.stream(), Nes::Api::Machine::USE_COMPRESSION);
-
-	if (stream.overflowed())
+	// 1. 全量产出裸 NST 到可增长缓冲
+	nes_stream::GrowableOStream raw;
+	const Nes::Result result = ctx->machine.SaveState(raw.stream(), Nes::Api::Machine::USE_COMPRESSION);
+	if (result != Nes::RESULT_OK)
 	{
-		*written = stream.written(); // 已写入缓冲的(前缀)字节数
-		*needed  = stream.needed();  // 下界: 真实存档 ≥ 已写入 + 首次失败块
-		return NES_ERR_BUFFER_TOO_SMALL;
+		*written = 0;
+		*needed  = 0;
+		return static_cast<int>(result);
 	}
 
-	*written = stream.written();
-	*needed  = stream.written(); // 成功完整写出: end_ 即最终流长度
-	// 正值为警告 (RESULT_NOP 等) 照常返回, 负值透传 Nestopia Result (与 nes_err 同值)
-	return static_cast<int>(result);
+	// 2. 源 ROM SHA1 (profile 缺失 → 全 0, 加载时跳过 SHA1 校验)
+	char sha1_hex[41];
+	const Nes::Api::Cartridge::Profile* profile = ctx->cartridge.GetProfile();
+	if (profile)
+	{
+		char crc_buf[9];
+		profile->hash.Get(sha1_hex, crc_buf);
+		sha1_hex[40] = '\0'; // Hash::Get 只写 40 hex、不写 NUL (同 fill_rom_info)
+	}
+	else
+	{
+		std::memset(sha1_hex, 0, sizeof(sha1_hex));
+	}
+
+	// 3. 包装进调用方缓冲 (cap 不足 → BUFFER_TOO_SMALL + 精确 *needed)
+	const std::vector<uint8_t>& raw_data = raw.data();
+	return flynes_state::wrap(raw_data.data(), raw_data.size(), sha1_hex,
+	                          out, cap, written, needed);
 }
 
 /*
- * nes_load_state — Machine::LoadState(istream) (t2b §2)。
- * Result 与 nes_err 同值直接透传: RESULT_ERR_INVALID_CRC(-7) 即 NES_ERR_INVALID_CRC。
- * 若注册了 questionCallback, CRC 不匹配时内核可能抛
- * QUESTION_NST_PRG_CRC_FAIL_CONTINUE, 由宿主回调决定继续/中止 (on_question 已桥接)。
+ * nes_load_state — 兼容 FLYNST1 包装档与旧版裸 NST 档 (S1-2)。
+ *   - 包装档: unwrap 校验 magic/version/len/crc32/sha1; 失败返回具体错误码
+ *     (UNSUPPORTED_VER / INVALID_CRC / STATE_ROM_MISMATCH / CORRUPT_FILE),
+ *     此时不触碰机器状态;
+ *   - 魔数不符 → 视为旧版裸 NST, 原样喂 Machine::LoadState (旧档兼容路径);
+ *   - 通过校验后: Machine::LoadState(MemIStream(payload)), Result 与 nes_err
+ *     同值直接透传 (RESULT_ERR_INVALID_CRC(-7) 即 NES_ERR_INVALID_CRC)。
  */
 NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size)
 {
@@ -1016,7 +1026,32 @@ NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size)
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
-	nes_stream::MemIStream stream(in, size);
+	// 当前 ROM SHA1 (profile 缺失 → 全 0 → unwrap 跳过 SHA1 校验)
+	char current_sha1[41];
+	const Nes::Api::Cartridge::Profile* profile = ctx->cartridge.GetProfile();
+	if (profile)
+	{
+		char crc_buf[9];
+		profile->hash.Get(current_sha1, crc_buf);
+		current_sha1[40] = '\0';
+	}
+	else
+	{
+		std::memset(current_sha1, 0, sizeof(current_sha1));
+	}
+
+	const uint8_t* payload = nullptr;
+	size_t payload_len = 0;
+	bool is_wrapped = false;
+	const int rc = flynes_state::unwrap(in, size, current_sha1, &payload, &payload_len, &is_wrapped);
+	if (rc != NES_OK)
+		return rc;
+
+	// 包装档 → 校验后的 payload; 旧版裸 NST → 原输入
+	const uint8_t* data = is_wrapped ? payload : in;
+	const size_t len    = is_wrapped ? payload_len : size;
+
+	nes_stream::MemIStream stream(data, len);
 	const Nes::Result result = ctx->machine.LoadState(stream.stream());
 	return static_cast<int>(result);
 }

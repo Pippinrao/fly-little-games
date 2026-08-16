@@ -34,6 +34,7 @@
 #include <istream>
 #include <ostream>
 #include <streambuf>
+#include <vector>
 
 namespace nes_stream
 {
@@ -105,6 +106,44 @@ namespace nes_stream
 		Buf buf_;
 		std::ostream out_;
 		bool overflowed_;
+	};
+
+	// ------------------------------------------------------------------
+	// 可增长只写输出流 (内部工具, 无容量上限):
+	//   - 后端为 std::vector<uint8_t>, 写满自动扩容 —— 用于 nes_save_state
+	//     先「全量产出裸 NST 字节」再套 FLYNST1 安全包装头 (S1-2);
+	//   - 与 MemOStream 一样必须实现 seekoff/seekpos: 状态存档器在
+	//     NstState.cpp Saver::End 用 stream.Seek(...) 回填 chunk 长度,
+	//     没有 seek 的话首个 End() 就抛 RESULT_ERR_CORRUPT_FILE (同 957e882);
+	//   - 游标模型与 MemOStream 相同: cur_ = 写游标 (seekp 目标),
+	//     data_.size() = 高水位 (完整写出后即最终流长度); 回填式写入
+	//     落在 [cur_, cur_+n) 原地覆盖, 不会截断已有字节。
+	// ------------------------------------------------------------------
+	class GrowableOStream
+	{
+	public:
+		GrowableOStream();
+		std::ostream& stream() { return out_; }
+		const std::vector<uint8_t>& data() const { return data_; }
+
+	private:
+		struct Buf : std::streambuf
+		{
+			Buf(std::vector<uint8_t>* data);
+			int_type overflow(int_type c) override;
+			std::streamsize xsputn(const char* s, std::streamsize n) override;
+			pos_type seekoff(off_type off, std::ios_base::seekdir dir,
+			                 std::ios_base::openmode which) override;
+			pos_type seekpos(pos_type pos, std::ios_base::openmode which) override;
+			int sync() override;
+
+			std::vector<uint8_t>* data_;
+			size_t cur_;   // 当前写游标 (seekp 的目标)
+		};
+
+		std::vector<uint8_t> data_;
+		Buf buf_;
+		std::ostream out_;
 	};
 }
 
