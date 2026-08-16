@@ -2,6 +2,8 @@ package com.flynes.emu;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -52,6 +54,8 @@ public class GameLibraryActivity extends Activity {
     private ListView listView;
     private LinearLayout emptyState;
     private Button chooseButton;
+    private TextView titleCount;
+    private final List<Button> sortButtons = new ArrayList<>();
     private GameAdapter adapter;
 
     private int sortMode = SORT_POPULARITY;
@@ -74,15 +78,36 @@ public class GameLibraryActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF101010);
+        // Deep blue-black gradient background.
+        root.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFF0F2027, 0xFF203A43, 0xFF2C5364}));
 
-        // (a) Search box.
+        // (a) Title bar + game count.
+        TextView title = new TextView(this);
+        title.setText("🎮 FlyNES 游戏库");
+        title.setTextSize(22f);
+        title.setTextColor(0xFFFFFFFF);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setPadding(pad, dp(18), pad, dp(2));
+        root.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        titleCount = new TextView(this);
+        titleCount.setTextColor(0xFF9FB6C9);
+        titleCount.setTextSize(12f);
+        titleCount.setPadding(pad, 0, pad, dp(10));
+        root.addView(titleCount, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // (b) Search box (rounded capsule).
         searchBox = new EditText(this);
-        searchBox.setHint("搜索游戏…");
+        searchBox.setHint("🔍 搜索游戏…");
         searchBox.setSingleLine(true);
         searchBox.setTextColor(0xFFFFFFFF);
-        searchBox.setHintTextColor(0xFF888888);
+        searchBox.setHintTextColor(0xFF8FA6B8);
         searchBox.setTextSize(15f);
+        searchBox.setBackground(roundedBox(0x33000000, 0x66FFFFFF));
         searchBox.setPadding(pad, dp(10), pad, dp(10));
         searchBox.addTextChangedListener(new TextWatcher() {
             @Override
@@ -117,11 +142,13 @@ public class GameLibraryActivity extends Activity {
         root.addView(searchAndSort, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // (c) Game list.
+        // (c) Game list (card rows, no dividers).
         listView = new ListView(this);
-        listView.setBackgroundColor(0xFF101010);
-        listView.setDivider(new android.graphics.drawable.ColorDrawable(0xFF222222));
-        listView.setDividerHeight(1);
+        listView.setBackgroundColor(0x00000000);
+        listView.setDivider(null);
+        listView.setDividerHeight(0);
+        listView.setPadding(dp(10), 0, dp(10), dp(10));
+        listView.setClipToPadding(false);
         adapter = new GameAdapter();
         listView.setAdapter(adapter);
         listView.setOnItemClickListener((parent, view, position, id) ->
@@ -134,16 +161,35 @@ public class GameLibraryActivity extends Activity {
         emptyState.setOrientation(LinearLayout.VERTICAL);
         emptyState.setGravity(Gravity.CENTER);
         emptyState.setPadding(pad * 2, 0, pad * 2, 0);
+        TextView emptyIcon = new TextView(this);
+        emptyIcon.setText("🎮");
+        emptyIcon.setTextSize(64f);
+        emptyIcon.setGravity(Gravity.CENTER);
+        emptyState.addView(emptyIcon, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView emptyTitle = new TextView(this);
+        emptyTitle.setText("还没有游戏");
+        emptyTitle.setTextSize(18f);
+        emptyTitle.setTextColor(0xFFDDE6EE);
+        emptyTitle.setGravity(Gravity.CENTER);
+        emptyTitle.setPadding(0, dp(8), 0, 0);
+        emptyState.addView(emptyTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         chooseButton = new Button(this);
         chooseButton.setText("选择 ROM 目录");
         chooseButton.setTextSize(16f);
         chooseButton.setAllCaps(false);
+        chooseButton.setPadding(dp(36), dp(12), dp(36), dp(12));
+        GradientDrawable btnBg = new GradientDrawable();
+        btnBg.setCornerRadius(dp(24));
+        btnBg.setColor(0xFF4A90D9);
+        chooseButton.setBackground(btnBg);
         chooseButton.setOnClickListener(v -> pickTree());
         emptyState.addView(chooseButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView emptyHint = new TextView(this);
         emptyHint.setText("从设备存储选择一个包含 .nes / .zip 的文件夹");
-        emptyHint.setTextColor(0xFF888888);
+        emptyHint.setTextColor(0xFF9FB6C9);
         emptyHint.setTextSize(13f);
         emptyHint.setGravity(Gravity.CENTER);
         emptyHint.setPadding(0, dp(12), 0, 0);
@@ -170,12 +216,43 @@ public class GameLibraryActivity extends Activity {
         b.setText(label);
         b.setTextSize(13f);
         b.setAllCaps(false);
-        b.setPadding(dp(16), 0, dp(16), 0);
+        b.setPadding(dp(20), 0, dp(20), 0);
+        b.setBackground(segmentedStyle(mode == sortMode));
         b.setOnClickListener(v -> {
             sortMode = mode;
+            updateSortHighlight();
             applyFilterAndSort();
         });
+        sortButtons.add(b);
         return b;
+    }
+
+    private void updateSortHighlight() {
+        for (int i = 0; i < sortButtons.size(); i++) {
+            sortButtons.get(i).setBackground(segmentedStyle(i == sortMode));
+        }
+    }
+
+    private GradientDrawable segmentedStyle(boolean selected) {
+        GradientDrawable d = new GradientDrawable();
+        d.setCornerRadius(dp(18));
+        d.setColor(selected ? 0xFF4A90D9 : 0x22000000);
+        return d;
+    }
+
+    private GradientDrawable roundedBox(int fill, int stroke) {
+        GradientDrawable d = new GradientDrawable();
+        d.setCornerRadius(dp(24));
+        d.setColor(fill);
+        d.setStroke(1, stroke);
+        return d;
+    }
+
+    private GradientDrawable cardStyle() {
+        GradientDrawable d = new GradientDrawable();
+        d.setCornerRadius(dp(12));
+        d.setColor(0x22FFFFFF);
+        return d;
     }
 
     // ------------------------------------------------------------------
@@ -190,6 +267,7 @@ public class GameLibraryActivity extends Activity {
             allGames.addAll(stored);
         }
         boolean hasUserGames = stored != null && !stored.isEmpty();
+        titleCount.setText("共 " + allGames.size() + " 个游戏 · 从设备目录加载");
         if (hasUserGames) {
             searchAndSort.setVisibility(View.VISIBLE);
             listView.setVisibility(View.VISIBLE);
@@ -343,7 +421,8 @@ public class GameLibraryActivity extends Activity {
             } else {
                 row = new LinearLayout(GameLibraryActivity.this);
                 row.setOrientation(LinearLayout.VERTICAL);
-                row.setPadding(dp(14), dp(8), dp(14), dp(8));
+                row.setPadding(dp(16), dp(12), dp(16), dp(12));
+                row.setBackground(cardStyle());
                 line1 = new TextView(GameLibraryActivity.this);
                 line1.setTextColor(0xFFFFFFFF);
                 line1.setTextSize(16f);
