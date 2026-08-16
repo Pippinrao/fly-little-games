@@ -32,12 +32,21 @@ public class MainActivity extends Activity implements TouchController.Listener {
     private static final String ROM_ASSET = "roms/from_below.nes";
     private static final String AUTOSAVE_NAME = "autosave.nst";
     private static final int AUDIO_SAMPLE_RATE = 48000;
+    private static final int REQ_LIBRARY = 1001;
+    /** Content hash of the ROM an autosave was saved from; compared against
+     *  {@link #currentRomHash} before restoring, so a state saved from one ROM
+     *  is never applied onto a different one. */
+    private static final String PREFS_NAME = "main";
+    private static final String KEY_AUTOSAVE_ROM_HASH = "autosave_rom_hash";
 
     private final NesCore core = new NesCore();
     private EmuView view;
     private AudioThread audio;
     private int scale = 2;
     private boolean rendering = false;
+    /** Content hash of the ROM loaded by {@link #startPlaying}; compared
+     *  against the persisted hash of the last autosave before restoring it. */
+    private String currentRomHash;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -86,6 +95,25 @@ public class MainActivity extends Activity implements TouchController.Listener {
         infoLp.setMargins(0, Math.round(20 * density), Math.round(20 * density), 0);
         root.addView(infoButton, infoLp);
 
+        // "Game library" button overlaid on the top-left, mirroring the
+        // info button; opens the library which hands back ROM bytes via
+        // NesCore.sPendingRom (byte[] cannot cross an Intent extra).
+        TextView libraryButton = new TextView(this);
+        libraryButton.setText("📚");
+        libraryButton.setTextSize(20f);
+        libraryButton.setTextColor(0xFFFFFFFF);
+        libraryButton.setBackgroundColor(0x66000000);
+        libraryButton.setPadding(Math.round(14 * density), Math.round(6 * density),
+                Math.round(14 * density), Math.round(6 * density));
+        libraryButton.setOnClickListener(v -> startActivityForResult(
+                new Intent(this, GameLibraryActivity.class), REQ_LIBRARY));
+        FrameLayout.LayoutParams libraryLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        libraryLp.setMargins(Math.round(20 * density), Math.round(20 * density), 0, 0);
+        root.addView(libraryButton, libraryLp);
+
         setContentView(root);
 
         if (!core.create()) {
@@ -107,14 +135,37 @@ public class MainActivity extends Activity implements TouchController.Listener {
             return;
         }
         // rc < 0 = failure; 0/positive = success (warnings are positive).
-        int rc = core.loadRom(rom, null);
-        if (rc < 0) {
-            Log.e(TAG, "loadRom failed, rc=" + rc);
-            toastAndFinish("Failed to load ROM (rc=" + rc + ")");
+        if (startPlaying(rom) < 0) {
+            toastAndFinish("Failed to load ROM");
             return;
         }
-        scale = computeScale();
-        Log.i(TAG, "ROM loaded (rc=" + rc + "), render scale=" + scale + "x");
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_LIBRARY || resultCode != RESULT_OK) return;
+
+        byte[] rom = NesCore.sPendingRom;
+        NesCore.sPendingRom = null; // consumed either way — nothing to relaunch without it
+        if (rom == null) return;
+
+        // Stop the current game's audio-master clock before touching the core.
+        if (!stopAudioThread()) {
+            // The old thread is still inside the native core; loading a new ROM
+            // now would race nes_run_frames. Keep the old game, leak at process
+            // death (same policy as onPause/onDestroy).
+            Log.w(TAG, "audio thread still alive; not switching ROM");
+            Toast.makeText(this, "无法切换游戏: 音频线程仍在运行", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!core.isCreated()) return;
+        if (startPlaying(rom) < 0) {
+            Toast.makeText(this, "无法加载游戏", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // onResume() (which follows immediately) starts a fresh AudioThread and
+        // rendering; startPlaying() only loads the ROM and records its hash.
     }
 
     @Override
@@ -126,9 +177,15 @@ public class MainActivity extends Activity implements TouchController.Listener {
         // Only start fresh when the previous thread is confirmed dead.
         if (!core.isCreated() || (audio != null && audio.isAlive())) return;
 
-        // Restore the previous session BEFORE powering frames.
+        // Restore the previous session BEFORE powering frames — but only when
+        // the autosave was saved from the ROM that is currently loaded. A state
+        // saved from a different ROM (e.g. a library pick replaced the asset)
+        // must never be applied onto another game.
         byte[] state = readAutosave();
-        if (state != null && state.length > 0) {
+        String savedRomHash = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_AUTOSAVE_ROM_HASH, null);
+        if (state != null && state.length > 0
+                && currentRomHash != null && currentRomHash.equals(savedRomHash)) {
             int rc = core.loadState(state);
             Log.i(TAG, "autosave restore rc=" + rc);
         }
@@ -144,38 +201,23 @@ public class MainActivity extends Activity implements TouchController.Listener {
         stopRendering();
 
         // Stop the audio-master clock first so the core is quiescent, then snapshot.
-        if (audio != null) {
-            audio.stopLoop();
-            // Bounded loop-join: a single 500 ms join can TIME OUT while the
-            // thread is still inside a blocking AudioTrack.write() (or a slow
-            // runFrames); proceeding afterwards would run saveState()/destroy()
-            // concurrently with nes_run_frames — a data race, and a
-            // use-after-free if destroy lands first. Loop until the thread is
-            // truly dead, with a generous 5 s overall cap.
-            long deadline = System.currentTimeMillis() + 5000;
-            boolean dead = false;
-            try {
-                while (audio.isAlive() && System.currentTimeMillis() < deadline) {
-                    audio.join(50);
-                }
-                dead = !audio.isAlive();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            if (!dead) {
-                // Safety valve: the thread is STILL inside the native core
-                // after the cap. Never save/destroy while it runs — skip the
-                // autosave, keep the `audio` reference so onResume()/onDestroy()
-                // can see the live thread, and let the native core leak at
-                // process death rather than crash with a use-after-free.
-                Log.w(TAG, "audio thread still alive after 5 s; skipping autosave, core kept alive");
-                return;
-            }
-            audio = null;
+        if (!stopAudioThread()) {
+            // Safety valve: the thread is STILL inside the native core after the
+            // cap. Never save/destroy while it runs — skip the autosave, keep the
+            // `audio` reference so onResume()/onDestroy() can see the live thread,
+            // and let the native core leak at process death rather than crash with
+            // a use-after-free.
+            Log.w(TAG, "audio thread still alive after 5 s; skipping autosave, core kept alive");
+            return;
         }
 
         byte[] state = core.saveState();
         if (state != null && state.length > 0) {
+            // Remember which ROM this state belongs to, so a later resume never
+            // restores it onto a different ROM (see the guard in onResume).
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putString(KEY_AUTOSAVE_ROM_HASH, currentRomHash)
+                    .apply();
             writeAutosave(state);
         }
     }
@@ -198,6 +240,64 @@ public class MainActivity extends Activity implements TouchController.Listener {
     @Override
     public void onButtons(int buttons) {
         core.setInput(buttons);
+    }
+
+    // ------------------------------------------------------------------
+    // ROM loading / audio lifecycle
+    // ------------------------------------------------------------------
+
+    /**
+     * Loads ROM bytes into the emulator core and prepares for play. Used by
+     * both the onCreate assets path and the library handoff (onActivityResult).
+     * Does NOT start the AudioThread or the renderer: onResume() always follows
+     * this call and does that, guarded against double-start.
+     *
+     * @return 0/positive rc on success, negative on failure.
+     */
+    private int startPlaying(byte[] rom) {
+        if (!core.isCreated()) return -3; // NES_ERR_NOT_READY
+        int rc = core.loadRom(rom, null);
+        if (rc < 0) {
+            Log.e(TAG, "loadRom failed, rc=" + rc);
+            return rc;
+        }
+        currentRomHash = romHash(rom);
+        scale = computeScale();
+        Log.i(TAG, "ROM loaded (rc=" + rc + "), render scale=" + scale + "x");
+        return rc;
+    }
+
+    /**
+     * Stops and joins the audio thread, bounded by a 5 s cap (a blocking
+     * AudioTrack.write() can stall the loop; never proceed to saveState() /
+     * loadRom() / destroy() while nes_run_frames might still be running).
+     *
+     * @return true when the thread is confirmed dead afterwards; on false the
+     *         thread is still referenced and alive — treat the core as unsafe
+     *         to touch and let it leak at process death.
+     */
+    private boolean stopAudioThread() {
+        if (audio == null) return true;
+        audio.stopLoop();
+        long deadline = System.currentTimeMillis() + 5000;
+        boolean dead = false;
+        try {
+            while (audio.isAlive() && System.currentTimeMillis() < deadline) {
+                audio.join(50);
+            }
+            dead = !audio.isAlive();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (dead) audio = null;
+        return dead;
+    }
+
+    /** Cheap content hash identifying a ROM; used to pair autosaves with ROMs. */
+    private static String romHash(byte[] rom) {
+        java.util.zip.Adler32 a = new java.util.zip.Adler32();
+        a.update(rom);
+        return Long.toHexString(a.getValue());
     }
 
     // ------------------------------------------------------------------

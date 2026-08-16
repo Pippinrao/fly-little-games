@@ -16,6 +16,15 @@ public final class NesCore {
         System.loadLibrary("nescore");
     }
 
+    /**
+     * In-process ROM handoff from {@link GameLibraryActivity} back to
+     * MainActivity: a byte[] cannot be passed through an Intent extra, so the
+     * library drops the loaded ROM here and MainActivity consumes it in
+     * onActivityResult, then sets it back to null. volatile so the handoff is
+     * visible across threads.
+     */
+    public static volatile byte[] sPendingRom;
+
     // Direct buffer used as the native audio sink for runFrames.
     // 128 KiB = 65536 int16 samples = ~82 frames of NTSC audio at 48 kHz;
     // far more than a single runFrames(2) call needs (~1600 samples).
