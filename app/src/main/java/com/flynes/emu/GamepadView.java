@@ -12,11 +12,13 @@ import android.view.View;
 import android.view.WindowInsets;
 
 import com.flynes.emu.input.GamepadHitMap;
+import com.flynes.emu.input.GamepadVisualMetrics;
 import com.flynes.emu.input.HapticController;
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.input.InputBits;
 import com.flynes.emu.input.InputRouter;
 import com.flynes.emu.input.MinimumTap;
+import com.flynes.emu.settings.AppSettings;
 
 /** Virtual NES controls with non-overlapping hit regions and source-aware input. */
 public class GamepadView extends View {
@@ -36,9 +38,9 @@ public class GamepadView extends View {
     }
 
     private static final int PULSE_MS = 50;
-    private static final int COLOR_IDLE = 0x70323A4A;
-    private static final int COLOR_PRESSED = 0xE0F2F5FA;
-    private static final int COLOR_OUTLINE = 0xD0AAB6CB;
+    private static final int COLOR_IDLE = 0xFF323A4A;
+    private static final int COLOR_PRESSED = 0xFFF2F5FA;
+    private static final int COLOR_OUTLINE = 0xFFAAB6CB;
     private static final int COLOR_ACCENT = 0xFFF0B45A;
 
     private final float density;
@@ -48,6 +50,7 @@ public class GamepadView extends View {
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final HapticController haptics;
+    private AppSettings controlSettings = AppSettings.defaults();
 
     private GamepadHitMap hitMap;
     private InputRouter inputRouter;
@@ -97,6 +100,13 @@ public class GamepadView extends View {
         haptics.configure(level, distinguishAB);
     }
 
+    public void setControlSettings(AppSettings settings) {
+        controlSettings = settings == null ? AppSettings.defaults() : settings;
+        haptics.configure(controlSettings.hapticLevel(),
+                controlSettings.distinctABHaptics());
+        rebuildHitMap();
+    }
+
     public int buttons() {
         return buttons;
     }
@@ -135,8 +145,8 @@ public class GamepadView extends View {
 
     private void rebuildHitMap() {
         if (getWidth() > 0 && getHeight() > 0) {
-            hitMap = GamepadHitMap.standard(getWidth(), getHeight(), density,
-                    insetLeft, insetRight, insetTop, insetBottom);
+            hitMap = GamepadHitMap.fromSettings(getWidth(), getHeight(), density,
+                    insetLeft, insetRight, insetTop, insetBottom, controlSettings);
             invalidate();
         }
     }
@@ -148,33 +158,44 @@ public class GamepadView extends View {
         for (GamepadHitMap.Circle circle : hitMap.circles()) {
             boolean pressed = isHeld(circle.control());
             if (circle.control() == GamepadHitMap.Control.JOY) {
-                drawCircle(canvas, circle.cx(), circle.cy(), circle.radius(), pressed, null, false);
+                drawCircle(canvas, circle.cx(), circle.cy(), circle.radius(), pressed,
+                        null, false, GamepadHitMap.Control.JOY);
                 drawCircle(canvas, circle.cx() + joyKnobX, circle.cy() + joyKnobY,
-                        28f * density, pressed, null, true);
+                        28f * density * controlSettings.joystickScale(), pressed,
+                        null, true, GamepadHitMap.Control.JOY);
             } else {
                 drawCircle(canvas, circle.cx(), circle.cy(), circle.radius(), pressed,
-                        labelFor(circle.control()), circle.control() == GamepadHitMap.Control.A);
+                        labelFor(circle.control()), circle.control() == GamepadHitMap.Control.A,
+                        circle.control());
             }
         }
     }
 
     private void drawCircle(Canvas canvas, float cx, float cy, float radius,
-                            boolean pressed, String text, boolean accent) {
+                            boolean pressed, String text, boolean accent,
+                            GamepadHitMap.Control control) {
         float renderedRadius = radius * (pressed ? 0.94f : 1f);
         fill.setStyle(Paint.Style.FILL);
-        fill.setColor(pressed ? COLOR_PRESSED : COLOR_IDLE);
+        int fillAlpha = Math.round(controlSettings.controlOpacity() * (pressed ? 255f : 160f));
+        fill.setColor(withAlpha(pressed ? COLOR_PRESSED : COLOR_IDLE, fillAlpha));
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth((accent ? 3f : 2f) * density);
-        stroke.setColor(accent ? COLOR_ACCENT : COLOR_OUTLINE);
+        int strokeAlpha = Math.round(controlSettings.controlOpacity() * 255f);
+        stroke.setColor(withAlpha(accent ? COLOR_ACCENT : COLOR_OUTLINE, strokeAlpha));
         canvas.drawCircle(cx, cy, renderedRadius, fill);
         canvas.drawCircle(cx, cy, renderedRadius, stroke);
         if (text == null) return;
-        label.setColor(pressed ? 0xFF17202D : Color.WHITE);
-        label.setTextSize(Math.min(radius * 0.72f, 20f * density));
+        label.setColor(withAlpha(pressed ? 0xFF17202D : Color.WHITE, strokeAlpha));
+        label.setTextSize(Math.min(radius * 0.72f,
+                GamepadVisualMetrics.labelSizeDp(control) * density));
         label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         label.setTextAlign(Paint.Align.CENTER);
         Paint.FontMetrics metrics = label.getFontMetrics();
         canvas.drawText(text, cx, cy - (metrics.ascent + metrics.descent) / 2f, label);
+    }
+
+    private static int withAlpha(int color, int alpha) {
+        return (color & 0x00FFFFFF) | (Math.max(0, Math.min(255, alpha)) << 24);
     }
 
     private String labelFor(GamepadHitMap.Control control) {
@@ -321,7 +342,8 @@ public class GamepadView extends View {
         }
         if (isHeld(GamepadHitMap.Control.JOY)) {
             next |= joystickBits(joyKnobX, joyKnobY,
-                    hitMap.circle(GamepadHitMap.Control.JOY).radius());
+                    hitMap.circle(GamepadHitMap.Control.JOY).radius(),
+                    controlSettings.deadZone());
         }
         if (next != buttons) {
             buttons = next;
@@ -331,8 +353,12 @@ public class GamepadView extends View {
     }
 
     static int joystickBits(float knobX, float knobY, float baseRadius) {
+        return joystickBits(knobX, knobY, baseRadius, 0.15f);
+    }
+
+    static int joystickBits(float knobX, float knobY, float baseRadius, float deadZone) {
         float distance = (float) Math.hypot(knobX, knobY);
-        if (distance < 0.15f * baseRadius) return 0;
+        if (distance < deadZone * baseRadius) return 0;
         double degrees = Math.toDegrees(Math.atan2(knobY, knobX));
         if (degrees < -157.5 || degrees >= 157.5) return InputBits.LEFT;
         if (degrees < -112.5) return InputBits.UP | InputBits.LEFT;

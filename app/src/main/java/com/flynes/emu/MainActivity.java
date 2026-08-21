@@ -1,6 +1,5 @@
 package com.flynes.emu;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
@@ -16,6 +15,8 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
 
 import com.flynes.emu.input.InputRouter;
 import com.flynes.emu.data.RomIdentity;
@@ -42,7 +43,7 @@ import java.io.InputStream;
  * Choreographer blits, play audio via the audio-master-clock thread, accept
  * touch input, and auto-save on pause.
  */
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "FlyNES";
     private static final String ROM_ASSET = "roms/from_below.nes";
@@ -379,8 +380,7 @@ public class MainActivity extends Activity {
 
     private void applyHapticSettings() {
         if (gamepad != null) {
-            gamepad.setHapticPreferences(SettingsActivity.loadHapticLevel(this),
-                    SettingsActivity.loadDistinctAB(this));
+            gamepad.setControlSettings(appSettings == null ? settings.load() : appSettings);
         }
     }
 

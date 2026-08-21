@@ -1,5 +1,8 @@
 package com.flynes.emu.input;
 
+import com.flynes.emu.settings.AppSettings;
+import com.flynes.emu.settings.LayoutPreset;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -57,23 +60,38 @@ public final class GamepadHitMap {
     public static GamepadHitMap standard(int width, int height, float density,
                                          int insetLeft, int insetRight,
                                          int insetTop, int insetBottom) {
+        return fromSettings(width, height, density, insetLeft, insetRight,
+                insetTop, insetBottom, AppSettings.defaults());
+    }
+
+    public static GamepadHitMap fromSettings(int width, int height, float density,
+                                             int insetLeft, int insetRight,
+                                             int insetTop, int insetBottom,
+                                             AppSettings settings) {
         float safeRight = width - insetRight;
         float controlBottom = height - insetBottom - 24f * density;
-        float actionRadius = 28f * density;
-        Circle joy = new Circle(Control.JOY, insetLeft + 100f * density,
-                controlBottom - 76f * density, 76f * density);
-        Circle select = new Circle(Control.SELECT, width / 2f - 28f * density,
+        float verticalShift = settings.verticalOffset() * 96f * density;
+        float actionRadius = Math.max(24f, 28f * settings.buttonScale()) * density;
+        float joystickRadius = Math.max(24f, 76f * settings.joystickScale()) * density;
+        Circle joy = new Circle(Control.JOY,
+                insetLeft + joystickRadius + 24f * density,
+                controlBottom - joystickRadius - verticalShift, joystickRadius);
+        Circle select = new Circle(Control.SELECT, width / 2f - 34f * density,
                 controlBottom - 24f * density, 24f * density);
-        Circle start = new Circle(Control.START, width / 2f + 28f * density,
+        Circle start = new Circle(Control.START, width / 2f + 34f * density,
                 controlBottom - 24f * density, 24f * density);
-        Circle b = new Circle(Control.B, safeRight - 104f * density,
-                controlBottom - actionRadius, actionRadius);
-        Circle a = new Circle(Control.A, safeRight - 32f * density,
-                controlBottom - actionRadius, actionRadius);
+        float rightCenter = safeRight - actionRadius - 4f * density;
+        float leftCenter = rightCenter - 2f * actionRadius - 16f * density;
+        float actionY = controlBottom - actionRadius - verticalShift;
+        Control rightControl = settings.layoutPreset() == LayoutPreset.MIRRORED_AB
+                ? Control.B : Control.A;
+        Control leftControl = rightControl == Control.A ? Control.B : Control.A;
+        Circle leftAction = new Circle(leftControl, leftCenter, actionY, actionRadius);
+        Circle rightAction = new Circle(rightControl, rightCenter, actionY, actionRadius);
 
         GamepadHitMap map = new GamepadHitMap(insetLeft, insetTop,
                 width - insetRight, height - insetBottom,
-                List.of(joy, select, start, b, a));
+                List.of(joy, select, start, leftAction, rightAction));
         List<String> errors = map.validate();
         if (!errors.isEmpty()) {
             throw new IllegalArgumentException(String.join("; ", errors));
