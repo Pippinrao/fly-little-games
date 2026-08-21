@@ -1,13 +1,14 @@
 package com.flynes.emu;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowInsets;
 
+import androidx.appcompat.app.AppCompatActivity;
+
 /** Branded launcher that makes play, library, sources, and settings discoverable. */
-public final class HomeActivity extends Activity {
+public final class HomeActivity extends AppCompatActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(R.layout.activity_home);

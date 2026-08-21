@@ -61,4 +61,17 @@
     <string name="autosave">自动存档</string>
     <string name="autosave_summary">应用进入后台时安全保存进度。</string>
     <string name="manage_library">管理游戏库</string>
+    <string name="library_title">FlyNES 游戏库</string>
+    <string name="search_games">搜索游戏…</string>
+    <string name="sort_popularity">热度</string>
+    <string name="sort_name">名称</string>
+    <string name="sort_size">大小</string>
+    <string name="choose_rom_folder">选择 ROM 目录</string>
+    <string name="library_game_count">共 %1$d 个游戏 · 从设备目录加载</string>
+    <string name="folder_permission_failed">无法获取目录访问权限</string>
+    <string name="scanning_games">正在扫描…</string>
+    <string name="scan_complete">扫描完成：%1$d 个游戏</string>
+    <string name="cannot_load_game">无法加载 %1$s</string>
+    <string name="popularity_score">热度 %1$d</string>
+    <string name="builtin_rom">内置 ROM</string>
 </resources>

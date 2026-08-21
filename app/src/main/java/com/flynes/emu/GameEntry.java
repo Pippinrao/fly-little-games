@@ -45,7 +45,7 @@ public class GameEntry {
     /** The bundled From Below homebrew, pinned to the top of the library. */
     public static GameEntry builtinFromBelow() {
         return new GameEntry(
-                "From Below (内置)",
+                "From Below",
                 "file:///android_asset/roms/from_below.nes",
                 "assets",
                 0,

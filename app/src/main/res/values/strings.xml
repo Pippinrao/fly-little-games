@@ -61,4 +61,17 @@
     <string name="autosave">Automatic save</string>
     <string name="autosave_summary">Save safely when the app moves to the background.</string>
     <string name="manage_library">Manage game library</string>
+    <string name="library_title">FlyNES game library</string>
+    <string name="search_games">Search games…</string>
+    <string name="sort_popularity">Popularity</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_size">Size</string>
+    <string name="choose_rom_folder">Choose ROM folder</string>
+    <string name="library_game_count">%1$d games · loaded from device folders</string>
+    <string name="folder_permission_failed">Could not access that folder</string>
+    <string name="scanning_games">Scanning…</string>
+    <string name="scan_complete">Scan complete: %1$d games</string>
+    <string name="cannot_load_game">Could not load %1$s</string>
+    <string name="popularity_score">popularity %1$d</string>
+    <string name="builtin_rom">Built-in ROM</string>
 </resources>

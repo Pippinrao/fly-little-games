@@ -1,6 +1,5 @@
 package com.flynes.emu;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -17,10 +16,14 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.core.content.ContextCompat;
+import androidx.appcompat.app.AppCompatActivity;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,7 +39,7 @@ import java.util.Locale;
  * MainActivity through {@link NesCore#sPendingRom}: a byte[] cannot travel
  * through an Intent extra, and both activities live in the same process.
  */
-public class GameLibraryActivity extends Activity {
+public class GameLibraryActivity extends AppCompatActivity {
 
     private static final int REQ_PICK_TREE = 100;
     private static final int SCAN_MAX_DEPTH = 3;
@@ -78,23 +81,20 @@ public class GameLibraryActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        // Deep blue-black gradient background.
-        root.setBackground(new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xFF0F2027, 0xFF203A43, 0xFF2C5364}));
+        root.setBackgroundColor(color(R.color.fly_background));
 
         // (a) Title bar + game count.
         TextView title = new TextView(this);
-        title.setText("🎮 FlyNES 游戏库");
+        title.setText(R.string.library_title);
         title.setTextSize(22f);
-        title.setTextColor(0xFFFFFFFF);
+        title.setTextColor(color(R.color.fly_on_surface));
         title.setTypeface(null, Typeface.BOLD);
         title.setPadding(pad, dp(18), pad, dp(2));
         root.addView(title, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         titleCount = new TextView(this);
-        titleCount.setTextColor(0xFF9FB6C9);
+        titleCount.setTextColor(color(R.color.fly_on_surface_muted));
         titleCount.setTextSize(12f);
         titleCount.setPadding(pad, 0, pad, dp(10));
         root.addView(titleCount, new LinearLayout.LayoutParams(
@@ -102,12 +102,13 @@ public class GameLibraryActivity extends Activity {
 
         // (b) Search box (rounded capsule).
         searchBox = new EditText(this);
-        searchBox.setHint("🔍 搜索游戏…");
+        searchBox.setHint(R.string.search_games);
         searchBox.setSingleLine(true);
-        searchBox.setTextColor(0xFFFFFFFF);
-        searchBox.setHintTextColor(0xFF8FA6B8);
+        searchBox.setTextColor(color(R.color.fly_on_surface));
+        searchBox.setHintTextColor(color(R.color.fly_on_surface_muted));
         searchBox.setTextSize(15f);
-        searchBox.setBackground(roundedBox(0x33000000, 0x66FFFFFF));
+        searchBox.setBackground(roundedBox(color(R.color.fly_surface),
+                color(R.color.fly_outline)));
         searchBox.setPadding(pad, dp(10), pad, dp(10));
         searchBox.addTextChangedListener(new TextWatcher() {
             @Override
@@ -129,9 +130,9 @@ public class GameLibraryActivity extends Activity {
         sortRow.setOrientation(LinearLayout.HORIZONTAL);
         sortRow.setGravity(Gravity.CENTER);
         sortRow.setPadding(0, dp(2), 0, dp(6));
-        sortRow.addView(makeSortButton("热度", SORT_POPULARITY));
-        sortRow.addView(makeSortButton("名称", SORT_NAME));
-        sortRow.addView(makeSortButton("大小", SORT_SIZE));
+        sortRow.addView(makeSortButton(getString(R.string.sort_popularity), SORT_POPULARITY));
+        sortRow.addView(makeSortButton(getString(R.string.sort_name), SORT_NAME));
+        sortRow.addView(makeSortButton(getString(R.string.sort_size), SORT_SIZE));
 
         searchAndSort = new LinearLayout(this);
         searchAndSort.setOrientation(LinearLayout.VERTICAL);
@@ -161,35 +162,36 @@ public class GameLibraryActivity extends Activity {
         emptyState.setOrientation(LinearLayout.VERTICAL);
         emptyState.setGravity(Gravity.CENTER);
         emptyState.setPadding(pad * 2, 0, pad * 2, 0);
-        TextView emptyIcon = new TextView(this);
-        emptyIcon.setText("🎮");
-        emptyIcon.setTextSize(64f);
-        emptyIcon.setGravity(Gravity.CENTER);
+        ImageView emptyIcon = new ImageView(this);
+        emptyIcon.setImageResource(R.drawable.ic_library);
+        emptyIcon.setColorFilter(color(R.color.fly_on_surface_muted));
+        emptyIcon.setContentDescription(getString(R.string.no_local_games));
         emptyState.addView(emptyIcon, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView emptyTitle = new TextView(this);
-        emptyTitle.setText("还没有游戏");
+        emptyTitle.setText(R.string.no_local_games);
         emptyTitle.setTextSize(18f);
-        emptyTitle.setTextColor(0xFFDDE6EE);
+        emptyTitle.setTextColor(color(R.color.fly_on_surface));
         emptyTitle.setGravity(Gravity.CENTER);
         emptyTitle.setPadding(0, dp(8), 0, 0);
         emptyState.addView(emptyTitle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         chooseButton = new Button(this);
-        chooseButton.setText("选择 ROM 目录");
+        chooseButton.setText(R.string.choose_rom_folder);
         chooseButton.setTextSize(16f);
         chooseButton.setAllCaps(false);
         chooseButton.setPadding(dp(36), dp(12), dp(36), dp(12));
         GradientDrawable btnBg = new GradientDrawable();
         btnBg.setCornerRadius(dp(24));
-        btnBg.setColor(0xFF4A90D9);
+        btnBg.setColor(color(R.color.fly_primary));
         chooseButton.setBackground(btnBg);
+        chooseButton.setTextColor(color(R.color.fly_on_primary));
         chooseButton.setOnClickListener(v -> pickTree());
         emptyState.addView(chooseButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView emptyHint = new TextView(this);
-        emptyHint.setText("从设备存储选择一个包含 .nes / .zip 的文件夹");
-        emptyHint.setTextColor(0xFF9FB6C9);
+        emptyHint.setText(R.string.add_source_hint);
+        emptyHint.setTextColor(color(R.color.fly_on_surface_muted));
         emptyHint.setTextSize(13f);
         emptyHint.setGravity(Gravity.CENTER);
         emptyHint.setPadding(0, dp(12), 0, 0);
@@ -200,8 +202,8 @@ public class GameLibraryActivity extends Activity {
 
         // (d) Compliance line.
         TextView compliance = new TextView(this);
-        compliance.setText("仅加载你合法拥有的 ROM");
-        compliance.setTextColor(0xFF777777);
+        compliance.setText(R.string.legal_rom_notice);
+        compliance.setTextColor(color(R.color.fly_on_surface_muted));
         compliance.setTextSize(11f);
         compliance.setGravity(Gravity.CENTER);
         compliance.setPadding(0, dp(6), 0, dp(6));
@@ -218,6 +220,8 @@ public class GameLibraryActivity extends Activity {
         b.setAllCaps(false);
         b.setPadding(dp(20), 0, dp(20), 0);
         b.setBackground(segmentedStyle(mode == sortMode));
+        b.setTextColor(color(mode == sortMode ? R.color.fly_on_primary
+                : R.color.fly_on_surface));
         b.setOnClickListener(v -> {
             sortMode = mode;
             updateSortHighlight();
@@ -230,13 +234,15 @@ public class GameLibraryActivity extends Activity {
     private void updateSortHighlight() {
         for (int i = 0; i < sortButtons.size(); i++) {
             sortButtons.get(i).setBackground(segmentedStyle(i == sortMode));
+            sortButtons.get(i).setTextColor(color(i == sortMode ? R.color.fly_on_primary
+                    : R.color.fly_on_surface));
         }
     }
 
     private GradientDrawable segmentedStyle(boolean selected) {
         GradientDrawable d = new GradientDrawable();
         d.setCornerRadius(dp(18));
-        d.setColor(selected ? 0xFF4A90D9 : 0x22000000);
+        d.setColor(color(selected ? R.color.fly_primary : R.color.fly_surface_variant));
         return d;
     }
 
@@ -251,7 +257,7 @@ public class GameLibraryActivity extends Activity {
     private GradientDrawable cardStyle() {
         GradientDrawable d = new GradientDrawable();
         d.setCornerRadius(dp(12));
-        d.setColor(0x22FFFFFF);
+        d.setColor(color(R.color.fly_surface));
         return d;
     }
 
@@ -267,7 +273,7 @@ public class GameLibraryActivity extends Activity {
             allGames.addAll(stored);
         }
         boolean hasUserGames = stored != null && !stored.isEmpty();
-        titleCount.setText("共 " + allGames.size() + " 个游戏 · 从设备目录加载");
+        titleCount.setText(getString(R.string.library_game_count, allGames.size()));
         if (hasUserGames) {
             searchAndSort.setVisibility(View.VISIBLE);
             listView.setVisibility(View.VISIBLE);
@@ -285,7 +291,7 @@ public class GameLibraryActivity extends Activity {
         String query = searchBox.getText().toString().trim().toLowerCase(Locale.ROOT);
         visible.clear();
         for (GameEntry g : allGames) {
-            if (query.isEmpty() || g.name.toLowerCase(Locale.ROOT).contains(query)) {
+            if (query.isEmpty() || displayName(g).toLowerCase(Locale.ROOT).contains(query)) {
                 visible.add(g);
             }
         }
@@ -299,7 +305,7 @@ public class GameLibraryActivity extends Activity {
                 return (a, b) -> {
                     int builtin = builtinFirst(a, b);
                     if (builtin != 0) return builtin;
-                    return a.name.compareTo(b.name);
+                    return displayName(a).compareTo(displayName(b));
                 };
             case SORT_SIZE:
                 return (a, b) -> Long.compare(b.size, a.size); // size desc
@@ -309,7 +315,7 @@ public class GameLibraryActivity extends Activity {
                     int builtin = builtinFirst(a, b);
                     if (builtin != 0) return builtin;
                     int byPop = Integer.compare(b.popularity, a.popularity); // desc
-                    return byPop != 0 ? byPop : a.name.compareTo(b.name);
+                    return byPop != 0 ? byPop : displayName(a).compareTo(displayName(b));
                 };
         }
     }
@@ -351,14 +357,14 @@ public class GameLibraryActivity extends Activity {
             getContentResolver().takePersistableUriPermission(
                     treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (SecurityException e) {
-            Toast.makeText(this, "无法获取目录访问权限", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.folder_permission_failed, Toast.LENGTH_LONG).show();
             return;
         }
 
         if (scanning) return;
         scanning = true;
         chooseButton.setEnabled(false);
-        Toast.makeText(this, "扫描中…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, R.string.scanning_games, Toast.LENGTH_SHORT).show();
 
         new Thread(() -> {
             final List<GameEntry> games = RomScanner.scanTree(this, treeUri, SCAN_MAX_DEPTH);
@@ -367,7 +373,7 @@ public class GameLibraryActivity extends Activity {
                 chooseButton.setEnabled(true);
                 RomStore.saveTreeUri(this, treeUri);
                 RomStore.saveGames(this, games);
-                Toast.makeText(this, "扫描完成: " + games.size() + " 个游戏",
+                Toast.makeText(this, getString(R.string.scan_complete, games.size()),
                         Toast.LENGTH_SHORT).show();
                 reloadData();
             });
@@ -386,7 +392,8 @@ public class GameLibraryActivity extends Activity {
             ui.post(() -> {
                 launching = false;
                 if (rom == null) {
-                    Toast.makeText(this, "无法加载: " + entry.name, Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, getString(R.string.cannot_load_game,
+                            displayName(entry)), Toast.LENGTH_LONG).show();
                     return;
                 }
                 // byte[] cannot cross an Intent extra; the static field is the
@@ -424,10 +431,10 @@ public class GameLibraryActivity extends Activity {
                 row.setPadding(dp(16), dp(12), dp(16), dp(12));
                 row.setBackground(cardStyle());
                 line1 = new TextView(GameLibraryActivity.this);
-                line1.setTextColor(0xFFFFFFFF);
+                line1.setTextColor(color(R.color.fly_on_surface));
                 line1.setTextSize(16f);
                 line2 = new TextView(GameLibraryActivity.this);
-                line2.setTextColor(0xFF9E9E9E);
+                line2.setTextColor(color(R.color.fly_on_surface_muted));
                 line2.setTextSize(12f);
                 row.addView(line1, new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -437,12 +444,12 @@ public class GameLibraryActivity extends Activity {
                         ViewGroup.LayoutParams.WRAP_CONTENT));
             }
 
-            StringBuilder title = new StringBuilder(g.name);
+            StringBuilder title = new StringBuilder(displayName(g));
             if (g.popularity > 0) {
-                title.append(" ⭐").append(g.popularity);
+                title.append(" · ").append(getString(R.string.popularity_score, g.popularity));
             }
             if (isBuiltin(g)) {
-                title.append(" [内置]");
+                title.append(" · ").append(getString(R.string.builtin_badge));
             }
             line1.setText(title.toString());
             line2.setText(secondLine(g));
@@ -450,7 +457,7 @@ public class GameLibraryActivity extends Activity {
         }
 
         private String secondLine(GameEntry g) {
-            if (isBuiltin(g)) return "内置 ROM";
+            if (isBuiltin(g)) return getString(R.string.builtin_rom);
             List<String> parts = new ArrayList<>();
             if (g.mapper >= 0) parts.add("mapper " + g.mapper);
             if (g.prgKb >= 0) parts.add("PRG " + g.prgKb + "KB");
@@ -465,6 +472,15 @@ public class GameLibraryActivity extends Activity {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return (bytes / 1024) + " KB";
         return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    private String displayName(GameEntry entry) {
+        Locale locale = getResources().getConfiguration().getLocales().get(0);
+        return GameTitleLocalizer.localize(entry.name, locale);
+    }
+
+    private int color(int resource) {
+        return ContextCompat.getColor(this, resource);
     }
 
     private int dp(int v) {

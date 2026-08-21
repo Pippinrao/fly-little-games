@@ -1,11 +1,12 @@
 package com.flynes.emu;
 
-import android.app.Activity;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.ViewGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
+
+import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -20,7 +21,7 @@ import java.util.Arrays;
  * with the binary; this page is the in-app copy, and the same texts live at
  * the repo root (LICENSE) and in docs/COMPLIANCE.md.
  */
-public class LicensesActivity extends Activity {
+public class LicensesActivity extends AppCompatActivity {
 
     private static final String TAG = "FlyNES";
     private static final String LICENSES_DIR = "licenses";
