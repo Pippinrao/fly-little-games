@@ -18,6 +18,10 @@ import android.widget.ImageButton;
 import android.widget.Toast;
 
 import com.flynes.emu.input.InputRouter;
+import com.flynes.emu.data.RomIdentity;
+import com.flynes.emu.data.RomInfo;
+import com.flynes.emu.save.SaveRecord;
+import com.flynes.emu.save.SaveRepository;
 import com.flynes.emu.session.EmulationSession;
 import com.flynes.emu.session.SessionResult;
 import com.flynes.emu.session.SessionState;
@@ -25,9 +29,6 @@ import com.flynes.emu.video.DisplayModeController;
 import com.flynes.emu.video.RefreshMode;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -40,14 +41,8 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "FlyNES";
     private static final String ROM_ASSET = "roms/from_below.nes";
-    private static final String AUTOSAVE_NAME = "autosave.nst";
     private static final int AUDIO_SAMPLE_RATE = 48000;
     private static final int REQ_LIBRARY = 1001;
-    /** Content hash of the ROM an autosave was saved from; compared against
-     *  {@link #currentRomHash} before restoring, so a state saved from one ROM
-     *  is never applied onto a different one. */
-    private static final String PREFS_NAME = "main";
-    private static final String KEY_AUTOSAVE_ROM_HASH = "autosave_rom_hash";
 
     private final NesCore core = new NesCore();
     private final EmulationSession session = new EmulationSession(core);
@@ -56,11 +51,10 @@ public class MainActivity extends Activity {
     private InputRouter inputRouter;
     private AlertDialog pauseDialog;
     private AudioThread audio;
+    private SaveRepository saves;
     private int scale = 2;
     private boolean rendering = false;
-    /** Content hash of the ROM loaded by {@link #startPlaying}; compared
-     *  against the persisted hash of the last autosave before restoring it. */
-    private String currentRomHash;
+    private RomIdentity currentRomIdentity;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -78,6 +72,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        saves = new SaveRepository(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         view = new EmuView(this);
@@ -211,17 +206,17 @@ public class MainActivity extends Activity {
             session.resume();
         }
 
-        // Restore the previous session BEFORE powering frames — but only when
-        // the autosave was saved from the ROM that is currently loaded. A state
-        // saved from a different ROM (e.g. a library pick replaced the asset)
-        // must never be applied onto another game.
-        byte[] state = readAutosave();
-        String savedRomHash = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(KEY_AUTOSAVE_ROM_HASH, null);
-        if (state != null && state.length > 0
-                && currentRomHash != null && currentRomHash.equals(savedRomHash)) {
-            int rc = core.loadState(state);
-            Log.i(TAG, "autosave restore rc=" + rc);
+        // Restore only from the active ROM's core-backed SHA-1 directory.
+        if (currentRomIdentity != null) {
+            try {
+                SaveRecord record = saves.readAutosave(currentRomIdentity).orElse(null);
+                if (record != null && record.state().length > 0) {
+                    int rc = core.loadState(record.state());
+                    Log.i(TAG, "autosave restore rc=" + rc + " rom=" + currentRomIdentity.sha1());
+                }
+            } catch (IOException e) {
+                Log.e(TAG, "read per-ROM autosave failed", e);
+            }
         }
 
         audio = new AudioThread(core);
@@ -248,13 +243,14 @@ public class MainActivity extends Activity {
         }
 
         byte[] state = core.saveState();
-        if (state != null && state.length > 0) {
-            // Remember which ROM this state belongs to, so a later resume never
-            // restores it onto a different ROM (see the guard in onResume).
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                    .putString(KEY_AUTOSAVE_ROM_HASH, currentRomHash)
-                    .apply();
-            writeAutosave(state);
+        if (state != null && state.length > 0 && currentRomIdentity != null) {
+            try {
+                saves.writeAutosave(currentRomIdentity, state, System.currentTimeMillis());
+                Log.i(TAG, "per-ROM autosave written: " + state.length
+                        + " bytes rom=" + currentRomIdentity.sha1());
+            } catch (IOException e) {
+                Log.e(TAG, "write per-ROM autosave failed", e);
+            }
         }
     }
 
@@ -403,7 +399,12 @@ public class MainActivity extends Activity {
             Log.e(TAG, "loadRom failed, rc=" + loadResult.code());
             return loadResult.code();
         }
-        currentRomHash = romHash(rom);
+        RomInfo info = core.romInfo();
+        if (info == null) {
+            Log.e(TAG, "core returned no ROM identity");
+            return -1;
+        }
+        currentRomIdentity = info.identity();
         scale = computeScale();
         // HQ4X after load: Machine::Load/Power can rebuild renderer state, so
         // the filter must be (re)applied once the ROM is in place.
@@ -445,13 +446,6 @@ public class MainActivity extends Activity {
         return dead;
     }
 
-    /** Cheap content hash identifying a ROM; used to pair autosaves with ROMs. */
-    private static String romHash(byte[] rom) {
-        java.util.zip.Adler32 a = new java.util.zip.Adler32();
-        a.update(rom);
-        return Long.toHexString(a.getValue());
-    }
-
     // ------------------------------------------------------------------
     // Rendering
     // ------------------------------------------------------------------
@@ -490,38 +484,6 @@ public class MainActivity extends Activity {
         } catch (IOException e) {
             Log.e(TAG, "readAsset failed: " + path, e);
             return null;
-        }
-    }
-
-    private File autosaveFile() {
-        return new File(getFilesDir(), AUTOSAVE_NAME);
-    }
-
-    private byte[] readAutosave() {
-        File f = autosaveFile();
-        if (!f.exists()) return null;
-        long len = f.length();
-        if (len <= 0 || len > Integer.MAX_VALUE) return null;
-        byte[] data = new byte[(int) len];
-        try (FileInputStream in = new FileInputStream(f)) {
-            int off = 0;
-            int n;
-            while (off < data.length && (n = in.read(data, off, data.length - off)) > 0) {
-                off += n;
-            }
-            return off == data.length ? data : null;
-        } catch (IOException e) {
-            Log.e(TAG, "read autosave failed", e);
-            return null;
-        }
-    }
-
-    private void writeAutosave(byte[] data) {
-        try (FileOutputStream out = new FileOutputStream(autosaveFile())) {
-            out.write(data);
-            Log.i(TAG, "autosave written: " + data.length + " bytes");
-        } catch (IOException e) {
-            Log.e(TAG, "write autosave failed", e);
         }
     }
 
