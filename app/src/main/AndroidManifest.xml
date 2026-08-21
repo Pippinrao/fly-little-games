@@ -9,7 +9,7 @@
         android:allowBackup="true"
         android:theme="@style/Theme.FlyNES">
         <activity
-            android:name=".MainActivity"
+            android:name=".HomeActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="landscape">
@@ -18,6 +18,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="landscape" />
         <activity
             android:name=".LicensesActivity"
             android:exported="false"

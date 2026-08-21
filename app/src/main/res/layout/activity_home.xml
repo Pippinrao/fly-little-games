@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/home_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/fly_background"
+    android:orientation="vertical"
+    android:padding="@dimen/fly_space_4">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:minHeight="64dp"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_launcher_foreground" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/fly_space_3"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                android:textColor="@color/fly_on_surface"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/home_tagline"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="@color/fly_on_surface_muted" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/open_library"
+            style="@style/Widget.Material3.Button.TextButton.Icon"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/fly_touch_min"
+            android:layout_marginEnd="@dimen/fly_space_2"
+            android:text="@string/game_library"
+            android:textColor="@color/fly_on_surface"
+            app:icon="@drawable/ic_library"
+            app:iconTint="@color/fly_on_surface_muted" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/open_settings"
+            style="@style/Widget.Material3.Button.TextButton.Icon"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/fly_touch_min"
+            android:text="@string/settings"
+            android:textColor="@color/fly_on_surface"
+            app:icon="@drawable/ic_settings"
+            app:iconTint="@color/fly_on_surface_muted" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="@dimen/fly_space_4"
+        android:layout_weight="1"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="@dimen/fly_space_4"
+            android:layout_weight="1.3"
+            app:cardBackgroundColor="@color/fly_surface"
+            app:cardCornerRadius="@dimen/fly_radius_large"
+            app:strokeColor="@color/fly_surface_variant"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="vertical"
+                android:padding="@dimen/fly_space_8">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_label_primary"
+                    android:paddingStart="@dimen/fly_space_3"
+                    android:paddingTop="@dimen/fly_space_1"
+                    android:paddingEnd="@dimen/fly_space_3"
+                    android:paddingBottom="@dimen/fly_space_1"
+                    android:text="@string/builtin_badge"
+                    android:textAppearance="?attr/textAppearanceLabelLarge"
+                    android:textColor="@color/fly_on_primary"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/fly_space_4"
+                    android:text="@string/builtin_game_name"
+                    android:textAppearance="?attr/textAppearanceDisplaySmall"
+                    android:textColor="@color/fly_on_surface"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/fly_space_2"
+                    android:maxWidth="520dp"
+                    android:text="@string/builtin_description"
+                    android:textAppearance="?attr/textAppearanceBodyLarge"
+                    android:textColor="@color/fly_on_surface_muted" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/builtin_game"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="@dimen/fly_space_6"
+                    android:minWidth="176dp"
+                    android:text="@string/play_now"
+                    android:textColor="@color/fly_on_primary"
+                    app:backgroundTint="@color/fly_primary"
+                    app:icon="@drawable/ic_play"
+                    app:iconTint="@color/fly_on_primary" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/your_games"
+                android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                android:textColor="@color/fly_on_surface"
+                android:textStyle="bold" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="@dimen/fly_space_3"
+                android:layout_weight="1"
+                app:cardBackgroundColor="@color/fly_surface"
+                app:cardCornerRadius="@dimen/fly_radius_medium"
+                app:strokeColor="@color/fly_surface_variant"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="@dimen/fly_space_6">
+
+                    <androidx.appcompat.widget.AppCompatImageView
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:contentDescription="@string/no_local_games"
+                        android:src="@drawable/ic_library"
+                        app:tint="@color/fly_on_surface_muted" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/fly_space_3"
+                        android:gravity="center"
+                        android:text="@string/no_local_games"
+                        android:textAppearance="?attr/textAppearanceTitleMedium"
+                        android:textColor="@color/fly_on_surface" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/fly_space_1"
+                        android:gravity="center"
+                        android:text="@string/add_source_hint"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:textColor="@color/fly_on_surface_muted" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/add_source"
+                style="@style/Widget.Material3.Button.OutlinedButton.Icon"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="@dimen/fly_space_3"
+                android:text="@string/add_rom_source"
+                android:textColor="@color/fly_primary"
+                app:icon="@drawable/ic_add_folder"
+                app:iconTint="@color/fly_primary"
+                app:strokeColor="@color/fly_primary" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/fly_space_3"
+        android:gravity="center"
+        android:text="@string/legal_rom_notice"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        android:textColor="@color/fly_on_surface_muted" />
+</LinearLayout>

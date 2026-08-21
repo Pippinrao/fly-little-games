@@ -16,4 +16,14 @@
     <string name="haptic_standard">Standard</string>
     <string name="haptic_strong">Strong</string>
     <string name="distinct_ab_haptics">Use different feedback for A and B</string>
+    <string name="home_tagline">Your games. Your controls.</string>
+    <string name="builtin_badge">BUILT IN</string>
+    <string name="builtin_game_name">From Below</string>
+    <string name="builtin_description">A complete homebrew puzzle game, ready to play offline.</string>
+    <string name="play_now">Play now</string>
+    <string name="your_games">Your games</string>
+    <string name="no_local_games">No local games yet</string>
+    <string name="add_source_hint">Add a folder containing .nes or .zip files.</string>
+    <string name="add_rom_source">Add ROM folder</string>
+    <string name="legal_rom_notice">Only load game files you are legally entitled to use.</string>
 </resources>
