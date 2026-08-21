@@ -10,6 +10,7 @@ import android.util.Log;
 import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.Surface;
+import android.view.SurfaceHolder;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -20,6 +21,8 @@ import com.flynes.emu.input.InputRouter;
 import com.flynes.emu.session.EmulationSession;
 import com.flynes.emu.session.SessionResult;
 import com.flynes.emu.session.SessionState;
+import com.flynes.emu.video.DisplayModeController;
+import com.flynes.emu.video.RefreshMode;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -78,6 +81,18 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         view = new EmuView(this);
+        view.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override public void surfaceCreated(SurfaceHolder holder) {
+                DisplayModeController.ApplyResult result = DisplayModeController.apply(
+                        MainActivity.this, holder.getSurface(), RefreshMode.AUTO, 60.0988f);
+                Log.i(TAG, "display refresh request=" + result);
+            }
+
+            @Override public void surfaceChanged(SurfaceHolder holder, int format,
+                                                 int width, int height) { }
+
+            @Override public void surfaceDestroyed(SurfaceHolder holder) { }
+        });
         gamepad = new GamepadView(this);
         gamepad.setId(R.id.gamepad);
         inputRouter = new InputRouter(buttons -> {
