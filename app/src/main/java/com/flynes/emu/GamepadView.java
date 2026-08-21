@@ -4,352 +4,316 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
 
-/**
- * Virtual gamepad overlay for FlyNES (mobile-game style): fixed joystick at
- * bottom-left, A/B action buttons at bottom-right, START/SELECT at top-right.
- *
- * Every control is drawn with Canvas (no XML drawables) and every pointer is
- * tracked independently (SparseArray keyed by pointerId), so the left thumb
- * can steer while the right thumb presses A/B at the same time. The resulting
- * NES button bitmask is reported via {@link Listener#onButtons(int)} whenever
- * it changes; a START press additionally fires {@link Listener#onPauseMenu()}.
- */
+import com.flynes.emu.input.GamepadHitMap;
+import com.flynes.emu.input.HapticController;
+import com.flynes.emu.input.HapticLevel;
+import com.flynes.emu.input.InputBits;
+import com.flynes.emu.input.InputRouter;
+
+/** Virtual NES controls with non-overlapping hit regions and source-aware input. */
 public class GamepadView extends View {
+    public static final int A = InputBits.A;
+    public static final int B = InputBits.B;
+    public static final int SELECT = InputBits.SELECT;
+    public static final int START = InputBits.START;
+    public static final int UP = InputBits.UP;
+    public static final int DOWN = InputBits.DOWN;
+    public static final int LEFT = InputBits.LEFT;
+    public static final int RIGHT = InputBits.RIGHT;
 
-    // NES button bitmask (matches core/include/nes/nes.h NES_BTN_*).
-    public static final int A = 0x01;
-    public static final int B = 0x02;
-    public static final int SELECT = 0x04;
-    public static final int START = 0x08;
-    public static final int UP = 0x10;
-    public static final int DOWN = 0x20;
-    public static final int LEFT = 0x40;
-    public static final int RIGHT = 0x80;
-
-    /** Input + UI events; all callbacks arrive on the UI thread. */
+    /** Transitional compatibility listener; app actions no longer originate here. */
     public interface Listener {
-        /** Bitmask of currently-held NES buttons (directions + A/B + SELECT/START). */
         void onButtons(int buttons);
-        /** A START press just happened; the host should show its pause menu. */
-        void onPauseMenu();
+        default void onPauseMenu() { }
     }
 
     private static final int PULSE_MS = 50;
-    private static final int ROLE_NONE = 0;
-    private static final int ROLE_JOY = 1;
-    private static final int ROLE_B = 2;
-    private static final int ROLE_A = 3;
-    private static final int ROLE_START = 4;
-    private static final int ROLE_SELECT = 5;
+    private static final int COLOR_IDLE = 0x70323A4A;
+    private static final int COLOR_PRESSED = 0xE0F2F5FA;
+    private static final int COLOR_OUTLINE = 0xD0AAB6CB;
+    private static final int COLOR_ACCENT = 0xFFF0B45A;
 
     private final float density;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final SparseArray<Pointer> pointers = new SparseArray<>(5);
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final HapticController haptics;
 
-    // Control sizes in px (dp * density, computed on size change).
-    private float joyBaseR, joyKnobR, bR, aR, startW, startH, selR, gap;
-    // Control centers in px.
-    private float joyCX, joyCY, bCX, bCY, aCX, aCY, startCX, startCY, selCX, selCY;
-
-    private final SparseArray<Pointer> pointers = new SparseArray<>(4);
-    private int buttons = 0;
+    private GamepadHitMap hitMap;
+    private InputRouter inputRouter;
     private Listener listener;
+    private int buttons;
+    private int pulseBits;
+    private float joyKnobX;
+    private float joyKnobY;
 
     private static final class Pointer {
-        int role = ROLE_NONE;
-        float x, y;         // current position in view coords
-        float knobX, knobY; // joystick knob offset from base center
+        final GamepadHitMap.Control control;
+        float x;
+        float y;
+
+        Pointer(GamepadHitMap.Control control, float x, float y) {
+            this.control = control;
+            this.x = x;
+            this.y = y;
+        }
     }
 
     public GamepadView(Context context) {
         super(context);
         density = context.getResources().getDisplayMetrics().density;
+        haptics = new HapticController(this);
         setWillNotDraw(false);
+        setFocusable(true);
+        setClickable(true);
     }
 
-    public void setListener(Listener l) {
-        this.listener = l;
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
-    /** Current NES button bitmask (also delivered via {@link Listener#onButtons}). */
+    public void setInputRouter(InputRouter inputRouter) {
+        this.inputRouter = inputRouter;
+        publishButtons();
+    }
+
+    public void setHapticPreferences(HapticLevel level, boolean distinguishAB) {
+        haptics.configure(level, distinguishAB);
+    }
+
     public int buttons() {
         return buttons;
     }
 
-    /** Releases every held control and cancels pending pulses (pause/resume). */
+    /** Production lifecycle operation used on pause, focus loss, and detach. */
     public void reset() {
         handler.removeCallbacksAndMessages(null);
         pointers.clear();
+        pulseBits = 0;
+        joyKnobX = 0;
+        joyKnobY = 0;
         if (buttons != 0) {
             buttons = 0;
-            notifyButtons();
+            publishButtons();
+        } else if (inputRouter != null) {
+            inputRouter.cancel(InputRouter.Source.TOUCH);
         }
         invalidate();
     }
 
-    // ------------------------------------------------------------------ layout
-
     @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-        float dp = density;
-        joyBaseR = 56 * dp;
-        joyKnobR = 28 * dp;
-        bR = 40 * dp;
-        aR = 32 * dp;
-        startW = 56 * dp;
-        startH = 24 * dp;
-        selR = 18 * dp;
-        gap = 8 * dp;
-
-        float margin = 24 * dp;
-        float topMargin = 16 * dp;
-
-        joyCX = margin + joyBaseR;
-        joyCY = h - margin - joyBaseR;
-
-        bCX = w - margin - bR;
-        bCY = h - margin - bR;
-
-        float dist = bR + aR + gap;
-        double rad45 = Math.toRadians(45);
-        aCX = bCX - (float) (dist * Math.cos(rad45));
-        aCY = bCY - (float) (dist * Math.sin(rad45));
-
-        startCX = w - margin - startW / 2f;
-        startCY = topMargin + startH / 2f;
-
-        selCX = startCX - startW / 2f - selR - gap;
-        selCY = startCY;
-    }
-
-    // ------------------------------------------------------------------ drawing
-
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-    @Override
-    protected void onDraw(Canvas c) {
-        super.onDraw(c);
-
-        Pointer joy = findRole(ROLE_JOY);
-        Pointer b = findRole(ROLE_B);
-        Pointer a = findRole(ROLE_A);
-        Pointer start = findRole(ROLE_START);
-        Pointer sel = findRole(ROLE_SELECT);
-
-        // Joystick: fixed base + knob (knob follows the finger while held).
-        drawCircle(c, joyCX, joyCY, joyBaseR, false, null);
-        float knobX = joyCX, knobY = joyCY;
-        if (joy != null) {
-            knobX = joyCX + joy.knobX;
-            knobY = joyCY + joy.knobY;
-        }
-        drawCircle(c, knobX, knobY, joyKnobR, true, null);
-
-        // Action buttons.
-        drawCircle(c, bCX, bCY, bR, b != null, "B");
-        drawCircle(c, aCX, aCY, aR, a != null, "A");
-
-        // Function buttons.
-        drawRounded(c, startCX - startW / 2f, startCY - startH / 2f, startW, startH,
-                start != null, "START");
-        drawCircle(c, selCX, selCY, selR, sel != null, "SEL");
-    }
-
-    private void drawCircle(Canvas c, float cx, float cy, float r, boolean pressed, String text) {
-        float scale = pressed ? 1.1f : 1f;
-        float rr = r * scale;
-        fill.setColor(pressed ? 0xAAFFFFFF : 0x55FFFFFF);
-        fill.setStyle(Paint.Style.FILL);
-        stroke.setColor(0xCCFFFFFF);
-        stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeWidth(2f * density);
-        c.drawCircle(cx, cy, rr, fill);
-        c.drawCircle(cx, cy, rr, stroke);
-        if (text != null) {
-            label.setColor(Color.WHITE);
-            label.setTextSize((pressed ? 1.1f : 1f) * r * 0.8f);
-            label.setTextAlign(Paint.Align.CENTER);
-            Paint.FontMetrics fm = label.getFontMetrics();
-            c.drawText(text, cx, cy - (fm.ascent + fm.descent) / 2f, label);
+    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
+        if (width > 0 && height > 0) {
+            hitMap = GamepadHitMap.standard(width, height, density, 0, 0, 0, 0);
         }
     }
 
-    private void drawRounded(Canvas c, float left, float top, float w, float h,
-                             boolean pressed, String text) {
-        float scale = pressed ? 1.08f : 1f;
-        float ww = w * scale, hh = h * scale;
-        float cx = left + w / 2f, cy = top + h / 2f;
-        RectF rect = new RectF(cx - ww / 2f, cy - hh / 2f, cx + ww / 2f, cy + hh / 2f);
-        fill.setColor(pressed ? 0xAAFFFFFF : 0x55FFFFFF);
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        if (hitMap == null) return;
+        for (GamepadHitMap.Circle circle : hitMap.circles()) {
+            boolean pressed = isHeld(circle.control());
+            if (circle.control() == GamepadHitMap.Control.JOY) {
+                drawCircle(canvas, circle.cx(), circle.cy(), circle.radius(), pressed, null, false);
+                drawCircle(canvas, circle.cx() + joyKnobX, circle.cy() + joyKnobY,
+                        28f * density, pressed, null, true);
+            } else {
+                drawCircle(canvas, circle.cx(), circle.cy(), circle.radius(), pressed,
+                        labelFor(circle.control()), circle.control() == GamepadHitMap.Control.A);
+            }
+        }
+    }
+
+    private void drawCircle(Canvas canvas, float cx, float cy, float radius,
+                            boolean pressed, String text, boolean accent) {
+        float renderedRadius = radius * (pressed ? 0.94f : 1f);
         fill.setStyle(Paint.Style.FILL);
-        stroke.setColor(0xCCFFFFFF);
+        fill.setColor(pressed ? COLOR_PRESSED : COLOR_IDLE);
         stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeWidth(2f * density);
-        c.drawRoundRect(rect, hh / 2f, hh / 2f, fill);
-        c.drawRoundRect(rect, hh / 2f, hh / 2f, stroke);
-        label.setColor(Color.WHITE);
-        label.setTextSize((pressed ? 1.08f : 1f) * h * 0.5f);
+        stroke.setStrokeWidth((accent ? 3f : 2f) * density);
+        stroke.setColor(accent ? COLOR_ACCENT : COLOR_OUTLINE);
+        canvas.drawCircle(cx, cy, renderedRadius, fill);
+        canvas.drawCircle(cx, cy, renderedRadius, stroke);
+        if (text == null) return;
+        label.setColor(pressed ? 0xFF17202D : Color.WHITE);
+        label.setTextSize(Math.min(radius * 0.72f, 20f * density));
+        label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         label.setTextAlign(Paint.Align.CENTER);
-        Paint.FontMetrics fm = label.getFontMetrics();
-        c.drawText(text, cx, cy - (fm.ascent + fm.descent) / 2f, label);
+        Paint.FontMetrics metrics = label.getFontMetrics();
+        canvas.drawText(text, cx, cy - (metrics.ascent + metrics.descent) / 2f, label);
     }
 
-    private Pointer findRole(int role) {
-        for (int i = 0; i < pointers.size(); i++) {
-            Pointer p = pointers.valueAt(i);
-            if (p.role == role) return p;
+    private String labelFor(GamepadHitMap.Control control) {
+        switch (control) {
+            case A: return "A";
+            case B: return "B";
+            case START: return "START";
+            case SELECT: return "SELECT";
+            default: return null;
         }
-        return null;
     }
-
-    // ------------------------------------------------------------------ input
 
     @Override
-    public boolean onTouchEvent(MotionEvent e) {
-        int action = e.getActionMasked();
-        int index = e.getActionIndex();
-        int id = e.getPointerId(index);
+    public boolean onTouchEvent(MotionEvent event) {
+        if (hitMap == null) return false;
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_CANCEL) {
+            reset();
+            return true;
+        }
 
+        int actionIndex = event.getActionIndex();
+        int pointerId = event.getPointerId(actionIndex);
         switch (action) {
             case MotionEvent.ACTION_DOWN:
-            case MotionEvent.ACTION_POINTER_DOWN: {
-                float x = e.getX(index);
-                float y = e.getY(index);
-                int role = hitTest(x, y);
-                if (role != ROLE_NONE && findRole(role) != null) {
-                    role = ROLE_NONE; // control already held by another finger
-                }
-                Pointer p = new Pointer();
-                p.role = role;
-                p.x = x;
-                p.y = y;
-                if (role == ROLE_JOY) {
-                    clampKnob(p);
-                }
-                pointers.put(id, p);
-                if (role == ROLE_START) {
-                    pulse(START);
-                    if (listener != null) listener.onPauseMenu();
-                } else if (role == ROLE_SELECT) {
-                    pulse(SELECT);
+            case MotionEvent.ACTION_POINTER_DOWN:
+                handleDown(pointerId, event.getX(actionIndex), event.getY(actionIndex));
+                break;
+            case MotionEvent.ACTION_MOVE:
+                for (int i = 0; i < event.getPointerCount(); i++) {
+                    Pointer pointer = pointers.get(event.getPointerId(i));
+                    if (pointer == null) continue;
+                    pointer.x = event.getX(i);
+                    pointer.y = event.getY(i);
+                    if (pointer.control == GamepadHitMap.Control.JOY) updateJoystick(pointer);
                 }
                 recompute();
                 break;
-            }
-            case MotionEvent.ACTION_MOVE: {
-                for (int i = 0; i < e.getPointerCount(); i++) {
-                    Pointer p = pointers.get(e.getPointerId(i));
-                    if (p == null) continue;
-                    p.x = e.getX(i);
-                    p.y = e.getY(i);
-                    if (p.role == ROLE_JOY) {
-                        clampKnob(p);
-                    }
-                }
-                recompute();
-                break;
-            }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_POINTER_UP:
-            case MotionEvent.ACTION_CANCEL: {
-                pointers.remove(id);
+                Pointer removed = pointers.get(pointerId);
+                pointers.remove(pointerId);
+                if (removed != null && removed.control == GamepadHitMap.Control.JOY) {
+                    joyKnobX = 0;
+                    joyKnobY = 0;
+                }
                 recompute();
+                performClick();
                 break;
-            }
+            default:
+                break;
         }
         return true;
     }
 
-    /** Assigns a control role to a touch point (action zone checked first). */
-    private int hitTest(float x, float y) {
-        float pad = 8 * density;
-        if (dist2(x, y, bCX, bCY) <= bR * bR * 1.6f) return ROLE_B;
-        if (dist2(x, y, aCX, aCY) <= aR * aR * 1.6f) return ROLE_A;
-        if (x >= startCX - startW / 2f - pad && x <= startCX + startW / 2f + pad
-                && y >= startCY - startH / 2f - pad && y <= startCY + startH / 2f + pad) {
-            return ROLE_START;
+    private void handleDown(int pointerId, float x, float y) {
+        GamepadHitMap.Control control = hitMap.hit(x, y);
+        if (control != GamepadHitMap.Control.NONE && isHeld(control)) {
+            control = GamepadHitMap.Control.NONE;
         }
-        if (dist2(x, y, selCX, selCY) <= selR * selR * 1.6f) return ROLE_SELECT;
-        if (dist2(x, y, joyCX, joyCY) <= joyBaseR * joyBaseR * 4f) return ROLE_JOY;
-        return ROLE_NONE;
-    }
-
-    private static float dist2(float x1, float y1, float x2, float y2) {
-        float dx = x1 - x2, dy = y1 - y2;
-        return dx * dx + dy * dy;
-    }
-
-    /** Clamps the knob offset to the travel limit (saturation: full direction). */
-    private void clampKnob(Pointer p) {
-        float dx = p.x - joyCX, dy = p.y - joyCY;
-        float dist = (float) Math.hypot(dx, dy);
-        float max = joyBaseR - joyKnobR * 0.5f;
-        if (dist <= max || dist == 0f) {
-            p.knobX = dx;
-            p.knobY = dy;
-        } else {
-            float s = max / dist;
-            p.knobX = dx * s;
-            p.knobY = dy * s;
+        Pointer pointer = new Pointer(control, x, y);
+        pointers.put(pointerId, pointer);
+        if (control == GamepadHitMap.Control.JOY) {
+            updateJoystick(pointer);
+        } else if (control == GamepadHitMap.Control.START) {
+            haptics.feedback(control);
+            pulse(InputBits.START);
+        } else if (control == GamepadHitMap.Control.SELECT) {
+            haptics.feedback(control);
+            pulse(InputBits.SELECT);
+        } else if (control == GamepadHitMap.Control.A || control == GamepadHitMap.Control.B) {
+            haptics.feedback(control);
         }
+        recompute();
     }
 
-    /** START/SELECT fire a short pulse (down then auto-release). */
-    private void pulse(int mask) {
-        buttons |= mask;
-        notifyButtons();
+    @Override
+    public boolean performClick() {
+        super.performClick();
+        return true;
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasWindowFocus) {
+        super.onWindowFocusChanged(hasWindowFocus);
+        if (!hasWindowFocus) reset();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        reset();
+        super.onDetachedFromWindow();
+    }
+
+    private boolean isHeld(GamepadHitMap.Control control) {
+        for (int i = 0; i < pointers.size(); i++) {
+            if (pointers.valueAt(i).control == control) return true;
+        }
+        return false;
+    }
+
+    private void updateJoystick(Pointer pointer) {
+        GamepadHitMap.Circle joy = hitMap.circle(GamepadHitMap.Control.JOY);
+        float dx = pointer.x - joy.cx();
+        float dy = pointer.y - joy.cy();
+        float distance = (float) Math.hypot(dx, dy);
+        float max = joy.radius() - 14f * density;
+        if (distance > max && distance > 0f) {
+            float scale = max / distance;
+            dx *= scale;
+            dy *= scale;
+        }
+        joyKnobX = dx;
+        joyKnobY = dy;
+    }
+
+    private void pulse(int bit) {
+        pulseBits |= bit;
         handler.postDelayed(() -> {
-            buttons &= ~mask;
-            notifyButtons();
+            pulseBits &= ~bit;
+            recompute();
         }, PULSE_MS);
     }
 
-    /** Recomputes the held-bitmask from live pointers and repaints. */
     private void recompute() {
-        int b = 0;
-        Pointer joy = findRole(ROLE_JOY);
-        if (joy != null) {
-            b |= joystickBits(joy.knobX, joy.knobY, joyBaseR);
+        int next = pulseBits;
+        for (int i = 0; i < pointers.size(); i++) {
+            GamepadHitMap.Control control = pointers.valueAt(i).control;
+            if (control == GamepadHitMap.Control.A) next |= InputBits.A;
+            if (control == GamepadHitMap.Control.B) next |= InputBits.B;
         }
-        if (findRole(ROLE_B) != null) b |= B;
-        if (findRole(ROLE_A) != null) b |= A;
-        b |= buttons & (START | SELECT); // pulse bits survive recompute
-        if (b != buttons) {
-            buttons = b;
-            notifyButtons();
+        if (isHeld(GamepadHitMap.Control.JOY)) {
+            next |= joystickBits(joyKnobX, joyKnobY,
+                    hitMap.circle(GamepadHitMap.Control.JOY).radius());
+        }
+        if (next != buttons) {
+            buttons = next;
+            publishButtons();
         }
         invalidate();
     }
 
-    /**
-     * Maps a joystick knob offset (px) to NES direction bits.
-     * 8 sectors; diagonals set both keys; dead zone below 15% of base radius.
-     */
     static int joystickBits(float knobX, float knobY, float baseRadius) {
-        float dist = (float) Math.hypot(knobX, knobY);
-        if (dist < 0.15f * baseRadius) return 0;
-        double deg = Math.toDegrees(Math.atan2(knobY, knobX)); // 0=right, 90=down
-        if (deg < -157.5 || deg >= 157.5) return LEFT;
-        if (deg < -112.5) return UP | LEFT;
-        if (deg < -67.5) return UP;
-        if (deg < -22.5) return UP | RIGHT;
-        if (deg < 22.5) return RIGHT;
-        if (deg < 67.5) return DOWN | RIGHT;
-        if (deg < 112.5) return DOWN;
-        if (deg < 157.5) return DOWN | LEFT;
-        return LEFT;
+        float distance = (float) Math.hypot(knobX, knobY);
+        if (distance < 0.15f * baseRadius) return 0;
+        double degrees = Math.toDegrees(Math.atan2(knobY, knobX));
+        if (degrees < -157.5 || degrees >= 157.5) return InputBits.LEFT;
+        if (degrees < -112.5) return InputBits.UP | InputBits.LEFT;
+        if (degrees < -67.5) return InputBits.UP;
+        if (degrees < -22.5) return InputBits.UP | InputBits.RIGHT;
+        if (degrees < 22.5) return InputBits.RIGHT;
+        if (degrees < 67.5) return InputBits.DOWN | InputBits.RIGHT;
+        if (degrees < 112.5) return InputBits.DOWN;
+        if (degrees < 157.5) return InputBits.DOWN | InputBits.LEFT;
+        return InputBits.LEFT;
     }
 
-    private void notifyButtons() {
-        if (listener != null) listener.onButtons(buttons);
+    private void publishButtons() {
+        if (inputRouter != null) {
+            inputRouter.setMask(InputRouter.Source.TOUCH, buttons);
+        }
+        if (listener != null) {
+            listener.onButtons(buttons);
+        }
     }
 }
