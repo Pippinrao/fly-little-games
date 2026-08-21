@@ -5,13 +5,15 @@ import android.view.Surface;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
+import com.flynes.emu.session.CoreFacade;
+
 /**
  * JNI wrapper around the FlyNES C ABI core (libnescore.so).
  *
  * One instance owns one emulator context. All native methods are static;
  * the context is carried as a jlong handle.
  */
-public final class NesCore {
+public final class NesCore implements CoreFacade {
     static {
         System.loadLibrary("nescore");
     }
@@ -47,13 +49,13 @@ public final class NesCore {
     private static native void nativeBlit(long h, Surface surface, int scale);
 
     /** @return true if a native context is now live. */
-    public boolean create() {
+    @Override public boolean create() {
         if (handle != 0) return true;
         handle = nativeCreate();
         return handle != 0;
     }
 
-    public void destroy() {
+    @Override public void destroy() {
         if (handle != 0) {
             nativeDestroy(handle);
             handle = 0;
@@ -71,6 +73,10 @@ public final class NesCore {
     public int loadRom(byte[] rom, byte[] patch) {
         if (handle == 0) return -3; // NES_ERR_NOT_READY
         return nativeLoadRom(handle, rom, patch);
+    }
+
+    @Override public int loadRom(byte[] rom) {
+        return loadRom(rom, null);
     }
 
     /**
@@ -96,7 +102,11 @@ public final class NesCore {
         return nativeRunFrames(handle, n, audioBuffer, audioBuffer.capacity() / 2);
     }
 
-    public void setInput(int buttons) {
+    @Override public int runOneFrame() {
+        return runFrames(1);
+    }
+
+    @Override public void setInput(int buttons) {
         if (handle != 0) nativeSetInput(handle, buttons);
     }
 
@@ -124,7 +134,7 @@ public final class NesCore {
     /**
      * @return the saved state bytes, or null on failure (e.g. not ready).
      */
-    public byte[] saveState() {
+    @Override public byte[] saveState() {
         if (handle == 0) return null;
         byte[] out = new byte[SAVE_STATE_BUFFER_BYTES];
         int written = nativeSaveState(handle, out);
@@ -133,7 +143,7 @@ public final class NesCore {
     }
 
     /** @return 0/positive on success, negative on failure. */
-    public int loadState(byte[] in) {
+    @Override public int loadState(byte[] in) {
         if (handle == 0) return -3; // NES_ERR_NOT_READY
         return nativeLoadState(handle, in);
     }

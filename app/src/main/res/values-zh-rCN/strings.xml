@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FlyNES</string>
+    <string name="open_pause">暂停游戏</string>
+    <string name="pause_title">游戏已暂停</string>
+    <string name="continue_game">继续游戏</string>
+    <string name="game_library">游戏库</string>
+    <string name="license_information">许可信息</string>
+    <string name="cancel">取消</string>
+    <string name="switch_game_failed">无法切换游戏：音频仍在停止</string>
+    <string name="load_game_failed">无法加载游戏</string>
+</resources>

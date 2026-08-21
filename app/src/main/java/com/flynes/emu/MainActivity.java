@@ -4,8 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.graphics.drawable.GradientDrawable;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Choreographer;
@@ -14,7 +13,13 @@ import android.view.Surface;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.Toast;
+
+import com.flynes.emu.input.InputRouter;
+import com.flynes.emu.session.EmulationSession;
+import com.flynes.emu.session.SessionResult;
+import com.flynes.emu.session.SessionState;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -42,8 +47,11 @@ public class MainActivity extends Activity {
     private static final String KEY_AUTOSAVE_ROM_HASH = "autosave_rom_hash";
 
     private final NesCore core = new NesCore();
+    private final EmulationSession session = new EmulationSession(core);
     private EmuView view;
     private GamepadView gamepad;
+    private InputRouter inputRouter;
+    private AlertDialog pauseDialog;
     private AudioThread audio;
     private int scale = 2;
     private boolean rendering = false;
@@ -71,19 +79,12 @@ public class MainActivity extends Activity {
 
         view = new EmuView(this);
         gamepad = new GamepadView(this);
-        gamepad.setListener(new GamepadView.Listener() {
-            @Override
-            public void onButtons(int buttons) {
-                // Debug aid: the adb-injection verification asserts these lines.
-                Log.d(TAG, "input=0x" + Integer.toHexString(buttons));
-                core.setInput(buttons);
-            }
-
-            @Override
-            public void onPauseMenu() {
-                showPauseMenu();
-            }
-        });
+        gamepad.setId(R.id.gamepad);
+        inputRouter = new InputRouter(buttons -> {
+            Log.d(TAG, "input=0x" + Integer.toHexString(buttons));
+            session.setInput(buttons);
+        }, this::handleAppAction);
+        gamepad.setInputRouter(inputRouter);
 
         FrameLayout root = new FrameLayout(this);
         // Game surface: fixed 4:3 view sized to fit the screen and centered —
@@ -99,6 +100,24 @@ public class MainActivity extends Activity {
         root.addView(gamepad, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+
+        ImageButton pauseButton = createPauseButton();
+        int pauseSize = Math.round(48 * getResources().getDisplayMetrics().density);
+        int pauseMargin = Math.round(16 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams pauseParams = new FrameLayout.LayoutParams(pauseSize, pauseSize,
+                Gravity.TOP | Gravity.END);
+        pauseParams.setMargins(pauseMargin, pauseMargin, pauseMargin, pauseMargin);
+        root.addView(pauseButton, pauseParams);
+        pauseButton.setOnApplyWindowInsetsListener((button, insets) -> {
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
+            params.setMargins(pauseMargin,
+                    pauseMargin + insets.getSystemWindowInsetTop(),
+                    pauseMargin + insets.getSystemWindowInsetRight(),
+                    pauseMargin + insets.getSystemWindowInsetBottom());
+            button.setLayoutParams(params);
+            return insets;
+        });
+        pauseButton.requestApplyInsets();
 
         setContentView(root);
 
@@ -142,12 +161,20 @@ public class MainActivity extends Activity {
             // now would race nes_run_frames. Keep the old game, leak at process
             // death (same policy as onPause/onDestroy).
             Log.w(TAG, "audio thread still alive; not switching ROM");
-            Toast.makeText(this, "无法切换游戏: 音频线程仍在运行", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.switch_game_failed, Toast.LENGTH_LONG).show();
             return;
         }
-        if (!core.isCreated()) return;
+        try {
+            session.stop().get();
+        } catch (Exception e) {
+            Log.e(TAG, "session stop before ROM switch failed", e);
+            return;
+        }
+        if (!core.create()) return;
+        byte[] db = readAsset("NstDatabase.xml");
+        if (db != null) core.loadDatabase(db);
         if (startPlaying(rom) < 0) {
-            Toast.makeText(this, "无法加载游戏", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.load_game_failed, Toast.LENGTH_LONG).show();
             return;
         }
         // onResume() (which follows immediately) starts a fresh AudioThread and
@@ -162,6 +189,10 @@ public class MainActivity extends Activity {
         // second AudioThread on the same core would race nes_run_frames.
         // Only start fresh when the previous thread is confirmed dead.
         if (!core.isCreated() || (audio != null && audio.isAlive())) return;
+
+        if (session.state() == SessionState.PAUSED) {
+            session.resume();
+        }
 
         // Restore the previous session BEFORE powering frames — but only when
         // the autosave was saved from the ROM that is currently loaded. A state
@@ -184,6 +215,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (session.state() == SessionState.RUNNING) session.pause();
         stopRendering();
         gamepad.reset();
 
@@ -222,26 +254,75 @@ public class MainActivity extends Activity {
             Log.w(TAG, "audio thread still alive; leaking native core instead of destroying");
             return;
         }
-        core.destroy();
+        try {
+            session.stop().get();
+        } catch (Exception e) {
+            Log.e(TAG, "session stop failed", e);
+            core.destroy();
+        }
+        session.closeExecutor();
     }
 
     // ------------------------------------------------------------------
-    // Pause menu (opened by the gamepad START key)
+    // Pause menu (opened only by the independent App control)
     // ------------------------------------------------------------------
 
+    private ImageButton createPauseButton() {
+        ImageButton button = new ImageButton(this);
+        button.setId(R.id.pause_button);
+        button.setImageResource(R.drawable.ic_pause);
+        button.setContentDescription(getString(R.string.open_pause));
+        button.setPadding(dp(12), dp(12), dp(12), dp(12));
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.OVAL);
+        background.setColor(0xC8323A4A);
+        background.setStroke(dp(1), 0xD0AAB6CB);
+        button.setBackground(background);
+        button.setOnClickListener(v -> inputRouter.dispatch(InputRouter.AppAction.OPEN_PAUSE));
+        return button;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void handleAppAction(InputRouter.AppAction action) {
+        switch (action) {
+            case OPEN_PAUSE:
+                showPauseMenu();
+                break;
+            case CLOSE_PAUSE:
+                resumeFromPauseMenu();
+                break;
+            case OPEN_LIBRARY:
+                startActivityForResult(new Intent(this, GameLibraryActivity.class), REQ_LIBRARY);
+                break;
+            case OPEN_SETTINGS:
+                break;
+        }
+    }
+
     private void showPauseMenu() {
-        if (isFinishing() || gamepad == null) return;
-        new AlertDialog.Builder(this)
-                .setTitle("FlyNES")
-                .setItems(new String[]{"继续游戏", "游戏库", "许可信息", "取消"}, (d, which) -> {
+        if (isFinishing() || gamepad == null
+                || (pauseDialog != null && pauseDialog.isShowing())) return;
+        inputRouter.cancelAll();
+        if (session.state() == SessionState.RUNNING) session.pause();
+        stopRendering();
+        stopAudioThread();
+        pauseDialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.pause_title)
+                .setItems(new String[]{getString(R.string.continue_game),
+                        getString(R.string.game_library),
+                        getString(R.string.license_information),
+                        getString(R.string.cancel)}, (d, which) -> {
                     switch (which) {
                         case 0:
                             d.dismiss();
-                            pressStart();
+                            resumeFromPauseMenu();
                             break;
                         case 1:
                             d.dismiss();
-                            startActivityForResult(new Intent(this, GameLibraryActivity.class), REQ_LIBRARY);
+                            handleAppAction(InputRouter.AppAction.OPEN_LIBRARY);
                             break;
                         case 2:
                             d.dismiss();
@@ -252,17 +333,20 @@ public class MainActivity extends Activity {
                             break;
                     }
                 })
-                .setOnCancelListener(d -> {
-                    // Back / outside-tap dismiss: stay paused in-game, user's choice.
-                })
-                .show();
+                .setOnCancelListener(d -> resumeFromPauseMenu())
+                .create();
+        pauseDialog.setOnDismissListener(d -> pauseDialog = null);
+        pauseDialog.show();
     }
 
-    /** Sends one START pulse to resume from the NES game's own pause state. */
-    private void pressStart() {
-        core.setInput(GamepadView.START);
-        new Handler(Looper.getMainLooper()).postDelayed(
-                () -> core.setInput(gamepad.buttons()), 50);
+    private void resumeFromPauseMenu() {
+        if (isFinishing()) return;
+        if (session.state() == SessionState.PAUSED) session.resume();
+        if (audio == null || !audio.isAlive()) {
+            audio = new AudioThread(core);
+            audio.start();
+        }
+        startRendering();
     }
 
     // ------------------------------------------------------------------
@@ -278,19 +362,31 @@ public class MainActivity extends Activity {
      * @return 0/positive rc on success, negative on failure.
      */
     private int startPlaying(byte[] rom) {
-        if (!core.isCreated()) return -3; // NES_ERR_NOT_READY
-        int rc = core.loadRom(rom, null);
-        if (rc < 0) {
-            Log.e(TAG, "loadRom failed, rc=" + rc);
-            return rc;
+        SessionResult loadResult;
+        try {
+            loadResult = session.load(rom).get();
+        } catch (Exception e) {
+            Log.e(TAG, "session load failed", e);
+            return -1;
+        }
+        if (!loadResult.isSuccess()) {
+            Log.e(TAG, "loadRom failed, rc=" + loadResult.code());
+            return loadResult.code();
         }
         currentRomHash = romHash(rom);
         scale = computeScale();
         // HQ4X after load: Machine::Load/Power can rebuild renderer state, so
         // the filter must be (re)applied once the ROM is in place.
         core.setVideoFilter(NesCore.FILTER_HQ4X);
-        Log.i(TAG, "ROM loaded (rc=" + rc + "), render scale=" + scale + "x");
-        return rc;
+        try {
+            SessionResult startResult = session.start().get();
+            if (!startResult.isSuccess()) return startResult.code();
+        } catch (Exception e) {
+            Log.e(TAG, "session start failed", e);
+            return -1;
+        }
+        Log.i(TAG, "ROM loaded, render scale=" + scale + "x");
+        return 0;
     }
 
     /**

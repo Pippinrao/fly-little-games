@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FlyNES</string>
+    <string name="open_pause">Pause game</string>
+    <string name="pause_title">Game paused</string>
+    <string name="continue_game">Continue</string>
+    <string name="game_library">Game library</string>
+    <string name="license_information">Licenses</string>
+    <string name="cancel">Cancel</string>
+    <string name="switch_game_failed">Could not switch game: audio is still stopping</string>
+    <string name="load_game_failed">Could not load game</string>
 </resources>

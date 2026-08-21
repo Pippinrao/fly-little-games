@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
 
 import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.input.HapticController;
@@ -54,6 +55,10 @@ public class GamepadView extends View {
     private int pulseBits;
     private float joyKnobX;
     private float joyKnobY;
+    private int insetLeft;
+    private int insetTop;
+    private int insetRight;
+    private int insetBottom;
 
     private static final class Pointer {
         final GamepadHitMap.Control control;
@@ -112,8 +117,24 @@ public class GamepadView extends View {
     @Override
     protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
         super.onSizeChanged(width, height, oldWidth, oldHeight);
-        if (width > 0 && height > 0) {
-            hitMap = GamepadHitMap.standard(width, height, density, 0, 0, 0, 0);
+        rebuildHitMap();
+    }
+
+    @Override
+    public WindowInsets onApplyWindowInsets(WindowInsets insets) {
+        insetLeft = insets.getSystemWindowInsetLeft();
+        insetTop = insets.getSystemWindowInsetTop();
+        insetRight = insets.getSystemWindowInsetRight();
+        insetBottom = insets.getSystemWindowInsetBottom();
+        rebuildHitMap();
+        return insets;
+    }
+
+    private void rebuildHitMap() {
+        if (getWidth() > 0 && getHeight() > 0) {
+            hitMap = GamepadHitMap.standard(getWidth(), getHeight(), density,
+                    insetLeft, insetRight, insetTop, insetBottom);
+            invalidate();
         }
     }
 
