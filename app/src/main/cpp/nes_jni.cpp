@@ -99,6 +99,52 @@ Java_com_flynes_emu_NesCore_nativeLoadRom(JNIEnv* env, jclass, jlong handle,
     return static_cast<jint>(rc);
 }
 
+JNIEXPORT jobjectArray JNICALL
+Java_com_flynes_emu_NesCore_nativeRomInfoStrings(JNIEnv* env, jclass, jlong handle)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (!ctx) return nullptr;
+    nes_rom_info info{};
+    info.struct_size = sizeof(info);
+    info.version = NES_STRUCT_VERSION;
+    if (nes_get_rom_info(ctx, &info) < 0) return nullptr;
+
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray result = env->NewObjectArray(6, stringClass, nullptr);
+    const char* values[] = {info.title, info.publisher, info.developer,
+                            info.region, info.sha1, info.crc32};
+    for (jsize i = 0; i < 6; ++i) {
+        jstring value = env->NewStringUTF(values[i]);
+        env->SetObjectArrayElement(result, i, value);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(stringClass);
+    return result;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_flynes_emu_NesCore_nativeRomInfoNumbers(JNIEnv* env, jclass, jlong handle)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (!ctx) return nullptr;
+    nes_rom_info info{};
+    info.struct_size = sizeof(info);
+    info.version = NES_STRUCT_VERSION;
+    if (nes_get_rom_info(ctx, &info) < 0) return nullptr;
+    const jint values[] = {
+        static_cast<jint>(info.mapper), static_cast<jint>(info.submapper),
+        static_cast<jint>(info.prg_size), static_cast<jint>(info.chr_size),
+        static_cast<jint>(info.wram_size), static_cast<jint>(info.vram_size),
+        static_cast<jint>(info.has_battery), static_cast<jint>(info.system),
+        static_cast<jint>(info.cpu), static_cast<jint>(info.ppu),
+        static_cast<jint>(info.region_ntsc), static_cast<jint>(info.patched),
+        static_cast<jint>(info.players)
+    };
+    jintArray result = env->NewIntArray(13);
+    if (result) env->SetIntArrayRegion(result, 0, 13, values);
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Database (NstDatabase.xml is bundled as an asset; load before any ROM)
 // ---------------------------------------------------------------------------

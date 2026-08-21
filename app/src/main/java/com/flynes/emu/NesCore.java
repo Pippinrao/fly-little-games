@@ -6,6 +6,8 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 import com.flynes.emu.session.CoreFacade;
+import com.flynes.emu.data.RomIdentity;
+import com.flynes.emu.data.RomInfo;
 
 /**
  * JNI wrapper around the FlyNES C ABI core (libnescore.so).
@@ -39,6 +41,8 @@ public final class NesCore implements CoreFacade {
     private static native long nativeCreate();
     private static native void nativeDestroy(long h);
     private static native int nativeLoadRom(long h, byte[] rom, byte[] patch);
+    private static native String[] nativeRomInfoStrings(long h);
+    private static native int[] nativeRomInfoNumbers(long h);
     private static native int nativeLoadDatabase(long h, byte[] xml);
     private static native int nativeRunFrames(long h, int maxFrames, ByteBuffer audio, int capSamples);
     private static native void nativeSetInput(long h, int buttons);
@@ -77,6 +81,19 @@ public final class NesCore implements CoreFacade {
 
     @Override public int loadRom(byte[] rom) {
         return loadRom(rom, null);
+    }
+
+    public RomInfo romInfo() {
+        if (handle == 0) return null;
+        String[] text = nativeRomInfoStrings(handle);
+        int[] values = nativeRomInfoNumbers(handle);
+        if (text == null || text.length != 6 || values == null || values.length != 13) {
+            return null;
+        }
+        return new RomInfo(new RomIdentity(text[4]), text[0], text[1], text[2], text[3],
+                values[0], values[1], values[2], values[3], values[4], values[5],
+                values[6] != 0, values[7], values[8], values[9], values[10] != 0,
+                values[11] != 0, text[5], values[12]);
     }
 
     /**
