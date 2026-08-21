@@ -2,4 +2,9 @@
 <resources>
     <item name="gamepad" type="id" />
     <item name="pause_button" type="id" />
+    <item name="haptic_off" type="id" />
+    <item name="haptic_light" type="id" />
+    <item name="haptic_standard" type="id" />
+    <item name="haptic_strong" type="id" />
+    <item name="haptic_distinct" type="id" />
 </resources>

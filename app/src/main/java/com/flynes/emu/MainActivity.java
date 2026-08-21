@@ -94,6 +94,7 @@ public class MainActivity extends Activity {
             @Override public void surfaceDestroyed(SurfaceHolder holder) { }
         });
         gamepad = new GamepadView(this);
+        applyHapticSettings();
         gamepad.setId(R.id.gamepad);
         inputRouter = new InputRouter(buttons -> {
             Log.d(TAG, "input=0x" + Integer.toHexString(buttons));
@@ -199,6 +200,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyHapticSettings();
         // Guard against double-start: a timed-out pause join can leave the
         // previous thread still running inside the native core; starting a
         // second AudioThread on the same core would race nes_run_frames.
@@ -313,6 +315,7 @@ public class MainActivity extends Activity {
                 startActivityForResult(new Intent(this, GameLibraryActivity.class), REQ_LIBRARY);
                 break;
             case OPEN_SETTINGS:
+                startActivity(new Intent(this, SettingsActivity.class));
                 break;
         }
     }
@@ -328,6 +331,7 @@ public class MainActivity extends Activity {
                 .setTitle(R.string.pause_title)
                 .setItems(new String[]{getString(R.string.continue_game),
                         getString(R.string.game_library),
+                        getString(R.string.settings),
                         getString(R.string.license_information),
                         getString(R.string.cancel)}, (d, which) -> {
                     switch (which) {
@@ -341,6 +345,10 @@ public class MainActivity extends Activity {
                             break;
                         case 2:
                             d.dismiss();
+                            handleAppAction(InputRouter.AppAction.OPEN_SETTINGS);
+                            break;
+                        case 3:
+                            d.dismiss();
                             startActivity(new Intent(this, LicensesActivity.class));
                             break;
                         default:
@@ -352,6 +360,13 @@ public class MainActivity extends Activity {
                 .create();
         pauseDialog.setOnDismissListener(d -> pauseDialog = null);
         pauseDialog.show();
+    }
+
+    private void applyHapticSettings() {
+        if (gamepad != null) {
+            gamepad.setHapticPreferences(SettingsActivity.loadHapticLevel(this),
+                    SettingsActivity.loadDistinctAB(this));
+        }
     }
 
     private void resumeFromPauseMenu() {

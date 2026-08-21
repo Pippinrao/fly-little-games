@@ -9,4 +9,11 @@
     <string name="cancel">取消</string>
     <string name="switch_game_failed">无法切换游戏：音频仍在停止</string>
     <string name="load_game_failed">无法加载游戏</string>
+    <string name="settings">设置</string>
+    <string name="control_feedback">操作反馈</string>
+    <string name="haptic_off">关闭</string>
+    <string name="haptic_light">轻</string>
+    <string name="haptic_standard">标准</string>
+    <string name="haptic_strong">强</string>
+    <string name="distinct_ab_haptics">A/B 使用不同振动反馈</string>
 </resources>
