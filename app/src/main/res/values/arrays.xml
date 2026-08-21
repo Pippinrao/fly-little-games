@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="aspect_entries"><item>@string/aspect_four_three</item><item>@string/aspect_square_pixels</item><item>@string/aspect_integer</item></string-array>
+    <string-array name="aspect_values"><item>FOUR_BY_THREE</item><item>SQUARE_PIXELS</item><item>INTEGER_SCALE</item></string-array>
+    <string-array name="filter_entries"><item>HQ4X</item><item>@string/filter_nearest</item><item>@string/filter_smooth</item></string-array>
+    <string-array name="filter_values"><item>HQ4X</item><item>NEAREST</item><item>SMOOTH</item></string-array>
+    <string-array name="refresh_entries"><item>@string/refresh_auto</item><item>60 Hz</item><item>90 Hz</item><item>120 Hz</item></string-array>
+    <string-array name="refresh_values"><item>AUTO</item><item>HZ_60</item><item>HZ_90</item><item>HZ_120</item></string-array>
+    <string-array name="layout_entries"><item>@string/layout_standard_ba</item><item>@string/layout_mirrored_ab</item></string-array>
+    <string-array name="layout_values"><item>STANDARD_BA</item><item>MIRRORED_AB</item></string-array>
+    <string-array name="haptic_entries"><item>@string/haptic_off</item><item>@string/haptic_light</item><item>@string/haptic_standard</item><item>@string/haptic_strong</item></string-array>
+    <string-array name="haptic_values"><item>OFF</item><item>LIGHT</item><item>STANDARD</item><item>STRONG</item></string-array>
+    <string-array name="audio_focus_entries"><item>@string/audio_focus_pause</item><item>@string/audio_focus_duck</item><item>@string/audio_focus_ignore</item></string-array>
+    <string-array name="audio_focus_values"><item>PAUSE</item><item>DUCK</item><item>IGNORE</item></string-array>
+    <string-array name="language_entries"><item>@string/language_system</item><item>English</item><item>简体中文</item></string-array>
+    <string-array name="language_values"><item>system</item><item>en</item><item>zh-CN</item></string-array>
+</resources>

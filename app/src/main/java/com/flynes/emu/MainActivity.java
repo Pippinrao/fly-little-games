@@ -23,11 +23,15 @@ import com.flynes.emu.data.RomInfo;
 import com.flynes.emu.save.SaveRecord;
 import com.flynes.emu.save.SaveRepository;
 import com.flynes.emu.save.LegacySaveMigrator;
+import com.flynes.emu.settings.AppSettings;
+import com.flynes.emu.settings.FilterMode;
+import com.flynes.emu.settings.SettingsRepository;
+import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 import com.flynes.emu.session.EmulationSession;
 import com.flynes.emu.session.SessionResult;
 import com.flynes.emu.session.SessionState;
 import com.flynes.emu.video.DisplayModeController;
-import com.flynes.emu.video.RefreshMode;
+import com.flynes.emu.video.ViewportLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -53,6 +57,9 @@ public class MainActivity extends Activity {
     private AlertDialog pauseDialog;
     private AudioThread audio;
     private SaveRepository saves;
+    private SettingsRepository settings;
+    private AppSettings appSettings;
+    private FrameLayout root;
     private int scale = 2;
     private boolean rendering = false;
     private RomIdentity currentRomIdentity;
@@ -74,6 +81,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         saves = new SaveRepository(this);
+        settings = new SettingsRepository(new SharedPreferencesSettingsStore(this));
+        appSettings = settings.load();
         Log.i(TAG, "legacy autosave migration=" + LegacySaveMigrator.migrate(this, saves));
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -81,7 +90,8 @@ public class MainActivity extends Activity {
         view.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(SurfaceHolder holder) {
                 DisplayModeController.ApplyResult result = DisplayModeController.apply(
-                        MainActivity.this, holder.getSurface(), RefreshMode.AUTO, 60.0988f);
+                        MainActivity.this, holder.getSurface(),
+                        appSettings.refreshMode(), 60.0988f);
                 Log.i(TAG, "display refresh request=" + result);
             }
 
@@ -99,15 +109,19 @@ public class MainActivity extends Activity {
         }, this::handleAppAction);
         gamepad.setInputRouter(inputRouter);
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         // Game surface: fixed 4:3 view sized to fit the screen and centered —
         // a MATCH_PARENT surface would stretch the 1024x960 (hq4x) buffer
         // non-uniformly on wide screens (the "stretched picture" complaint).
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        float aspect = 1024f / 960f; // core framebuffer ratio under hq4x
-        int vh = dm.heightPixels;
-        int vw = Math.min(dm.widthPixels, Math.round(vh * aspect));
-        root.addView(view, new FrameLayout.LayoutParams(vw, vh, Gravity.CENTER));
+        ViewportLayout.Size viewport = viewportSize(dm.widthPixels, dm.heightPixels, 0, 0);
+        root.addView(view, new FrameLayout.LayoutParams(
+                viewport.width(), viewport.height(), Gravity.CENTER));
+        root.setOnApplyWindowInsetsListener((container, insets) -> {
+            updateViewport(insets.getSystemWindowInsetLeft(),
+                    insets.getSystemWindowInsetRight());
+            return insets;
+        });
 
         // Gamepad overlay sits above the game surface and owns all touch input.
         root.addView(gamepad, new FrameLayout.LayoutParams(
@@ -133,6 +147,7 @@ public class MainActivity extends Activity {
         pauseButton.requestApplyInsets();
 
         setContentView(root);
+        root.requestApplyInsets();
 
         if (!core.create()) {
             toastAndFinish("Failed to create emulator core");
@@ -197,7 +212,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        appSettings = settings.load();
         applyHapticSettings();
+        applyRuntimeVideoSettings();
         // Guard against double-start: a timed-out pause join can leave the
         // previous thread still running inside the native core; starting a
         // second AudioThread on the same core would race nes_run_frames.
@@ -209,7 +226,7 @@ public class MainActivity extends Activity {
         }
 
         // Restore only from the active ROM's core-backed SHA-1 directory.
-        if (currentRomIdentity != null) {
+        if (appSettings.autosaveEnabled() && currentRomIdentity != null) {
             try {
                 SaveRecord record = saves.readAutosave(currentRomIdentity).orElse(null);
                 if (record != null && record.state().length > 0) {
@@ -221,7 +238,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        audio = new AudioThread(core);
+        audio = new AudioThread(core, appSettings.audioEnabled());
         audio.start();
         startRendering();
     }
@@ -244,7 +261,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        byte[] state = core.saveState();
+        byte[] state = appSettings.autosaveEnabled() ? core.saveState() : null;
         if (state != null && state.length > 0 && currentRomIdentity != null) {
             try {
                 saves.writeAutosave(currentRomIdentity, state, System.currentTimeMillis());
@@ -371,7 +388,7 @@ public class MainActivity extends Activity {
         if (isFinishing()) return;
         if (session.state() == SessionState.PAUSED) session.resume();
         if (audio == null || !audio.isAlive()) {
-            audio = new AudioThread(core);
+            audio = new AudioThread(core, appSettings.audioEnabled());
             audio.start();
         }
         startRendering();
@@ -410,7 +427,7 @@ public class MainActivity extends Activity {
         scale = computeScale();
         // HQ4X after load: Machine::Load/Power can rebuild renderer state, so
         // the filter must be (re)applied once the ROM is in place.
-        core.setVideoFilter(NesCore.FILTER_HQ4X);
+        core.setVideoFilter(nativeFilter(appSettings.filterMode()));
         try {
             SessionResult startResult = session.start().get();
             if (!startResult.isSuccess()) return startResult.code();
@@ -451,6 +468,42 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------
     // Rendering
     // ------------------------------------------------------------------
+
+    private void applyRuntimeVideoSettings() {
+        if (!core.isCreated()) return;
+        core.setVideoFilter(nativeFilter(appSettings.filterMode()));
+        updateViewport(0, gamepad == null ? 0 : gamepad.getRootWindowInsets() == null
+                ? 0 : gamepad.getRootWindowInsets().getSystemWindowInsetRight());
+        Surface surface = view.getHolder().getSurface();
+        if (surface != null && surface.isValid()) {
+            DisplayModeController.ApplyResult result = DisplayModeController.apply(
+                    this, surface, appSettings.refreshMode(), 60.0988f);
+            Log.i(TAG, "display refresh update=" + result);
+        }
+    }
+
+    private void updateViewport(int insetLeft, int insetRight) {
+        if (view == null || appSettings == null) return;
+        DisplayMetrics metrics = getResources().getDisplayMetrics();
+        ViewportLayout.Size viewport = viewportSize(metrics.widthPixels, metrics.heightPixels,
+                insetLeft, insetRight);
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) view.getLayoutParams();
+        if (params == null) return;
+        params.width = viewport.width();
+        params.height = viewport.height();
+        params.gravity = Gravity.CENTER;
+        view.setLayoutParams(params);
+    }
+
+    private ViewportLayout.Size viewportSize(int width, int height, int insetLeft, int insetRight) {
+        boolean filtered = appSettings.filterMode() == FilterMode.HQ4X;
+        return ViewportLayout.compute(width, height, insetLeft, insetRight,
+                appSettings.aspectMode(), filtered ? 1024 : 256, filtered ? 960 : 240);
+    }
+
+    private static int nativeFilter(FilterMode mode) {
+        return mode == FilterMode.HQ4X ? NesCore.FILTER_HQ4X : NesCore.FILTER_NONE;
+    }
 
     private void startRendering() {
         if (!rendering) {

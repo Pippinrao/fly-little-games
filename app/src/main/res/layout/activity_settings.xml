@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/settings_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/fly_background"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/settings_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:background="@color/fly_surface"
+        android:minHeight="@dimen/fly_touch_min"
+        app:navigationIcon="@drawable/ic_back"
+        app:navigationIconTint="@color/fly_on_surface"
+        app:title="@string/settings"
+        app:titleTextColor="@color/fly_on_surface" />
+
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/settings_content"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+</LinearLayout>

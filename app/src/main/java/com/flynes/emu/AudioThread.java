@@ -24,6 +24,7 @@ public class AudioThread extends Thread {
     private static final int MAX_IDLE_ITERATIONS = 60;
 
     private final NesCore core;
+    private final boolean audible;
     // AtomicBoolean (not a plain volatile flag): run() CLAIMS the loop with
     // compareAndSet(false, true) so a stopLoop() issued before the thread
     // actually starts can never be overwritten by a later `running = true`.
@@ -31,8 +32,13 @@ public class AudioThread extends Thread {
     private volatile AudioTrack track;
 
     public AudioThread(NesCore core) {
+        this(core, true);
+    }
+
+    public AudioThread(NesCore core, boolean audible) {
         super("FlyNES-Audio");
         this.core = core;
+        this.audible = audible;
     }
 
     /**
@@ -94,6 +100,7 @@ public class AudioThread extends Thread {
         }
 
         ByteBuffer audio = core.audioBuffer();
+        if (!audible) track.setVolume(0f);
         track.play();
 
         int idleIterations = 0;
