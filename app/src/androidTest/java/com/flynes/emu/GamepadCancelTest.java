@@ -41,4 +41,30 @@ public final class GamepadCancelTest {
         assertEquals(0, router.currentMask());
         assertEquals(0, view.buttons());
     }
+
+    @Test
+    public void zeroDurationATapSurvivesLongEnoughForTheCoreToSampleIt() {
+        Context context = ApplicationProvider.getApplicationContext();
+        GamepadView view = new GamepadView(context);
+        int width = 2340;
+        int height = 1080;
+        float density = context.getResources().getDisplayMetrics().density;
+        view.layout(0, 0, width, height);
+        long now = SystemClock.uptimeMillis();
+        float x = width - 32f * density;
+        float y = height - 52f * density;
+        MotionEvent down = MotionEvent.obtain(
+                now, now, MotionEvent.ACTION_DOWN, x, y, 0);
+        MotionEvent up = MotionEvent.obtain(
+                now, now, MotionEvent.ACTION_UP, x, y, 0);
+
+        view.onTouchEvent(down);
+        view.onTouchEvent(up);
+        down.recycle();
+        up.recycle();
+
+        assertEquals(InputBits.A, view.buttons());
+        SystemClock.sleep(90L);
+        assertEquals(0, view.buttons());
+    }
 }

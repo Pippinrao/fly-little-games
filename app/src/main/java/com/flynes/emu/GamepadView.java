@@ -16,6 +16,7 @@ import com.flynes.emu.input.HapticController;
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.input.InputBits;
 import com.flynes.emu.input.InputRouter;
+import com.flynes.emu.input.MinimumTap;
 
 /** Virtual NES controls with non-overlapping hit regions and source-aware input. */
 public class GamepadView extends View {
@@ -62,13 +63,15 @@ public class GamepadView extends View {
 
     private static final class Pointer {
         final GamepadHitMap.Control control;
+        final long downTimeMillis;
         float x;
         float y;
 
-        Pointer(GamepadHitMap.Control control, float x, float y) {
+        Pointer(GamepadHitMap.Control control, float x, float y, long downTimeMillis) {
             this.control = control;
             this.x = x;
             this.y = y;
+            this.downTimeMillis = downTimeMillis;
         }
     }
 
@@ -198,7 +201,8 @@ public class GamepadView extends View {
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
-                handleDown(pointerId, event.getX(actionIndex), event.getY(actionIndex));
+                handleDown(pointerId, event.getX(actionIndex), event.getY(actionIndex),
+                        event.getEventTime());
                 break;
             case MotionEvent.ACTION_MOVE:
                 for (int i = 0; i < event.getPointerCount(); i++) {
@@ -218,6 +222,14 @@ public class GamepadView extends View {
                     joyKnobX = 0;
                     joyKnobY = 0;
                 }
+                if (removed != null && (removed.control == GamepadHitMap.Control.A
+                        || removed.control == GamepadHitMap.Control.B)) {
+                    int bit = removed.control == GamepadHitMap.Control.A
+                            ? InputBits.A : InputBits.B;
+                    long remaining = MinimumTap.remainingMillis(removed.downTimeMillis,
+                            event.getEventTime(), PULSE_MS);
+                    if (remaining > 0L) pulse(bit, remaining);
+                }
                 recompute();
                 performClick();
                 break;
@@ -227,12 +239,12 @@ public class GamepadView extends View {
         return true;
     }
 
-    private void handleDown(int pointerId, float x, float y) {
+    private void handleDown(int pointerId, float x, float y, long eventTimeMillis) {
         GamepadHitMap.Control control = hitMap.hit(x, y);
         if (control != GamepadHitMap.Control.NONE && isHeld(control)) {
             control = GamepadHitMap.Control.NONE;
         }
-        Pointer pointer = new Pointer(control, x, y);
+        Pointer pointer = new Pointer(control, x, y, eventTimeMillis);
         pointers.put(pointerId, pointer);
         if (control == GamepadHitMap.Control.JOY) {
             updateJoystick(pointer);
@@ -289,11 +301,15 @@ public class GamepadView extends View {
     }
 
     private void pulse(int bit) {
+        pulse(bit, PULSE_MS);
+    }
+
+    private void pulse(int bit, long durationMillis) {
         pulseBits |= bit;
         handler.postDelayed(() -> {
             pulseBits &= ~bit;
             recompute();
-        }, PULSE_MS);
+        }, durationMillis);
     }
 
     private void recompute() {
