@@ -35,10 +35,12 @@
         <activity
             android:name=".LicensesActivity"
             android:exported="false"
+            android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity
             android:name=".GameLibraryActivity"
             android:exported="false"
+            android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity
             android:name=".SettingsActivity"
