@@ -41,20 +41,33 @@ public final class LaunchResult {
         return code == Code.SUCCESS;
     }
 
+    /**
+     * Returns whether the requested ROM session was committed. A history failure happens after
+     * the session and catalog commit and must not be retried as though launch never occurred.
+     */
+    public boolean sessionCommitted() {
+        return code == Code.SUCCESS || code == Code.HISTORY_FAILED;
+    }
+
     public enum Code {
         SUCCESS,
         VARIANT_NOT_FOUND,
         NOT_PLAYABLE,
         INVALID_REQUEST,
+        CATALOG_CHANGED,
         SOURCE_OPEN_FAILED,
         IO_ERROR,
         INVALID_ZIP,
+        ZIP_SOURCE_LIMIT_EXCEEDED,
+        ZIP_ENTRY_LIMIT_EXCEEDED,
+        ZIP_INFLATED_LIMIT_EXCEEDED,
         ZIP_ENTRY_MISSING,
         ZIP_ENTRY_DUPLICATE,
         ZIP_ENTRY_IS_DIRECTORY,
         PAYLOAD_TOO_LARGE,
         EXECUTABLE_REJECTED,
         HASH_MISMATCH,
-        SESSION_FAILED
+        SESSION_FAILED,
+        HISTORY_FAILED
     }
 }

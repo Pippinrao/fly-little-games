@@ -176,6 +176,28 @@ public final class GameCatalogTest {
         assertTrue(after.isRecent());
     }
 
+    @Test
+    public void favoriteAndRecentViewsAreFilteredOrderedAndImmutable() {
+        GameCatalog catalog = new GameCatalog();
+        catalog.applyScanResult(ScanResult.success(List.of(
+                rawPackage("package-a", "variant-a", game("game-a", IDENTITY_A), "A.nes"),
+                rawPackage("package-b", "variant-b", game("game-b", IDENTITY_B), "B.nes")),
+                List.of()));
+        catalog.setFavorite("game-a", true);
+        catalog.recordSuccessfulLaunch("game-a");
+        catalog.recordSuccessfulLaunch("game-b");
+
+        List<GameCatalogEntry> favorites = catalog.favoriteEntries();
+        List<GameCatalogEntry> recent = catalog.recentEntries();
+
+        assertEquals(List.of("game-a"), favorites.stream()
+                .map(entry -> entry.canonicalGame().id()).collect(java.util.stream.Collectors.toList()));
+        assertEquals(List.of("game-b", "game-a"), recent.stream()
+                .map(entry -> entry.canonicalGame().id()).collect(java.util.stream.Collectors.toList()));
+        assertThrows(UnsupportedOperationException.class, favorites::clear);
+        assertThrows(UnsupportedOperationException.class, recent::clear);
+    }
+
     private static RomSource builtin() {
         return new RomSource(
                 "builtin", RomSource.Type.BUILTIN, "asset:///roms",

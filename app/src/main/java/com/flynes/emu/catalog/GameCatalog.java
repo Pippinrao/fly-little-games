@@ -65,6 +65,7 @@ public final class GameCatalog {
         groups.sort(Comparator.comparing(Group::canonicalGame, CANONICAL_ORDER));
         ArrayList<GameCatalogEntry> entries = new ArrayList<>(groups.size());
         LinkedHashMap<String, GameCatalogEntry> entriesById = new LinkedHashMap<>();
+        LinkedHashMap<RomIdentity, GameCatalogEntry> entriesByIdentity = new LinkedHashMap<>();
         LinkedHashMap<String, GameVariant> variantsById = new LinkedHashMap<>();
 
         for (Group group : groups) {
@@ -91,6 +92,7 @@ public final class GameCatalog {
                     state.playCount);
             entries.add(entry);
             entriesById.put(canonicalGame.id(), entry);
+            entriesByIdentity.put(canonicalGame.identity(), entry);
             for (GameVariant variant : projectedVariants) {
                 variantsById.put(variant.variantId(), variant);
             }
@@ -99,8 +101,10 @@ public final class GameCatalog {
         snapshot = new Snapshot(
                 List.copyOf(entries),
                 Map.copyOf(entriesById),
+                Map.copyOf(entriesByIdentity),
                 Map.copyOf(variantsById),
-                previous.lastPlayedSequence);
+                previous.lastPlayedSequence,
+                Math.addExact(previous.version, 1L));
         return true;
     }
 
@@ -113,6 +117,18 @@ public final class GameCatalog {
             return Optional.empty();
         }
         return Optional.ofNullable(snapshot.variantsById.get(variantId));
+    }
+
+    public Optional<LaunchResolution> resolveVariantForLaunch(String variantId) {
+        if (variantId == null || variantId.isBlank()) {
+            return Optional.empty();
+        }
+        Snapshot current = snapshot;
+        GameVariant variant = current.variantsById.get(variantId);
+        if (variant == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new LaunchResolution(current.version, variant));
     }
 
     public List<GameCatalogEntry> search(String query) {
@@ -130,14 +146,25 @@ public final class GameCatalog {
     }
 
     public List<GameCatalogEntry> favoriteEntries() {
-        return snapshot.entries.stream().filter(GameCatalogEntry::favorite).toList();
+        ArrayList<GameCatalogEntry> favorites = new ArrayList<>();
+        for (GameCatalogEntry entry : snapshot.entries) {
+            if (entry.favorite()) {
+                favorites.add(entry);
+            }
+        }
+        return List.copyOf(favorites);
     }
 
     public List<GameCatalogEntry> recentEntries() {
-        return snapshot.entries.stream()
-                .filter(GameCatalogEntry::isRecent)
-                .sorted(Comparator.comparingLong(GameCatalogEntry::lastPlayedSequence).reversed())
-                .toList();
+        ArrayList<GameCatalogEntry> recent = new ArrayList<>();
+        for (GameCatalogEntry entry : snapshot.entries) {
+            if (entry.isRecent()) {
+                recent.add(entry);
+            }
+        }
+        recent.sort(Comparator.comparingLong(
+                GameCatalogEntry::lastPlayedSequence).reversed());
+        return List.copyOf(recent);
     }
 
     public synchronized boolean setFavorite(String canonicalGameId, boolean favorite) {
@@ -159,6 +186,36 @@ public final class GameCatalog {
         return true;
     }
 
+    /**
+     * Revalidates a launch against the current catalog, stages its session, and records the
+     * catalog launch as one catalog-locked commit. A scan may rename IDs while preserving the
+     * same ROM identity; an absent identity rejects the commit before {@code sessionCommit} runs.
+     */
+    public synchronized <E extends Exception> boolean commitSuccessfulLaunch(
+            LaunchResolution resolution,
+            SessionCommit<E> sessionCommit) throws E {
+        DomainValidation.requireNonNull(resolution, "launch resolution");
+        DomainValidation.requireNonNull(sessionCommit, "session commit");
+        Snapshot current = snapshot;
+        GameVariant resolvedVariant = resolution.variant();
+        GameCatalogEntry currentEntry = current.entriesByIdentity.get(resolvedVariant.identity());
+        if (currentEntry == null) {
+            return false;
+        }
+        if (current.version == resolution.catalogVersion()) {
+            GameVariant currentVariant = current.variantsById.get(resolvedVariant.variantId());
+            if (!resolvedVariant.equals(currentVariant)) {
+                return false;
+            }
+        }
+
+        long nextSequence = Math.addExact(current.lastPlayedSequence, 1L);
+        GameCatalogEntry replacement = currentEntry.withSuccessfulLaunch(nextSequence);
+        sessionCommit.stage();
+        replaceEntry(replacement, nextSequence);
+        return true;
+    }
+
     private void replaceEntry(GameCatalogEntry replacement, long lastPlayedSequence) {
         ArrayList<GameCatalogEntry> entries = new ArrayList<>(snapshot.entries);
         for (int i = 0; i < entries.size(); i++) {
@@ -170,11 +227,16 @@ public final class GameCatalog {
         LinkedHashMap<String, GameCatalogEntry> entriesById =
                 new LinkedHashMap<>(snapshot.entriesById);
         entriesById.put(replacement.canonicalGame().id(), replacement);
+        LinkedHashMap<RomIdentity, GameCatalogEntry> entriesByIdentity =
+                new LinkedHashMap<>(snapshot.entriesByIdentity);
+        entriesByIdentity.put(replacement.canonicalGame().identity(), replacement);
         snapshot = new Snapshot(
                 List.copyOf(entries),
                 Map.copyOf(entriesById),
+                Map.copyOf(entriesByIdentity),
                 snapshot.variantsById,
-                lastPlayedSequence);
+                lastPlayedSequence,
+                snapshot.version);
     }
 
     private static boolean matches(GameCatalogEntry entry, String needle) {
@@ -275,11 +337,27 @@ public final class GameCatalog {
     private record Snapshot(
             List<GameCatalogEntry> entries,
             Map<String, GameCatalogEntry> entriesById,
+            Map<RomIdentity, GameCatalogEntry> entriesByIdentity,
             Map<String, GameVariant> variantsById,
-            long lastPlayedSequence) {
+            long lastPlayedSequence,
+            long version) {
 
         static Snapshot empty() {
-            return new Snapshot(List.of(), Map.of(), Map.of(), 0L);
+            return new Snapshot(List.of(), Map.of(), Map.of(), Map.of(), 0L, 0L);
         }
+    }
+
+    public record LaunchResolution(long catalogVersion, GameVariant variant) {
+        public LaunchResolution {
+            if (catalogVersion < 0) {
+                throw new IllegalArgumentException("catalog version must not be negative");
+            }
+            variant = DomainValidation.requireNonNull(variant, "variant");
+        }
+    }
+
+    @FunctionalInterface
+    public interface SessionCommit<E extends Exception> {
+        void stage() throws E;
     }
 }

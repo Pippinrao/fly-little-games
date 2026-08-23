@@ -15,13 +15,17 @@ import org.junit.Test;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
 import java.util.zip.ZipOutputStream;
 
 public final class ExactRomLoaderTest {
@@ -32,7 +36,18 @@ public final class ExactRomLoaderTest {
 
         Map<String, String> encoded = request.toMap();
 
-        assertEquals(request, LaunchRequest.fromMap(encoded));
+        Map<String, String> compatibilityFixture = Map.of(
+                "canonicalGameId", "game",
+                "variantId", "variant",
+                "sourceId", "source",
+                "sourceUri", "content://games/collection.zip",
+                "entryPath", "nested/SECOND.nes",
+                "packageFormat", "ZIP",
+                "romFormat", "INES",
+                "compatibility", "PLAYABLE",
+                "romSha1", identity(bytes("second")).sha1());
+        assertEquals(compatibilityFixture, encoded);
+        assertEquals(request, LaunchRequest.fromMap(compatibilityFixture));
         assertThrows(UnsupportedOperationException.class, () -> encoded.put("variantId", "other"));
     }
 
@@ -66,6 +81,25 @@ public final class ExactRomLoaderTest {
                 "content://games/collection.zip", "nested/SECOND.nes", second));
 
         assertArrayEquals(second, loaded);
+    }
+
+    @Test
+    public void loaderPropagatesExactSourceIdAndUriToStreamOpener() throws Exception {
+        byte[] rom = bytes("rom");
+        String[] openedLocation = new String[2];
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
+            openedLocation[0] = sourceId;
+            openedLocation[1] = sourceUri;
+            return new ByteArrayInputStream(rom);
+        });
+        LaunchRequest request = new LaunchRequest(
+                "game", "variant", "source-exact", "content://provider/document/42", null,
+                PackageFormat.RAW_NES, RomFormat.INES, CompatibilityState.PLAYABLE,
+                identity(rom));
+
+        assertArrayEquals(rom, loader.load(request));
+        assertEquals("source-exact", openedLocation[0]);
+        assertEquals("content://provider/document/42", openedLocation[1]);
     }
 
     @Test
@@ -127,6 +161,306 @@ public final class ExactRomLoaderTest {
                 () -> loader.load(rawRequest("content://games/large.nes", identity(oversized))));
 
         assertEquals(ExactRomLoader.ErrorCode.PAYLOAD_TOO_LARGE, failure.code());
+    }
+
+    @Test
+    public void rawPayloadAtExactScannerLimitIsAccepted() throws Exception {
+        byte[] exactLimit = new byte[(int) RomScanner.MAX_ROM_BYTES];
+        exactLimit[0] = 'N';
+
+        byte[] loaded = loaderFor(exactLimit).load(rawRequest(
+                "content://games/exact.nes", identity(exactLimit)));
+
+        assertEquals(RomScanner.MAX_ROM_BYTES, loaded.length);
+        assertEquals('N', loaded[0]);
+    }
+
+    @Test
+    public void zipPayloadAtExactScannerLimitIsAccepted() throws Exception {
+        byte[] exactLimit = new byte[(int) RomScanner.MAX_ROM_BYTES];
+        exactLimit[0] = 'N';
+        ExactRomLoader loader = loaderFor(zip(Map.of("game.nes", exactLimit)));
+
+        byte[] loaded = loader.load(zipRequest(
+                "content://games/exact.zip", "game.nes", exactLimit));
+
+        assertEquals(RomScanner.MAX_ROM_BYTES, loaded.length);
+        assertEquals('N', loaded[0]);
+    }
+
+    @Test
+    public void compressedZipBombPayloadOverScannerLimitIsRejected() throws Exception {
+        byte[] oversized = new byte[(int) RomScanner.MAX_ROM_BYTES + 1];
+        ExactRomLoader loader = loaderFor(zip(Map.of("game.nes", oversized)));
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/bomb.zip", "game.nes", oversized)));
+
+        assertEquals(ExactRomLoader.ErrorCode.PAYLOAD_TOO_LARGE, failure.code());
+    }
+
+    @Test
+    public void largeSkippedEntryCountsAgainstTotalInflatedLimit() throws Exception {
+        byte[] skipped = new byte[(int) ExactRomLoader.MAX_ZIP_INFLATED_BYTES];
+        byte[] target = bytes("rom");
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("skipped.bin", skipped);
+        entries.put("game.nes", target);
+        ExactRomLoader loader = loaderFor(zip(entries));
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/skipped.zip", "game.nes", target)));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_INFLATED_LIMIT_EXCEEDED, failure.code());
+    }
+
+    @Test
+    public void oversizedSkippedEntryAfterTargetStillCountsAgainstInflatedLimit()
+            throws Exception {
+        byte[] target = bytes("rom");
+        byte[] skipped = new byte[(int) ExactRomLoader.MAX_ZIP_INFLATED_BYTES];
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("game.nes", target);
+        entries.put("skipped.bin", skipped);
+        ExactRomLoader loader = loaderFor(zip(entries));
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/skipped-after.zip", "game.nes", target)));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_INFLATED_LIMIT_EXCEEDED, failure.code());
+    }
+
+    @Test
+    public void tooManyZipEntriesAreRejectedEvenWhenTargetAppearsFirst() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] archive = zipWithEmptyEntries(
+                ExactRomLoader.MAX_ZIP_ENTRIES, "game.nes", target);
+        ExactRomLoader loader = loaderFor(archive);
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/many.zip", "game.nes", target)));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_ENTRY_LIMIT_EXCEEDED, failure.code());
+    }
+
+    @Test
+    public void declaredEntryCountLimitShortCircuitsBeforeCentralDirectoryTraversal()
+            throws Exception {
+        byte[] archive = zip(Map.of());
+        archive[8] = (byte) 0xFF;
+        archive[9] = (byte) 0xFF;
+        archive[10] = (byte) 0xFF;
+        archive[11] = (byte) 0xFF;
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(archive).load(zipRequest(
+                        "content://games/declared-many.zip", "game.nes", bytes("rom"))));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_ENTRY_LIMIT_EXCEEDED, failure.code());
+    }
+
+    @Test
+    public void zipEntryCountAtExactLimitIsAccepted() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] archive = zipWithEmptyEntries(
+                ExactRomLoader.MAX_ZIP_ENTRIES - 1, "game.nes", target);
+        ExactRomLoader loader = loaderFor(archive);
+
+        assertArrayEquals(target, loader.load(zipRequest(
+                "content://games/entries-limit.zip", "game.nes", target)));
+    }
+
+    @Test
+    public void cumulativeInflatedBytesAtExactLimitAreAccepted() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] skipped = new byte[(int) ExactRomLoader.MAX_ZIP_INFLATED_BYTES - target.length];
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("skipped.bin", skipped);
+        entries.put("game.nes", target);
+        ExactRomLoader loader = loaderFor(zip(entries));
+
+        assertArrayEquals(target, loader.load(zipRequest(
+                "content://games/inflated-limit.zip", "game.nes", target)));
+    }
+
+    @Test
+    public void zipSourceBytesAreBoundedBeforeTraversal() {
+        byte[] oversizedSource = new byte[(int) ExactRomLoader.MAX_ZIP_SOURCE_BYTES + 1];
+        oversizedSource[0] = 'P';
+        oversizedSource[1] = 'K';
+        oversizedSource[2] = 3;
+        oversizedSource[3] = 4;
+        ExactRomLoader loader = loaderFor(oversizedSource);
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/huge.zip", "game.nes", bytes("rom"))));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_SOURCE_LIMIT_EXCEEDED, failure.code());
+    }
+
+    @Test
+    public void zipSourceAtExactByteLimitIsAccepted() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] archive = storedZipAtSize(
+                (int) ExactRomLoader.MAX_ZIP_SOURCE_BYTES, target);
+        ExactRomLoader loader = loaderFor(archive);
+
+        assertArrayEquals(target, loader.load(zipRequest(
+                "content://games/source-limit.zip", "game.nes", target)));
+    }
+
+    @Test
+    public void zipWithLocalEntryButNoCentralDirectoryIsInvalid() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] archive = zip(Map.of("game.nes", target));
+        int centralDirectory = indexOfSignature(archive, 0x50, 0x4B, 0x01, 0x02);
+        byte[] truncated = Arrays.copyOf(archive, centralDirectory);
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(truncated).load(zipRequest(
+                        "content://games/truncated.zip", "game.nes", target)));
+
+        assertEquals(ExactRomLoader.ErrorCode.INVALID_ZIP, failure.code());
+    }
+
+    @Test
+    public void fakeEndRecordAndSplitMarkerAreInvalidZip() {
+        byte[][] malformedArchives = {
+                {(byte) 0x50, (byte) 0x4B, (byte) 0x05, (byte) 0x06},
+                {(byte) 0x50, (byte) 0x4B, (byte) 0x07, (byte) 0x08}
+        };
+
+        for (byte[] archive : malformedArchives) {
+            ExactRomLoader.LoadException failure = assertThrows(
+                    ExactRomLoader.LoadException.class,
+                    () -> loaderFor(archive).load(zipRequest(
+                            "content://games/fake.zip", "game.nes", bytes("rom"))));
+            assertEquals(ExactRomLoader.ErrorCode.INVALID_ZIP, failure.code());
+        }
+    }
+
+    @Test
+    public void validEmptyZipReportsMissingEntry() throws Exception {
+        byte[] archive = zip(Map.of());
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(archive).load(zipRequest(
+                        "content://games/empty.zip", "game.nes", bytes("rom"))));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_ENTRY_MISSING, failure.code());
+    }
+
+    @Test
+    public void malformedNonZipSourceIsClassifiedAsInvalidZip() {
+        ExactRomLoader loader = loaderFor(bytes("not a zip"));
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/broken.zip", "game.nes", bytes("rom"))));
+
+        assertEquals(ExactRomLoader.ErrorCode.INVALID_ZIP, failure.code());
+    }
+
+    @Test
+    public void sourceZipExceptionIsClassifiedAsIoErrorNotInvalidArchive() {
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new ZipException("provider stream failed");
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws IOException {
+                throw new ZipException("provider stream failed");
+            }
+        });
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/read-failure.zip", "game.nes", bytes("rom"))));
+
+        assertEquals(ExactRomLoader.ErrorCode.IO_ERROR, failure.code());
+    }
+
+    @Test
+    public void sourceCloseZipExceptionIsClassifiedAsIoError() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] archive = zip(Map.of("game.nes", target));
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> new InputStream() {
+            private final ByteArrayInputStream delegate = new ByteArrayInputStream(archive);
+
+            @Override
+            public int read() {
+                return delegate.read();
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) {
+                return delegate.read(buffer, offset, length);
+            }
+
+            @Override
+            public void close() throws IOException {
+                throw new ZipException("provider close failed");
+            }
+        });
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/close-failure.zip", "game.nes", target)));
+
+        assertEquals(ExactRomLoader.ErrorCode.IO_ERROR, failure.code());
+    }
+
+    @Test
+    public void sourceReadSecurityExceptionIsClassifiedAsIoError() {
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> new InputStream() {
+            @Override
+            public int read() {
+                throw new SecurityException("provider permission changed");
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) {
+                throw new SecurityException("provider permission changed");
+            }
+        });
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loader.load(zipRequest(
+                        "content://games/security-failure.zip", "game.nes", bytes("rom"))));
+
+        assertEquals(ExactRomLoader.ErrorCode.IO_ERROR, failure.code());
+    }
+
+    @Test
+    public void malformedUtf8EntryNameIsClassifiedAsInvalidZip() throws Exception {
+        byte[] target = bytes("rom");
+        byte[] archive = replaceAsciiWithInvalidUtf8(zip(Map.of("ab", target)), "ab");
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(archive).load(zipRequest(
+                        "content://games/bad-name.zip", "ab", target)));
+
+        assertEquals(ExactRomLoader.ErrorCode.INVALID_ZIP, failure.code());
     }
 
     @Test
@@ -197,6 +531,73 @@ public final class ExactRomLoaderTest {
         return bytes.toByteArray();
     }
 
+    private static byte[] zipWithEmptyEntries(
+            int emptyEntryCount,
+            String targetName,
+            byte[] target) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            zip.putNextEntry(new ZipEntry(targetName));
+            zip.write(target);
+            zip.closeEntry();
+            for (int i = 0; i < emptyEntryCount; i++) {
+                zip.putNextEntry(new ZipEntry("empty-" + i));
+                zip.closeEntry();
+            }
+        }
+        return bytes.toByteArray();
+    }
+
+    private static byte[] storedZipAtSize(int exactSize, byte[] target) throws IOException {
+        byte[] emptyArchive = storedZip(Map.of(
+                "game.nes", target,
+                "padding.bin", new byte[0]));
+        int paddingSize = exactSize - emptyArchive.length;
+        if (paddingSize < 0) {
+            throw new IllegalArgumentException("exact ZIP size is too small");
+        }
+        byte[] result = storedZip(Map.of(
+                "game.nes", target,
+                "padding.bin", new byte[paddingSize]));
+        assertEquals(exactSize, result.length);
+        return result;
+    }
+
+    private static byte[] storedZip(Map<String, byte[]> entries) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            for (Map.Entry<String, byte[]> value : entries.entrySet()) {
+                CRC32 crc = new CRC32();
+                crc.update(value.getValue());
+                ZipEntry entry = new ZipEntry(value.getKey());
+                entry.setMethod(ZipEntry.STORED);
+                entry.setSize(value.getValue().length);
+                entry.setCompressedSize(value.getValue().length);
+                entry.setCrc(crc.getValue());
+                zip.putNextEntry(entry);
+                zip.write(value.getValue());
+                zip.closeEntry();
+            }
+        }
+        return bytes.toByteArray();
+    }
+
+    private static int indexOfSignature(byte[] source, int... signature) {
+        for (int i = 0; i <= source.length - signature.length; i++) {
+            boolean matches = true;
+            for (int j = 0; j < signature.length; j++) {
+                if ((source[i + j] & 0xFF) != signature[j]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return i;
+            }
+        }
+        throw new AssertionError("ZIP signature was not found");
+    }
+
     private static byte[] replaceAscii(byte[] source, String from, String to) {
         if (from.length() != to.length()) {
             throw new IllegalArgumentException("replacement must preserve ZIP field lengths");
@@ -215,6 +616,22 @@ public final class ExactRomLoaderTest {
             if (match) {
                 System.arraycopy(replacement, 0, result, i, replacement.length);
                 i += replacement.length - 1;
+            }
+        }
+        return result;
+    }
+
+    private static byte[] replaceAsciiWithInvalidUtf8(byte[] source, String name) {
+        if (name.length() != 2) {
+            throw new IllegalArgumentException("fixture name must contain two ASCII bytes");
+        }
+        byte[] result = source.clone();
+        byte[] needle = name.getBytes(StandardCharsets.US_ASCII);
+        for (int i = 0; i <= result.length - needle.length; i++) {
+            if (result[i] == needle[0] && result[i + 1] == needle[1]) {
+                result[i] = (byte) 0xC3;
+                result[i + 1] = 0x28;
+                i++;
             }
         }
         return result;

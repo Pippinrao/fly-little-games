@@ -24,12 +24,14 @@ public final class LaunchCoordinator {
     }
 
     public LaunchResult launch(String variantId) {
-        Optional<GameVariant> resolved = catalog.resolveVariant(variantId);
+        Optional<GameCatalog.LaunchResolution> resolved =
+                catalog.resolveVariantForLaunch(variantId);
         if (resolved.isEmpty()) {
             return LaunchResult.failure(
                     LaunchResult.Code.VARIANT_NOT_FOUND, null, "variant was not found");
         }
-        GameVariant variant = resolved.get();
+        GameCatalog.LaunchResolution resolution = resolved.get();
+        GameVariant variant = resolution.variant();
         if (!variant.compatibility().isPlayable()) {
             return LaunchResult.failure(
                     LaunchResult.Code.NOT_PLAYABLE, null, "variant is not explicitly playable");
@@ -59,16 +61,37 @@ public final class LaunchCoordinator {
             return LaunchResult.failure(map(failure.code()), request, failure.getMessage());
         }
 
-        try {
-            sessionGateway.stageAndReplace(request, payload);
-        } catch (RomSessionGateway.SessionException failure) {
-            return LaunchResult.failure(
-                    LaunchResult.Code.SESSION_FAILED, request, failure.getMessage());
+        synchronized (catalog) {
+            boolean catalogRecorded;
+            try {
+                catalogRecorded = catalog.commitSuccessfulLaunch(
+                        resolution,
+                        () -> sessionGateway.stageAndReplace(request, payload));
+            } catch (RomSessionGateway.SessionException failure) {
+                return LaunchResult.failure(
+                        LaunchResult.Code.SESSION_FAILED, request, failure.getMessage());
+            }
+            if (!catalogRecorded) {
+                return LaunchResult.failure(
+                        LaunchResult.Code.CATALOG_CHANGED,
+                        request,
+                        "resolved ROM identity is no longer present in the catalog");
+            }
+            try {
+                launchHistory.recordSuccessfulLaunch(request);
+            } catch (LaunchHistory.HistoryException | RuntimeException failure) {
+                return LaunchResult.failure(
+                        LaunchResult.Code.HISTORY_FAILED,
+                        request,
+                        failureMessage(failure, "launch history update failed"));
+            }
+            return LaunchResult.success(request);
         }
+    }
 
-        catalog.recordSuccessfulLaunch(request.canonicalGameId());
-        launchHistory.recordSuccessfulLaunch(request);
-        return LaunchResult.success(request);
+    private static String failureMessage(Throwable failure, String fallback) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? fallback : message;
     }
 
     private static LaunchResult.Code map(ExactRomLoader.ErrorCode code) {
@@ -76,6 +99,9 @@ public final class LaunchCoordinator {
             case SOURCE_OPEN_FAILED -> LaunchResult.Code.SOURCE_OPEN_FAILED;
             case IO_ERROR -> LaunchResult.Code.IO_ERROR;
             case INVALID_ZIP -> LaunchResult.Code.INVALID_ZIP;
+            case ZIP_SOURCE_LIMIT_EXCEEDED -> LaunchResult.Code.ZIP_SOURCE_LIMIT_EXCEEDED;
+            case ZIP_ENTRY_LIMIT_EXCEEDED -> LaunchResult.Code.ZIP_ENTRY_LIMIT_EXCEEDED;
+            case ZIP_INFLATED_LIMIT_EXCEEDED -> LaunchResult.Code.ZIP_INFLATED_LIMIT_EXCEEDED;
             case ZIP_ENTRY_MISSING -> LaunchResult.Code.ZIP_ENTRY_MISSING;
             case ZIP_ENTRY_DUPLICATE -> LaunchResult.Code.ZIP_ENTRY_DUPLICATE;
             case ZIP_ENTRY_IS_DIRECTORY -> LaunchResult.Code.ZIP_ENTRY_IS_DIRECTORY;

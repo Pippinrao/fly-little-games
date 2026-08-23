@@ -4,6 +4,7 @@ import com.flynes.emu.RomScanner;
 import com.flynes.emu.catalog.PackageFormat;
 import com.flynes.emu.data.RomIdentity;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,10 +13,13 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipException;
 import java.util.zip.ZipInputStream;
 
 public final class ExactRomLoader {
+    public static final int MAX_ZIP_ENTRIES = 1024;
+    public static final long MAX_ZIP_SOURCE_BYTES = RomScanner.MAX_ROM_BYTES * 2L;
+    public static final long MAX_ZIP_INFLATED_BYTES = RomScanner.MAX_ROM_BYTES * 4L;
+
     private final StreamOpener streamOpener;
 
     public ExactRomLoader(StreamOpener streamOpener) {
@@ -49,10 +53,7 @@ public final class ExactRomLoader {
             }
         } catch (LoadException failure) {
             throw failure;
-        } catch (ZipException failure) {
-            throw new LoadException(
-                    ErrorCode.INVALID_ZIP, "invalid ZIP package", failure);
-        } catch (IOException failure) {
+        } catch (IOException | SecurityException failure) {
             throw new LoadException(ErrorCode.IO_ERROR, "could not read ROM payload", failure);
         }
 
@@ -72,13 +73,27 @@ public final class ExactRomLoader {
 
     private static byte[] readExactZipEntry(InputStream source, String entryPath)
             throws IOException, LoadException {
+        byte[] archive = readZipSource(source);
+        int expectedEntryCount = validateZipStructure(archive);
+
+        int entryCount = 0;
         int matchingEntries = 0;
         boolean matchingEntryIsDirectory = false;
         byte[] payload = null;
-        try (ZipInputStream zip = new ZipInputStream(source)) {
+        long totalInflatedBytes = 0;
+        byte[] buffer = new byte[8192];
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(archive))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
-                if (entryPath.equals(entry.getName())) {
+                entryCount++;
+                if (entryCount > MAX_ZIP_ENTRIES) {
+                    throw zipEntryLimitExceeded();
+                }
+
+                boolean matches = entryPath.equals(entry.getName());
+                ByteArrayOutputStream selectedPayload = null;
+                long selectedPayloadBytes = 0;
+                if (matches) {
                     matchingEntries++;
                     if (matchingEntries > 1) {
                         throw new LoadException(
@@ -87,11 +102,45 @@ public final class ExactRomLoader {
                     }
                     matchingEntryIsDirectory = entry.isDirectory();
                     if (!matchingEntryIsDirectory) {
-                        payload = readPayload(zip);
+                        selectedPayload = new ByteArrayOutputStream();
                     }
+                }
+
+                while (true) {
+                    int count = zip.read(buffer);
+                    if (count < 0) {
+                        break;
+                    }
+                    if (count == 0) {
+                        int singleByte = zip.read();
+                        if (singleByte < 0) {
+                            break;
+                        }
+                        totalInflatedBytes = checkedInflatedTotal(totalInflatedBytes, 1);
+                        if (selectedPayload != null) {
+                            selectedPayloadBytes = checkedPayloadTotal(selectedPayloadBytes, 1);
+                            selectedPayload.write(singleByte);
+                        }
+                        continue;
+                    }
+                    totalInflatedBytes = checkedInflatedTotal(totalInflatedBytes, count);
+                    if (selectedPayload != null) {
+                        selectedPayloadBytes = checkedPayloadTotal(selectedPayloadBytes, count);
+                        selectedPayload.write(buffer, 0, count);
+                    }
+                }
+                if (selectedPayload != null) {
+                    payload = selectedPayload.toByteArray();
                 }
                 zip.closeEntry();
             }
+        } catch (LoadException failure) {
+            throw failure;
+        } catch (IOException | IllegalArgumentException failure) {
+            throw new LoadException(ErrorCode.INVALID_ZIP, "invalid ZIP package", failure);
+        }
+        if (entryCount != expectedEntryCount) {
+            throw invalidZip("ZIP local and central entry counts differ");
         }
         if (matchingEntries == 0) {
             throw new LoadException(
@@ -104,6 +153,203 @@ public final class ExactRomLoader {
                     "ZIP entry is a directory: " + entryPath);
         }
         return payload;
+    }
+
+    private static byte[] readZipSource(InputStream input) throws IOException, LoadException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        while (true) {
+            int count = input.read(buffer);
+            if (count < 0) {
+                break;
+            }
+            if (count == 0) {
+                int singleByte = input.read();
+                if (singleByte < 0) {
+                    break;
+                }
+                total++;
+                if (total > MAX_ZIP_SOURCE_BYTES) {
+                    throw zipSourceTooLarge();
+                }
+                output.write(singleByte);
+                continue;
+            }
+            total += count;
+            if (total > MAX_ZIP_SOURCE_BYTES) {
+                throw zipSourceTooLarge();
+            }
+            output.write(buffer, 0, count);
+        }
+        return output.toByteArray();
+    }
+
+    private static int validateZipStructure(byte[] archive) throws LoadException {
+        int endRecord = findEndRecord(archive);
+        int diskNumber = unsignedShort(archive, endRecord + 4);
+        int centralDirectoryDisk = unsignedShort(archive, endRecord + 6);
+        int entriesOnDisk = unsignedShort(archive, endRecord + 8);
+        int totalEntries = unsignedShort(archive, endRecord + 10);
+        long centralDirectorySize = unsignedInt(archive, endRecord + 12);
+        long centralDirectoryOffset = unsignedInt(archive, endRecord + 16);
+        if (totalEntries > MAX_ZIP_ENTRIES) {
+            throw zipEntryLimitExceeded();
+        }
+        if (diskNumber != 0 || centralDirectoryDisk != 0 || entriesOnDisk != totalEntries) {
+            throw invalidZip("split ZIP archives are unsupported");
+        }
+        if (totalEntries == 0xFFFF
+                || centralDirectorySize == 0xFFFFFFFFL
+                || centralDirectoryOffset == 0xFFFFFFFFL) {
+            throw invalidZip("ZIP64 archives are unsupported");
+        }
+        long centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+        if (centralDirectoryEnd != endRecord) {
+            throw invalidZip("ZIP central directory bounds are invalid");
+        }
+        if (centralDirectoryOffset > Integer.MAX_VALUE) {
+            throw invalidZip("ZIP central directory offset is invalid");
+        }
+
+        int cursor = (int) centralDirectoryOffset;
+        for (int i = 0; i < totalEntries; i++) {
+            requireRange(archive, cursor, 46, "ZIP central directory is truncated");
+            if (unsignedInt(archive, cursor) != 0x02014B50L) {
+                throw invalidZip("ZIP central-directory entry signature is invalid");
+            }
+            int nameLength = unsignedShort(archive, cursor + 28);
+            int extraLength = unsignedShort(archive, cursor + 30);
+            int commentLength = unsignedShort(archive, cursor + 32);
+            if (unsignedShort(archive, cursor + 34) != 0) {
+                throw invalidZip("split ZIP entries are unsupported");
+            }
+            long localHeaderOffset = unsignedInt(archive, cursor + 42);
+            if (localHeaderOffset == 0xFFFFFFFFL || localHeaderOffset > Integer.MAX_VALUE) {
+                throw invalidZip("ZIP64 local headers are unsupported");
+            }
+            long centralEntryEnd = (long) cursor + 46L
+                    + nameLength + extraLength + commentLength;
+            if (centralEntryEnd > centralDirectoryEnd) {
+                throw invalidZip("ZIP central-directory entry is truncated");
+            }
+            validateLocalHeader(
+                    archive,
+                    (int) localHeaderOffset,
+                    cursor + 46,
+                    nameLength,
+                    unsignedInt(archive, cursor + 20),
+                    centralDirectoryOffset);
+            cursor = (int) centralEntryEnd;
+        }
+        if (cursor != centralDirectoryEnd) {
+            throw invalidZip("ZIP central-directory entry count is invalid");
+        }
+        return totalEntries;
+    }
+
+    private static void validateLocalHeader(
+            byte[] archive,
+            int localHeaderOffset,
+            int centralNameOffset,
+            int centralNameLength,
+            long compressedSize,
+            long centralDirectoryOffset) throws LoadException {
+        requireRange(archive, localHeaderOffset, 30, "ZIP local header is truncated");
+        if (unsignedInt(archive, localHeaderOffset) != 0x04034B50L) {
+            throw invalidZip("ZIP local-entry signature is invalid");
+        }
+        int localNameLength = unsignedShort(archive, localHeaderOffset + 26);
+        int localExtraLength = unsignedShort(archive, localHeaderOffset + 28);
+        if (localNameLength != centralNameLength) {
+            throw invalidZip("ZIP local and central entry names differ");
+        }
+        requireRange(
+                archive,
+                localHeaderOffset + 30,
+                localNameLength + localExtraLength,
+                "ZIP local entry metadata is truncated");
+        for (int i = 0; i < localNameLength; i++) {
+            if (archive[localHeaderOffset + 30 + i] != archive[centralNameOffset + i]) {
+                throw invalidZip("ZIP local and central entry names differ");
+            }
+        }
+        long dataOffset = (long) localHeaderOffset + 30L
+                + localNameLength + localExtraLength;
+        if (dataOffset + compressedSize > centralDirectoryOffset) {
+            throw invalidZip("ZIP entry payload is truncated");
+        }
+    }
+
+    private static int findEndRecord(byte[] archive) throws LoadException {
+        if (archive.length < 22) {
+            throw invalidZip("ZIP end record is missing");
+        }
+        int earliest = Math.max(0, archive.length - 22 - 0xFFFF);
+        for (int offset = archive.length - 22; offset >= earliest; offset--) {
+            if (unsignedInt(archive, offset) != 0x06054B50L) {
+                continue;
+            }
+            int commentLength = unsignedShort(archive, offset + 20);
+            if ((long) offset + 22L + commentLength == archive.length) {
+                return offset;
+            }
+        }
+        throw invalidZip("ZIP end record is missing or truncated");
+    }
+
+    private static int unsignedShort(byte[] bytes, int offset) throws LoadException {
+        requireRange(bytes, offset, 2, "ZIP structure is truncated");
+        return (bytes[offset] & 0xFF) | ((bytes[offset + 1] & 0xFF) << 8);
+    }
+
+    private static long unsignedInt(byte[] bytes, int offset) throws LoadException {
+        requireRange(bytes, offset, 4, "ZIP structure is truncated");
+        return (bytes[offset] & 0xFFL)
+                | ((bytes[offset + 1] & 0xFFL) << 8)
+                | ((bytes[offset + 2] & 0xFFL) << 16)
+                | ((bytes[offset + 3] & 0xFFL) << 24);
+    }
+
+    private static void requireRange(byte[] bytes, int offset, int length, String message)
+            throws LoadException {
+        if (offset < 0 || length < 0 || (long) offset + length > bytes.length) {
+            throw invalidZip(message);
+        }
+    }
+
+    private static long checkedInflatedTotal(long current, int added) throws LoadException {
+        long total = current + added;
+        if (total > MAX_ZIP_INFLATED_BYTES) {
+            throw new LoadException(
+                    ErrorCode.ZIP_INFLATED_LIMIT_EXCEEDED,
+                    "ZIP inflated data exceeds " + MAX_ZIP_INFLATED_BYTES + " bytes");
+        }
+        return total;
+    }
+
+    private static long checkedPayloadTotal(long current, int added) throws LoadException {
+        long total = current + added;
+        if (total > RomScanner.MAX_ROM_BYTES) {
+            throw payloadTooLarge();
+        }
+        return total;
+    }
+
+    private static LoadException zipSourceTooLarge() {
+        return new LoadException(
+                ErrorCode.ZIP_SOURCE_LIMIT_EXCEEDED,
+                "ZIP source exceeds " + MAX_ZIP_SOURCE_BYTES + " bytes");
+    }
+
+    private static LoadException zipEntryLimitExceeded() {
+        return new LoadException(
+                ErrorCode.ZIP_ENTRY_LIMIT_EXCEEDED,
+                "ZIP contains more than " + MAX_ZIP_ENTRIES + " entries");
+    }
+
+    private static LoadException invalidZip(String message) {
+        return new LoadException(ErrorCode.INVALID_ZIP, message);
     }
 
     private static byte[] readPayload(InputStream input) throws IOException, LoadException {
@@ -187,6 +433,9 @@ public final class ExactRomLoader {
         SOURCE_OPEN_FAILED,
         IO_ERROR,
         INVALID_ZIP,
+        ZIP_SOURCE_LIMIT_EXCEEDED,
+        ZIP_ENTRY_LIMIT_EXCEEDED,
+        ZIP_INFLATED_LIMIT_EXCEEDED,
         ZIP_ENTRY_MISSING,
         ZIP_ENTRY_DUPLICATE,
         ZIP_ENTRY_IS_DIRECTORY,
