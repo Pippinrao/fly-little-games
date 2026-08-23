@@ -43,6 +43,13 @@ public final class GameCatalogTest {
                 "zip-a", builtin(), "asset:///games.zip", "games.zip", PackageFormat.ZIP,
                 List.of(noEntry)));
         assertThrows(IllegalArgumentException.class, () -> new PhysicalPackage(
+                "zip-without-locator",
+                builtin(),
+                "asset:///games.zip",
+                "games.zip",
+                PackageFormat.ZIP,
+                List.of(withEntry)));
+        assertThrows(IllegalArgumentException.class, () -> new PhysicalPackage(
                 "raw-a", builtin(), "asset:///game.nes", "game.nes", PackageFormat.RAW_NES,
                 List.of(withEntry)));
 
@@ -52,11 +59,64 @@ public final class GameCatalogTest {
         PhysicalPackage many = new PhysicalPackage(
                 "zip-many", builtin(), "asset:///many.zip", "many.zip", PackageFormat.ZIP,
                 List.of(
-                        variant("variant-a", game("game-a", IDENTITY_A), "a.nes"),
-                        variant("variant-b", game("game-b", IDENTITY_B), "b.nes")));
+                        zipVariant("variant-a", game("game-a", IDENTITY_A), "a.nes", 0),
+                        zipVariant("variant-b", game("game-b", IDENTITY_B), "b.nes", 64)));
 
         assertTrue(empty.variants().isEmpty());
         assertEquals(2, many.variants().size());
+    }
+
+    @Test
+    public void zipEntryIdentityIsValidatedAndPropagatedWithSourcePermission() {
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(
+                new byte[]{(byte) 0xBB, (byte) 0xEA}, 42);
+        RomVariant zipVariant = new RomVariant(
+                "variant-zip",
+                game("game-a", IDENTITY_A),
+                "魂.nes",
+                RomFormat.INES,
+                CompatibilityState.PLAYABLE,
+                locator,
+                ZipNameEncoding.GB18030);
+        RomSource source = new RomSource(
+                "tree",
+                RomSource.Type.SAF_TREE,
+                "content://tree/roms",
+                RomSource.PermissionState.GRANTED);
+        PhysicalPackage zip = new PhysicalPackage(
+                "package-zip",
+                source,
+                "content://tree/roms/archive.zip",
+                "archive.zip",
+                PackageFormat.ZIP,
+                List.of(zipVariant));
+        GameCatalog catalog = new GameCatalog();
+
+        assertTrue(catalog.applyScanResult(ScanResult.success(List.of(zip), List.of())));
+
+        GameVariant projected = catalog.resolveVariant("variant-zip").orElseThrow();
+        assertEquals(locator, projected.zipEntryIdentity());
+        assertEquals(RomSource.PermissionState.GRANTED, projected.sourcePermissionState());
+        assertThrows(IllegalArgumentException.class, () -> new PhysicalPackage(
+                "package-raw",
+                source,
+                "content://tree/roms/game.nes",
+                "game.nes",
+                PackageFormat.RAW_NES,
+                List.of(new RomVariant(
+                        "variant-raw",
+                        game("game-a", IDENTITY_A),
+                        null,
+                        RomFormat.INES,
+                        CompatibilityState.PLAYABLE,
+                        locator,
+                        ZipNameEncoding.GB18030))));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ZipEntryIdentity("0", 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ZipEntryIdentity("GG", 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ZipEntryIdentity("00", -1));
     }
 
     @Test
@@ -109,7 +169,8 @@ public final class GameCatalogTest {
         PhysicalPackage zip = new PhysicalPackage(
                 "package-zip", builtin(), "asset:///collection.zip", "Collection.zip",
                 PackageFormat.ZIP,
-                List.of(variant("variant-zip", canonical, "roms/contra.nes")));
+                List.of(zipVariant(
+                        "variant-zip", canonical, "roms/contra.nes", 0)));
         GameCatalog catalog = new GameCatalog();
 
         assertTrue(catalog.applyScanResult(ScanResult.success(List.of(raw, zip), List.of())));
@@ -210,6 +271,23 @@ public final class GameCatalogTest {
 
     private static RomVariant variant(String id, CanonicalGame game, String entryPath) {
         return new RomVariant(id, game, entryPath, RomFormat.INES, CompatibilityState.PLAYABLE);
+    }
+
+    private static RomVariant zipVariant(
+            String id,
+            CanonicalGame game,
+            String entryPath,
+            int localHeaderOffset) {
+        return new RomVariant(
+                id,
+                game,
+                entryPath,
+                RomFormat.INES,
+                CompatibilityState.PLAYABLE,
+                ZipEntryIdentity.fromRawName(
+                        entryPath.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        localHeaderOffset),
+                ZipNameEncoding.UTF8_EFS);
     }
 
     private static PhysicalPackage rawPackage(

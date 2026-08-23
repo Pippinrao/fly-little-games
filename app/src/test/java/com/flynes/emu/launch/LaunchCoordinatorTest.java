@@ -16,11 +16,15 @@ import com.flynes.emu.catalog.RomFormat;
 import com.flynes.emu.catalog.RomSource;
 import com.flynes.emu.catalog.RomVariant;
 import com.flynes.emu.catalog.ScanResult;
+import com.flynes.emu.catalog.ZipEntryIdentity;
+import com.flynes.emu.catalog.ZipNameEncoding;
 import com.flynes.emu.data.RomIdentity;
 
 import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -36,6 +40,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public final class LaunchCoordinatorTest {
     @Test
@@ -60,6 +66,9 @@ public final class LaunchCoordinatorTest {
         assertEquals("variant-a", history.requests.get(0).variantId());
         assertEquals(List.of("builtin", "asset:///roms/game.nes"), openedLocation);
         assertNotNull(gateway.request);
+        assertEquals("builtin", gateway.request.sourceId());
+        assertEquals("asset:///roms/game.nes", gateway.request.sourceUri());
+        assertEquals(gateway.request, history.requests.get(0));
         assertArrayEquals(rom, gateway.bytes);
         GameCatalogEntry entry = catalog.canonicalEntries().get(0);
         assertEquals(1, entry.playCount());
@@ -101,6 +110,28 @@ public final class LaunchCoordinatorTest {
         assertTrue(history.requests.isEmpty());
         assertEquals(0, catalog.canonicalEntries().get(0).playCount());
         assertFalse(catalog.canonicalEntries().get(0).isRecent());
+    }
+
+    @Test
+    public void uncheckedGatewayFailureReturnsTypedSessionFailure() {
+        byte[] rom = bytes("valid-rom");
+        GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.PLAYABLE);
+        RecordingHistory history = new RecordingHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog,
+                new ExactRomLoader(
+                        (sourceId, sourceUri) -> new ByteArrayInputStream(rom)),
+                (request, bytes) -> {
+                    throw new IllegalStateException("unexpected gateway failure");
+                },
+                history);
+
+        LaunchResult result = coordinator.launch("variant-a");
+
+        assertEquals(LaunchResult.Code.SESSION_FAILED, result.code());
+        assertFalse(result.sessionCommitted());
+        assertTrue(history.requests.isEmpty());
+        assertEquals(0, catalog.canonicalEntries().get(0).playCount());
     }
 
     @Test
@@ -187,9 +218,9 @@ public final class LaunchCoordinatorTest {
             replaceCatalog(
                     catalog,
                     "game-renamed",
-                    "variant-renamed",
+                    "variant-a",
                     identity,
-                    "asset:///roms/renamed.nes");
+                    "asset:///roms/game.nes");
             continueLoad.countDown();
 
             LaunchResult result = launch.get(5, TimeUnit.SECONDS);
@@ -197,7 +228,11 @@ public final class LaunchCoordinatorTest {
             assertTrue(result.isSuccess());
             assertEquals(1, gateway.calls);
             assertEquals("variant-a", gateway.request.variantId());
+            assertEquals("game-renamed", gateway.request.canonicalGameId());
+            assertEquals("asset:///roms/game.nes", gateway.request.sourceUri());
             assertEquals(1, history.requests.size());
+            assertEquals(gateway.request, history.requests.get(0));
+            assertEquals(gateway.request, result.request().orElseThrow());
             GameCatalogEntry renamed = catalog.canonicalEntries().get(0);
             assertEquals("game-renamed", renamed.canonicalGame().id());
             assertEquals(1, renamed.playCount());
@@ -205,6 +240,177 @@ public final class LaunchCoordinatorTest {
             continueLoad.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    public void movedSourceUriRejectsStaleLaunchBeforeSessionCommit() throws Exception {
+        byte[] rom = bytes("same-rom");
+        RomIdentity identity = identity(rom);
+        GameCatalog catalog = catalogFor(identity, CompatibilityState.PLAYABLE);
+        CountDownLatch loaderEntered = new CountDownLatch(1);
+        CountDownLatch continueLoad = new CountDownLatch(1);
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
+            loaderEntered.countDown();
+            awaitForTest(continueLoad);
+            return new ByteArrayInputStream(rom);
+        });
+        RecordingHistory history = new RecordingHistory();
+        RecordingGateway gateway = new RecordingGateway(false);
+        LaunchCoordinator coordinator = new LaunchCoordinator(catalog, loader, gateway, history);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<LaunchResult> launch = executor.submit(() -> coordinator.launch("variant-a"));
+            assertTrue(loaderEntered.await(5, TimeUnit.SECONDS));
+            replaceCatalog(
+                    catalog,
+                    "game-a",
+                    "variant-a",
+                    identity,
+                    "asset:///roms/moved.nes");
+            continueLoad.countDown();
+
+            LaunchResult result = launch.get(5, TimeUnit.SECONDS);
+
+            assertEquals(LaunchResult.Code.CATALOG_CHANGED, result.code());
+            assertEquals(0, gateway.calls);
+            assertTrue(history.requests.isEmpty());
+        } finally {
+            continueLoad.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void removedVariantRejectsStaleLaunchBeforeSessionCommit() throws Exception {
+        byte[] rom = bytes("same-rom");
+        GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.PLAYABLE);
+        CountDownLatch loaderEntered = new CountDownLatch(1);
+        CountDownLatch continueLoad = new CountDownLatch(1);
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
+            loaderEntered.countDown();
+            awaitForTest(continueLoad);
+            return new ByteArrayInputStream(rom);
+        });
+        RecordingHistory history = new RecordingHistory();
+        RecordingGateway gateway = new RecordingGateway(false);
+        LaunchCoordinator coordinator = new LaunchCoordinator(catalog, loader, gateway, history);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<LaunchResult> launch = executor.submit(() -> coordinator.launch("variant-a"));
+            assertTrue(loaderEntered.await(5, TimeUnit.SECONDS));
+            catalog.applyScanResult(ScanResult.success(List.of(), List.of()));
+            continueLoad.countDown();
+
+            LaunchResult result = launch.get(5, TimeUnit.SECONDS);
+
+            assertEquals(LaunchResult.Code.CATALOG_CHANGED, result.code());
+            assertEquals(0, gateway.calls);
+            assertTrue(history.requests.isEmpty());
+        } finally {
+            continueLoad.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void revokedPermissionAndIncompatibleReplacementRejectStaleLaunch()
+            throws Exception {
+        assertStaleMetadataRejected(
+                CompatibilityState.PLAYABLE,
+                RomSource.PermissionState.NEEDS_REAUTHORIZE);
+        assertStaleMetadataRejected(
+                CompatibilityState.UNSUPPORTED,
+                RomSource.PermissionState.GRANTED);
+    }
+
+    @Test
+    public void initiallyUnavailableSourceDoesNotOpenOrLaunch() {
+        byte[] rom = bytes("same-rom");
+        GameCatalog catalog = catalogForSaf(
+                identity(rom),
+                CompatibilityState.PLAYABLE,
+                RomSource.PermissionState.NEEDS_REAUTHORIZE);
+        AtomicInteger opens = new AtomicInteger();
+        RecordingGateway gateway = new RecordingGateway(false);
+        RecordingHistory history = new RecordingHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog,
+                new ExactRomLoader((sourceId, sourceUri) -> {
+                    opens.incrementAndGet();
+                    return new ByteArrayInputStream(rom);
+                }),
+                gateway,
+                history);
+
+        LaunchResult result = coordinator.launch("variant-a");
+
+        assertEquals(LaunchResult.Code.NOT_PLAYABLE, result.code());
+        assertEquals(0, opens.get());
+        assertEquals(0, gateway.calls);
+        assertTrue(history.requests.isEmpty());
+    }
+
+    @Test
+    public void changedZipOffsetRejectsLoadedVariantAsStale() throws Exception {
+        byte[] rom = bytes("zip-rom");
+        byte[] archive = zip("game.nes", rom);
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(bytes("game.nes"), 0);
+        GameCatalog catalog = zipCatalog(identity(rom), locator);
+        CountDownLatch loaderEntered = new CountDownLatch(1);
+        CountDownLatch continueLoad = new CountDownLatch(1);
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
+            loaderEntered.countDown();
+            awaitForTest(continueLoad);
+            return new ByteArrayInputStream(archive);
+        });
+        RecordingGateway gateway = new RecordingGateway(false);
+        RecordingHistory history = new RecordingHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(catalog, loader, gateway, history);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<LaunchResult> launch = executor.submit(() -> coordinator.launch("variant-a"));
+            assertTrue(loaderEntered.await(5, TimeUnit.SECONDS));
+            replaceZipCatalog(
+                    catalog,
+                    "game-a",
+                    ZipEntryIdentity.fromRawName(bytes("game.nes"), 1),
+                    identity(rom));
+            continueLoad.countDown();
+
+            assertEquals(
+                    LaunchResult.Code.CATALOG_CHANGED,
+                    launch.get(5, TimeUnit.SECONDS).code());
+            assertEquals(0, gateway.calls);
+            assertTrue(history.requests.isEmpty());
+        } finally {
+            continueLoad.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void coordinatorPropagatesExactZipLocatorAndEncoding() throws Exception {
+        byte[] rom = bytes("zip-rom");
+        byte[] archive = zip("game.nes", rom);
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(bytes("game.nes"), 0);
+        GameCatalog catalog = zipCatalog(identity(rom), locator);
+        RecordingGateway gateway = new RecordingGateway(false);
+        RecordingHistory history = new RecordingHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog,
+                new ExactRomLoader(
+                        (sourceId, sourceUri) -> new ByteArrayInputStream(archive)),
+                gateway,
+                history);
+
+        LaunchResult result = coordinator.launch("variant-a");
+
+        assertTrue(result.isSuccess());
+        LaunchRequest request = result.request().orElseThrow();
+        assertEquals(locator, request.zipEntryIdentity());
+        assertEquals(ZipNameEncoding.UTF8_EFS, request.zipNameEncoding());
+        assertEquals(request, gateway.request);
+        assertEquals(List.of(request), history.requests);
     }
 
     @Test
@@ -316,6 +522,129 @@ public final class LaunchCoordinatorTest {
     }
 
     @Test
+    public void gatewayRunsWithoutHoldingPublicCatalogMonitor() throws Exception {
+        byte[] rom = bytes("valid-rom");
+        GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.PLAYABLE);
+        CountDownLatch catalogWriteCompleted = new CountDownLatch(1);
+        boolean[] favoriteRecorded = {false};
+        RomSessionGateway gateway = (request, bytes) -> {
+            Thread catalogWriter = new Thread(() -> {
+                favoriteRecorded[0] = catalog.setFavorite("game-a", true);
+                catalogWriteCompleted.countDown();
+            });
+            catalogWriter.start();
+            try {
+                if (!catalogWriteCompleted.await(1, TimeUnit.SECONDS)) {
+                    throw new RomSessionGateway.SessionException(
+                            "gateway observed the public catalog monitor held");
+                }
+                catalogWriter.join(1000);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new RomSessionGateway.SessionException("interrupted", interrupted);
+            }
+        };
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog,
+                new ExactRomLoader(
+                        (sourceId, sourceUri) -> new ByteArrayInputStream(rom)),
+                gateway,
+                new RecordingHistory());
+
+        LaunchResult result = coordinator.launch("variant-a");
+
+        assertTrue(result.isSuccess());
+        assertTrue(favoriteRecorded[0]);
+        assertTrue(catalog.canonicalEntries().get(0).favorite());
+    }
+
+    @Test
+    public void scanPublicationWaitsForGatewayAndCatalogCommit() throws Exception {
+        byte[] rom = bytes("valid-rom");
+        RomIdentity identity = identity(rom);
+        GameCatalog catalog = catalogFor(identity, CompatibilityState.PLAYABLE);
+        BlockingOrderGateway gateway = new BlockingOrderGateway();
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog,
+                new ExactRomLoader(
+                        (sourceId, sourceUri) -> new ByteArrayInputStream(rom)),
+                gateway,
+                new RecordingHistory());
+        CountDownLatch scanStarted = new CountDownLatch(1);
+        CountDownLatch scanFinished = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<LaunchResult> launch = executor.submit(() -> coordinator.launch("variant-a"));
+            assertTrue(gateway.firstEntered.await(5, TimeUnit.SECONDS));
+            Future<?> scan = executor.submit(() -> {
+                scanStarted.countDown();
+                replaceCatalog(
+                        catalog,
+                        "game-after",
+                        "variant-a",
+                        identity,
+                        "asset:///roms/game.nes");
+                scanFinished.countDown();
+            });
+            assertTrue(scanStarted.await(5, TimeUnit.SECONDS));
+            assertFalse(scanFinished.await(200, TimeUnit.MILLISECONDS));
+
+            gateway.releaseFirst.countDown();
+
+            assertTrue(launch.get(5, TimeUnit.SECONDS).isSuccess());
+            scan.get(5, TimeUnit.SECONDS);
+            assertEquals("game-after",
+                    catalog.canonicalEntries().get(0).canonicalGame().id());
+            assertEquals(1, catalog.canonicalEntries().get(0).playCount());
+        } finally {
+            gateway.releaseFirst.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void slowHistoryDoesNotBlockCatalogReadFavoriteOrScan() throws Exception {
+        byte[] rom = bytes("valid-rom");
+        RomIdentity identity = identity(rom);
+        GameCatalog catalog = catalogFor(identity, CompatibilityState.PLAYABLE);
+        BlockingFirstHistory history = new BlockingFirstHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog,
+                new ExactRomLoader(
+                        (sourceId, sourceUri) -> new ByteArrayInputStream(rom)),
+                new RecordingGateway(false),
+                history);
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+        try {
+            Future<LaunchResult> launch = executor.submit(() -> coordinator.launch("variant-a"));
+            assertTrue(history.firstEntered.await(5, TimeUnit.SECONDS));
+
+            Future<Boolean> favorite = executor.submit(
+                    () -> catalog.setFavorite("game-a", true));
+            Future<Integer> search = executor.submit(() -> catalog.search("Game").size());
+            Future<Boolean> scan = executor.submit(() -> {
+                replaceCatalog(
+                        catalog,
+                        "game-a",
+                        "variant-a",
+                        identity,
+                        "asset:///roms/game.nes");
+                return true;
+            });
+
+            assertTrue(favorite.get(1, TimeUnit.SECONDS));
+            assertEquals(Integer.valueOf(1), search.get(1, TimeUnit.SECONDS));
+            assertTrue(scan.get(1, TimeUnit.SECONDS));
+            history.releaseFirst.countDown();
+            assertTrue(launch.get(5, TimeUnit.SECONDS).isSuccess());
+            assertEquals(1, catalog.canonicalEntries().get(0).playCount());
+        } finally {
+            history.releaseFirst.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     public void checkedHistoryFailureReturnsTypedPostCommitResult() {
         byte[] rom = bytes("valid-rom");
         GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.PLAYABLE);
@@ -382,6 +711,103 @@ public final class LaunchCoordinatorTest {
         return catalog;
     }
 
+    private static GameCatalog catalogForSaf(
+            RomIdentity identity,
+            CompatibilityState compatibility,
+            RomSource.PermissionState permissionState) {
+        GameCatalog catalog = new GameCatalog();
+        replaceCatalog(
+                catalog,
+                "game-a",
+                "variant-a",
+                identity,
+                "content://tree/roms/game.nes",
+                compatibility,
+                safSource(permissionState));
+        return catalog;
+    }
+
+    private static GameCatalog zipCatalog(
+            RomIdentity identity, ZipEntryIdentity locator) {
+        GameCatalog catalog = new GameCatalog();
+        replaceZipCatalog(catalog, "game-a", locator, identity);
+        return catalog;
+    }
+
+    private static void replaceZipCatalog(
+            GameCatalog catalog,
+            String canonicalGameId,
+            ZipEntryIdentity locator,
+            RomIdentity identity) {
+        RomSource source = new RomSource(
+                "tree",
+                RomSource.Type.SAF_TREE,
+                "content://tree/roms",
+                RomSource.PermissionState.GRANTED);
+        CanonicalGame canonical = new CanonicalGame(
+                canonicalGameId, identity, "Game", "游戏", List.of());
+        RomVariant variant = new RomVariant(
+                "variant-a",
+                canonical,
+                "game.nes",
+                RomFormat.INES,
+                CompatibilityState.PLAYABLE,
+                locator,
+                ZipNameEncoding.UTF8_EFS);
+        PhysicalPackage physicalPackage = new PhysicalPackage(
+                "package-variant-a",
+                source,
+                "content://tree/roms/games.zip",
+                "games.zip",
+                PackageFormat.ZIP,
+                List.of(variant));
+        catalog.applyScanResult(ScanResult.success(List.of(physicalPackage), List.of()));
+    }
+
+    private static void assertStaleMetadataRejected(
+            CompatibilityState replacementCompatibility,
+            RomSource.PermissionState replacementPermission) throws Exception {
+        byte[] rom = bytes("same-rom");
+        RomIdentity identity = identity(rom);
+        GameCatalog catalog = catalogForSaf(
+                identity,
+                CompatibilityState.PLAYABLE,
+                RomSource.PermissionState.GRANTED);
+        CountDownLatch loaderEntered = new CountDownLatch(1);
+        CountDownLatch continueLoad = new CountDownLatch(1);
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
+            loaderEntered.countDown();
+            awaitForTest(continueLoad);
+            return new ByteArrayInputStream(rom);
+        });
+        RecordingGateway gateway = new RecordingGateway(false);
+        RecordingHistory history = new RecordingHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(catalog, loader, gateway, history);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<LaunchResult> launch = executor.submit(() -> coordinator.launch("variant-a"));
+            assertTrue(loaderEntered.await(5, TimeUnit.SECONDS));
+            replaceCatalog(
+                    catalog,
+                    "game-a",
+                    "variant-a",
+                    identity,
+                    "content://tree/roms/game.nes",
+                    replacementCompatibility,
+                    safSource(replacementPermission));
+            continueLoad.countDown();
+
+            LaunchResult result = launch.get(5, TimeUnit.SECONDS);
+
+            assertEquals(LaunchResult.Code.CATALOG_CHANGED, result.code());
+            assertEquals(0, gateway.calls);
+            assertTrue(history.requests.isEmpty());
+        } finally {
+            continueLoad.countDown();
+            executor.shutdownNow();
+        }
+    }
+
     private static void replaceCatalog(
             GameCatalog catalog,
             String canonicalGameId,
@@ -404,9 +830,28 @@ public final class LaunchCoordinatorTest {
             RomIdentity identity,
             String sourceUri,
             CompatibilityState compatibility) {
-        RomSource source = new RomSource(
-                "builtin", RomSource.Type.BUILTIN, "asset:///roms",
-                RomSource.PermissionState.NOT_REQUIRED);
+        replaceCatalog(
+                catalog,
+                canonicalGameId,
+                variantId,
+                identity,
+                sourceUri,
+                compatibility,
+                new RomSource(
+                        "builtin",
+                        RomSource.Type.BUILTIN,
+                        "asset:///roms",
+                        RomSource.PermissionState.NOT_REQUIRED));
+    }
+
+    private static void replaceCatalog(
+            GameCatalog catalog,
+            String canonicalGameId,
+            String variantId,
+            RomIdentity identity,
+            String sourceUri,
+            CompatibilityState compatibility,
+            RomSource source) {
         CanonicalGame canonical = new CanonicalGame(
                 canonicalGameId, identity, "Game", "游戏", List.of("Alias"));
         RomVariant variant = new RomVariant(
@@ -415,6 +860,14 @@ public final class LaunchCoordinatorTest {
                 "package-" + variantId, source, sourceUri, variantId + ".nes",
                 PackageFormat.RAW_NES, List.of(variant));
         catalog.applyScanResult(ScanResult.success(List.of(physicalPackage), List.of()));
+    }
+
+    private static RomSource safSource(RomSource.PermissionState permissionState) {
+        return new RomSource(
+                "tree",
+                RomSource.Type.SAF_TREE,
+                "content://tree/roms",
+                permissionState);
     }
 
     private static GameCatalog catalogWithTwoGames(byte[] romA, byte[] romB) {
@@ -478,6 +931,16 @@ public final class LaunchCoordinatorTest {
 
     private static byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] zip(String entryName, byte[] payload) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            zip.putNextEntry(new ZipEntry(entryName));
+            zip.write(payload);
+            zip.closeEntry();
+        }
+        return bytes.toByteArray();
     }
 
     private static RomIdentity identity(byte[] bytes) {

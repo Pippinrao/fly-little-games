@@ -2,16 +2,21 @@ package com.flynes.emu.launch;
 
 import com.flynes.emu.RomScanner;
 import com.flynes.emu.catalog.PackageFormat;
+import com.flynes.emu.catalog.ZipEntryIdentity;
 import com.flynes.emu.data.RomIdentity;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -54,7 +59,7 @@ public final class ExactRomLoader {
             if (request.packageFormat() == PackageFormat.RAW_NES) {
                 payload = readPayload(source);
             } else {
-                payload = readExactZipEntry(source, request.entryPath());
+                payload = readExactZipEntry(source, request);
             }
         } catch (LoadException failure) {
             throw failure;
@@ -76,10 +81,15 @@ public final class ExactRomLoader {
         return payload;
     }
 
-    private static byte[] readExactZipEntry(InputStream source, String entryPath)
+    private static byte[] readExactZipEntry(InputStream source, LaunchRequest request)
             throws IOException, LoadException {
         byte[] archive = readZipSource(source);
         ZipStructure structure = validateZipStructure(archive);
+        String entryPath = request.entryPath();
+        ZipEntryIdentity requestedIdentity = request.zipEntryIdentity();
+        byte[] requestedRawName = requestedIdentity == null
+                ? entryPath.getBytes(StandardCharsets.UTF_8)
+                : requestedIdentity.rawNameBytes();
 
         int entryCount = 0;
         int matchingEntries = 0;
@@ -87,7 +97,8 @@ public final class ExactRomLoader {
         byte[] payload = null;
         long totalInflatedBytes = 0;
         byte[] buffer = new byte[8192];
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(archive))) {
+        try (ZipInputStream zip = new ZipInputStream(
+                new ByteArrayInputStream(archive), StandardCharsets.ISO_8859_1)) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
                 if (entryCount >= structure.entries().size()) {
@@ -100,7 +111,12 @@ public final class ExactRomLoader {
                 }
                 validateStreamHeader(entry, centralEntry);
 
-                boolean matches = entryPath.equals(entry.getName());
+                boolean rawNameMatches = Arrays.equals(
+                        requestedRawName, centralEntry.rawName());
+                boolean offsetMatches = requestedIdentity == null
+                        || requestedIdentity.localHeaderOffset()
+                        == centralEntry.localHeaderOffset();
+                boolean matches = rawNameMatches && offsetMatches;
                 ByteArrayOutputStream selectedPayload = null;
                 long selectedPayloadBytes = 0;
                 long entryInflatedBytes = 0;
@@ -251,14 +267,16 @@ public final class ExactRomLoader {
             if (centralEntryEnd > centralDirectoryEnd) {
                 throw invalidZip("ZIP central-directory entry is truncated");
             }
+            byte[] rawName = Arrays.copyOfRange(
+                    archive, cursor + 46, cursor + 46 + nameLength);
+            int flags = unsignedShort(archive, cursor + 8);
+            if ((flags & 0x0800) != 0) {
+                decodeStrict(rawName, StandardCharsets.UTF_8);
+            }
             CentralEntryMetadata entry = new CentralEntryMetadata(
-                    new String(
-                            archive,
-                            cursor + 46,
-                            nameLength,
-                            StandardCharsets.UTF_8),
+                    rawName,
                     (int) localHeaderOffset,
-                    unsignedShort(archive, cursor + 8),
+                    flags,
                     unsignedShort(archive, cursor + 10),
                     unsignedInt(archive, cursor + 16),
                     unsignedInt(archive, cursor + 20),
@@ -349,11 +367,22 @@ public final class ExactRomLoader {
 
     private static void validateStreamHeader(
             ZipEntry streamedEntry, CentralEntryMetadata centralEntry) throws LoadException {
-        if (!centralEntry.name().equals(streamedEntry.getName())) {
-            throw invalidZip("ZIP streamed and central entry names differ");
-        }
         if (streamedEntry.getMethod() != centralEntry.method()) {
             throw invalidZip("ZIP streamed and central compression methods differ");
+        }
+    }
+
+    private static String decodeStrict(byte[] bytes, java.nio.charset.Charset charset)
+            throws LoadException {
+        try {
+            return charset.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString();
+        } catch (CharacterCodingException failure) {
+            throw new LoadException(
+                    ErrorCode.INVALID_ZIP, "ZIP entry name has invalid encoding", failure);
         }
     }
 
@@ -483,6 +512,13 @@ public final class ExactRomLoader {
     }
 
     private static void rejectExecutable(LaunchRequest request) throws LoadException {
+        ZipEntryIdentity exactZipEntry = request.zipEntryIdentity();
+        if (exactZipEntry != null
+                && endsWithAsciiIgnoreCase(exactZipEntry.rawNameBytes(), ".exe")) {
+            throw new LoadException(
+                    ErrorCode.EXECUTABLE_REJECTED,
+                    "executable ZIP entries cannot be loaded as ROMs");
+        }
         String exactName = request.packageFormat() == PackageFormat.ZIP
                 ? request.entryPath()
                 : request.sourceUri();
@@ -499,6 +535,24 @@ public final class ExactRomLoader {
                     ErrorCode.EXECUTABLE_REJECTED,
                     "executable files cannot be loaded as ROMs");
         }
+    }
+
+    private static boolean endsWithAsciiIgnoreCase(byte[] value, String suffix) {
+        if (value.length < suffix.length()) {
+            return false;
+        }
+        int start = value.length - suffix.length();
+        for (int i = 0; i < suffix.length(); i++) {
+            int actual = value[start + i] & 0xFF;
+            int expected = suffix.charAt(i);
+            if (actual >= 'A' && actual <= 'Z') {
+                actual += 'a' - 'A';
+            }
+            if (actual != expected) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean hasDosExecutableSignature(byte[] payload) {
@@ -522,7 +576,7 @@ public final class ExactRomLoader {
     }
 
     private record CentralEntryMetadata(
-            String name,
+            byte[] rawName,
             int localHeaderOffset,
             int flags,
             int method,

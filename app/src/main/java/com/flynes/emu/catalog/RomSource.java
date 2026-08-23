@@ -21,6 +21,10 @@ public record RomSource(
     public enum PermissionState {
         NOT_REQUIRED,
         GRANTED,
-        NEEDS_REAUTHORIZE
+        NEEDS_REAUTHORIZE;
+
+        public boolean isUsable() {
+            return this == NOT_REQUIRED || this == GRANTED;
+        }
     }
 }

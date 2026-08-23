@@ -2,12 +2,16 @@ package com.flynes.emu.launch;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import com.flynes.emu.RomScanner;
 import com.flynes.emu.catalog.CompatibilityState;
 import com.flynes.emu.catalog.PackageFormat;
 import com.flynes.emu.catalog.RomFormat;
+import com.flynes.emu.catalog.ZipEntryIdentity;
+import com.flynes.emu.catalog.ZipNameEncoding;
 import com.flynes.emu.data.RomIdentity;
 
 import org.junit.Test;
@@ -16,11 +20,14 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.zip.CRC32;
@@ -48,7 +55,153 @@ public final class ExactRomLoaderTest {
                 "romSha1", identity(bytes("second")).sha1());
         assertEquals(compatibilityFixture, encoded);
         assertEquals(request, LaunchRequest.fromMap(compatibilityFixture));
+        assertTrue(request.legacyZipPath());
         assertThrows(UnsupportedOperationException.class, () -> encoded.put("variantId", "other"));
+    }
+
+    @Test
+    public void launchRequestMapCodecRoundTripsRawZipEntryIdentity() throws Exception {
+        byte[] rom = bytes("legacy-rom");
+        byte[] rawName = "Grüße.nes".getBytes(Charset.forName("IBM437"));
+        byte[] archive = zipWithCharset(
+                Map.of("Grüße.nes", rom), Charset.forName("IBM437"));
+        ZipEntryIdentity entryIdentity = ZipEntryIdentity.fromRawName(
+                rawName,
+                localHeaderOffset(archive, rawName));
+        LaunchRequest request = zipRequest(
+                "content://games/legacy.zip",
+                "Grüße.nes",
+                rom,
+                entryIdentity,
+                ZipNameEncoding.CP437);
+
+        Map<String, String> encoded = request.toMap();
+
+        assertEquals(entryIdentity.rawNameHex(), encoded.get("zipRawNameHex"));
+        assertEquals(Integer.toString(entryIdentity.localHeaderOffset()),
+                encoded.get("zipLocalHeaderOffset"));
+        assertEquals("CP437", encoded.get("zipNameEncoding"));
+        assertEquals(request, LaunchRequest.fromMap(encoded));
+        assertFalse(request.legacyZipPath());
+    }
+
+    @Test
+    public void explicitCp437AndGb18030NamesLoadByRawIdentity() throws Exception {
+        assertLegacyNameLoads("Grüße.nes", Charset.forName("IBM437"),
+                ZipNameEncoding.CP437);
+        assertLegacyNameLoads("魂斗罗.nes", Charset.forName("GB18030"),
+                ZipNameEncoding.GB18030);
+    }
+
+    @Test
+    public void legacySidecarsBeforeAndAfterTargetDoNotAffectExactLoading() throws Exception {
+        byte[] rom = bytes("target-rom");
+        Charset gb18030 = Charset.forName("GB18030");
+        for (boolean targetFirst : new boolean[]{true, false}) {
+            LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+            if (targetFirst) {
+                entries.put("game.nes", rom);
+            }
+            entries.put("封面.txt", bytes("cover"));
+            if (!targetFirst) {
+                entries.put("game.nes", rom);
+            }
+            byte[] archive = markEntryEfs(
+                    zipWithCharset(entries, gb18030), bytes("game.nes"));
+
+            assertArrayEquals(rom, loaderFor(archive).load(zipRequest(
+                    "content://games/sidecars.zip", "game.nes", rom)));
+        }
+    }
+
+    @Test
+    public void unicodePathDisplayMetadataTravelsWithExactRawLocator() throws Exception {
+        byte[] rom = bytes("unicode-rom");
+        byte[] rawName = bytes("game.nes");
+        String displayName = "魂斗罗.nes";
+        ZipEntry entry = new ZipEntry("game.nes");
+        entry.setExtra(unicodePathExtra(rawName, displayName, false));
+        byte[] archive = zipWithEntries(
+                Map.of(entry, rom), Charset.forName("IBM437"));
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(
+                rawName,
+                localHeaderOffset(archive, rawName));
+
+        assertArrayEquals(rom, loaderFor(archive).load(zipRequest(
+                "content://games/unicode-path.zip",
+                displayName,
+                rom,
+                locator,
+                ZipNameEncoding.UNICODE_PATH)));
+    }
+
+    @Test
+    public void displayMetadataCannotChangeExactRawSelection() throws Exception {
+        byte[] rom = bytes("unicode-rom");
+        byte[] rawName = bytes("game.nes");
+        ZipEntry entry = new ZipEntry("game.nes");
+        entry.setExtra(unicodePathExtra(rawName, "魂斗罗.nes", true));
+        byte[] archive = zipWithEntries(
+                Map.of(entry, rom), Charset.forName("IBM437"));
+        int offset = localHeaderOffset(archive, rawName);
+
+        assertArrayEquals(rom, loaderFor(archive).load(zipRequest(
+                "content://games/unicode-path.zip",
+                "不可信的展示名.nes",
+                rom,
+                ZipEntryIdentity.fromRawName(rawName, offset),
+                ZipNameEncoding.UNICODE_PATH)));
+        assertArrayEquals(rom, loaderFor(archive).load(zipRequest(
+                "content://games/unicode-path.zip",
+                "wrong-display.nes",
+                rom,
+                ZipEntryIdentity.fromRawName(rawName, offset),
+                ZipNameEncoding.GB18030)));
+    }
+
+    @Test
+    public void wrongRawNameOrOffsetCannotSelectAnotherEntry() throws Exception {
+        byte[] rom = bytes("rom");
+        byte[] rawName = bytes("game.nes");
+        byte[] archive = zip(Map.of("game.nes", rom));
+        int offset = localHeaderOffset(archive, rawName);
+
+        ExactRomLoader.LoadException wrongName = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(archive).load(zipRequest(
+                        "content://games/exact.zip",
+                        "game.nes",
+                        rom,
+                        ZipEntryIdentity.fromRawName(bytes("other.ne"), offset),
+                        ZipNameEncoding.UTF8_EFS)));
+        ExactRomLoader.LoadException wrongOffset = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(archive).load(zipRequest(
+                        "content://games/exact.zip",
+                        "game.nes",
+                        rom,
+                        ZipEntryIdentity.fromRawName(rawName, offset + 1),
+                        ZipNameEncoding.UTF8_EFS)));
+
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_ENTRY_MISSING, wrongName.code());
+        assertEquals(ExactRomLoader.ErrorCode.ZIP_ENTRY_MISSING, wrongOffset.code());
+    }
+
+    @Test
+    public void caseCollidingNamesRemainDistinctRawEntries() throws Exception {
+        byte[] lower = bytes("lower");
+        byte[] upper = bytes("upper");
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("game.nes", lower);
+        entries.put("GAME.nes", upper);
+        byte[] archive = zip(entries);
+        byte[] rawName = bytes("GAME.nes");
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(
+                rawName,
+                localHeaderOffset(archive, rawName));
+
+        assertArrayEquals(upper, loaderFor(archive).load(zipRequest(
+                "content://games/case.zip", "GAME.nes", upper, locator)));
     }
 
     @Test
@@ -65,6 +218,10 @@ public final class ExactRomLoaderTest {
                 "game", "variant", "source", "content://games.zip", " ",
                 PackageFormat.ZIP, RomFormat.INES, CompatibilityState.PLAYABLE,
                 identity(bytes("rom"))));
+        assertThrows(IllegalArgumentException.class, () -> new LaunchRequest(
+                "game", "variant", "source", "content://games.zip", "game.nes",
+                PackageFormat.ZIP, RomFormat.INES, CompatibilityState.PLAYABLE,
+                identity(bytes("rom")), null, null, false));
     }
 
     @Test
@@ -129,6 +286,25 @@ public final class ExactRomLoaderTest {
                         "content://games/collection.zip", "rom.nes", bytes("first"))));
 
         assertEquals(ExactRomLoader.ErrorCode.ZIP_ENTRY_DUPLICATE, failure.code());
+    }
+
+    @Test
+    public void rawLocatorDisambiguatesDuplicateNamesByLocalHeaderOffset() throws Exception {
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("one.nes", bytes("first"));
+        entries.put("two.nes", bytes("second"));
+        byte[] archive = replaceAscii(zip(entries), "one.nes", "rom.nes");
+        archive = replaceAscii(archive, "two.nes", "rom.nes");
+        List<Integer> offsets = localHeaderOffsets(archive, bytes("rom.nes"));
+        ZipEntryIdentity second = ZipEntryIdentity.fromRawName(
+                bytes("rom.nes"), offsets.get(1));
+
+        assertArrayEquals(bytes("second"), loaderFor(archive).load(zipRequest(
+                "content://games/duplicates.zip",
+                "rom.nes",
+                bytes("second"),
+                second,
+                ZipNameEncoding.UTF8_EFS)));
     }
 
     @Test
@@ -529,6 +705,26 @@ public final class ExactRomLoaderTest {
     }
 
     @Test
+    public void rawExeNameCannotBeHiddenByDisplayMetadata() throws Exception {
+        byte[] payload = bytes("not-an-mz-header");
+        byte[] archive = zip(Map.of("evil.exe", payload));
+        byte[] rawName = bytes("evil.exe");
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(
+                rawName, localHeaderOffset(archive, rawName));
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(archive).load(zipRequest(
+                        "content://games/archive.zip",
+                        "friendly.nes",
+                        payload,
+                        locator,
+                        ZipNameEncoding.UTF8_EFS)));
+
+        assertEquals(ExactRomLoader.ErrorCode.EXECUTABLE_REJECTED, failure.code());
+    }
+
+    @Test
     public void executablePayloadIsRejectedWhenRawContentUriIsOpaque() {
         byte[] executable = bytes("MZ-not-a-rom");
         ExactRomLoader loader = loaderFor(executable);
@@ -557,6 +753,26 @@ public final class ExactRomLoaderTest {
                 PackageFormat.ZIP, RomFormat.INES, CompatibilityState.PLAYABLE, identity(bytes));
     }
 
+    private static LaunchRequest zipRequest(
+            String uri,
+            String entry,
+            byte[] bytes,
+            ZipEntryIdentity entryIdentity) {
+        return zipRequest(uri, entry, bytes, entryIdentity, ZipNameEncoding.UTF8_EFS);
+    }
+
+    private static LaunchRequest zipRequest(
+            String uri,
+            String entry,
+            byte[] bytes,
+            ZipEntryIdentity entryIdentity,
+            ZipNameEncoding nameEncoding) {
+        return new LaunchRequest(
+                "game", "variant", "source", uri, entry,
+                PackageFormat.ZIP, RomFormat.INES, CompatibilityState.PLAYABLE,
+                identity(bytes), entryIdentity, nameEncoding);
+    }
+
     private static byte[] zip(Map<String, byte[]> entries) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
@@ -567,6 +783,102 @@ public final class ExactRomLoaderTest {
             }
         }
         return bytes.toByteArray();
+    }
+
+    private static byte[] zipWithCharset(
+            Map<String, byte[]> entries, Charset charset) throws IOException {
+        LinkedHashMap<ZipEntry, byte[]> zipEntries = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+            zipEntries.put(new ZipEntry(entry.getKey()), entry.getValue());
+        }
+        return zipWithEntries(zipEntries, charset);
+    }
+
+    private static byte[] zipWithEntries(
+            Map<ZipEntry, byte[]> entries, Charset charset) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes, charset)) {
+            for (Map.Entry<ZipEntry, byte[]> entry : entries.entrySet()) {
+                zip.putNextEntry(entry.getKey());
+                zip.write(entry.getValue());
+                zip.closeEntry();
+            }
+        }
+        return bytes.toByteArray();
+    }
+
+    private static void assertLegacyNameLoads(
+            String displayName,
+            Charset charset,
+            ZipNameEncoding encoding) throws Exception {
+        byte[] rom = bytes("legacy-rom-" + encoding);
+        byte[] rawName = displayName.getBytes(charset);
+        byte[] archive = zipWithCharset(Map.of(displayName, rom), charset);
+        ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(
+                rawName, localHeaderOffset(archive, rawName));
+
+        assertArrayEquals(rom, loaderFor(archive).load(zipRequest(
+                "content://games/legacy.zip", displayName, rom, locator, encoding)));
+    }
+
+    private static byte[] unicodePathExtra(
+            byte[] rawName, String unicodeName, boolean corruptCrc) {
+        byte[] unicodeBytes = unicodeName.getBytes(StandardCharsets.UTF_8);
+        CRC32 crc = new CRC32();
+        crc.update(rawName);
+        long value = crc.getValue();
+        if (corruptCrc) {
+            value ^= 1L;
+        }
+        byte[] extra = new byte[9 + unicodeBytes.length];
+        extra[0] = 0x75;
+        extra[1] = 0x70;
+        extra[2] = (byte) (5 + unicodeBytes.length);
+        extra[3] = 0;
+        extra[4] = 1;
+        writeUnsignedInt(extra, 5, value);
+        System.arraycopy(unicodeBytes, 0, extra, 9, unicodeBytes.length);
+        return extra;
+    }
+
+    private static int localHeaderOffset(byte[] archive, byte[] rawName) {
+        return localHeaderOffsets(archive, rawName).get(0);
+    }
+
+    private static List<Integer> localHeaderOffsets(byte[] archive, byte[] rawName) {
+        ArrayList<Integer> offsets = new ArrayList<>();
+        int searchFrom = 0;
+        while (true) {
+            int centralHeader = findCentralHeader(archive, rawName, searchFrom);
+            if (centralHeader < 0) {
+                break;
+            }
+            offsets.add((archive[centralHeader + 42] & 0xFF)
+                    | ((archive[centralHeader + 43] & 0xFF) << 8)
+                    | ((archive[centralHeader + 44] & 0xFF) << 16)
+                    | ((archive[centralHeader + 45] & 0xFF) << 24));
+            searchFrom = centralHeader + 46 + rawName.length;
+        }
+        if (offsets.isEmpty()) {
+            throw new AssertionError("central entry was not found");
+        }
+        return offsets;
+    }
+
+    private static void writeUnsignedInt(byte[] bytes, int offset, long value) {
+        bytes[offset] = (byte) value;
+        bytes[offset + 1] = (byte) (value >>> 8);
+        bytes[offset + 2] = (byte) (value >>> 16);
+        bytes[offset + 3] = (byte) (value >>> 24);
+    }
+
+    private static byte[] markEntryEfs(byte[] archive, byte[] rawName) {
+        byte[] result = archive.clone();
+        int centralHeader = findCentralHeader(result, rawName);
+        int localHeader = localHeaderOffset(result, rawName);
+        result[centralHeader + 9] |= 0x08;
+        result[localHeader + 7] |= 0x08;
+        return result;
     }
 
     private static byte[] zipWithEmptyEntries(
@@ -638,8 +950,20 @@ public final class ExactRomLoaderTest {
     }
 
     private static int findCentralHeader(byte[] archive, String entryName) {
-        byte[] expectedName = entryName.getBytes(StandardCharsets.UTF_8);
-        for (int offset = 0; offset <= archive.length - 46; offset++) {
+        return findCentralHeader(archive, entryName.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static int findCentralHeader(byte[] archive, byte[] expectedName) {
+        int result = findCentralHeader(archive, expectedName, 0);
+        if (result >= 0) {
+            return result;
+        }
+        throw new AssertionError("central entry was not found");
+    }
+
+    private static int findCentralHeader(
+            byte[] archive, byte[] expectedName, int searchFrom) {
+        for (int offset = searchFrom; offset <= archive.length - 46; offset++) {
             if ((archive[offset] & 0xFF) != 0x50
                     || (archive[offset + 1] & 0xFF) != 0x4B
                     || (archive[offset + 2] & 0xFF) != 0x01
@@ -662,7 +986,7 @@ public final class ExactRomLoaderTest {
                 return offset;
             }
         }
-        throw new AssertionError("central entry was not found: " + entryName);
+        return -1;
     }
 
     private static int indexOfSignature(byte[] source, int... signature) {

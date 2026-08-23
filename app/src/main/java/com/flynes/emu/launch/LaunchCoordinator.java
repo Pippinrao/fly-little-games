@@ -32,23 +32,17 @@ public final class LaunchCoordinator {
         }
         GameCatalog.LaunchResolution resolution = resolved.get();
         GameVariant variant = resolution.variant();
-        if (!variant.compatibility().isPlayable()) {
+        if (!variant.compatibility().isPlayable()
+                || !variant.sourcePermissionState().isUsable()) {
             return LaunchResult.failure(
-                    LaunchResult.Code.NOT_PLAYABLE, null, "variant is not explicitly playable");
+                    LaunchResult.Code.NOT_PLAYABLE,
+                    null,
+                    "variant is not playable from an authorized source");
         }
 
         LaunchRequest request;
         try {
-            request = new LaunchRequest(
-                    variant.canonicalGameId(),
-                    variant.variantId(),
-                    variant.sourceId(),
-                    variant.sourceUri(),
-                    variant.entryPath(),
-                    variant.packageFormat(),
-                    variant.romFormat(),
-                    variant.compatibility(),
-                    variant.identity());
+            request = requestFor(variant);
         } catch (IllegalArgumentException failure) {
             return LaunchResult.failure(
                     LaunchResult.Code.INVALID_REQUEST, null, failure.getMessage());
@@ -61,33 +55,93 @@ public final class LaunchCoordinator {
             return LaunchResult.failure(map(failure.code()), request, failure.getMessage());
         }
 
-        synchronized (catalog) {
-            boolean catalogRecorded;
-            try {
-                catalogRecorded = catalog.commitSuccessfulLaunch(
-                        resolution,
-                        () -> sessionGateway.stageAndReplace(request, payload));
-            } catch (RomSessionGateway.SessionException failure) {
-                return LaunchResult.failure(
-                        LaunchResult.Code.SESSION_FAILED, request, failure.getMessage());
-            }
-            if (!catalogRecorded) {
-                return LaunchResult.failure(
-                        LaunchResult.Code.CATALOG_CHANGED,
-                        request,
-                        "resolved ROM identity is no longer present in the catalog");
-            }
-            try {
-                launchHistory.recordSuccessfulLaunch(request);
-            } catch (LaunchHistory.HistoryException | RuntimeException failure) {
-                return LaunchResult.failure(
-                        LaunchResult.Code.HISTORY_FAILED,
-                        request,
-                        failureMessage(failure, "launch history update failed"));
-            }
-            return LaunchResult.success(request);
-        }
+        LaunchRequest loadedRequest = request;
+        byte[] loadedPayload = payload;
+        return catalog.serializeLaunch(() -> commitLaunch(
+                resolution, loadedRequest, loadedPayload));
     }
+
+    private LaunchResult commitLaunch(
+            GameCatalog.LaunchResolution resolution,
+            LaunchRequest loadedRequest,
+            byte[] payload) {
+        LaunchRequest[] committedRequest = new LaunchRequest[1];
+        Optional<GameVariant> committedVariant;
+        try {
+            committedVariant = catalog.commitSuccessfulLaunch(
+                    resolution,
+                    currentVariant -> {
+                        LaunchRequest currentRequest = requestFor(currentVariant);
+                        committedRequest[0] = currentRequest;
+                        try {
+                            sessionGateway.stageAndReplace(currentRequest, payload);
+                        } catch (RomSessionGateway.SessionException failure) {
+                            throw failure;
+                        } catch (RuntimeException failure) {
+                            throw new RomSessionGateway.SessionException(
+                                    failureMessage(failure, "unexpected ROM session failure"),
+                                    failure);
+                        }
+                    });
+        } catch (RomSessionGateway.SessionException failure) {
+            LaunchRequest failedRequest = committedRequest[0] == null
+                    ? loadedRequest
+                    : committedRequest[0];
+            return LaunchResult.failure(
+                    LaunchResult.Code.SESSION_FAILED,
+                    failedRequest,
+                    failureMessage(failure, "ROM session update failed"));
+        } catch (IllegalArgumentException failure) {
+            return LaunchResult.failure(
+                    LaunchResult.Code.INVALID_REQUEST,
+                    loadedRequest,
+                    failureMessage(failure, "current launch request is invalid"));
+        }
+        if (committedVariant.isEmpty()) {
+            return LaunchResult.failure(
+                    LaunchResult.Code.CATALOG_CHANGED,
+                    loadedRequest,
+                    "exact loaded variant is no longer launchable in the catalog");
+        }
+
+        LaunchRequest currentRequest = committedRequest[0];
+        if (currentRequest == null) {
+            return LaunchResult.failure(
+                    LaunchResult.Code.INVALID_REQUEST,
+                    loadedRequest,
+                    "catalog launch commit did not produce a request");
+        }
+        try {
+            launchHistory.recordSuccessfulLaunch(currentRequest);
+        } catch (LaunchHistory.HistoryException | RuntimeException failure) {
+            return LaunchResult.failure(
+                    LaunchResult.Code.HISTORY_FAILED,
+                    currentRequest,
+                    failureMessage(failure, "launch history update failed"));
+        }
+        return LaunchResult.success(currentRequest);
+    }
+
+    private static LaunchRequest requestFor(GameVariant variant) {
+        return new LaunchRequest(
+                variant.canonicalGameId(),
+                variant.variantId(),
+                variant.sourceId(),
+                variant.sourceUri(),
+                variant.entryPath(),
+                variant.packageFormat(),
+                variant.romFormat(),
+                variant.compatibility(),
+                variant.identity(),
+                variant.zipEntryIdentity(),
+                variant.zipNameEncoding());
+    }
+
+    /*
+     * The catalog commit above deliberately ends before history I/O. The catalog-owned launch
+     * sequence still orders histories across coordinators, while scans/favorites/search remain
+     * independent of slow history storage.
+     */
 
     private static String failureMessage(Throwable failure, String fallback) {
         String message = failure.getMessage();

@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Supplier;
 
 public final class GameCatalog {
     private static final Comparator<CanonicalGame> CANONICAL_ORDER = Comparator
@@ -22,9 +23,17 @@ public final class GameCatalog {
             .thenComparing(CanonicalGame::zhHansTitle);
 
     private volatile Snapshot snapshot = Snapshot.empty();
+    private final Object scanCommitGate = new Object();
+    private final Object launchSequenceGate = new Object();
 
-    public synchronized boolean applyScanResult(ScanResult result) {
+    public boolean applyScanResult(ScanResult result) {
         DomainValidation.requireNonNull(result, "scan result");
+        synchronized (scanCommitGate) {
+            return applyScanResultUnderCommitGate(result);
+        }
+    }
+
+    private synchronized boolean applyScanResultUnderCommitGate(ScanResult result) {
         if (!result.replaceExistingCatalog()) {
             return false;
         }
@@ -177,6 +186,10 @@ public final class GameCatalog {
     }
 
     public synchronized boolean recordSuccessfulLaunch(String canonicalGameId) {
+        return recordSuccessfulLaunchLocked(canonicalGameId);
+    }
+
+    private boolean recordSuccessfulLaunchLocked(String canonicalGameId) {
         GameCatalogEntry current = snapshot.entriesById.get(canonicalGameId);
         if (current == null) {
             return false;
@@ -187,33 +200,73 @@ public final class GameCatalog {
     }
 
     /**
-     * Revalidates a launch against the current catalog, stages its session, and records the
-     * catalog launch as one catalog-locked commit. A scan may rename IDs while preserving the
-     * same ROM identity; an absent identity rejects the commit before {@code sessionCommit} runs.
+     * Serializes an entire launch, including its post-commit history notification, across every
+     * coordinator sharing this catalog. Normal catalog reads, favorites, and scans do not acquire
+     * this gate.
      */
-    public synchronized <E extends Exception> boolean commitSuccessfulLaunch(
+    public <T> T serializeLaunch(Supplier<T> launch) {
+        DomainValidation.requireNonNull(launch, "launch");
+        synchronized (launchSequenceGate) {
+            return launch.get();
+        }
+    }
+
+    /**
+     * Revalidates the exact loaded variant, stages its session, and records its catalog state
+     * while scan publication is excluded. The gateway runs without holding this object's monitor.
+     * A canonical metadata rename may rebase the returned variant; payload location changes do
+     * not.
+     */
+    public <E extends Exception> Optional<GameVariant> commitSuccessfulLaunch(
             LaunchResolution resolution,
             SessionCommit<E> sessionCommit) throws E {
         DomainValidation.requireNonNull(resolution, "launch resolution");
         DomainValidation.requireNonNull(sessionCommit, "session commit");
-        Snapshot current = snapshot;
-        GameVariant resolvedVariant = resolution.variant();
-        GameCatalogEntry currentEntry = current.entriesByIdentity.get(resolvedVariant.identity());
-        if (currentEntry == null) {
-            return false;
-        }
-        if (current.version == resolution.catalogVersion()) {
-            GameVariant currentVariant = current.variantsById.get(resolvedVariant.variantId());
-            if (!resolvedVariant.equals(currentVariant)) {
-                return false;
+        synchronized (scanCommitGate) {
+            GameVariant currentVariant;
+            synchronized (this) {
+                currentVariant = rebaseExactLaunchVariant(resolution);
             }
-        }
+            if (currentVariant == null) {
+                return Optional.empty();
+            }
 
-        long nextSequence = Math.addExact(current.lastPlayedSequence, 1L);
-        GameCatalogEntry replacement = currentEntry.withSuccessfulLaunch(nextSequence);
-        sessionCommit.stage();
-        replaceEntry(replacement, nextSequence);
-        return true;
+            sessionCommit.stage(currentVariant);
+
+            synchronized (this) {
+                if (!recordSuccessfulLaunchLocked(currentVariant.canonicalGameId())) {
+                    throw new IllegalStateException(
+                            "validated catalog launch could not be recorded");
+                }
+            }
+            return Optional.of(currentVariant);
+        }
+    }
+
+    private GameVariant rebaseExactLaunchVariant(LaunchResolution resolution) {
+        GameVariant loaded = resolution.variant();
+        GameVariant current = snapshot.variantsById.get(loaded.variantId());
+        if (current == null
+                || !current.compatibility().isPlayable()
+                || !current.sourcePermissionState().isUsable()
+                || !sameExactPayloadVariant(loaded, current)) {
+            return null;
+        }
+        return current;
+    }
+
+    private static boolean sameExactPayloadVariant(GameVariant loaded, GameVariant current) {
+        return loaded.variantId().equals(current.variantId())
+                && loaded.packageId().equals(current.packageId())
+                && loaded.sourceId().equals(current.sourceId())
+                && loaded.sourceUri().equals(current.sourceUri())
+                && java.util.Objects.equals(loaded.entryPath(), current.entryPath())
+                && loaded.packageFormat() == current.packageFormat()
+                && loaded.romFormat() == current.romFormat()
+                && loaded.identity().equals(current.identity())
+                && java.util.Objects.equals(
+                        loaded.zipEntryIdentity(), current.zipEntryIdentity())
+                && loaded.zipNameEncoding() == current.zipNameEncoding();
     }
 
     private void replaceEntry(GameCatalogEntry replacement, long lastPlayedSequence) {
@@ -358,6 +411,6 @@ public final class GameCatalog {
 
     @FunctionalInterface
     public interface SessionCommit<E extends Exception> {
-        void stage() throws E;
+        void stage(GameVariant currentVariant) throws E;
     }
 }

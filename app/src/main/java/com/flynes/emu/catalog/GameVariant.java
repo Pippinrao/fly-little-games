@@ -13,7 +13,27 @@ public record GameVariant(
         PackageFormat packageFormat,
         RomFormat romFormat,
         CompatibilityState compatibility,
-        RomIdentity identity) {
+        RomIdentity identity,
+        ZipEntryIdentity zipEntryIdentity,
+        ZipNameEncoding zipNameEncoding,
+        RomSource.PermissionState sourcePermissionState) {
+
+    public GameVariant(
+            String canonicalGameId,
+            String variantId,
+            String packageId,
+            String sourceId,
+            String sourceUri,
+            String originalFilename,
+            String entryPath,
+            PackageFormat packageFormat,
+            RomFormat romFormat,
+            CompatibilityState compatibility,
+            RomIdentity identity) {
+        this(canonicalGameId, variantId, packageId, sourceId, sourceUri,
+                originalFilename, entryPath, packageFormat, romFormat, compatibility,
+                identity, null, null, RomSource.PermissionState.NOT_REQUIRED);
+    }
 
     public GameVariant {
         canonicalGameId = DomainValidation.requireNonBlank(
@@ -28,7 +48,10 @@ public record GameVariant(
         romFormat = DomainValidation.requireNonNull(romFormat, "ROM format");
         compatibility = DomainValidation.requireNonNull(compatibility, "compatibility");
         identity = DomainValidation.requireNonNull(identity, "ROM identity");
-        PhysicalPackage.validateEntryPath(packageFormat, entryPath);
+        sourcePermissionState = DomainValidation.requireNonNull(
+                sourcePermissionState, "source permission state");
+        PhysicalPackage.validateEntryLocation(
+                packageFormat, entryPath, zipEntryIdentity, zipNameEncoding);
     }
 
     static GameVariant from(
@@ -46,6 +69,9 @@ public record GameVariant(
                 physicalPackage.packageFormat(),
                 variant.romFormat(),
                 variant.compatibility(),
-                variant.canonicalGame().identity());
+                variant.canonicalGame().identity(),
+                variant.zipEntryIdentity(),
+                variant.zipNameEncoding(),
+                physicalPackage.source().permissionState());
     }
 }
