@@ -7,12 +7,16 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import com.flynes.emu.catalog.CanonicalGame;
+import com.flynes.emu.catalog.CompatibilityDecision;
+import com.flynes.emu.catalog.CompatibilityReason;
 import com.flynes.emu.catalog.CompatibilityState;
 import com.flynes.emu.catalog.GameCatalog;
 import com.flynes.emu.catalog.GameCatalogEntry;
 import com.flynes.emu.catalog.PackageFormat;
 import com.flynes.emu.catalog.PhysicalPackage;
 import com.flynes.emu.catalog.RomFormat;
+import com.flynes.emu.catalog.RomAnalysis;
+import com.flynes.emu.catalog.RomHashes;
 import com.flynes.emu.catalog.RomSource;
 import com.flynes.emu.catalog.RomVariant;
 import com.flynes.emu.catalog.ScanResult;
@@ -35,6 +39,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -42,8 +47,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.zip.CRC32;
 
 public final class LaunchCoordinatorTest {
+    private static final Map<String, RomHashes> HASHES_BY_SHA1 = new ConcurrentHashMap<>();
     @Test
     public void successfulGatewayCommitRecordsHistoryAndCatalogExactlyOnce() {
         byte[] rom = bytes("valid-rom");
@@ -188,7 +195,7 @@ public final class LaunchCoordinatorTest {
             assertEquals(0, gateway.calls);
             assertTrue(history.requests.isEmpty());
             GameCatalogEntry replacement = catalog.canonicalEntries().get(0);
-            assertEquals(identity(replacementRom), replacement.canonicalGame().identity());
+            assertEquals(identity(replacementRom), replacement.variants().get(0).identity());
             assertEquals(0, replacement.playCount());
         } finally {
             continueLoad.countDown();
@@ -355,7 +362,7 @@ public final class LaunchCoordinatorTest {
         byte[] rom = bytes("zip-rom");
         byte[] archive = zip("game.nes", rom);
         ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(bytes("game.nes"), 0);
-        GameCatalog catalog = zipCatalog(identity(rom), locator);
+        GameCatalog catalog = zipCatalog(identity(rom), locator, archive);
         CountDownLatch loaderEntered = new CountDownLatch(1);
         CountDownLatch continueLoad = new CountDownLatch(1);
         ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
@@ -374,7 +381,8 @@ public final class LaunchCoordinatorTest {
                     catalog,
                     "game-a",
                     ZipEntryIdentity.fromRawName(bytes("game.nes"), 1),
-                    identity(rom));
+                    identity(rom),
+                    archive);
             continueLoad.countDown();
 
             assertEquals(
@@ -393,7 +401,7 @@ public final class LaunchCoordinatorTest {
         byte[] rom = bytes("zip-rom");
         byte[] archive = zip("game.nes", rom);
         ZipEntryIdentity locator = ZipEntryIdentity.fromRawName(bytes("game.nes"), 0);
-        GameCatalog catalog = zipCatalog(identity(rom), locator);
+        GameCatalog catalog = zipCatalog(identity(rom), locator, archive);
         RecordingGateway gateway = new RecordingGateway(false);
         RecordingHistory history = new RecordingHistory();
         LaunchCoordinator coordinator = new LaunchCoordinator(
@@ -580,7 +588,7 @@ public final class LaunchCoordinatorTest {
                 scanStarted.countDown();
                 replaceCatalog(
                         catalog,
-                        "game-after",
+                        "game-a",
                         "variant-a",
                         identity,
                         "asset:///roms/game.nes");
@@ -593,7 +601,7 @@ public final class LaunchCoordinatorTest {
 
             assertTrue(launch.get(5, TimeUnit.SECONDS).isSuccess());
             scan.get(5, TimeUnit.SECONDS);
-            assertEquals("game-after",
+            assertEquals("game-a",
                     catalog.canonicalEntries().get(0).canonicalGame().id());
             assertEquals(1, catalog.canonicalEntries().get(0).playCount());
         } finally {
@@ -728,9 +736,9 @@ public final class LaunchCoordinatorTest {
     }
 
     private static GameCatalog zipCatalog(
-            RomIdentity identity, ZipEntryIdentity locator) {
+            RomIdentity identity, ZipEntryIdentity locator, byte[] physicalBytes) {
         GameCatalog catalog = new GameCatalog();
-        replaceZipCatalog(catalog, "game-a", locator, identity);
+        replaceZipCatalog(catalog, "game-a", locator, identity, physicalBytes);
         return catalog;
     }
 
@@ -738,20 +746,24 @@ public final class LaunchCoordinatorTest {
             GameCatalog catalog,
             String canonicalGameId,
             ZipEntryIdentity locator,
-            RomIdentity identity) {
+            RomIdentity identity,
+            byte[] physicalBytes) {
         RomSource source = new RomSource(
                 "tree",
                 RomSource.Type.SAF_TREE,
                 "content://tree/roms",
                 RomSource.PermissionState.GRANTED);
+        RomHashes hashes = hashesFor(identity, physicalBytes);
         CanonicalGame canonical = new CanonicalGame(
-                canonicalGameId, identity, "Game", "游戏", List.of());
+                canonicalGameId, "Game", "游戏", List.of());
         RomVariant variant = new RomVariant(
                 "variant-a",
                 canonical,
                 "game.nes",
                 RomFormat.INES,
-                CompatibilityState.PLAYABLE,
+                CompatibilityDecision.playableNes(),
+                hashes,
+                RomAnalysis.basic(0),
                 locator,
                 ZipNameEncoding.UTF8_EFS);
         PhysicalPackage physicalPackage = new PhysicalPackage(
@@ -760,6 +772,7 @@ public final class LaunchCoordinatorTest {
                 "content://tree/roms/games.zip",
                 "games.zip",
                 PackageFormat.ZIP,
+                hashes.physicalPackageSha256(),
                 List.of(variant));
         catalog.applyScanResult(ScanResult.success(List.of(physicalPackage), List.of()));
     }
@@ -852,13 +865,15 @@ public final class LaunchCoordinatorTest {
             String sourceUri,
             CompatibilityState compatibility,
             RomSource source) {
+        RomHashes hashes = hashesFor(identity);
         CanonicalGame canonical = new CanonicalGame(
-                canonicalGameId, identity, "Game", "游戏", List.of("Alias"));
+                canonicalGameId, "Game", "游戏", List.of("Alias"));
         RomVariant variant = new RomVariant(
-                variantId, canonical, null, RomFormat.INES, compatibility);
+                variantId, canonical, null, RomFormat.INES,
+                decision(compatibility), hashes);
         PhysicalPackage physicalPackage = new PhysicalPackage(
                 "package-" + variantId, source, sourceUri, variantId + ".nes",
-                PackageFormat.RAW_NES, List.of(variant));
+                PackageFormat.RAW, hashes.physicalPackageSha256(), List.of(variant));
         catalog.applyScanResult(ScanResult.success(List.of(physicalPackage), List.of()));
     }
 
@@ -874,22 +889,26 @@ public final class LaunchCoordinatorTest {
         RomSource source = new RomSource(
                 "builtin", RomSource.Type.BUILTIN, "asset:///roms",
                 RomSource.PermissionState.NOT_REQUIRED);
+        RomHashes hashesA = hashesFor(identity(romA));
+        RomHashes hashesB = hashesFor(identity(romB));
         CanonicalGame gameA = new CanonicalGame(
-                "game-a", identity(romA), "A", "甲", List.of());
+                "game-a", "A", "甲", List.of());
         CanonicalGame gameB = new CanonicalGame(
-                "game-b", identity(romB), "B", "乙", List.of());
+                "game-b", "B", "乙", List.of());
         PhysicalPackage packageA = new PhysicalPackage(
                 "package-a", source, "asset:///roms/a.nes", "a.nes",
-                PackageFormat.RAW_NES,
+                PackageFormat.RAW,
+                hashesA.physicalPackageSha256(),
                 List.of(new RomVariant(
                         "variant-a", gameA, null, RomFormat.INES,
-                        CompatibilityState.PLAYABLE)));
+                        CompatibilityDecision.playableNes(), hashesA)));
         PhysicalPackage packageB = new PhysicalPackage(
                 "package-b", source, "asset:///roms/b.nes", "b.nes",
-                PackageFormat.RAW_NES,
+                PackageFormat.RAW,
+                hashesB.physicalPackageSha256(),
                 List.of(new RomVariant(
                         "variant-b", gameB, null, RomFormat.INES,
-                        CompatibilityState.PLAYABLE)));
+                        CompatibilityDecision.playableNes(), hashesB)));
         GameCatalog catalog = new GameCatalog();
         catalog.applyScanResult(ScanResult.success(List.of(packageA, packageB), List.of()));
         return catalog;
@@ -950,10 +969,47 @@ public final class LaunchCoordinatorTest {
             for (byte value : digest) {
                 sha1.append(String.format(Locale.ROOT, "%02X", value & 0xFF));
             }
-            return new RomIdentity(sha1.toString());
+            RomIdentity identity = new RomIdentity(sha1.toString());
+            byte[] sha256Digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            StringBuilder sha256 = new StringBuilder(64);
+            for (byte value : sha256Digest) {
+                sha256.append(String.format(Locale.ROOT, "%02X", value & 0xFF));
+            }
+            CRC32 crc32 = new CRC32();
+            crc32.update(bytes);
+            HASHES_BY_SHA1.put(identity.sha1(), new RomHashes(
+                    identity.sha1(),
+                    sha256.toString(),
+                    sha256.toString(),
+                    String.format(Locale.ROOT, "%08X", crc32.getValue())));
+            return identity;
         } catch (NoSuchAlgorithmException impossible) {
             throw new AssertionError(impossible);
         }
+    }
+
+    private static RomHashes hashesFor(RomIdentity identity) {
+        RomHashes hashes = HASHES_BY_SHA1.get(identity.sha1());
+        if (hashes == null) {
+            throw new AssertionError("test identity was not derived from payload bytes");
+        }
+        return hashes;
+    }
+
+    private static RomHashes hashesFor(RomIdentity identity, byte[] physicalPackage) {
+        RomHashes payloadHashes = hashesFor(identity);
+        String physicalSha256 = hashesFor(identity(physicalPackage)).payloadSha256();
+        return new RomHashes(
+                payloadHashes.payloadSha1(),
+                payloadHashes.payloadSha256(),
+                physicalSha256,
+                payloadHashes.crc32());
+    }
+
+    private static CompatibilityDecision decision(CompatibilityState state) {
+        return state == CompatibilityState.PLAYABLE
+                ? CompatibilityDecision.playableNes()
+                : new CompatibilityDecision(state, CompatibilityReason.UNKNOWN_FORMAT);
     }
 
     private static final class RecordingHistory implements LaunchHistory {

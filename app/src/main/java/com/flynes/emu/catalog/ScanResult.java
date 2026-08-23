@@ -1,14 +1,27 @@
 package com.flynes.emu.catalog;
 
+import java.util.Collections;
 import java.util.List;
 
 public record ScanResult(
         List<PhysicalPackage> packages,
+        List<PackageOutcome> packageOutcomes,
+        List<EntryOutcome> entryOutcomes,
         List<ScanIssue> issues) {
 
     public ScanResult {
-        packages = List.copyOf(DomainValidation.requireNonNull(packages, "packages"));
-        issues = List.copyOf(DomainValidation.requireNonNull(issues, "scan issues"));
+        packages = DomainValidation.immutableList(packages, "packages");
+        packageOutcomes = DomainValidation.immutableList(
+                packageOutcomes, "package outcomes");
+        entryOutcomes = DomainValidation.immutableList(entryOutcomes, "entry outcomes");
+        issues = DomainValidation.immutableList(issues, "scan issues");
+    }
+
+    public ScanResult(List<PhysicalPackage> packages, List<ScanIssue> issues) {
+        this(packages,
+                Collections.<PackageOutcome>emptyList(),
+                Collections.<EntryOutcome>emptyList(),
+                issues);
     }
 
     public static ScanResult success(
@@ -22,7 +35,12 @@ public record ScanResult(
     }
 
     public boolean hasFatalIssue() {
-        return issues.stream().anyMatch(issue -> issue.severity() == ScanIssue.Severity.FATAL);
+        for (ScanIssue issue : issues) {
+            if (issue.severity() == ScanIssue.Severity.FATAL) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean replaceExistingCatalog() {

@@ -85,7 +85,7 @@ public final class ZipEntryNameDecoder {
                                     Arrays.copyOfRange(
                                             extra, cursor + 5, cursor + length),
                                     StandardCharsets.UTF_8);
-                            if (candidate.isBlank()) {
+                            if (DomainValidation.isBlank(candidate)) {
                                 rejected = true;
                             } else {
                                 displayPath = candidate;

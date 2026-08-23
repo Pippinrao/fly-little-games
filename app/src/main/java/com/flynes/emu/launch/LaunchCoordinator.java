@@ -1,5 +1,6 @@
 package com.flynes.emu.launch;
 
+import com.flynes.emu.catalog.DomainValidation;
 import com.flynes.emu.catalog.GameCatalog;
 import com.flynes.emu.catalog.GameVariant;
 
@@ -26,14 +27,14 @@ public final class LaunchCoordinator {
     public LaunchResult launch(String variantId) {
         Optional<GameCatalog.LaunchResolution> resolved =
                 catalog.resolveVariantForLaunch(variantId);
-        if (resolved.isEmpty()) {
+        if (!resolved.isPresent()) {
             return LaunchResult.failure(
                     LaunchResult.Code.VARIANT_NOT_FOUND, null, "variant was not found");
         }
         GameCatalog.LaunchResolution resolution = resolved.get();
         GameVariant variant = resolution.variant();
         if (!variant.compatibility().isPlayable()
-                || !variant.sourcePermissionState().isUsable()) {
+                || !variant.isLaunchable()) {
             return LaunchResult.failure(
                     LaunchResult.Code.NOT_PLAYABLE,
                     null,
@@ -97,7 +98,7 @@ public final class LaunchCoordinator {
                     loadedRequest,
                     failureMessage(failure, "current launch request is invalid"));
         }
-        if (committedVariant.isEmpty()) {
+        if (!committedVariant.isPresent()) {
             return LaunchResult.failure(
                     LaunchResult.Code.CATALOG_CHANGED,
                     loadedRequest,
@@ -123,18 +124,7 @@ public final class LaunchCoordinator {
     }
 
     private static LaunchRequest requestFor(GameVariant variant) {
-        return new LaunchRequest(
-                variant.canonicalGameId(),
-                variant.variantId(),
-                variant.sourceId(),
-                variant.sourceUri(),
-                variant.entryPath(),
-                variant.packageFormat(),
-                variant.romFormat(),
-                variant.compatibility(),
-                variant.identity(),
-                variant.zipEntryIdentity(),
-                variant.zipNameEncoding());
+        return LaunchRequest.forVariant(variant);
     }
 
     /*
@@ -145,7 +135,7 @@ public final class LaunchCoordinator {
 
     private static String failureMessage(Throwable failure, String fallback) {
         String message = failure.getMessage();
-        return message == null || message.isBlank() ? fallback : message;
+        return message == null || DomainValidation.isBlank(message) ? fallback : message;
     }
 
     private static LaunchResult.Code map(ExactRomLoader.ErrorCode code) {
@@ -156,12 +146,14 @@ public final class LaunchCoordinator {
             case ZIP_SOURCE_LIMIT_EXCEEDED -> LaunchResult.Code.ZIP_SOURCE_LIMIT_EXCEEDED;
             case ZIP_ENTRY_LIMIT_EXCEEDED -> LaunchResult.Code.ZIP_ENTRY_LIMIT_EXCEEDED;
             case ZIP_INFLATED_LIMIT_EXCEEDED -> LaunchResult.Code.ZIP_INFLATED_LIMIT_EXCEEDED;
+            case ZIP_NAME_LIMIT_EXCEEDED -> LaunchResult.Code.INVALID_ZIP;
+            case ZIP_RATIO_LIMIT_EXCEEDED -> LaunchResult.Code.INVALID_ZIP;
             case ZIP_ENTRY_MISSING -> LaunchResult.Code.ZIP_ENTRY_MISSING;
             case ZIP_ENTRY_DUPLICATE -> LaunchResult.Code.ZIP_ENTRY_DUPLICATE;
             case ZIP_ENTRY_IS_DIRECTORY -> LaunchResult.Code.ZIP_ENTRY_IS_DIRECTORY;
             case PAYLOAD_TOO_LARGE -> LaunchResult.Code.PAYLOAD_TOO_LARGE;
             case EXECUTABLE_REJECTED -> LaunchResult.Code.EXECUTABLE_REJECTED;
-            case SHA1_MISMATCH -> LaunchResult.Code.HASH_MISMATCH;
+            case HASH_MISMATCH -> LaunchResult.Code.HASH_MISMATCH;
         };
     }
 }

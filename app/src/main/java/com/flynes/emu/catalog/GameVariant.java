@@ -12,28 +12,13 @@ public record GameVariant(
         String entryPath,
         PackageFormat packageFormat,
         RomFormat romFormat,
-        CompatibilityState compatibility,
-        RomIdentity identity,
+        CompatibilityDecision compatibilityDecision,
+        RomHashes hashes,
+        RomAnalysis analysis,
         ZipEntryIdentity zipEntryIdentity,
         ZipNameEncoding zipNameEncoding,
-        RomSource.PermissionState sourcePermissionState) {
-
-    public GameVariant(
-            String canonicalGameId,
-            String variantId,
-            String packageId,
-            String sourceId,
-            String sourceUri,
-            String originalFilename,
-            String entryPath,
-            PackageFormat packageFormat,
-            RomFormat romFormat,
-            CompatibilityState compatibility,
-            RomIdentity identity) {
-        this(canonicalGameId, variantId, packageId, sourceId, sourceUri,
-                originalFilename, entryPath, packageFormat, romFormat, compatibility,
-                identity, null, null, RomSource.PermissionState.NOT_REQUIRED);
-    }
+        RomSource.PermissionState sourcePermissionState,
+        RomSource.Availability sourceAvailability) {
 
     public GameVariant {
         canonicalGameId = DomainValidation.requireNonBlank(
@@ -46,10 +31,14 @@ public record GameVariant(
                 originalFilename, "original filename");
         packageFormat = DomainValidation.requireNonNull(packageFormat, "package format");
         romFormat = DomainValidation.requireNonNull(romFormat, "ROM format");
-        compatibility = DomainValidation.requireNonNull(compatibility, "compatibility");
-        identity = DomainValidation.requireNonNull(identity, "ROM identity");
+        compatibilityDecision = DomainValidation.requireNonNull(
+                compatibilityDecision, "compatibility decision");
+        hashes = DomainValidation.requireNonNull(hashes, "ROM hashes");
+        analysis = DomainValidation.requireNonNull(analysis, "ROM analysis");
         sourcePermissionState = DomainValidation.requireNonNull(
                 sourcePermissionState, "source permission state");
+        sourceAvailability = DomainValidation.requireNonNull(
+                sourceAvailability, "source availability");
         PhysicalPackage.validateEntryLocation(
                 packageFormat, entryPath, zipEntryIdentity, zipNameEncoding);
     }
@@ -68,10 +57,26 @@ public record GameVariant(
                 variant.entryPath(),
                 physicalPackage.packageFormat(),
                 variant.romFormat(),
-                variant.compatibility(),
-                variant.canonicalGame().identity(),
+                variant.compatibilityDecision(),
+                variant.hashes(),
+                variant.analysis(),
                 variant.zipEntryIdentity(),
                 variant.zipNameEncoding(),
-                physicalPackage.source().permissionState());
+                physicalPackage.source().permissionState(),
+                physicalPackage.source().availability());
+    }
+
+    public CompatibilityState compatibility() {
+        return compatibilityDecision.state();
+    }
+
+    public RomIdentity identity() {
+        return hashes.romIdentity();
+    }
+
+    public boolean isLaunchable() {
+        return compatibilityDecision.isPlayable()
+                && sourcePermissionState.isUsable()
+                && sourceAvailability == RomSource.Availability.AVAILABLE;
     }
 }

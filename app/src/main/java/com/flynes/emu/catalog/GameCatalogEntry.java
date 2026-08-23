@@ -11,7 +11,7 @@ public record GameCatalogEntry(
 
     public GameCatalogEntry {
         canonicalGame = DomainValidation.requireNonNull(canonicalGame, "canonical game");
-        variants = List.copyOf(DomainValidation.requireNonNull(variants, "variants"));
+        variants = DomainValidation.immutableList(variants, "variants");
         if (lastPlayedSequence < 0) {
             throw new IllegalArgumentException("last played sequence must not be negative");
         }
@@ -23,10 +23,6 @@ public record GameCatalogEntry(
             if (!canonicalGame.id().equals(variant.canonicalGameId())) {
                 throw new IllegalArgumentException(
                         "variant canonical game id does not match catalog entry");
-            }
-            if (!canonicalGame.identity().equals(variant.identity())) {
-                throw new IllegalArgumentException(
-                        "variant identity does not match catalog entry");
             }
         }
     }

@@ -8,6 +8,7 @@ public record PhysicalPackage(
         String sourceUri,
         String originalFilename,
         PackageFormat packageFormat,
+        String physicalPackageSha256,
         List<RomVariant> variants) {
 
     public PhysicalPackage {
@@ -16,14 +17,19 @@ public record PhysicalPackage(
         sourceUri = DomainValidation.requireNonBlank(sourceUri, "package source URI");
         originalFilename = DomainValidation.requireNonBlank(originalFilename, "original filename");
         packageFormat = DomainValidation.requireNonNull(packageFormat, "package format");
-        variants = List.copyOf(DomainValidation.requireNonNull(variants, "variants"));
+        physicalPackageSha256 = RomHashes.normalizedSha256(
+                physicalPackageSha256, "physical package SHA-256");
+        variants = DomainValidation.immutableList(variants, "variants");
         for (RomVariant variant : variants) {
-            DomainValidation.requireNonNull(variant, "variant");
             validateEntryLocation(
                     packageFormat,
                     variant.entryPath(),
                     variant.zipEntryIdentity(),
                     variant.zipNameEncoding());
+            if (!physicalPackageSha256.equals(variant.hashes().physicalPackageSha256())) {
+                throw new IllegalArgumentException(
+                        "variant physical hash does not match its physical package");
+            }
         }
     }
 
@@ -42,13 +48,9 @@ public record PhysicalPackage(
             if (entryPath != null) {
                 throw new IllegalArgumentException("raw ROM variants must not have an entry path");
             }
-            if (zipEntryIdentity != null) {
+            if (zipEntryIdentity != null || zipNameEncoding != null) {
                 throw new IllegalArgumentException(
-                        "raw ROM variants must not have a ZIP entry identity");
-            }
-            if (zipNameEncoding != null) {
-                throw new IllegalArgumentException(
-                        "raw ROM variants must not have a ZIP name encoding");
+                        "raw ROM variants must not have ZIP entry metadata");
             }
         }
     }

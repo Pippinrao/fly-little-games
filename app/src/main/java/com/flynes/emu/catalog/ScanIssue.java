@@ -1,11 +1,11 @@
 package com.flynes.emu.catalog;
 
+/** Persistable scan issue. It deliberately contains no path, URI, provider error, or message. */
 public record ScanIssue(
         Code code,
         Severity severity,
         String sourceId,
-        String packageId,
-        String message) {
+        String packageId) {
 
     public ScanIssue {
         code = DomainValidation.requireNonNull(code, "scan issue code");
@@ -16,11 +16,12 @@ public record ScanIssue(
         if (packageId != null) {
             packageId = DomainValidation.requireNonBlank(packageId, "scan issue package id");
         }
-        message = DomainValidation.requireNonBlank(message, "scan issue message");
     }
 
-    public ScanIssue(Code code, Severity severity, String message) {
-        this(code, severity, null, null, message);
+    /** Compatibility constructor for Task 1 callers; the free-form message is not retained. */
+    @Deprecated
+    public ScanIssue(Code code, Severity severity, String ignoredMessage) {
+        this(code, severity, null, null);
     }
 
     public enum Severity {
@@ -35,6 +36,9 @@ public record ScanIssue(
         INVALID_PACKAGE,
         OVERSIZE,
         NO_PLAYABLE_VARIANTS,
+        DUPLICATE_ENTRY_NAME,
+        CASE_COLLISION,
+        UNICODE_PATH_REJECTED,
         OTHER
     }
 }

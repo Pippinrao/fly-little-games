@@ -1,9 +1,8 @@
 package com.flynes.emu.catalog;
 
-import com.flynes.emu.data.RomIdentity;
-
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -39,10 +38,10 @@ public final class GameCatalog {
         }
 
         Snapshot previous = snapshot;
-        Map<RomIdentity, UserState> previousUserState = new HashMap<>();
+        Map<String, UserState> previousUserState = new HashMap<>();
         for (GameCatalogEntry entry : previous.entries) {
             previousUserState.put(
-                    entry.canonicalGame().identity(),
+                    entry.canonicalGame().id(),
                     new UserState(
                             entry.favorite(), entry.lastPlayedSequence(), entry.playCount()));
         }
@@ -51,7 +50,7 @@ public final class GameCatalog {
         packages.sort(Comparator.comparing(PhysicalPackage::id));
         Set<String> packageIds = new HashSet<>();
         Set<String> variantIds = new HashSet<>();
-        Map<RomIdentity, Group> groupsByIdentity = new HashMap<>();
+        Map<String, Group> groupsByCanonicalId = new HashMap<>();
 
         for (PhysicalPackage physicalPackage : packages) {
             if (!packageIds.add(physicalPackage.id())) {
@@ -64,25 +63,21 @@ public final class GameCatalog {
                 if (!variantIds.add(variant.id())) {
                     throw new IllegalArgumentException("duplicate variant id: " + variant.id());
                 }
-                RomIdentity identity = variant.canonicalGame().identity();
-                Group group = groupsByIdentity.computeIfAbsent(identity, ignored -> new Group());
+                String canonicalGameId = variant.canonicalGame().id();
+                Group group = groupsByCanonicalId.computeIfAbsent(
+                        canonicalGameId, ignored -> new Group());
                 group.add(physicalPackage, variant);
             }
         }
 
-        ArrayList<Group> groups = new ArrayList<>(groupsByIdentity.values());
+        ArrayList<Group> groups = new ArrayList<>(groupsByCanonicalId.values());
         groups.sort(Comparator.comparing(Group::canonicalGame, CANONICAL_ORDER));
         ArrayList<GameCatalogEntry> entries = new ArrayList<>(groups.size());
         LinkedHashMap<String, GameCatalogEntry> entriesById = new LinkedHashMap<>();
-        LinkedHashMap<RomIdentity, GameCatalogEntry> entriesByIdentity = new LinkedHashMap<>();
         LinkedHashMap<String, GameVariant> variantsById = new LinkedHashMap<>();
 
         for (Group group : groups) {
             CanonicalGame canonicalGame = group.canonicalGame();
-            if (entriesById.containsKey(canonicalGame.id())) {
-                throw new IllegalArgumentException(
-                        "canonical game id maps to multiple identities: " + canonicalGame.id());
-            }
             ArrayList<GameVariant> projectedVariants = new ArrayList<>();
             for (PackageVariant pair : group.packageVariants) {
                 GameVariant projected = GameVariant.from(
@@ -92,7 +87,7 @@ public final class GameCatalog {
             projectedVariants.sort(Comparator.comparing(GameVariant::variantId));
 
             UserState state = previousUserState.getOrDefault(
-                    canonicalGame.identity(), UserState.EMPTY);
+                    canonicalGame.id(), UserState.EMPTY);
             GameCatalogEntry entry = new GameCatalogEntry(
                     canonicalGame,
                     projectedVariants,
@@ -101,17 +96,15 @@ public final class GameCatalog {
                     state.playCount);
             entries.add(entry);
             entriesById.put(canonicalGame.id(), entry);
-            entriesByIdentity.put(canonicalGame.identity(), entry);
             for (GameVariant variant : projectedVariants) {
                 variantsById.put(variant.variantId(), variant);
             }
         }
 
         snapshot = new Snapshot(
-                List.copyOf(entries),
-                Map.copyOf(entriesById),
-                Map.copyOf(entriesByIdentity),
-                Map.copyOf(variantsById),
+                immutableList(entries),
+                immutableMap(entriesById),
+                immutableMap(variantsById),
                 previous.lastPlayedSequence,
                 Math.addExact(previous.version, 1L));
         return true;
@@ -122,14 +115,14 @@ public final class GameCatalog {
     }
 
     public Optional<GameVariant> resolveVariant(String variantId) {
-        if (variantId == null || variantId.isBlank()) {
+        if (DomainValidation.isBlank(variantId)) {
             return Optional.empty();
         }
         return Optional.ofNullable(snapshot.variantsById.get(variantId));
     }
 
     public Optional<LaunchResolution> resolveVariantForLaunch(String variantId) {
-        if (variantId == null || variantId.isBlank()) {
+        if (DomainValidation.isBlank(variantId)) {
             return Optional.empty();
         }
         Snapshot current = snapshot;
@@ -151,7 +144,7 @@ public final class GameCatalog {
                 matches.add(entry);
             }
         }
-        return List.copyOf(matches);
+        return immutableList(matches);
     }
 
     public List<GameCatalogEntry> favoriteEntries() {
@@ -161,7 +154,7 @@ public final class GameCatalog {
                 favorites.add(entry);
             }
         }
-        return List.copyOf(favorites);
+        return immutableList(favorites);
     }
 
     public List<GameCatalogEntry> recentEntries() {
@@ -173,7 +166,7 @@ public final class GameCatalog {
         }
         recent.sort(Comparator.comparingLong(
                 GameCatalogEntry::lastPlayedSequence).reversed());
-        return List.copyOf(recent);
+        return immutableList(recent);
     }
 
     public synchronized boolean setFavorite(String canonicalGameId, boolean favorite) {
@@ -247,8 +240,7 @@ public final class GameCatalog {
         GameVariant loaded = resolution.variant();
         GameVariant current = snapshot.variantsById.get(loaded.variantId());
         if (current == null
-                || !current.compatibility().isPlayable()
-                || !current.sourcePermissionState().isUsable()
+                || !current.isLaunchable()
                 || !sameExactPayloadVariant(loaded, current)) {
             return null;
         }
@@ -263,7 +255,10 @@ public final class GameCatalog {
                 && java.util.Objects.equals(loaded.entryPath(), current.entryPath())
                 && loaded.packageFormat() == current.packageFormat()
                 && loaded.romFormat() == current.romFormat()
-                && loaded.identity().equals(current.identity())
+                && loaded.hashes().payloadSha256().equals(current.hashes().payloadSha256())
+                && loaded.hashes().payloadSha1().equals(current.hashes().payloadSha1())
+                && loaded.hashes().physicalPackageSha256().equals(
+                        current.hashes().physicalPackageSha256())
                 && java.util.Objects.equals(
                         loaded.zipEntryIdentity(), current.zipEntryIdentity())
                 && loaded.zipNameEncoding() == current.zipNameEncoding();
@@ -280,13 +275,9 @@ public final class GameCatalog {
         LinkedHashMap<String, GameCatalogEntry> entriesById =
                 new LinkedHashMap<>(snapshot.entriesById);
         entriesById.put(replacement.canonicalGame().id(), replacement);
-        LinkedHashMap<RomIdentity, GameCatalogEntry> entriesByIdentity =
-                new LinkedHashMap<>(snapshot.entriesByIdentity);
-        entriesByIdentity.put(replacement.canonicalGame().identity(), replacement);
         snapshot = new Snapshot(
-                List.copyOf(entries),
-                Map.copyOf(entriesById),
-                Map.copyOf(entriesByIdentity),
+                immutableList(entries),
+                immutableMap(entriesById),
                 snapshot.variantsById,
                 lastPlayedSequence,
                 snapshot.version);
@@ -296,6 +287,11 @@ public final class GameCatalog {
         CanonicalGame game = entry.canonicalGame();
         if (contains(game.englishTitle(), needle) || contains(game.zhHansTitle(), needle)) {
             return true;
+        }
+        for (TitleCandidate candidate : game.titleCandidates()) {
+            if (contains(candidate.value(), needle)) {
+                return true;
+            }
         }
         for (String alias : game.aliases()) {
             if (contains(alias, needle)) {
@@ -322,10 +318,12 @@ public final class GameCatalog {
 
     private static final class Group {
         private final ArrayList<PackageVariant> packageVariants = new ArrayList<>();
+        private final Map<TitleCandidate.Language, String> verifiedTitles = new HashMap<>();
         private CanonicalGame baseCanonicalGame;
         private CanonicalGame mergedCanonicalGame;
 
         void add(PhysicalPackage physicalPackage, RomVariant variant) {
+            validateVerifiedTitles(variant.canonicalGame());
             packageVariants.add(new PackageVariant(physicalPackage, variant));
             if (baseCanonicalGame == null
                     || CANONICAL_ORDER.compare(
@@ -333,6 +331,21 @@ public final class GameCatalog {
                 baseCanonicalGame = variant.canonicalGame();
             }
             mergedCanonicalGame = null;
+        }
+
+        private void validateVerifiedTitles(CanonicalGame canonicalGame) {
+            for (TitleCandidate candidate : canonicalGame.titleCandidates()) {
+                if (candidate.reviewState() != TitleCandidate.ReviewState.VERIFIED
+                        || candidate.language() == TitleCandidate.Language.UNKNOWN) {
+                    continue;
+                }
+                String previous = verifiedTitles.get(candidate.language());
+                if (previous != null && !previous.equals(candidate.value())) {
+                    throw new IllegalArgumentException(
+                            "one canonical game id has conflicting verified titles");
+                }
+                verifiedTitles.put(candidate.language(), candidate.value());
+            }
         }
 
         CanonicalGame canonicalGame() {
@@ -343,40 +356,22 @@ public final class GameCatalog {
         }
 
         private CanonicalGame mergeCanonicalMetadata() {
-            TreeSet<String> englishTitles = new TreeSet<>();
-            TreeSet<String> chineseTitles = new TreeSet<>();
             TreeSet<String> aliases = new TreeSet<>();
+            TreeSet<TitleCandidate> titleCandidates = new TreeSet<>(Comparator
+                    .comparing(TitleCandidate::language)
+                    .thenComparing(TitleCandidate::origin)
+                    .thenComparing(TitleCandidate::confidence)
+                    .thenComparing(TitleCandidate::reviewState)
+                    .thenComparing(TitleCandidate::value));
             for (PackageVariant pair : packageVariants) {
                 CanonicalGame game = pair.variant.canonicalGame();
-                addIfNotBlank(englishTitles, game.englishTitle());
-                addIfNotBlank(chineseTitles, game.zhHansTitle());
                 aliases.addAll(game.aliases());
+                titleCandidates.addAll(game.titleCandidates());
             }
-
-            String englishTitle = preferredTitle(
-                    baseCanonicalGame.englishTitle(), englishTitles);
-            String zhHansTitle = preferredTitle(
-                    baseCanonicalGame.zhHansTitle(), chineseTitles);
-            aliases.addAll(englishTitles);
-            aliases.addAll(chineseTitles);
-            aliases.remove(englishTitle);
-            aliases.remove(zhHansTitle);
             return new CanonicalGame(
                     baseCanonicalGame.id(),
-                    baseCanonicalGame.identity(),
-                    englishTitle,
-                    zhHansTitle,
-                    List.copyOf(aliases));
-        }
-
-        private static String preferredTitle(String preferred, TreeSet<String> candidates) {
-            return preferred.isBlank() && !candidates.isEmpty() ? candidates.first() : preferred;
-        }
-
-        private static void addIfNotBlank(Set<String> values, String value) {
-            if (!value.isBlank()) {
-                values.add(value);
-            }
+                    immutableList(titleCandidates),
+                    immutableList(aliases));
         }
     }
 
@@ -390,13 +385,17 @@ public final class GameCatalog {
     private record Snapshot(
             List<GameCatalogEntry> entries,
             Map<String, GameCatalogEntry> entriesById,
-            Map<RomIdentity, GameCatalogEntry> entriesByIdentity,
             Map<String, GameVariant> variantsById,
             long lastPlayedSequence,
             long version) {
 
         static Snapshot empty() {
-            return new Snapshot(List.of(), Map.of(), Map.of(), Map.of(), 0L, 0L);
+            return new Snapshot(
+                    Collections.<GameCatalogEntry>emptyList(),
+                    Collections.<String, GameCatalogEntry>emptyMap(),
+                    Collections.<String, GameVariant>emptyMap(),
+                    0L,
+                    0L);
         }
     }
 
@@ -412,5 +411,13 @@ public final class GameCatalog {
     @FunctionalInterface
     public interface SessionCommit<E extends Exception> {
         void stage(GameVariant currentVariant) throws E;
+    }
+
+    private static <T> List<T> immutableList(java.util.Collection<? extends T> values) {
+        return Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    private static <K, V> Map<K, V> immutableMap(Map<K, V> values) {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(values));
     }
 }
