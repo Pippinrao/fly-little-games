@@ -364,6 +364,44 @@ public final class ExactRomLoaderTest {
     }
 
     @Test
+    public void centralCrcMustMatchSelectedAndSkippedInflatedPayloads() throws Exception {
+        byte[] selected = bytes("selected-rom");
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("game.nes", selected);
+        entries.put("skipped.bin", bytes("skipped-data"));
+        byte[] archive = zip(entries);
+
+        assertCentralMutationInvalid(archive, "game.nes", 16, "game.nes", selected);
+        assertCentralMutationInvalid(archive, "skipped.bin", 16, "game.nes", selected);
+    }
+
+    @Test
+    public void centralCompressedAndUncompressedSizesMustMatchStreamedEntry()
+            throws Exception {
+        byte[] selected = bytes("selected-rom");
+        byte[] archive = zip(Map.of("game.nes", selected));
+
+        assertCentralMutationInvalid(archive, "game.nes", 20, "game.nes", selected);
+        assertCentralMutationInvalid(archive, "game.nes", 24, "game.nes", selected);
+    }
+
+    @Test
+    public void centralCompressionMethodMustMatchLocalHeader() throws Exception {
+        byte[] selected = bytes("selected-rom");
+        byte[] archive = zip(Map.of("game.nes", selected));
+
+        assertCentralMutationInvalid(archive, "game.nes", 10, "game.nes", selected);
+    }
+
+    @Test
+    public void centralFlagsMustMatchLocalHeader() throws Exception {
+        byte[] selected = bytes("selected-rom");
+        byte[] archive = zip(Map.of("game.nes", selected));
+
+        assertCentralMutationInvalid(archive, "game.nes", 8, "game.nes", selected);
+    }
+
+    @Test
     public void malformedNonZipSourceIsClassifiedAsInvalidZip() {
         ExactRomLoader loader = loaderFor(bytes("not a zip"));
 
@@ -580,6 +618,51 @@ public final class ExactRomLoaderTest {
             }
         }
         return bytes.toByteArray();
+    }
+
+    private static void assertCentralMutationInvalid(
+            byte[] archive,
+            String mutatedEntry,
+            int fieldOffset,
+            String requestedEntry,
+            byte[] requestedPayload) {
+        byte[] tampered = archive.clone();
+        int centralHeader = findCentralHeader(tampered, mutatedEntry);
+        tampered[centralHeader + fieldOffset] ^= 0x01;
+
+        ExactRomLoader.LoadException failure = assertThrows(
+                ExactRomLoader.LoadException.class,
+                () -> loaderFor(tampered).load(zipRequest(
+                        "content://games/tampered.zip", requestedEntry, requestedPayload)));
+        assertEquals(ExactRomLoader.ErrorCode.INVALID_ZIP, failure.code());
+    }
+
+    private static int findCentralHeader(byte[] archive, String entryName) {
+        byte[] expectedName = entryName.getBytes(StandardCharsets.UTF_8);
+        for (int offset = 0; offset <= archive.length - 46; offset++) {
+            if ((archive[offset] & 0xFF) != 0x50
+                    || (archive[offset + 1] & 0xFF) != 0x4B
+                    || (archive[offset + 2] & 0xFF) != 0x01
+                    || (archive[offset + 3] & 0xFF) != 0x02) {
+                continue;
+            }
+            int nameLength = (archive[offset + 28] & 0xFF)
+                    | ((archive[offset + 29] & 0xFF) << 8);
+            if (nameLength != expectedName.length || offset + 46 + nameLength > archive.length) {
+                continue;
+            }
+            boolean matches = true;
+            for (int i = 0; i < nameLength; i++) {
+                if (archive[offset + 46 + i] != expectedName[i]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return offset;
+            }
+        }
+        throw new AssertionError("central entry was not found: " + entryName);
     }
 
     private static int indexOfSignature(byte[] source, int... signature) {
