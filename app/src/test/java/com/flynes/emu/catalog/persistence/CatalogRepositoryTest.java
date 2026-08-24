@@ -477,6 +477,34 @@ public final class CatalogRepositoryTest {
         assertFalse(repository.state().userStates().containsKey("tree-game"));
     }
 
+    @Test
+    public void reauthorizeCannotChangeSourceTypeAndLeavesAllStateUnchanged() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource tree = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState initial = CatalogState.empty(builtin).withSource(tree);
+        MemoryStore store = new MemoryStore();
+        GameCatalog catalog = new GameCatalog();
+        CatalogRepository repository = new CatalogRepository(initial, store, catalog);
+        repository.commitScan(full(initial, tree, 1,
+                pkg(tree, "tree-package", "tree-game", 'A')));
+        CatalogState before = repository.state();
+        byte[] storedBefore = store.bytes.clone();
+        RomSource typeImpostor = new RomSource(
+                "tree", RomSource.Type.BUILTIN, "source://tree",
+                RomSource.PermissionState.NOT_REQUIRED);
+
+        CatalogRepository.RepositoryException rejected = assertThrows(
+                CatalogRepository.RepositoryException.class,
+                () -> repository.reauthorizeSource(typeImpostor));
+
+        assertEquals(CatalogRepository.ErrorCode.SOURCE_NOT_FOUND, rejected.code());
+        assertEquals(before, repository.state());
+        assertArrayEquals(storedBefore, store.bytes);
+        assertTrue(catalog.resolveVariant("v-tree-package").orElseThrow().isLaunchable());
+        assertEquals(RomSource.Type.SAF_TREE,
+                repository.state().sources().get("tree").source().type());
+    }
+
     private static SourceCatalogState sourceState(
             RomSource source, PhysicalPackage physicalPackage) {
         return new SourceCatalogState(

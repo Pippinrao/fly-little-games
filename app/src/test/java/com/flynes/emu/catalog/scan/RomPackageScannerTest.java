@@ -24,6 +24,7 @@ import com.flynes.emu.catalog.ScanResult;
 import com.flynes.emu.catalog.StableIds;
 import com.flynes.emu.catalog.TitleCandidate;
 import com.flynes.emu.catalog.ZipNameEncoding;
+import com.flynes.emu.catalog.persistence.SourceScanResult;
 import com.flynes.emu.launch.ExactRomLoader;
 import com.flynes.emu.launch.LaunchRequest;
 
@@ -522,6 +523,9 @@ public final class RomPackageScannerTest {
         assertEquals(2, duplicates.packageOutcomes().size());
         assertTrue(duplicates.packageOutcomes().stream().allMatch(item ->
                 item.reason() == PackageOutcome.Reason.DUPLICATE_DOCUMENT_KEY));
+        SourceScanResult persistedDuplicates = SourceScanResult.from(
+                source(), 0, 1, SourceScanResult.Completeness.FULL, duplicates, 2);
+        assertEquals(2, persistedDuplicates.packageOutcomes().size());
 
         ScanResult revoked = scanner().scan(source(), List.of(new PackageCandidate(
                 "revoked-document",

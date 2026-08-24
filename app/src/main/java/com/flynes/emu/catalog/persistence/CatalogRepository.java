@@ -50,7 +50,7 @@ public final class CatalogRepository {
             if (state.builtinSourceId().equals(source.id())) {
                 throw new RepositoryException(ErrorCode.BUILTIN_REMOVAL_REJECTED, null);
             }
-            if (old == null) {
+            if (old == null || old.source().type() != source.type()) {
                 throw new RepositoryException(ErrorCode.SOURCE_NOT_FOUND, null);
             }
             LinkedHashMap<String, CatalogPackage> retained = new LinkedHashMap<>();

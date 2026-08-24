@@ -9,7 +9,9 @@ import com.flynes.emu.catalog.ScanIssue;
 import com.flynes.emu.catalog.ScanResult;
 
 import java.util.List;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public record SourceScanResult(
@@ -46,9 +48,13 @@ public record SourceScanResult(
                 throw new IllegalArgumentException("scan contains duplicate packages");
             }
         }
-        Set<String> packageOutcomeIds = new HashSet<>();
+        Map<String, PackageOutcome> packageOutcomesById = new HashMap<>();
         for (PackageOutcome item : packageOutcomes) {
-            if (!packageOutcomeIds.add(item.packageId())) {
+            PackageOutcome previous = packageOutcomesById.putIfAbsent(
+                    item.packageId(), item);
+            if (previous != null && (!previous.equals(item)
+                    || item.status() != PackageOutcome.Status.ERROR
+                    || item.reason() != PackageOutcome.Reason.DUPLICATE_DOCUMENT_KEY)) {
                 throw new IllegalArgumentException("scan contains duplicate package outcomes");
             }
         }
