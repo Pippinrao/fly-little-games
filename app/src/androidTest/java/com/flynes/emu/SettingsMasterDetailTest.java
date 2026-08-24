@@ -24,6 +24,31 @@ import java.io.FileInputStream;
 
 @RunWith(AndroidJUnit4.class)
 public final class SettingsMasterDetailTest {
+    @Test public void resetControlsRestoresLayoutAndFeedbackDefaultsTogether() {
+        android.content.Context context=ApplicationProvider.getApplicationContext();
+        com.flynes.emu.settings.SettingsRepository settings=new com.flynes.emu.settings.SettingsRepository(
+                new com.flynes.emu.settings.SharedPreferencesSettingsStore(context));
+        settings.save(com.flynes.emu.settings.AppSettings.defaults().toBuilder()
+                .hapticLevel(com.flynes.emu.input.HapticLevel.STRONG).distinctABHaptics(false).build());
+        new com.flynes.emu.settings.ControlLayoutRepository(context).save(
+                com.flynes.emu.input.ControlLayoutV2.recommended().move(com.flynes.emu.input.ControlLayoutV2.Element.A,.5f,.5f));
+        try(ActivityScenario<SettingsActivity> scenario=ActivityScenario.launch(SettingsActivity.class)) {
+            scenario.onActivity(activity->{
+                activity.findViewById(R.id.settings_controls_master).performClick();
+                activity.getSupportFragmentManager().executePendingTransactions();
+                com.flynes.emu.settings.SettingsFragment fragment=visibleFragment(activity);
+                fragment.findPreference("controls.reset").performClick();
+            });
+            scenario.onActivity(activity->{
+                org.junit.Assert.assertEquals(com.flynes.emu.input.ControlLayoutV2.recommended(),
+                        new com.flynes.emu.settings.ControlLayoutRepository(activity).load());
+                com.flynes.emu.settings.AppSettings actual=new com.flynes.emu.settings.SettingsRepository(
+                        new com.flynes.emu.settings.SharedPreferencesSettingsStore(activity)).load();
+                org.junit.Assert.assertEquals(com.flynes.emu.input.HapticLevel.LIGHT,actual.hapticLevel());
+                org.junit.Assert.assertTrue(actual.distinctABHaptics());
+            });
+        }
+    }
     @Test public void allFiveMasterSectionsSwitchTheDetailPane() {
         try (ActivityScenario<SettingsActivity> scenario = ActivityScenario.launch(SettingsActivity.class)) {
             scenario.onActivity(activity -> {

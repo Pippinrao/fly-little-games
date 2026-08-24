@@ -6,6 +6,9 @@ import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 
+import com.flynes.emu.settings.DisplayStatus;
+import com.flynes.emu.settings.DisplayStatusRepository;
+
 public final class DisplayModeController {
     public enum ApplyResult { APPLIED, FALLBACK_AUTO }
 
@@ -25,6 +28,10 @@ public final class DisplayModeController {
 
         int selectedId = DisplayModeSelector.select(candidates,
                 current.getPhysicalWidth(), current.getPhysicalHeight(), requested);
+        float selectedHz = 0f;
+        for (DisplayCandidate candidate : candidates) if (candidate.modeId() == selectedId) {
+            selectedHz = candidate.refreshRate(); break;
+        }
         WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
         attributes.preferredDisplayModeId = selectedId;
         activity.getWindow().setAttributes(attributes);
@@ -33,6 +40,17 @@ public final class DisplayModeController {
                 && surface != null && surface.isValid()) {
             surface.setFrameRate(sourceFps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
         }
+        float requestedHz;
+        String reason;
+        if (requested == RefreshMode.AUTO) {
+            requestedHz = selectedHz > 0f ? selectedHz : current.getRefreshRate();
+            reason = selectedHz > 0f ? "AUTO_BEST_SUPPORTED" : "AUTO_SYSTEM_FALLBACK";
+        } else {
+            requestedHz = requested.targetHz();
+            reason = selectedId == 0 ? "MODE_UNAVAILABLE" : "";
+        }
+        new DisplayStatusRepository(activity).save(new DisplayStatus(
+                requestedHz, current.getRefreshRate(), reason));
         return selectedId == 0 ? ApplyResult.FALLBACK_AUTO : ApplyResult.APPLIED;
     }
 }

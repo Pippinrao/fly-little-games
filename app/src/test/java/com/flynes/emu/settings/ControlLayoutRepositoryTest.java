@@ -11,6 +11,7 @@ public final class ControlLayoutRepositoryTest {
         MemoryStore store=new MemoryStore(); ControlLayoutRepository repository=new ControlLayoutRepository(store);
         ControlLayoutV2 expected=ControlLayoutV2.recommended().move(ControlLayoutV2.Element.A,.90f,.50f);
         repository.save(expected); assertEquals(expected,repository.load());
+        repository.reset(); assertEquals(ControlLayoutV2.recommended(),repository.load());
         store.putString(ControlLayoutRepository.KEY,"v2|broken");
         assertEquals(ControlLayoutV2.recommended(),repository.load());
     }

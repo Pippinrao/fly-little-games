@@ -10,4 +10,5 @@ public final class ControlLayoutRepository {
     public ControlLayoutRepository(Context context){this(new SharedPreferencesSettingsStore(context));}
     public ControlLayoutV2 load(){return ControlLayoutV2.decodeOrRecommended(store.getString(KEY,""));}
     public void save(ControlLayoutV2 layout){store.putString(KEY,layout.encode());}
+    public void reset(){save(ControlLayoutV2.recommended());}
 }

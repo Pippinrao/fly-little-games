@@ -63,4 +63,19 @@ public final class ControlLayoutActivityTest {
             onView(withId(R.id.control_layout_preview)).check(matches(isDisplayed()));
         }
     }
+
+    @Test public void editorExposesFiveIndependentVirtualControlsAndClick() {
+        try(ActivityScenario<ControlLayoutActivity> scenario=ActivityScenario.launch(ControlLayoutActivity.class)) {
+            scenario.onActivity(activity -> {
+                ControlLayoutEditorView view=activity.findViewById(R.id.control_layout_preview);
+                androidx.core.view.accessibility.AccessibilityNodeProviderCompat provider=
+                        androidx.core.view.ViewCompat.getAccessibilityNodeProvider(view);
+                org.junit.Assert.assertNotNull(provider);
+                org.junit.Assert.assertEquals(5,view.createAccessibilityNodeInfo().getChildCount());
+                org.junit.Assert.assertEquals(5,view.virtualControlCountForTest());
+                org.junit.Assert.assertEquals(activity.getString(R.string.control_a),view.virtualControlNameForTest(1));
+                org.junit.Assert.assertTrue(view.performVirtualControlClickForTest(1));
+            });
+        }
+    }
 }

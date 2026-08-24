@@ -144,6 +144,8 @@
     <string name="display_status_summary">请求 %1$d Hz · 实际 %2$d Hz · %3$s</string>
     <string name="display_no_fallback">未回退</string>
     <string name="display_fallback_unavailable">请求模式不可用</string>
+    <string name="display_auto_policy">自动选择设备支持的最佳模式</string>
+    <string name="display_auto_system_fallback">自动使用系统显示模式</string>
     <string name="display_emulation_rate">模拟帧率</string>
     <string name="display_frames_note">NES 游戏仍按原生约 60 fps 运行。更高屏幕刷新率改善呈现与输入采样，但不会生成额外游戏帧。</string>
     <string name="haptic_preview">预览 A / B 振动</string>
@@ -158,4 +160,9 @@
     <string name="license_copy_link">复制来源链接</string>
     <string name="license_link_copied">已复制来源链接</string>
     <string name="license_source_unconfigured">未配置来源链接</string>
+    <string name="control_dpad">方向键</string>
+    <string name="control_up">上</string><string name="control_down">下</string>
+    <string name="control_left">左</string><string name="control_right">右</string>
+    <string name="control_a">A 键</string><string name="control_b">B 键</string>
+    <string name="control_select">Select 键</string><string name="control_start">Start 键</string>
 </resources>

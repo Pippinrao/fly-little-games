@@ -4,13 +4,19 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
+
+import androidx.core.view.ViewCompat;
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
+import androidx.customview.widget.ExploreByTouchHelper;
 
 import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.input.GamepadInputState;
@@ -20,8 +26,11 @@ import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.input.InputBits;
 import com.flynes.emu.input.InputRouter;
 import com.flynes.emu.input.MinimumTap;
+import com.flynes.emu.input.ControlVisualGeometry;
 import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.ControlLayoutRepository;
+
+import java.util.List;
 
 /** Classic NES controls. Every pointer is independently owned and always cancellable. */
 public class GamepadView extends View {
@@ -46,6 +55,7 @@ public class GamepadView extends View {
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final HapticController haptics;
+    private final GamepadAccessibilityHelper accessibility;
     private AppSettings controlSettings = AppSettings.defaults();
     private ControlLayoutV2 controlLayout;
     private GamepadHitMap hitMap;
@@ -62,6 +72,8 @@ public class GamepadView extends View {
         density = context.getResources().getDisplayMetrics().density;
         haptics = new HapticController(this);
         controlLayout = new ControlLayoutRepository(context).load();
+        accessibility = new GamepadAccessibilityHelper(this);
+        ViewCompat.setAccessibilityDelegate(this, accessibility);
         setWillNotDraw(false);
         setFocusable(true);
         setClickable(true);
@@ -81,6 +93,11 @@ public class GamepadView extends View {
     }
     public int buttons() { return buttons; }
     public GamepadHitMap hitMapForTest() { return hitMap; }
+    int virtualControlCountForTest() { return 8; }
+    CharSequence virtualControlNameForTest(int id) { return accessibility.controlName(accessibility.order[id]); }
+    boolean performVirtualControlClickForTest(int id) {
+        return accessibility.onPerformActionForVirtualView(id, AccessibilityNodeInfoCompat.ACTION_CLICK, null);
+    }
 
     public void reset() {
         handler.removeCallbacksAndMessages(null);
@@ -112,6 +129,7 @@ public class GamepadView extends View {
         hitMap = GamepadHitMap.fromLayout(getWidth(), getHeight(), density,
                 insetLeft, insetRight, insetTop, insetBottom, controlLayout);
         touchState = new GamepadInputState(hitMap);
+        accessibility.invalidateRoot();
         recompute();
     }
 
@@ -127,7 +145,8 @@ public class GamepadView extends View {
 
     private void drawDpad(Canvas canvas) {
         GamepadHitMap.Bounds d = hitMap.dpadBounds();
-        float arm = 48f * density;
+        float arm = ControlVisualGeometry.dpadArmPx(density,
+                controlLayout.placement(ControlLayoutV2.Element.D_PAD).scale());
         RectF vertical = new RectF(d.centerX() - arm / 2f, d.top,
                 d.centerX() + arm / 2f, d.bottom);
         RectF horizontal = new RectF(d.left, d.centerY() - arm / 2f,
@@ -290,6 +309,56 @@ public class GamepadView extends View {
             case SELECT: return InputBits.SELECT;
             case START: return InputBits.START;
             default: return 0;
+        }
+    }
+
+    private final class GamepadAccessibilityHelper extends ExploreByTouchHelper {
+        final GamepadHitMap.Control[] order = {GamepadHitMap.Control.UP,
+                GamepadHitMap.Control.DOWN, GamepadHitMap.Control.LEFT, GamepadHitMap.Control.RIGHT,
+                GamepadHitMap.Control.A, GamepadHitMap.Control.B,
+                GamepadHitMap.Control.SELECT, GamepadHitMap.Control.START};
+        GamepadAccessibilityHelper(View host) { super(host); }
+        @Override protected int getVirtualViewAt(float x, float y) {
+            if (hitMap == null) return INVALID_ID;
+            GamepadHitMap.Control hit = hitMap.hit(x, y);
+            for (int i=0;i<order.length;i++) if (order[i] == hit) return i;
+            return INVALID_ID;
+        }
+        @Override protected void getVisibleVirtualViews(List<Integer> ids) {
+            for (int i=0;i<order.length;i++) ids.add(i);
+        }
+        @Override protected void onPopulateNodeForVirtualView(int id, AccessibilityNodeInfoCompat node) {
+            GamepadHitMap.Control control = order[id];
+            node.setClassName("android.widget.Button");
+            node.setContentDescription(controlName(control));
+            node.setClickable(true);
+            node.addAction(AccessibilityNodeInfoCompat.ACTION_CLICK);
+            if (hitMap != null) {
+                GamepadHitMap.Bounds b=hitMap.target(control).bounds();
+                node.setBoundsInParent(new Rect(Math.round(b.left),Math.round(b.top),Math.round(b.right),Math.round(b.bottom)));
+            } else node.setBoundsInParent(new Rect(0,0,1,1));
+        }
+        @Override protected boolean onPerformActionForVirtualView(int id, int action, Bundle args) {
+            if (action != AccessibilityNodeInfoCompat.ACTION_CLICK) return false;
+            GamepadHitMap.Control control = order[id];
+            haptics.feedback(control);
+            pulse(bitFor(control), MIN_FRAME_MS);
+            recompute();
+            invalidateVirtualView(id);
+            return true;
+        }
+        String controlName(GamepadHitMap.Control control) {
+            switch(control) {
+                case UP:return getContext().getString(R.string.control_up);
+                case DOWN:return getContext().getString(R.string.control_down);
+                case LEFT:return getContext().getString(R.string.control_left);
+                case RIGHT:return getContext().getString(R.string.control_right);
+                case A:return getContext().getString(R.string.control_a);
+                case B:return getContext().getString(R.string.control_b);
+                case SELECT:return getContext().getString(R.string.control_select);
+                case START:return getContext().getString(R.string.control_start);
+                default:return control.name();
+            }
         }
     }
 }

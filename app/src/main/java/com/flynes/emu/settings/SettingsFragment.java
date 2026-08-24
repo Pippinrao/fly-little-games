@@ -60,6 +60,7 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         if (reset != null) {
             reset.setOnPreferenceClickListener(preference -> {
                 repository.save(AppSettings.defaults());
+                new ControlLayoutRepository(requireContext()).reset();
                 requireActivity().recreate();
                 return true;
             });
@@ -118,16 +119,46 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
             for (int hz : supported) { labels.add(hz + " Hz"); values.add("HZ_" + hz); }
             refresh.setEntries(labels.toArray(new String[0]));
             refresh.setEntryValues(values.toArray(new String[0]));
+            refresh.setOnPreferenceChangeListener((preference, value) -> {
+                Display.Mode now = requireActivity().getWindowManager().getDefaultDisplay().getMode();
+                DisplayStatus next = statusForMode(String.valueOf(value), supported, now.getRefreshRate());
+                new DisplayStatusRepository(requireContext()).save(next);
+                renderStatus(status, next);
+                return true;
+            });
         }
         if (status != null) {
             float actual = display.getMode().getRefreshRate();
-            AppSettings current = settings();
-            String mode = current.refreshMode().name();
-            float requested = "AUTO".equals(mode) ? actual : Float.parseFloat(mode.substring(3));
-            String fallback = Math.abs(requested - actual) > 1f
-                    ? getString(R.string.display_fallback_unavailable) : getString(R.string.display_no_fallback);
-            status.setSummary(getString(R.string.display_status_summary,
-                    Math.round(requested), Math.round(actual), fallback));
+            DisplayStatus recorded = new DisplayStatusRepository(requireContext()).load();
+            DisplayStatus current = recorded.requestedHz() > 0f
+                    ? new DisplayStatus(recorded.requestedHz(), actual, recorded.fallbackReason())
+                    : statusForMode(settings().refreshMode().name(), supported, actual);
+            new DisplayStatusRepository(requireContext()).save(current);
+            renderStatus(status, current);
         }
+    }
+
+    private DisplayStatus statusForMode(String mode, Set<Integer> supported, float actual) {
+        if ("AUTO".equals(mode)) {
+            int best = Math.round(actual);
+            for (int hz : supported) if (hz > best) best = hz;
+            return new DisplayStatus(best, actual, "AUTO_BEST_SUPPORTED");
+        }
+        float requested = Float.parseFloat(mode.substring(3));
+        return new DisplayStatus(requested, actual,
+                supported.contains(Math.round(requested)) ? "" : "MODE_UNAVAILABLE");
+    }
+
+    private void renderStatus(Preference preference, DisplayStatus value) {
+        String reason;
+        if ("AUTO_BEST_SUPPORTED".equals(value.fallbackReason()))
+            reason = getString(R.string.display_auto_policy);
+        else if ("MODE_UNAVAILABLE".equals(value.fallbackReason()))
+            reason = getString(R.string.display_fallback_unavailable);
+        else if ("AUTO_SYSTEM_FALLBACK".equals(value.fallbackReason()))
+            reason = getString(R.string.display_auto_system_fallback);
+        else reason = getString(R.string.display_no_fallback);
+        preference.setSummary(getString(R.string.display_status_summary,
+                Math.round(value.requestedHz()), Math.round(value.actualHz()), reason));
     }
 }
