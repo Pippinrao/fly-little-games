@@ -196,10 +196,20 @@ public final class RomPackageScanner {
                     null,
                     null,
                     null);
-        } catch (IllegalArgumentException invalidOverride) {
-            collector.errorPackage(
-                    source.id(), envelope.packageId(), PackageOutcome.Reason.UNKNOWN_FORMAT,
-                    ScanIssue.Code.INVALID_PACKAGE);
+        } catch (CanonicalResolutionException invalidOverride) {
+            collector.entryOutcomes.add(new EntryOutcome(
+                    envelope.packageId(), entryId,
+                    EntryOutcome.Status.ERROR,
+                    EntryOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED));
+            collector.packageOutcomes.add(new PackageOutcome(
+                    envelope.packageId(),
+                    PackageOutcome.Status.ERROR,
+                    PackageOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED));
+            collector.issues.add(new ScanIssue(
+                    ScanIssue.Code.CANONICAL_ID_RESOLUTION_FAILED,
+                    ScanIssue.Severity.WARNING,
+                    source.id(),
+                    envelope.packageId()));
             return;
         }
         PhysicalPackage physicalPackage = new PhysicalPackage(
@@ -243,6 +253,7 @@ public final class RomPackageScanner {
         Map<String, Integer> rawNameCounts = new HashMap<>();
         Map<String, Set<String>> caseFoldedLocators = new HashMap<>();
         boolean payloadError = false;
+        boolean canonicalResolutionError = false;
         for (BoundedZipArchive.Entry entry : archive.entries()) {
             String rawLocator = rawLocator(entry);
             String entryId = StableIds.entryOutcomeId(envelope.packageId(), rawLocator);
@@ -313,12 +324,12 @@ public final class RomPackageScanner {
                         decoded.path(),
                         entry.identity(),
                         decoded.encoding()));
-            } catch (IllegalArgumentException invalidOverride) {
-                payloadError = true;
+            } catch (CanonicalResolutionException invalidOverride) {
+                canonicalResolutionError = true;
                 collector.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.ERROR,
-                        EntryOutcome.Reason.INVALID_ROM));
+                        EntryOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED));
                 continue;
             }
             collector.entryOutcomes.add(new EntryOutcome(
@@ -343,6 +354,13 @@ public final class RomPackageScanner {
                     source.id(),
                     envelope.packageId()));
         }
+        if (canonicalResolutionError) {
+            collector.issues.add(new ScanIssue(
+                    ScanIssue.Code.CANONICAL_ID_RESOLUTION_FAILED,
+                    ScanIssue.Severity.WARNING,
+                    source.id(),
+                    envelope.packageId()));
+        }
         variants.sort(Comparator.comparing(RomVariant::id));
         if (!variants.isEmpty()) {
             collector.packages.add(new PhysicalPackage(
@@ -356,6 +374,10 @@ public final class RomPackageScanner {
             collector.packageOutcomes.add(new PackageOutcome(
                     envelope.packageId(), PackageOutcome.Status.INDEXED,
                     PackageOutcome.Reason.INDEXED));
+        } else if (canonicalResolutionError) {
+            collector.packageOutcomes.add(new PackageOutcome(
+                    envelope.packageId(), PackageOutcome.Status.ERROR,
+                    PackageOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED));
         } else if (payloadError) {
             collector.packageOutcomes.add(new PackageOutcome(
                     envelope.packageId(), PackageOutcome.Status.ERROR,
@@ -373,15 +395,13 @@ public final class RomPackageScanner {
             RomPayloadParser.Parsed parsed,
             String entryPath,
             com.flynes.emu.catalog.ZipEntryIdentity entryIdentity,
-            ZipNameEncoding nameEncoding) {
+            ZipNameEncoding nameEncoding) throws CanonicalResolutionException {
         String locator = entryIdentity == null
                 ? StableIds.RAW_LOCATOR
                 : entryIdentity.rawNameHex() + "@" + entryIdentity.localHeaderOffset();
         String variantId = StableIds.variantId(
                 envelope.packageId(), locator, hashes.payloadSha256());
-        String canonicalId = DomainValidation.requireNonBlank(
-                canonicalIds.canonicalGameId(hashes.payloadSha256(), parsed.format()),
-                "resolved canonical game id");
+        String canonicalId = resolveCanonicalId(hashes.payloadSha256(), parsed.format());
         ArrayList<TitleCandidate> titles = new ArrayList<>(2);
         titles.add(lowTitle(
                 titleFromPath(envelope.candidate().displayFilename()),
@@ -403,6 +423,46 @@ public final class RomPackageScanner {
                 parsed.analysis(),
                 entryIdentity,
                 nameEncoding);
+    }
+
+    private String resolveCanonicalId(String payloadSha256, com.flynes.emu.catalog.RomFormat format)
+            throws CanonicalResolutionException {
+        String resolved;
+        try {
+            resolved = canonicalIds.canonicalGameId(payloadSha256, format);
+        } catch (RuntimeException resolverFailure) {
+            throw new CanonicalResolutionException();
+        }
+        if (!isValidCanonicalId(resolved)) {
+            throw new CanonicalResolutionException();
+        }
+        return resolved;
+    }
+
+    private static boolean isValidCanonicalId(String value) {
+        if (DomainValidation.isBlank(value) || value.length() > 256) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            boolean valid = character >= 'a' && character <= 'z'
+                    || character >= 'A' && character <= 'Z'
+                    || character >= '0' && character <= '9'
+                    || character == ':'
+                    || character == '.'
+                    || character == '_'
+                    || character == '-';
+            if (!valid || index == 0 && !isAsciiLetterOrDigit(character)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiLetterOrDigit(char value) {
+        return value >= 'a' && value <= 'z'
+                || value >= 'A' && value <= 'Z'
+                || value >= '0' && value <= '9';
     }
 
     private static TitleCandidate lowTitle(String value, TitleCandidate.Origin origin) {
@@ -617,6 +677,10 @@ public final class RomPackageScanner {
             String rawPath,
             ZipNameEncoding encoding,
             boolean unicodePathRejected) {
+    }
+
+    /** Deliberately carries no resolver-provided message, path, or URI. */
+    private static final class CanonicalResolutionException extends Exception {
     }
 
     private static final class Collector {

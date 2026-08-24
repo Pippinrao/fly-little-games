@@ -319,6 +319,58 @@ public final class RomPackageScannerTest {
     }
 
     @Test
+    public void invalidCanonicalResolverOutputsHaveDedicatedRawAccountingWithoutLeakage() {
+        byte[] payload = ines(1, 0, 0, 0, false, false, 0);
+        List<CanonicalIdResolver> invalidResolvers = List.of(
+                (hash, format) -> null,
+                (hash, format) -> " \t",
+                (hash, format) -> "release/../../content://private",
+                (hash, format) -> {
+                    throw new IllegalStateException("content://private/resolver-error");
+                });
+        ScanResult baseline = null;
+        for (CanonicalIdResolver resolver : invalidResolvers) {
+            ScanResult result = new RomPackageScanner(ScanLimits.defaults(), resolver).scan(
+                    source(), List.of(PackageCandidate.bytes(
+                            "resolver-raw", "valid.nes", payload)));
+            assertCanonicalResolutionFailure(result);
+            assertFalse(result.toString().contains("content://private"));
+            if (baseline == null) {
+                baseline = result;
+            } else {
+                assertEquals(baseline, result);
+            }
+        }
+    }
+
+    @Test
+    public void invalidCanonicalResolverOutputsHaveDedicatedZipAccountingWithoutLeakage()
+            throws Exception {
+        byte[] payload = ines(1, 0, 0, 0, false, false, 0);
+        byte[] archive = zip(StandardCharsets.UTF_8, List.of(entry("valid.nes", payload)));
+        List<CanonicalIdResolver> invalidResolvers = List.of(
+                (hash, format) -> null,
+                (hash, format) -> "\n",
+                (hash, format) -> "content://private/canonical-id",
+                (hash, format) -> {
+                    throw new SecurityException("content://private/resolver-error");
+                });
+        ScanResult baseline = null;
+        for (CanonicalIdResolver resolver : invalidResolvers) {
+            ScanResult result = new RomPackageScanner(ScanLimits.defaults(), resolver).scan(
+                    source(), List.of(PackageCandidate.bytes(
+                            "resolver-zip", "valid.zip", archive)));
+            assertCanonicalResolutionFailure(result);
+            assertFalse(result.toString().contains("content://private"));
+            if (baseline == null) {
+                baseline = result;
+            } else {
+                assertEquals(baseline, result);
+            }
+        }
+    }
+
+    @Test
     public void unavailableSourceAndDuplicateDocumentKeysAccountEveryCandidateWithoutOpening() {
         AtomicBoolean opened = new AtomicBoolean();
         RomSource unavailable = new RomSource(
@@ -583,6 +635,28 @@ public final class RomPackageScannerTest {
 
     private static boolean hasEntryReason(ScanResult result, EntryOutcome.Reason reason) {
         return result.entryOutcomes().stream().anyMatch(item -> item.reason() == reason);
+    }
+
+    private static void assertCanonicalResolutionFailure(ScanResult result) {
+        assertTrue(result.packages().isEmpty());
+        assertEquals(1, result.packageOutcomes().size());
+        assertEquals(PackageOutcome.Status.ERROR, result.packageOutcomes().get(0).status());
+        assertEquals(PackageOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED,
+                result.packageOutcomes().get(0).reason());
+        assertEquals(1, result.entryOutcomes().size());
+        assertEquals(EntryOutcome.Status.ERROR, result.entryOutcomes().get(0).status());
+        assertEquals(EntryOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED,
+                result.entryOutcomes().get(0).reason());
+        assertEquals(1, result.issues().size());
+        assertEquals(ScanIssue.Code.CANONICAL_ID_RESOLUTION_FAILED,
+                result.issues().get(0).code());
+        assertEquals(ScanIssue.Severity.WARNING, result.issues().get(0).severity());
+        assertFalse(result.packageOutcomes().stream().anyMatch(item ->
+                item.reason() == PackageOutcome.Reason.UNKNOWN_FORMAT
+                        || item.reason() == PackageOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED));
+        assertFalse(result.entryOutcomes().stream().anyMatch(item ->
+                item.reason() == EntryOutcome.Reason.UNKNOWN_FORMAT
+                        || item.reason() == EntryOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED));
     }
 
     private static byte[] ines(

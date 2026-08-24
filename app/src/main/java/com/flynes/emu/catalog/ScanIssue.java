@@ -32,6 +32,7 @@ public record ScanIssue(
     public enum Code {
         PERMISSION_REVOKED,
         SOURCE_UNAVAILABLE,
+        CANONICAL_ID_RESOLUTION_FAILED,
         IO_ERROR,
         INVALID_PACKAGE,
         OVERSIZE,

@@ -30,6 +30,7 @@ public record EntryOutcome(
         SIDECAR,
         UNKNOWN_FORMAT,
         INVALID_ROM,
+        CANONICAL_ID_RESOLUTION_FAILED,
         PAYLOAD_LIMIT_EXCEEDED
     }
 }

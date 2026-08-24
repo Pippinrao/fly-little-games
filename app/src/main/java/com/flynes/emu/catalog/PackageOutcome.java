@@ -28,6 +28,7 @@ public record PackageOutcome(
         UNKNOWN_FORMAT,
         DUPLICATE_DOCUMENT_KEY,
         SOURCE_UNAVAILABLE,
+        CANONICAL_ID_RESOLUTION_FAILED,
         OPEN_FAILED,
         IO_ERROR,
         PACKAGE_LIMIT_EXCEEDED,
