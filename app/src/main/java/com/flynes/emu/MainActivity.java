@@ -5,7 +5,6 @@ import android.os.Bundle;
 import android.graphics.drawable.GradientDrawable;
 import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -30,13 +29,15 @@ import com.flynes.emu.save.SaveRecord;
 import com.flynes.emu.save.SaveRepository;
 import com.flynes.emu.save.LegacySaveMigrator;
 import com.flynes.emu.settings.AppSettings;
-import com.flynes.emu.settings.FilterMode;
 import com.flynes.emu.settings.SettingsRepository;
 import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 import com.flynes.emu.session.EmulationSession;
 import com.flynes.emu.session.SessionResult;
 import com.flynes.emu.session.SessionState;
 import com.flynes.emu.video.DisplayModeController;
+import com.flynes.emu.video.FramePublisher;
+import com.flynes.emu.video.GlFrameView;
+import com.flynes.emu.video.NativeFrameSource;
 import com.flynes.emu.video.ViewportLayout;
 
 import java.io.ByteArrayOutputStream;
@@ -45,7 +46,7 @@ import java.io.InputStream;
 
 /**
  * Stage-0 vertical slice: load the bundled homebrew ROM, render via
- * Choreographer blits, play audio via the audio-master-clock thread, accept
+ * sequenced OpenGL presentation, audio-master-clock playback, touch input,
  * touch input, and auto-save on pause.
  */
 public class MainActivity extends AppCompatActivity {
@@ -57,7 +58,8 @@ public class MainActivity extends AppCompatActivity {
 
     private final NesCore core = new NesCore();
     private final EmulationSession session = new EmulationSession(core);
-    private EmuView view;
+    private GlFrameView view;
+    private FramePublisher framePublisher;
     private GamepadView gamepad;
     private ImageButton pauseButton;
     private InputRouter inputRouter;
@@ -67,22 +69,8 @@ public class MainActivity extends AppCompatActivity {
     private SettingsRepository settings;
     private AppSettings appSettings;
     private FrameLayout root;
-    private int scale = 2;
     private boolean rendering = false;
     private RomIdentity currentRomIdentity;
-
-    private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
-        @Override
-        public void doFrame(long frameTimeNanos) {
-            if (rendering) {
-                Surface s = view.getHolder().getSurface();
-                if (s != null && s.isValid()) {
-                    core.blit(s, scale);
-                }
-                Choreographer.getInstance().postFrameCallback(this);
-            }
-        }
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,7 +81,9 @@ public class MainActivity extends AppCompatActivity {
         Log.i(TAG, "legacy autosave migration=" + LegacySaveMigrator.migrate(this, saves));
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        view = new EmuView(this);
+        framePublisher = new FramePublisher(new NativeFrameSource(core, 4 * 1024 * 1024));
+        view = new GlFrameView(this, framePublisher);
+        view.setId(R.id.game_surface);
         view.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(SurfaceHolder holder) {
                 DisplayModeController.ApplyResult result = DisplayModeController.apply(
@@ -531,10 +521,11 @@ public class MainActivity extends AppCompatActivity {
             return -1;
         }
         currentRomIdentity = info.identity();
-        scale = computeScale();
-        // HQ4X after load: Machine::Load/Power can rebuild renderer state, so
-        // the filter must be (re)applied once the ROM is in place.
-        core.setVideoFilter(nativeFilter(appSettings.filterMode()));
+        framePublisher.reset();
+        // Scaling and reconstruction now belong to the GPU presenter; the core
+        // always publishes its native 256x240 frame.
+        core.setVideoFilter(NesCore.FILTER_NONE);
+        view.setFilterMode(appSettings.filterMode());
         try {
             SessionResult startResult = session.start().get();
             if (!startResult.isSuccess()) return startResult.code();
@@ -542,7 +533,7 @@ public class MainActivity extends AppCompatActivity {
             Log.e(TAG, "session start failed", e);
             return -1;
         }
-        Log.i(TAG, "ROM loaded, render scale=" + scale + "x");
+        Log.i(TAG, "ROM loaded, sequenced GPU presenter ready");
         return 0;
     }
 
@@ -578,7 +569,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void applyRuntimeVideoSettings() {
         if (!core.isCreated()) return;
-        core.setVideoFilter(nativeFilter(appSettings.filterMode()));
+        core.setVideoFilter(NesCore.FILTER_NONE);
+        view.setFilterMode(appSettings.filterMode());
         updateViewport(0, gamepad == null ? 0 : gamepad.getRootWindowInsets() == null
                 ? 0 : gamepad.getRootWindowInsets().getSystemWindowInsetRight());
         Surface surface = view.getHolder().getSurface();
@@ -629,31 +621,22 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private ViewportLayout.Size viewportSize(int width, int height, int insetLeft, int insetRight) {
-        boolean filtered = appSettings.filterMode() == FilterMode.HQ4X;
         return ViewportLayout.compute(width, height, insetLeft, insetRight,
-                appSettings.aspectMode(), filtered ? 1024 : 256, filtered ? 960 : 240);
-    }
-
-    private static int nativeFilter(FilterMode mode) {
-        return mode == FilterMode.HQ4X ? NesCore.FILTER_HQ4X : NesCore.FILTER_NONE;
+                appSettings.aspectMode(), 256, 240);
     }
 
     private void startRendering() {
         if (!rendering) {
             rendering = true;
-            Choreographer.getInstance().postFrameCallback(frameCallback);
+            view.onResume();
         }
     }
 
     private void stopRendering() {
-        rendering = false;
-        Choreographer.getInstance().removeFrameCallback(frameCallback);
-    }
-
-    private int computeScale() {
-        // The core framebuffer is already filter-scaled (hq4x = 1024x960);
-        // blit 1:1 and let the SurfaceView geometry fit the window.
-        return 1;
+        if (rendering) {
+            rendering = false;
+            view.onPause();
+        }
     }
 
     // ------------------------------------------------------------------

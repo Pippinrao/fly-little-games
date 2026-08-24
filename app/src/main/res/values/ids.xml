@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="gamepad" type="id" />
+    <item name="game_surface" type="id" />
     <item name="pause_button" type="id" />
     <item name="pause_layer" type="id" />
     <item name="pause_scrim" type="id" />

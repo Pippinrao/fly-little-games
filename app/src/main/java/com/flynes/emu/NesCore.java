@@ -1,7 +1,5 @@
 package com.flynes.emu;
 
-import android.view.Surface;
-
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
@@ -52,7 +50,6 @@ public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
     private static native void nativeSetVideoFilter(long h, int filter);
     private static native int nativeSaveState(long h, byte[] out);
     private static native int nativeLoadState(long h, byte[] in);
-    private static native void nativeBlit(long h, Surface surface, int scale);
 
     /** @return true if a native context is now live. */
     @Override public boolean create() {
@@ -170,11 +167,6 @@ public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
     @Override public int loadState(byte[] in) {
         if (handle == 0) return -3; // NES_ERR_NOT_READY
         return nativeLoadState(handle, in);
-    }
-
-    /** Blits the latest framebuffer to {@code surface}, scaled by {@code scale}. */
-    public void blit(Surface surface, int scale) {
-        if (handle != 0) nativeBlit(handle, surface, scale);
     }
 
     /** The direct audio buffer filled by the most recent runFrames call. */

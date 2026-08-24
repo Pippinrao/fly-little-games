@@ -22,6 +22,17 @@ public final class FramePublisherTest {
     }
 
     @Test
+    public void resetAcceptsASequenceFromANewCoreInstance() {
+        FakeFrameSource source = new FakeFrameSource(7);
+        FramePublisher publisher = new FramePublisher(source);
+        assertTrue(publisher.poll().isPresent());
+
+        publisher.reset();
+        source.sequence = 1;
+        assertEquals(1, publisher.poll().orElseThrow().sequence());
+    }
+
+    @Test
     public void rejectsIncompleteOrRegressingFrames() {
         FakeFrameSource source = new FakeFrameSource(4);
         FramePublisher publisher = new FramePublisher(source);

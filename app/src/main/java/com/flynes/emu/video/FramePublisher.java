@@ -15,12 +15,16 @@ public final class FramePublisher {
         this.source = source;
     }
 
-    public Optional<PublishedFrame> poll() {
+    public synchronized Optional<PublishedFrame> poll() {
         PublishedFrame frame = source.copyLatest();
         if (frame == null || !frame.complete() || frame.sequence() <= lastSequence) {
             return Optional.empty();
         }
         lastSequence = frame.sequence();
         return Optional.of(frame);
+    }
+
+    public synchronized void reset() {
+        lastSequence = Long.MIN_VALUE;
     }
 }
