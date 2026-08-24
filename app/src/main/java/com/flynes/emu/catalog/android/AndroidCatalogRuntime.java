@@ -53,7 +53,8 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 CatalogState.empty(AndroidBuiltinCatalogAdapter.SOURCE), store, catalog);
         scanner = new RomPackageScanner(ScanLimits.defaults());
         permissions = new PersistedReadPermissionGateway(this.context.getContentResolver());
-        sources = new SourceRegistry(repository, permissions);
+        sources = new SourceRegistry(
+                repository, permissions, new AndroidPendingReleaseStore(this.context));
         executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "flynes-catalog");
             thread.setDaemon(true);
@@ -100,6 +101,13 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         CatalogRepository.LoadResult load = repository.load();
         if (load.status() == CatalogRepository.LoadStatus.RECOVERY_NEEDED) {
             return new BootstrapResult(load, null);
+        }
+        try {
+            sources.retryPendingReleases();
+        } catch (CatalogRepository.RepositoryException
+                | IOException
+                | com.flynes.emu.catalog.source.ReadPermissionGateway.PermissionFailure ignored) {
+            // Tombstone remains durable and will be retried on the next bootstrap.
         }
         sources.verifyPersistedPermissions();
         LegacyLibraryMigrator.Result migration = migrateLegacyIfEligible(!storeExisted);

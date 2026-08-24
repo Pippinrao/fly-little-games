@@ -48,6 +48,7 @@ public final class PersistedReadPermissionGateway implements ReadPermissionGatew
 
     @Override
     public void releaseRead(String locator) throws PermissionFailure {
+        if (!hasPersistedRead(locator)) return;
         try {
             resolver.releasePersistableUriPermission(
                     Uri.parse(locator), Intent.FLAG_GRANT_READ_URI_PERMISSION);

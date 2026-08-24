@@ -21,6 +21,9 @@ import com.flynes.emu.catalog.RomVariant;
 import com.flynes.emu.catalog.ScanIssue;
 import com.flynes.emu.catalog.ZipEntryIdentity;
 import com.flynes.emu.catalog.ZipNameEncoding;
+import com.flynes.emu.catalog.ScanResult;
+import com.flynes.emu.catalog.source.DocumentTreeGateway;
+import com.flynes.emu.catalog.source.SourceEnumerator;
 
 import org.junit.Test;
 
@@ -32,6 +35,43 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class CatalogRepositoryTest {
+    @Test
+    public void rootEnumerationTruncationPreservesLastGoodPackageAsStale() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource tree = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState initial = CatalogState.empty(builtin).withSource(tree);
+        CatalogRepository repository = new CatalogRepository(
+                initial, new MemoryStore(), new GameCatalog());
+        repository.commitScan(full(initial, tree, 1,
+                pkg(tree, "last-good", "game", 'A')));
+        SourceEnumerator.Result enumeration = new SourceEnumerator(16, 1).enumerate(
+                tree, new DocumentTreeGateway() {
+                    @Override public String rootDocumentId() { return "root"; }
+                    @Override public ChildrenBatch listChildren(String parent, int budget) {
+                        return new ChildrenBatch(Collections.singletonList(
+                                new DocumentNode("private-dir", "private", true,
+                                        "opaque://private")), false);
+                    }
+                    @Override public java.io.InputStream open(String locator) {
+                        return new java.io.ByteArrayInputStream(new byte[0]);
+                    }
+                });
+        assertEquals(SourceEnumerator.Completeness.FATAL, enumeration.completeness());
+        ScanResult failed = new ScanResult(
+                Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
+                enumeration.issues());
+        SourceCatalogState before = repository.state().sources().get(tree.id());
+
+        repository.commitScan(SourceScanResult.from(
+                tree, repository.state().revision(), before.lastScanToken() + 1,
+                SourceScanResult.Completeness.FATAL, failed, 0));
+
+        CatalogPackage preserved = repository.state().sources().get(tree.id())
+                .packages().get("last-good");
+        assertEquals(CatalogPackage.Freshness.PRESERVED_STALE, preserved.freshness());
+        assertFalse(preserved.projectedPackage().source().isUsable());
+    }
+
     @Test
     public void fullScanReplacesOnlyTargetFatalPreservesAndPackageErrorBecomesStale()
             throws Exception {

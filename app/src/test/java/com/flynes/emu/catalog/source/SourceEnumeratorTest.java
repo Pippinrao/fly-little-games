@@ -50,6 +50,37 @@ public final class SourceEnumeratorTest {
                 new SourceEnumerator(16, 1).enumerate(source(), files).completeness());
     }
 
+    @Test
+    public void unifiedNodeBudgetCountsDirectoriesAndBoundsProviderReads() {
+        FakeTree wide = new FakeTree("root");
+        wide.children.put("root", List.of(
+                node("one", "one.nes", false),
+                node("two", "two.nes", false),
+                node("three", "three.nes", false),
+                node("four", "four.nes", false)));
+        SourceEnumerator.Result wideResult = new SourceEnumerator(16, 2)
+                .enumerate(source(), wide);
+        assertEquals(SourceEnumerator.Completeness.FATAL, wideResult.completeness());
+        assertEquals(3, wide.maxRowsRead);
+        assertEquals(0, wideResult.candidateCount());
+
+        FakeTree directories = new FakeTree("root");
+        directories.children.put("root", List.of(node("d1", "d1", true)));
+        directories.children.put("d1", List.of(node("d2", "d2", true)));
+        directories.children.put("d2", List.of(node("d3", "d3", true)));
+        SourceEnumerator.Result directoryResult = new SourceEnumerator(16, 2)
+                .enumerate(source(), directories);
+        assertEquals(SourceEnumerator.Completeness.FATAL, directoryResult.completeness());
+        assertEquals(0, directoryResult.candidateCount());
+
+        FakeTree reservedSiblings = new FakeTree("root");
+        reservedSiblings.children.put("root", List.of(
+                node("dir", "dir", true), node("file", "file.nes", false)));
+        reservedSiblings.children.put("dir", List.of(node("nested", "nested.nes", false)));
+        new SourceEnumerator(16, 2).enumerate(source(), reservedSiblings);
+        assertEquals(List.of(2, 0), reservedSiblings.requestedBudgets);
+    }
+
     private static RomSource source() {
         return new RomSource("source", RomSource.Type.SAF_TREE, "opaque://tree",
                 RomSource.PermissionState.GRANTED);
@@ -63,10 +94,19 @@ public final class SourceEnumeratorTest {
     private static final class FakeTree implements DocumentTreeGateway {
         final String root;
         final Map<String, List<DocumentNode>> children = new HashMap<>();
+        final java.util.ArrayList<Integer> requestedBudgets = new java.util.ArrayList<>();
+        int maxRowsRead;
         FakeTree(String root) { this.root = root; }
         @Override public String rootDocumentId() { return root; }
-        @Override public List<DocumentNode> listChildren(String parentDocumentId) {
-            return children.getOrDefault(parentDocumentId, List.of());
+        @Override public ChildrenBatch listChildren(
+                String parentDocumentId, int remainingNodeBudget) {
+            requestedBudgets.add(remainingNodeBudget);
+            List<DocumentNode> all = children.getOrDefault(parentDocumentId, List.of());
+            int inspected = Math.min(all.size(), remainingNodeBudget + 1);
+            maxRowsRead = Math.max(maxRowsRead, inspected);
+            int returned = Math.min(all.size(), remainingNodeBudget);
+            return new ChildrenBatch(
+                    all.subList(0, returned), all.size() <= remainingNodeBudget);
         }
         @Override public InputStream open(String contentLocator) {
             return new ByteArrayInputStream(new byte[]{1});

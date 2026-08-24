@@ -11,7 +11,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.List;
 
 /** Read-only DocumentsContract adapter; it never requests provider write access. */
 public final class AndroidDocumentTreeGateway implements DocumentTreeGateway {
@@ -49,14 +48,18 @@ public final class AndroidDocumentTreeGateway implements DocumentTreeGateway {
     }
 
     @Override
-    public List<DocumentNode> listChildren(String parentDocumentId)
+    public ChildrenBatch listChildren(String parentDocumentId, int remainingNodeBudget)
             throws IOException, SecurityException {
+        if (remainingNodeBudget < 0) throw new IllegalArgumentException("negative node budget");
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
                 treeUri, parentDocumentId);
         ArrayList<DocumentNode> result = new ArrayList<>();
         try (Cursor cursor = resolver.query(children, PROJECTION, null, null, null)) {
             if (cursor == null) throw new IOException("null children cursor");
             while (cursor.moveToNext()) {
+                if (result.size() == remainingNodeBudget) {
+                    return new ChildrenBatch(result, false);
+                }
                 String id = cursor.getString(0);
                 String name = cursor.getString(1);
                 String mime = cursor.getString(2);
@@ -72,7 +75,7 @@ public final class AndroidDocumentTreeGateway implements DocumentTreeGateway {
         } catch (IllegalArgumentException malformed) {
             throw new IOException("invalid document tree", malformed);
         }
-        return result;
+        return new ChildrenBatch(result, true);
     }
 
     @Override

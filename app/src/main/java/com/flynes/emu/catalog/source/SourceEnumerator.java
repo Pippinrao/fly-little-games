@@ -16,12 +16,12 @@ import java.util.Set;
 /** Deterministic bounded recursive source enumeration. */
 public final class SourceEnumerator {
     private final int maxDepth;
-    private final int maxFiles;
+    private final int maxNodes;
 
-    public SourceEnumerator(int maxDepth, int maxFiles) {
-        if (maxDepth < 0 || maxFiles <= 0) throw new IllegalArgumentException("invalid limits");
+    public SourceEnumerator(int maxDepth, int maxNodes) {
+        if (maxDepth < 0 || maxNodes <= 0) throw new IllegalArgumentException("invalid limits");
         this.maxDepth = maxDepth;
-        this.maxFiles = maxFiles;
+        this.maxNodes = maxNodes;
     }
 
     public Result enumerate(RomSource source, DocumentTreeGateway gateway) {
@@ -36,7 +36,8 @@ public final class SourceEnumerator {
                     gateway.rootDocumentId(), "root document id");
             HashSet<String> visited = new HashSet<>();
             visited.add(root);
-            visit(gateway, root, 0, visited, candidates);
+            int[] remainingNodes = {maxNodes};
+            visit(gateway, root, 0, visited, candidates, remainingNodes);
             return new Result(candidates, Completeness.FULL, Collections.emptyList());
         } catch (SecurityException failure) {
             return fatal(source.id(), candidates, ScanIssue.Code.PERMISSION_REVOKED);
@@ -52,18 +53,24 @@ public final class SourceEnumerator {
             String parent,
             int depth,
             Set<String> visited,
-            List<PackageCandidate> candidates) throws IOException {
+            List<PackageCandidate> candidates,
+            int[] remainingNodes) throws IOException {
+        DocumentTreeGateway.ChildrenBatch batch =
+                gateway.listChildren(parent, remainingNodes[0]);
+        if (!batch.complete()) throw new TraversalFailure();
+        if (batch.entries().size() > remainingNodes[0]) throw new TraversalFailure();
+        remainingNodes[0] -= batch.entries().size();
         ArrayList<DocumentTreeGateway.DocumentNode> children =
-                new ArrayList<>(gateway.listChildren(parent));
+                new ArrayList<>(batch.entries());
         children.sort(Comparator.comparing(DocumentTreeGateway.DocumentNode::documentId)
                 .thenComparing(DocumentTreeGateway.DocumentNode::displayName));
         for (DocumentTreeGateway.DocumentNode child : children) {
             if (!visited.add(child.documentId())) throw new TraversalFailure();
             if (child.directory()) {
                 if (depth >= maxDepth) throw new TraversalFailure();
-                visit(gateway, child.documentId(), depth + 1, visited, candidates);
+                visit(gateway, child.documentId(), depth + 1, visited, candidates,
+                        remainingNodes);
             } else {
-                if (candidates.size() >= maxFiles) throw new TraversalFailure();
                 candidates.add(new PackageCandidate(
                         child.documentId(), child.displayName(), child.contentLocator(),
                         () -> gateway.open(child.contentLocator())));
