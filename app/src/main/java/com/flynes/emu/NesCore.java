@@ -32,7 +32,7 @@ public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
 
     // Direct buffer used as the native audio sink for runFrames.
     // 128 KiB = 65536 int16 samples = ~82 frames of NTSC audio at 48 kHz;
-    // far more than a single runFrames(2) call needs (~1600 samples).
+    // far more than one native frame needs (~800 samples at 48 kHz).
     private static final int AUDIO_BUFFER_BYTES = 128 * 1024;
     private static final int SAVE_STATE_BUFFER_BYTES = 4 * 1024 * 1024;
 

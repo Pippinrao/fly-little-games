@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Audio-master-clock loop: the emulator never runs ahead of the audio sink.
  *
- * Each iteration runs 2 NES frames (~1600 samples at 48 kHz) into the core's
- * direct buffer, then does a BLOCKING AudioTrack.write(). The write blocks
+ * Each iteration runs exactly one NES frame into the core's direct buffer,
+ * then drains it with BLOCKING AudioTrack.write(). The write blocks
  * until the audio HAL consumes enough buffer space, which paces emulation in
  * real time — no sleep, no busy-wait.
  */
@@ -99,19 +99,21 @@ public class AudioThread extends Thread {
             return;
         }
 
-        ByteBuffer audio = core.audioBuffer();
         if (!audible) track.setVolume(0f);
         track.play();
 
+        AudioPump pump = new AudioPump(new AudioPump.Core() {
+            @Override public int runOneFrame() { return core.runOneFrame(); }
+            @Override public ByteBuffer audioBuffer() { return core.audioBuffer(); }
+        }, (data, bytes) -> track.write(data, bytes, AudioTrack.WRITE_BLOCKING));
+
         int idleIterations = 0;
         while (running.get()) {
-            int samples = core.runFrames(2);
+            int samples = pump.pumpOnce();
             if (samples > 0) {
                 idleIterations = 0;
-                audio.position(0);
-                audio.limit(samples * 2);
-                // Blocking write paces the emulation loop to real-time audio.
-                track.write(audio, samples * 2, AudioTrack.WRITE_BLOCKING);
+            } else if (samples < 0) {
+                break;
             } else if (++idleIterations >= MAX_IDLE_ITERATIONS) {
                 // Persistent no-output (e.g. ROM not loaded / dead core): stop
                 // spinning so we don't peg a core. The lifecycle tolerates a
