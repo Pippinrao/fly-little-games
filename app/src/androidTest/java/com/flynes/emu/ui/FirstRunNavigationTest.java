@@ -169,20 +169,43 @@ public final class FirstRunNavigationTest {
     private static void assertFullyVisible(TextView view) {
         Rect visible = new Rect();
         assertTrue("text has no visible bounds", view.getGlobalVisibleRect(visible));
-        assertTrue("text is vertically clipped", visible.height() >= view.getHeight());
-        assertTrue("text is horizontally clipped", visible.width() >= view.getWidth());
+        assertTrue("text is vertically clipped: visible=" + visible
+                        + ", visibleHeight=" + visible.height()
+                        + ", viewHeight=" + view.getHeight()
+                        + ", viewY=" + view.getY()
+                        + ", parent=" + parentBounds(view),
+                visible.height() >= view.getHeight());
+        assertTrue("text is horizontally clipped: visible=" + visible
+                        + ", visibleWidth=" + visible.width()
+                        + ", viewWidth=" + view.getWidth()
+                        + ", viewX=" + view.getX()
+                        + ", parent=" + parentBounds(view),
+                visible.width() >= view.getWidth());
         Layout layout = view.getLayout();
         assertTrue("text layout is missing", layout != null && layout.getLineCount() > 0);
         assertEquals("text layout omitted characters", view.getText().length(),
                 layout.getLineEnd(layout.getLineCount() - 1));
-        assertTrue("text layout exceeds view height",
-                layout.getHeight() + view.getCompoundPaddingTop()
-                        + view.getCompoundPaddingBottom() <= view.getHeight());
+        int requiredHeight = layout.getHeight() + view.getCompoundPaddingTop()
+                + view.getCompoundPaddingBottom();
+        assertTrue("text layout exceeds view height: required=" + requiredHeight
+                        + ", layout=" + layout.getHeight()
+                        + ", paddingTop=" + view.getCompoundPaddingTop()
+                        + ", paddingBottom=" + view.getCompoundPaddingBottom()
+                        + ", actual=" + view.getHeight(),
+                requiredHeight <= view.getHeight());
         int available = view.getWidth() - view.getCompoundPaddingLeft()
                 - view.getCompoundPaddingRight();
         for (int line = 0; line < layout.getLineCount(); line++) {
             assertTrue("text line exceeds view width", layout.getLineWidth(line) <= available + 1f);
         }
+    }
+
+    private static Rect parentBounds(View view) {
+        Rect bounds = new Rect();
+        if (view.getParent() instanceof View) {
+            ((View) view.getParent()).getGlobalVisibleRect(bounds);
+        }
+        return bounds;
     }
 
     private static void shell(String command) throws Exception {

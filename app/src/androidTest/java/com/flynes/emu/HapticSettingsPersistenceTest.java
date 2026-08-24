@@ -3,10 +3,12 @@ package com.flynes.emu;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.hamcrest.Matchers.allOf;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -29,11 +31,12 @@ public final class HapticSettingsPersistenceTest {
                 .getSharedPreferences(SettingsActivity.PREFS, 0).edit().clear().commit();
         try (ActivityScenario<SettingsActivity> scenario =
                      ActivityScenario.launch(SettingsActivity.class)) {
-            onView(withId(androidx.preference.R.id.recycler_view)).perform(
+            onView(withId(R.id.settings_controls_master)).perform(click());
+            onView(allOf(withId(androidx.preference.R.id.recycler_view), isDisplayed())).perform(
                     RecyclerViewActions.scrollTo(hasDescendant(withText(R.string.haptic_level))));
             onView(withText(R.string.haptic_level)).perform(click());
             onView(withText(R.string.haptic_off)).perform(click());
-            onView(withId(androidx.preference.R.id.recycler_view)).perform(
+            onView(allOf(withId(androidx.preference.R.id.recycler_view), isDisplayed())).perform(
                     RecyclerViewActions.scrollTo(hasDescendant(
                             withText(R.string.distinct_ab_haptics))));
             onView(withText(R.string.distinct_ab_haptics)).perform(click());

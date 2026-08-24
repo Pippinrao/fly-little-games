@@ -3,9 +3,11 @@ package com.flynes.emu;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.junit.Assert.assertEquals;
+import static org.hamcrest.Matchers.allOf;
 
 import android.content.Context;
 
@@ -35,7 +37,8 @@ public final class SettingsPersistenceTest {
                      ActivityScenario.launch(SettingsActivity.class)) {
             onView(withText(R.string.aspect_mode)).perform(click());
             onView(withText(R.string.aspect_square_pixels)).perform(click());
-            onView(withId(androidx.preference.R.id.recycler_view)).perform(
+            onView(withId(R.id.settings_controls_master)).perform(click());
+            onView(allOf(withId(androidx.preference.R.id.recycler_view), isDisplayed())).perform(
                     RecyclerViewActions.scrollTo(hasDescendant(withText(R.string.haptic_level))));
             onView(withText(R.string.haptic_level)).perform(click());
             onView(withText(R.string.haptic_off)).perform(click());

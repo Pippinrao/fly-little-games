@@ -203,13 +203,14 @@ public final class HomeActivity extends AppCompatActivity {
         layout.setSpanCount(largeText ? 1 : 2);
         if (largeText) {
             findViewById(R.id.game_center_heading).setVisibility(View.GONE);
-            findViewById(R.id.detail_art_label).setVisibility(View.GONE);
+            findViewById(R.id.detail_art).setVisibility(View.GONE);
+            findViewById(R.id.detail_meta).setVisibility(View.GONE);
             findViewById(R.id.game_center_topbar).getLayoutParams().height = dp(80);
             findViewById(R.id.category_tabs).getLayoutParams().height = dp(64);
             int[] buttons = {R.id.category_recent, R.id.category_favorites,
                     R.id.category_all, R.id.category_builtin};
             for (int id : buttons) findViewById(id).getLayoutParams().height = dp(64);
-            findViewById(R.id.launch_selected).getLayoutParams().height = dp(64);
+            findViewById(R.id.launch_selected).getLayoutParams().height = dp(96);
         }
     }
 
