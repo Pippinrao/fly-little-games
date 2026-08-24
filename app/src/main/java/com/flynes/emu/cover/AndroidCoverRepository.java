@@ -63,7 +63,9 @@ public final class AndroidCoverRepository implements CoverCaptureCoordinator.Sin
     public Bitmap load(String canonicalId) {
         Bitmap cached = memory.get(canonicalId);
         if (cached != null && !cached.isRecycled()) return cached;
-        Bitmap decoded = BitmapFactory.decodeFile(file(canonicalId).getAbsolutePath());
+        File stored = file(canonicalId);
+        if (!stored.isFile()) return null;
+        Bitmap decoded = BitmapFactory.decodeFile(stored.getAbsolutePath());
         if (decoded != null) memory.put(canonicalId, decoded);
         return decoded;
     }
