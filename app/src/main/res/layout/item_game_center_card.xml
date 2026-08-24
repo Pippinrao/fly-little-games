@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/game_card" android:layout_width="wrap_content" android:layout_height="match_parent" android:layout_margin="4dp" android:background="@drawable/bg_game_center_selected" android:clickable="true" android:focusable="true" android:minHeight="88dp" android:minWidth="144dp" android:orientation="horizontal" android:padding="8dp">
-    <TextView android:id="@+id/card_art" android:layout_width="48dp" android:layout_height="match_parent" android:background="@drawable/bg_cartridge" android:gravity="center" android:maxLines="2" android:textColor="@color/fly_on_surface_muted" android:textSize="10sp" android:textStyle="bold" />
+    <FrameLayout android:layout_width="80dp" android:layout_height="match_parent" android:background="@drawable/bg_cartridge">
+        <ImageView android:id="@+id/card_cover" android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@null" android:scaleType="fitCenter" android:visibility="gone" />
+        <TextView android:id="@+id/card_art" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:maxLines="2" android:padding="4dp" android:textColor="@color/fly_on_surface_muted" android:textSize="10sp" android:textStyle="bold" />
+    </FrameLayout>
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginStart="8dp" android:layout_weight="1" android:gravity="center_vertical" android:orientation="vertical">
         <TextView android:id="@+id/card_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:ellipsize="end" android:maxLines="2" android:textColor="@color/fly_on_surface" android:textStyle="bold" />
         <TextView android:id="@+id/card_meta" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:ellipsize="end" android:maxLines="1" android:textColor="@color/fly_on_surface_muted" android:textSize="11sp" />

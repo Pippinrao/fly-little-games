@@ -7,6 +7,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.replaceText;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static androidx.test.espresso.matcher.ViewMatchers.withContentDescription;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -103,6 +104,17 @@ public final class FirstRunNavigationTest {
         }
     }
 
+    @Test public void selectedGameCanBeAddedToAndSeenInFavorites() {
+        try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
+            waitUntilEnabled(scenario, R.id.favorite_toggle);
+            onView(withId(R.id.favorite_toggle)).perform(click());
+            waitForContentDescription(scenario, R.id.favorite_toggle,
+                    scenarioText(scenario, R.string.remove_favorite));
+            onView(withId(R.id.category_favorites)).perform(click());
+            onView(withId(R.id.detail_title)).check(matches(withText("From Below")));
+        }
+    }
+
     @Test
     public void homeActivityIsTheLauncher() {
         Intent intent = new Intent(Intent.ACTION_MAIN)
@@ -164,6 +176,32 @@ public final class FirstRunNavigationTest {
         float density = view.getResources().getDisplayMetrics().density;
         assertTrue(view.getWidth() >= 48f * density);
         assertTrue(view.getHeight() >= 48f * density);
+    }
+
+    private static void waitUntilEnabled(ActivityScenario<HomeActivity> scenario, int id) {
+        final boolean[] ready = {false};
+        for (int attempt = 0; attempt < 80 && !ready[0]; attempt++) {
+            scenario.onActivity(activity -> ready[0] = activity.findViewById(id).isEnabled());
+            if (!ready[0]) SystemClock.sleep(100L);
+        }
+        assertTrue("view did not become enabled: " + id, ready[0]);
+    }
+
+    private static String scenarioText(ActivityScenario<HomeActivity> scenario, int id) {
+        final String[] value = {""};
+        scenario.onActivity(activity -> value[0] = activity.getString(id));
+        return value[0];
+    }
+
+    private static void waitForContentDescription(ActivityScenario<HomeActivity> scenario,
+            int viewId, String expected) {
+        final boolean[] matched = {false};
+        for (int attempt = 0; attempt < 80 && !matched[0]; attempt++) {
+            scenario.onActivity(activity -> matched[0] = expected.contentEquals(
+                    activity.findViewById(viewId).getContentDescription()));
+            if (!matched[0]) SystemClock.sleep(100L);
+        }
+        onView(withId(viewId)).check(matches(withContentDescription(expected)));
     }
 
     private static void assertFullyVisible(TextView view) {

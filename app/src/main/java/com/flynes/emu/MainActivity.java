@@ -23,6 +23,8 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.core.view.ViewCompat;
 
 import com.flynes.emu.input.InputRouter;
+import com.flynes.emu.cover.AndroidCoverRepository;
+import com.flynes.emu.cover.CoverCaptureCoordinator;
 import com.flynes.emu.data.RomIdentity;
 import com.flynes.emu.data.RomInfo;
 import com.flynes.emu.save.SaveRecord;
@@ -43,6 +45,8 @@ import com.flynes.emu.video.ViewportLayout;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Stage-0 vertical slice: load the bundled homebrew ROM, render via
@@ -71,6 +75,12 @@ public class MainActivity extends AppCompatActivity {
     private FrameLayout root;
     private boolean rendering = false;
     private RomIdentity currentRomIdentity;
+    private final ExecutorService coverExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "flynes-cover-capture");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private CoverCaptureCoordinator coverCapture;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -167,6 +177,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         PendingGameLaunch.Payload pending = PendingGameLaunch.consume();
+        String coverGameId = pending == null
+                ? "builtin:from-below" : pending.request().canonicalGameId();
+        coverCapture = new CoverCaptureCoordinator(coverGameId,
+                new AndroidCoverRepository(this), coverExecutor);
+        framePublisher.addObserver(coverCapture);
         byte[] rom = pending == null ? readAsset(ROM_ASSET) : pending.bytes();
         if (rom == null) {
             toastAndFinish(getString(R.string.missing_builtin_game));
@@ -285,6 +300,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (coverCapture != null) framePublisher.removeObserver(coverCapture);
+        coverExecutor.shutdownNow();
         stopRendering();
         gamepad.reset();
         // Never destroy the native core while the audio thread might still be

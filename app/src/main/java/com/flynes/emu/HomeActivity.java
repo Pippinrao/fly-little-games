@@ -3,6 +3,7 @@ package com.flynes.emu;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -13,6 +14,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -30,6 +32,7 @@ import com.flynes.emu.catalog.android.AndroidCatalogRuntime;
 import com.flynes.emu.catalog.android.PersistedReadPermissionGateway;
 import com.flynes.emu.catalog.persistence.SourceCatalogState;
 import com.flynes.emu.catalog.persistence.SourceScanResult;
+import com.flynes.emu.cover.AndroidCoverRepository;
 import com.flynes.emu.gamecenter.GameCenterItem;
 import com.flynes.emu.gamecenter.GameCenterState;
 import com.flynes.emu.gamecenter.GameTitlePresentation;
@@ -58,6 +61,7 @@ public final class HomeActivity extends AppCompatActivity {
         return thread;
     });
     private AndroidCatalogRuntime runtime;
+    private AndroidCoverRepository covers;
     private GameCenterState navigation;
     private SharedPreferences preferences;
     private final ArrayList<GameCenterItem> allItems = new ArrayList<>();
@@ -69,13 +73,20 @@ public final class HomeActivity extends AppCompatActivity {
     private View gameContent;
     private View sourceContent;
     private MaterialButton launch;
+    private MaterialButton favoriteToggle;
     private boolean busy;
     private boolean largeText;
+    private final ExecutorService coverLoader = Executors.newFixedThreadPool(2, runnable -> {
+        Thread thread = new Thread(runnable, "flynes-cover-loader");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
         runtime = ((FlyNesApplication) getApplication()).catalogRuntime();
+        covers = new AndroidCoverRepository(this);
         preferences = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
         navigation = restoreNavigation(savedInstanceState);
         bindViews();
@@ -132,12 +143,14 @@ public final class HomeActivity extends AppCompatActivity {
 
     @Override protected void onDestroy() {
         waiter.shutdownNow();
+        coverLoader.shutdownNow();
         super.onDestroy();
     }
 
     private void bindViews() {
         status = findViewById(R.id.library_status);
         launch = findViewById(R.id.launch_selected);
+        favoriteToggle = findViewById(R.id.favorite_toggle);
         searchInput = findViewById(R.id.search_input);
         gameContent = findViewById(R.id.game_center_content);
         sourceContent = findViewById(R.id.source_content);
@@ -157,6 +170,7 @@ public final class HomeActivity extends AppCompatActivity {
                 view -> startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.add_source).setOnClickListener(view -> chooseSource());
         launch.setOnClickListener(view -> launchSelected());
+        favoriteToggle.setOnClickListener(view -> toggleFavorite());
 
         searchInput.setText(navigation.query());
         if (!navigation.query().isEmpty()) findViewById(R.id.search_bar).setVisibility(View.VISIBLE);
@@ -291,10 +305,16 @@ public final class HomeActivity extends AppCompatActivity {
         TextView subtitle = findViewById(R.id.detail_subtitle);
         TextView meta = findViewById(R.id.detail_meta);
         TextView art = findViewById(R.id.detail_art_label);
+        ImageView cover = findViewById(R.id.detail_cover);
         if (entry == null) {
             title.setText(R.string.empty_category); subtitle.setText(""); meta.setText("");
             art.setText(R.string.app_name);
-            launch.setEnabled(false); return;
+            launch.setEnabled(false);
+            favoriteToggle.setEnabled(false);
+            favoriteToggle.setIconResource(R.drawable.ic_favorite_outline);
+            favoriteToggle.setContentDescription(getString(R.string.add_favorite));
+            cover.setVisibility(View.GONE);
+            return;
         }
         GameTitlePresentation.Title presentation = titlePresentation(entry);
         String display = presentation.primary();
@@ -307,9 +327,53 @@ public final class HomeActivity extends AppCompatActivity {
                         R.plurals.game_variant_count, entry.variants().size(),
                         entry.variants().size()));
         art.setText(display);
+        loadCover(entry.canonicalGame().id(), cover, art);
         launch.setEnabled(!busy && variant != null);
         launch.setText(entry.isRecent() ? R.string.continue_selected_game : R.string.start_game);
         launch.setContentDescription(launch.getText() + ", " + display);
+        favoriteToggle.setEnabled(!busy);
+        favoriteToggle.setIconResource(entry.favorite()
+                ? R.drawable.ic_favorite_filled : R.drawable.ic_favorite_outline);
+        favoriteToggle.setContentDescription(getString(entry.favorite()
+                ? R.string.remove_favorite : R.string.add_favorite));
+    }
+
+    private void toggleFavorite() {
+        GameCatalogEntry entry = entries.get(navigation.selectedCanonicalId());
+        if (entry == null || busy) return;
+        boolean next = !entry.favorite();
+        setBusy(true);
+        await(runtime.setFavorite(entry.canonicalGame().id(), next), changed -> {
+            setBusy(false);
+            if (Boolean.TRUE.equals(changed)) {
+                status.setText(next ? R.string.favorite_added : R.string.favorite_removed);
+                refreshSnapshot();
+            } else {
+                showStatus(R.string.favorite_failed);
+                renderDetail(entry);
+            }
+        }, failure -> {
+            setBusy(false);
+            showStatus(R.string.favorite_failed);
+            renderDetail(entry);
+        });
+    }
+
+    private void loadCover(String canonicalId, ImageView image, TextView fallback) {
+        image.setTag(canonicalId);
+        image.setImageDrawable(null);
+        image.setVisibility(View.GONE);
+        fallback.setVisibility(View.VISIBLE);
+        coverLoader.execute(() -> {
+            Bitmap bitmap = covers.load(canonicalId);
+            main.post(() -> {
+                if (isDestroyed() || !canonicalId.equals(image.getTag())) return;
+                if (bitmap == null) return;
+                image.setImageBitmap(bitmap);
+                image.setVisibility(View.VISIBLE);
+                fallback.setVisibility(View.GONE);
+            });
+        });
     }
 
     private void launchSelected() {
@@ -424,6 +488,7 @@ public final class HomeActivity extends AppCompatActivity {
         findViewById(R.id.open_sources).setEnabled(!value);
         GameCatalogEntry entry = entries.get(navigation == null ? null : navigation.selectedCanonicalId());
         launch.setEnabled(!value && entry != null && preferredVariant(entry) != null);
+        favoriteToggle.setEnabled(!value && entry != null);
     }
 
     private void showStatus(int stringId) { status.setText(stringId); }
@@ -466,6 +531,8 @@ public final class HomeActivity extends AppCompatActivity {
             String title = presentation.primary();
             holder.title.setText(title); holder.art.setText(title);
             holder.art.setVisibility(largeText ? View.GONE : View.VISIBLE);
+            holder.cover.setVisibility(View.GONE);
+            if (!largeText) loadCover(item.canonicalId(), holder.cover, holder.art);
             String metadata = presentation.secondary();
             if (metadata.isEmpty() && item.builtin()) metadata = getString(R.string.builtin_badge);
             holder.meta.setText(metadata);
@@ -482,7 +549,8 @@ public final class HomeActivity extends AppCompatActivity {
 
     private static final class GameCardHolder extends RecyclerView.ViewHolder {
         final TextView title, meta, art;
-        GameCardHolder(View view) { super(view); title = view.findViewById(R.id.card_title); meta = view.findViewById(R.id.card_meta); art = view.findViewById(R.id.card_art); }
+        final ImageView cover;
+        GameCardHolder(View view) { super(view); title = view.findViewById(R.id.card_title); meta = view.findViewById(R.id.card_meta); art = view.findViewById(R.id.card_art); cover = view.findViewById(R.id.card_cover); }
     }
 
     private final class SourceAdapter extends RecyclerView.Adapter<SourceHolder> {

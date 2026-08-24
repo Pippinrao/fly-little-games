@@ -88,6 +88,11 @@
     <string name="game_list">横向滑动游戏库</string>
     <string name="start_game">开始游戏</string>
     <string name="continue_selected_game">继续游戏</string>
+    <string name="add_favorite">添加收藏</string>
+    <string name="remove_favorite">取消收藏</string>
+    <string name="favorite_added">已添加到收藏</string>
+    <string name="favorite_removed">已取消收藏</string>
+    <string name="favorite_failed">无法更新收藏状态</string>
     <string name="game_ready">可以开始</string>
     <string name="game_unavailable">此版本当前不可用</string>
     <string name="game_count_continuous">%1$d 个游戏 · 横向滑动浏览全部</string>

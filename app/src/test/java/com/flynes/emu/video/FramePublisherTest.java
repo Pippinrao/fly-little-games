@@ -5,6 +5,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.Test;
 
@@ -78,6 +80,21 @@ public final class FramePublisherTest {
 
         NativeFrameSource failing = new NativeFrameSource((destination, metadata) -> -3, 64);
         assertEquals(null, failing.copyLatest());
+    }
+
+    @Test
+    public void observersReceiveOnlyAcceptedUniqueFrames() {
+        FakeFrameSource source = new FakeFrameSource(3);
+        FramePublisher publisher = new FramePublisher(source);
+        List<Long> observed = new ArrayList<>();
+        publisher.addObserver(frame -> observed.add(frame.sequence()));
+
+        publisher.poll();
+        publisher.poll();
+        source.sequence = 4;
+        publisher.poll();
+
+        assertEquals(List.of(3L, 4L), observed);
     }
 
     private static final class FakeFrameSource implements FramePublisher.Source {

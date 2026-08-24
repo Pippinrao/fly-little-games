@@ -88,6 +88,11 @@
     <string name="game_list">Horizontally scrolling game library</string>
     <string name="start_game">Start game</string>
     <string name="continue_selected_game">Continue game</string>
+    <string name="add_favorite">Add to favorites</string>
+    <string name="remove_favorite">Remove from favorites</string>
+    <string name="favorite_added">Added to favorites</string>
+    <string name="favorite_removed">Removed from favorites</string>
+    <string name="favorite_failed">Could not update favorites</string>
     <string name="game_ready">Ready to play</string>
     <string name="game_unavailable">This version is not available</string>
     <string name="game_count_continuous">%1$d games · swipe horizontally to browse all</string>
