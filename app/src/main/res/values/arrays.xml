@@ -2,8 +2,8 @@
 <resources>
     <string-array name="aspect_entries"><item>@string/aspect_four_three</item><item>@string/aspect_square_pixels</item><item>@string/aspect_integer</item></string-array>
     <string-array name="aspect_values"><item>FOUR_BY_THREE</item><item>SQUARE_PIXELS</item><item>INTEGER_SCALE</item></string-array>
-    <string-array name="filter_entries"><item>HQ4X</item><item>@string/filter_nearest</item><item>@string/filter_smooth</item></string-array>
-    <string-array name="filter_values"><item>HQ4X</item><item>NEAREST</item><item>SMOOTH</item></string-array>
+    <string-array name="filter_entries"><item>@string/filter_edge_enhanced</item><item>@string/filter_sharp_bilinear</item><item>@string/filter_nearest</item><item>@string/filter_crt</item></string-array>
+    <string-array name="filter_values"><item>EDGE_ENHANCED</item><item>SHARP_BILINEAR</item><item>NEAREST</item><item>CRT</item></string-array>
     <string-array name="refresh_entries"><item>@string/refresh_auto</item><item>60 Hz</item><item>90 Hz</item><item>120 Hz</item></string-array>
     <string-array name="refresh_values"><item>AUTO</item><item>HZ_60</item><item>HZ_90</item><item>HZ_120</item></string-array>
     <string-array name="layout_entries"><item>@string/layout_standard_ba</item><item>@string/layout_mirrored_ab</item></string-array>

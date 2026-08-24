@@ -35,8 +35,11 @@
     <string name="aspect_square_pixels">Square pixels</string>
     <string name="aspect_integer">Integer scale</string>
     <string name="filter_mode">Video filter</string>
+    <string name="filter_edge_enhanced">Edge enhanced (recommended)</string>
+    <string name="filter_sharp_bilinear">Sharp bilinear</string>
     <string name="filter_nearest">Sharp pixels</string>
     <string name="filter_smooth">Smooth</string>
+    <string name="filter_crt">CRT scanlines</string>
     <string name="refresh_rate">Display refresh rate</string>
     <string name="refresh_auto">Automatic (recommended)</string>
     <string name="button_layout">A/B button layout</string>

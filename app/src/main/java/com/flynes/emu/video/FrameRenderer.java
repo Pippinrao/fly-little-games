@@ -19,11 +19,52 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
             "attribute vec2 aTexCoord;\n" +
             "varying vec2 vTexCoord;\n" +
             "void main(){ gl_Position=vec4(aPosition,0.0,1.0); vTexCoord=aTexCoord; }";
-    private static final String FRAGMENT_SHADER =
+    private static final String FRAGMENT_HEADER =
             "precision mediump float;\n" +
             "uniform sampler2D uTexture;\n" +
-            "varying vec2 vTexCoord;\n" +
+            "varying vec2 vTexCoord;\n";
+    private static final String NEAREST_SHADER = FRAGMENT_HEADER +
             "void main(){ gl_FragColor=texture2D(uTexture,vTexCoord); }";
+    private static final String SHARP_BILINEAR_SHADER = FRAGMENT_HEADER +
+            "uniform vec2 uTextureSize;\n" +
+            "void main(){\n" +
+            " vec2 pixel=vTexCoord*uTextureSize-vec2(0.5);\n" +
+            " vec2 base=floor(pixel);\n" +
+            " vec2 sharpFraction=clamp((fract(pixel)-vec2(0.5))*2.0+vec2(0.5),0.0,1.0);\n" +
+            " vec2 uv=(base+sharpFraction+vec2(0.5))/uTextureSize;\n" +
+            " gl_FragColor=texture2D(uTexture,uv);\n" +
+            "}";
+    private static final String EDGE_ENHANCED_SHADER = FRAGMENT_HEADER +
+            "uniform vec2 uTextureSize;\n" +
+            "float colorDistance(vec4 a,vec4 b){ return dot(abs(a.rgb-b.rgb),vec3(0.299,0.587,0.114)); }\n" +
+            "void main(){\n" +
+            " vec2 pixel=vTexCoord*uTextureSize-vec2(0.5);\n" +
+            " vec2 centre=(floor(pixel)+vec2(0.5))/uTextureSize;\n" +
+            " vec2 f=fract(pixel); vec2 t=vec2(1.0)/uTextureSize;\n" +
+            " vec4 e=texture2D(uTexture,centre);\n" +
+            " vec4 b=texture2D(uTexture,centre-vec2(0.0,t.y));\n" +
+            " vec4 d=texture2D(uTexture,centre-vec2(t.x,0.0));\n" +
+            " vec4 r=texture2D(uTexture,centre+vec2(t.x,0.0));\n" +
+            " vec4 h=texture2D(uTexture,centre+vec2(0.0,t.y));\n" +
+            " vec4 outColor=e; float same=0.075;\n" +
+            " if(colorDistance(d,r)>same && colorDistance(b,h)>same){\n" +
+            "  if(f.x<0.5 && f.y<0.5 && colorDistance(d,b)<same) outColor=mix(e,d,0.72);\n" +
+            "  else if(f.x>=0.5 && f.y<0.5 && colorDistance(b,r)<same) outColor=mix(e,r,0.72);\n" +
+            "  else if(f.x<0.5 && f.y>=0.5 && colorDistance(d,h)<same) outColor=mix(e,d,0.72);\n" +
+            "  else if(f.x>=0.5 && f.y>=0.5 && colorDistance(h,r)<same) outColor=mix(e,r,0.72);\n" +
+            " }\n" +
+            " gl_FragColor=outColor;\n" +
+            "}";
+    private static final String CRT_SHADER = FRAGMENT_HEADER +
+            "uniform vec2 uTextureSize; uniform vec2 uOutputSize;\n" +
+            "void main(){\n" +
+            " vec4 color=texture2D(uTexture,vTexCoord);\n" +
+            " float scanline=0.88+0.12*sin(vTexCoord.y*uOutputSize.y*3.14159265);\n" +
+            " float mask=0.96+0.04*sin(vTexCoord.x*uOutputSize.x*2.0943951);\n" +
+            " vec2 edge=vTexCoord*(vec2(1.0)-vTexCoord);\n" +
+            " float vignette=clamp(pow(16.0*edge.x*edge.y,0.12),0.78,1.0);\n" +
+            " gl_FragColor=vec4(color.rgb*scanline*mask*vignette,color.a);\n" +
+            "}";
 
     private static final float[] QUAD = {
             -1f, -1f, 0f, 1f,
@@ -34,13 +75,16 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
 
     private final FramePublisher publisher;
     private final FloatBuffer vertices;
-    private volatile FilterMode filterMode = FilterMode.SMOOTH;
+    private volatile FilterMode filterMode = FilterMode.EDGE_ENHANCED;
+    private FilterMode activeFilterMode;
     private int program;
     private int texture;
     private int textureWidth;
     private int textureHeight;
     private PublishedFrame.Format textureFormat;
     private int appliedTextureFilter;
+    private int outputWidth;
+    private int outputHeight;
 
     public FrameRenderer(FramePublisher publisher) {
         this.publisher = publisher;
@@ -50,15 +94,28 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
     }
 
     public void setFilterMode(FilterMode filterMode) {
-        this.filterMode = filterMode == null ? FilterMode.SMOOTH : filterMode;
+        this.filterMode = filterMode == null ? FilterMode.EDGE_ENHANCED : filterMode;
     }
 
     static int textureFilter(FilterMode mode) {
-        return mode == FilterMode.NEAREST ? GLES20.GL_NEAREST : GLES20.GL_LINEAR;
+        return mode == FilterMode.SHARP_BILINEAR || mode == FilterMode.CRT
+                ? GLES20.GL_LINEAR : GLES20.GL_NEAREST;
+    }
+
+    static String fragmentShader(FilterMode mode) {
+        FilterMode safeMode = mode == null ? FilterMode.EDGE_ENHANCED : mode;
+        switch (safeMode) {
+            case SHARP_BILINEAR: return SHARP_BILINEAR_SHADER;
+            case NEAREST: return NEAREST_SHADER;
+            case CRT: return CRT_SHADER;
+            case EDGE_ENHANCED:
+            default: return EDGE_ENHANCED_SHADER;
+        }
     }
 
     @Override public void onSurfaceCreated(GL10 ignored, EGLConfig config) {
-        program = createProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+        program = 0;
+        activeFilterMode = null;
         int[] textures = new int[1];
         GLES20.glGenTextures(1, textures, 0);
         texture = textures[0];
@@ -72,17 +129,22 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
     }
 
     @Override public void onSurfaceChanged(GL10 ignored, int width, int height) {
+        outputWidth = width;
+        outputHeight = height;
         GLES20.glViewport(0, 0, width, height);
     }
 
     @Override public void onDrawFrame(GL10 ignored) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        ensureProgram();
         if (program == 0 || texture == 0) return;
 
         publisher.poll().ifPresent(this::upload);
         if (textureWidth <= 0 || textureHeight <= 0) return;
 
         GLES20.glUseProgram(program);
+        setUniform2f("uTextureSize", textureWidth, textureHeight);
+        setUniform2f("uOutputSize", outputWidth, outputHeight);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
         applyTextureFilter();
 
@@ -142,6 +204,21 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, requested);
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, requested);
         appliedTextureFilter = requested;
+    }
+
+    private void ensureProgram() {
+        FilterMode requested = filterMode;
+        if (program != 0 && activeFilterMode == requested) return;
+        int replacement = createProgram(VERTEX_SHADER, fragmentShader(requested));
+        if (program != 0) GLES20.glDeleteProgram(program);
+        program = replacement;
+        activeFilterMode = requested;
+        appliedTextureFilter = 0;
+    }
+
+    private void setUniform2f(String name, float first, float second) {
+        int location = GLES20.glGetUniformLocation(program, name);
+        if (location >= 0) GLES20.glUniform2f(location, first, second);
     }
 
     private static int createProgram(String vertexSource, String fragmentSource) {

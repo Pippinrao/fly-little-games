@@ -5,7 +5,7 @@ import com.flynes.emu.video.RefreshMode;
 
 /** Versioned settings loader that validates all untrusted persisted values. */
 public final class SettingsRepository {
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2;
     public static final String PREFERENCES_NAME = "flynes_settings";
 
     private final SettingsStore store;
@@ -19,7 +19,7 @@ public final class SettingsRepository {
         AppSettings defaults = AppSettings.defaults();
         AppSettings settings = defaults.toBuilder()
                 .aspectMode(enumValue(SettingsKeys.ASPECT, AspectMode.class, defaults.aspectMode()))
-                .filterMode(enumValue(SettingsKeys.FILTER, FilterMode.class, defaults.filterMode()))
+                .filterMode(filterValue(defaults.filterMode()))
                 .refreshMode(enumValue(SettingsKeys.REFRESH, RefreshMode.class, defaults.refreshMode()))
                 .layoutPreset(enumValue(SettingsKeys.LAYOUT, LayoutPreset.class,
                         defaults.layoutPreset()))
@@ -85,6 +85,17 @@ public final class SettingsRepository {
     private <T extends Enum<T>> T enumValue(String key, Class<T> type, T fallback) {
         try {
             return Enum.valueOf(type, store.getString(key, fallback.name()));
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            return fallback;
+        }
+    }
+
+    private FilterMode filterValue(FilterMode fallback) {
+        String stored = store.getString(SettingsKeys.FILTER, fallback.name());
+        if ("HQ4X".equals(stored)) return FilterMode.EDGE_ENHANCED;
+        if ("SMOOTH".equals(stored)) return FilterMode.SHARP_BILINEAR;
+        try {
+            return FilterMode.valueOf(stored);
         } catch (IllegalArgumentException | NullPointerException ignored) {
             return fallback;
         }

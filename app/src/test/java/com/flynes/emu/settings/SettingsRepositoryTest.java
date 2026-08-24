@@ -18,7 +18,7 @@ public final class SettingsRepositoryTest {
         AppSettings settings = new SettingsRepository(new MemoryStore()).load();
 
         assertEquals(AspectMode.FOUR_BY_THREE, settings.aspectMode());
-        assertEquals(FilterMode.HQ4X, settings.filterMode());
+        assertEquals(FilterMode.EDGE_ENHANCED, settings.filterMode());
         assertEquals(RefreshMode.AUTO, settings.refreshMode());
         assertEquals(HapticLevel.LIGHT, settings.hapticLevel());
         assertTrue(settings.distinctABHaptics());
@@ -90,6 +90,21 @@ public final class SettingsRepositoryTest {
 
         assertEquals(HapticLevel.STANDARD, settings.hapticLevel());
         assertFalse(settings.distinctABHaptics());
+    }
+
+    @Test
+    public void migrationMapsLegacyFilterNamesToHonestGpuModes() {
+        MemoryStore hq4x = new MemoryStore()
+                .put(SettingsKeys.SCHEMA, 1).put(SettingsKeys.FILTER, "HQ4X");
+        MemoryStore smooth = new MemoryStore()
+                .put(SettingsKeys.SCHEMA, 1).put(SettingsKeys.FILTER, "SMOOTH");
+
+        assertEquals(FilterMode.EDGE_ENHANCED,
+                new SettingsRepository(hq4x).load().filterMode());
+        assertEquals(FilterMode.SHARP_BILINEAR,
+                new SettingsRepository(smooth).load().filterMode());
+        assertEquals("EDGE_ENHANCED", hq4x.getString(SettingsKeys.FILTER, ""));
+        assertEquals("SHARP_BILINEAR", smooth.getString(SettingsKeys.FILTER, ""));
     }
 
     private static final class MemoryStore implements SettingsStore {

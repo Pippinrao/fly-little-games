@@ -37,7 +37,7 @@ public final class AppSettings {
 
     private AppSettings(Builder builder) {
         aspectMode = valueOr(builder.aspectMode, AspectMode.FOUR_BY_THREE);
-        filterMode = valueOr(builder.filterMode, FilterMode.HQ4X);
+        filterMode = valueOr(builder.filterMode, FilterMode.EDGE_ENHANCED);
         refreshMode = valueOr(builder.refreshMode, RefreshMode.AUTO);
         layoutPreset = valueOr(builder.layoutPreset, LayoutPreset.STANDARD_BA);
         buttonScale = clamp(builder.buttonScale, MIN_BUTTON_SCALE, MAX_BUTTON_SCALE);
@@ -120,7 +120,7 @@ public final class AppSettings {
 
     public static final class Builder {
         private AspectMode aspectMode = AspectMode.FOUR_BY_THREE;
-        private FilterMode filterMode = FilterMode.HQ4X;
+        private FilterMode filterMode = FilterMode.EDGE_ENHANCED;
         private RefreshMode refreshMode = RefreshMode.AUTO;
         private LayoutPreset layoutPreset = LayoutPreset.STANDARD_BA;
         private float buttonScale = 1f;

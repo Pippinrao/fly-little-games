@@ -35,8 +35,11 @@
     <string name="aspect_square_pixels">方形像素</string>
     <string name="aspect_integer">整数倍缩放</string>
     <string name="filter_mode">画面滤镜</string>
+    <string name="filter_edge_enhanced">边缘增强（推荐）</string>
+    <string name="filter_sharp_bilinear">锐化双线性</string>
     <string name="filter_nearest">锐利像素</string>
     <string name="filter_smooth">平滑</string>
+    <string name="filter_crt">CRT 扫描线</string>
     <string name="refresh_rate">屏幕刷新率</string>
     <string name="refresh_auto">自动（推荐）</string>
     <string name="button_layout">A/B 按键布局</string>
