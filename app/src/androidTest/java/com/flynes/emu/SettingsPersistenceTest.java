@@ -17,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.espresso.contrib.RecyclerViewActions;
 
 import com.flynes.emu.input.HapticLevel;
+import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.AspectMode;
 import com.flynes.emu.settings.SharedPreferencesSettingsStore;
@@ -38,6 +39,8 @@ public final class SettingsPersistenceTest {
             onView(withText(R.string.aspect_mode)).perform(click());
             onView(withText(R.string.aspect_square_pixels)).perform(click());
             onView(withId(R.id.settings_controls_master)).perform(click());
+            onView(withText(R.string.direction_control)).perform(click());
+            onView(withText(R.string.direction_dpad)).perform(click());
             onView(allOf(withId(androidx.preference.R.id.recycler_view), isDisplayed())).perform(
                     RecyclerViewActions.scrollTo(hasDescendant(withText(R.string.haptic_level))));
             onView(withText(R.string.haptic_level)).perform(click());
@@ -49,5 +52,6 @@ public final class SettingsPersistenceTest {
                 new SharedPreferencesSettingsStore(context)).load();
         assertEquals(AspectMode.SQUARE_PIXELS, saved.aspectMode());
         assertEquals(HapticLevel.OFF, saved.hapticLevel());
+        assertEquals(DirectionControlMode.DPAD, saved.directionControlMode());
     }
 }

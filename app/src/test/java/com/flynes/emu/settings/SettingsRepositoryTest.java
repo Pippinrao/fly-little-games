@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.flynes.emu.input.HapticLevel;
+import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.video.RefreshMode;
 
 import org.junit.Test;
@@ -23,6 +24,8 @@ public final class SettingsRepositoryTest {
         assertEquals(HapticLevel.LIGHT, settings.hapticLevel());
         assertTrue(settings.distinctABHaptics());
         assertEquals(LayoutPreset.STANDARD_BA, settings.layoutPreset());
+        assertEquals(DirectionControlMode.JOYSTICK, settings.directionControlMode());
+        assertEquals(.22f, settings.deadZone(), .0001f);
         assertTrue(settings.audioEnabled());
         assertTrue(settings.autosaveEnabled());
         assertEquals("system", settings.localeTag());
@@ -37,6 +40,7 @@ public final class SettingsRepositoryTest {
                 .filterMode(FilterMode.NEAREST)
                 .refreshMode(RefreshMode.HZ_120)
                 .layoutPreset(LayoutPreset.MIRRORED_AB)
+                .directionControlMode(DirectionControlMode.DPAD)
                 .buttonScale(1.25f)
                 .verticalOffset(-0.15f)
                 .controlOpacity(0.72f)

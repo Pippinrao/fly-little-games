@@ -10,6 +10,7 @@ public final class SettingsKeys {
     public static final String VERTICAL_OFFSET = "controls.vertical_offset";
     public static final String CONTROL_OPACITY = "controls.opacity";
     public static final String JOYSTICK_SCALE = "controls.joystick_scale";
+    public static final String DIRECTION_MODE = "controls.direction_mode";
     public static final String DEAD_ZONE = "controls.dead_zone";
     public static final String HAPTIC_LEVEL = "controls.haptic_level";
     public static final String DISTINCT_AB = "controls.distinct_ab";

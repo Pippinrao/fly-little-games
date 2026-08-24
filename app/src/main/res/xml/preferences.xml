@@ -8,6 +8,7 @@
         <Preference app:selectable="false" app:summary="@string/display_frames_note" app:title="@string/display_emulation_rate" />
     </PreferenceScreen>
     <PreferenceScreen app:key="section.controls" app:title="@string/settings_controls">
+        <ListPreference app:defaultValue="JOYSTICK" app:entries="@array/direction_control_entries" app:entryValues="@array/direction_control_values" app:key="controls.direction_mode" app:title="@string/direction_control" app:useSimpleSummaryProvider="true" />
         <Preference app:key="controls.layout_editor" app:summary="@string/control_layout_summary" app:title="@string/control_layout_title" />
         <Preference app:key="controls.haptic_preview" app:summary="@string/haptic_preview_summary" app:title="@string/haptic_preview" />
         <ListPreference app:defaultValue="LIGHT" app:entries="@array/haptic_entries" app:entryValues="@array/haptic_values" app:key="controls.haptic_level" app:title="@string/haptic_level" app:useSimpleSummaryProvider="true" />

@@ -52,7 +52,7 @@ public final class ControlLayoutV2 {
 
     public static ControlLayoutV2 recommended() {
         EnumMap<Element, Placement> values = new EnumMap<>(Element.class);
-        values.put(Element.D_PAD, new Placement(.09f, .78f, 1f));
+        values.put(Element.D_PAD, new Placement(.10f, .76f, 1f));
         values.put(Element.A, new Placement(.94f, .64f, 1f));
         values.put(Element.B, new Placement(.87f, .86f, 1f));
         values.put(Element.SELECT, new Placement(.09f, .28f, 1f));

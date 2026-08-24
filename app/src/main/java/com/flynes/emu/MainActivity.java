@@ -23,6 +23,8 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.core.view.ViewCompat;
 
 import com.flynes.emu.input.InputRouter;
+import com.flynes.emu.input.HapticController;
+import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.cover.AndroidCoverRepository;
 import com.flynes.emu.cover.CoverCaptureCoordinator;
 import com.flynes.emu.data.RomIdentity;
@@ -66,6 +68,7 @@ public class MainActivity extends AppCompatActivity {
     private FramePublisher framePublisher;
     private GamepadView gamepad;
     private ImageButton pauseButton;
+    private HapticController pauseHaptics;
     private InputRouter inputRouter;
     private FrameLayout pauseLayer;
     private AudioThread audio;
@@ -137,6 +140,8 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         pauseButton = createPauseButton();
+        pauseHaptics = new HapticController(pauseButton);
+        pauseHaptics.configure(appSettings.hapticLevel(), appSettings.distinctABHaptics());
         int pauseSize = Math.round(48 * getResources().getDisplayMetrics().density);
         int pauseMargin = Math.round(16 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams pauseParams = new FrameLayout.LayoutParams(pauseSize, pauseSize,
@@ -336,7 +341,10 @@ public class MainActivity extends AppCompatActivity {
         background.setColor(0xB81B1D22);
         background.setStroke(dp(2), 0xFFFF6B5E);
         button.setBackground(background);
-        button.setOnClickListener(v -> inputRouter.dispatch(InputRouter.AppAction.OPEN_PAUSE));
+        button.setOnClickListener(v -> {
+            if (pauseHaptics != null) pauseHaptics.feedback(GamepadHitMap.Control.PAUSE);
+            inputRouter.dispatch(InputRouter.AppAction.OPEN_PAUSE);
+        });
         return button;
     }
 
@@ -491,6 +499,10 @@ public class MainActivity extends AppCompatActivity {
     private void applyHapticSettings() {
         if (gamepad != null) {
             gamepad.setControlSettings(appSettings == null ? settings.load() : appSettings);
+        }
+        if (pauseHaptics != null) {
+            AppSettings active = appSettings == null ? settings.load() : appSettings;
+            pauseHaptics.configure(active.hapticLevel(), active.distinctABHaptics());
         }
     }
 

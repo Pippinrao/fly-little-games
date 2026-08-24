@@ -11,6 +11,9 @@
     <string name="load_game_failed">Could not load game</string>
     <string name="settings">Settings</string>
     <string name="control_feedback">Control feedback</string>
+    <string name="direction_control">Direction control</string>
+    <string name="direction_joystick">Fixed joystick (recommended)</string>
+    <string name="direction_dpad">Classic D-pad</string>
     <string name="haptic_off">Off</string>
     <string name="haptic_light">Light</string>
     <string name="haptic_standard">Standard</string>
@@ -167,6 +170,7 @@
     <string name="license_link_copied">Source link copied</string>
     <string name="license_source_unconfigured">Source link not configured</string>
     <string name="control_dpad">Directional pad</string>
+    <string name="control_joystick">Joystick</string>
     <string name="control_up">Up</string><string name="control_down">Down</string>
     <string name="control_left">Left</string><string name="control_right">Right</string>
     <string name="control_a">A button</string><string name="control_b">B button</string>

@@ -127,7 +127,8 @@ public class GamepadView extends View {
     private void rebuildHitMap() {
         if (getWidth() <= 0 || getHeight() <= 0) return;
         hitMap = GamepadHitMap.fromLayout(getWidth(), getHeight(), density,
-                insetLeft, insetRight, insetTop, insetBottom, controlLayout);
+                insetLeft, insetRight, insetTop, insetBottom, controlLayout,
+                controlSettings.directionControlMode(), controlSettings.deadZone());
         touchState = new GamepadInputState(hitMap);
         accessibility.invalidateRoot();
         recompute();
@@ -136,7 +137,12 @@ public class GamepadView extends View {
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         if (hitMap == null) return;
-        drawDpad(canvas);
+        if (controlSettings.directionControlMode()
+                == com.flynes.emu.input.DirectionControlMode.JOYSTICK) {
+            drawJoystick(canvas);
+        } else {
+            drawDpad(canvas);
+        }
         drawTarget(canvas, hitMap.target(GamepadHitMap.Control.B), "B");
         drawTarget(canvas, hitMap.target(GamepadHitMap.Control.A), "A");
         drawTarget(canvas, hitMap.target(GamepadHitMap.Control.SELECT), "SELECT");
@@ -162,6 +168,34 @@ public class GamepadView extends View {
         drawDirectionHighlight(canvas, GamepadHitMap.Control.RIGHT, InputBits.RIGHT);
         fill.setColor(withAlpha(0xFF121316, idleAlpha()));
         canvas.drawCircle(d.centerX(), d.centerY(), 8f * density, fill);
+    }
+
+    private void drawJoystick(Canvas canvas) {
+        GamepadHitMap.Bounds bounds = hitMap.dpadBounds();
+        float radius = Math.min(bounds.width(), bounds.height()) / 2f;
+        configurePaint(false, false);
+        canvas.drawCircle(bounds.centerX(), bounds.centerY(), radius, fill);
+        canvas.drawCircle(bounds.centerX(), bounds.centerY(), radius, stroke);
+        float directionX = ((buttons & InputBits.RIGHT) != 0 ? 1f : 0f)
+                - ((buttons & InputBits.LEFT) != 0 ? 1f : 0f);
+        float directionY = ((buttons & InputBits.DOWN) != 0 ? 1f : 0f)
+                - ((buttons & InputBits.UP) != 0 ? 1f : 0f);
+        if (directionX != 0f && directionY != 0f) {
+            directionX *= .7071f;
+            directionY *= .7071f;
+        }
+        float travel = radius * .42f;
+        boolean active = directionX != 0f || directionY != 0f;
+        fill.setColor(withAlpha(active ? COLOR_PRESSED : COLOR_IDLE,
+                active ? pressedAlpha() : idleAlpha()));
+        stroke.setColor(withAlpha(active ? COLOR_CORAL : COLOR_OUTLINE,
+                active ? pressedAlpha() : idleAlpha()));
+        float knobRadius = 28f * density
+                * controlLayout.placement(ControlLayoutV2.Element.D_PAD).scale();
+        float knobX = bounds.centerX() + directionX * travel;
+        float knobY = bounds.centerY() + directionY * travel;
+        canvas.drawCircle(knobX, knobY, knobRadius, fill);
+        canvas.drawCircle(knobX, knobY, knobRadius, stroke);
     }
 
     private void drawDirectionHighlight(Canvas canvas, GamepadHitMap.Control control, int bit) {
@@ -227,15 +261,19 @@ public class GamepadView extends View {
         int id = event.getPointerId(index);
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             GamepadHitMap.Control control = hitMap.hit(event.getX(index), event.getY(index));
+            int before = touchState.mask();
             touchState.down(id, event.getX(index), event.getY(index), event.getEventTime());
+            feedbackNewDirections(before, touchState.mask());
             if (control == GamepadHitMap.Control.A || control == GamepadHitMap.Control.B
                     || control == GamepadHitMap.Control.SELECT || control == GamepadHitMap.Control.START) {
                 haptics.feedback(control);
             }
         } else if (action == MotionEvent.ACTION_MOVE) {
+            int before = touchState.mask();
             for (int i = 0; i < event.getPointerCount(); i++) {
                 touchState.move(event.getPointerId(i), event.getX(i), event.getY(i), event.getEventTime());
             }
+            feedbackNewDirections(before, touchState.mask());
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             GamepadInputState.Release release = touchState.up(id, event.getEventTime());
             long remaining = MinimumTap.remainingMillis(event.getEventTime() - release.heldMillis(),
@@ -245,6 +283,14 @@ public class GamepadView extends View {
         }
         recompute();
         return true;
+    }
+
+    private void feedbackNewDirections(int before, int after) {
+        int entered = after & ~before;
+        if ((entered & InputBits.UP) != 0) haptics.feedback(GamepadHitMap.Control.UP);
+        if ((entered & InputBits.DOWN) != 0) haptics.feedback(GamepadHitMap.Control.DOWN);
+        if ((entered & InputBits.LEFT) != 0) haptics.feedback(GamepadHitMap.Control.LEFT);
+        if ((entered & InputBits.RIGHT) != 0) haptics.feedback(GamepadHitMap.Control.RIGHT);
     }
 
     private void pulse(int bits, long millis) {

@@ -8,6 +8,8 @@
     <string-array name="refresh_values"><item>AUTO</item><item>HZ_60</item><item>HZ_90</item><item>HZ_120</item></string-array>
     <string-array name="layout_entries"><item>@string/layout_standard_ba</item><item>@string/layout_mirrored_ab</item></string-array>
     <string-array name="layout_values"><item>STANDARD_BA</item><item>MIRRORED_AB</item></string-array>
+    <string-array name="direction_control_entries"><item>@string/direction_joystick</item><item>@string/direction_dpad</item></string-array>
+    <string-array name="direction_control_values"><item>JOYSTICK</item><item>DPAD</item></string-array>
     <string-array name="haptic_entries"><item>@string/haptic_off</item><item>@string/haptic_light</item><item>@string/haptic_standard</item><item>@string/haptic_strong</item></string-array>
     <string-array name="haptic_values"><item>OFF</item><item>LIGHT</item><item>STANDARD</item><item>STRONG</item></string-array>
     <string-array name="audio_focus_entries"><item>@string/audio_focus_pause</item><item>@string/audio_focus_duck</item><item>@string/audio_focus_ignore</item></string-array>

@@ -1,6 +1,7 @@
 package com.flynes.emu.settings;
 
 import com.flynes.emu.input.HapticLevel;
+import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.video.RefreshMode;
 
 import java.util.Objects;
@@ -22,6 +23,7 @@ public final class AppSettings {
     private final FilterMode filterMode;
     private final RefreshMode refreshMode;
     private final LayoutPreset layoutPreset;
+    private final DirectionControlMode directionControlMode;
     private final float buttonScale;
     private final float verticalOffset;
     private final float controlOpacity;
@@ -40,6 +42,7 @@ public final class AppSettings {
         filterMode = valueOr(builder.filterMode, FilterMode.EDGE_ENHANCED);
         refreshMode = valueOr(builder.refreshMode, RefreshMode.AUTO);
         layoutPreset = valueOr(builder.layoutPreset, LayoutPreset.STANDARD_BA);
+        directionControlMode = valueOr(builder.directionControlMode, DirectionControlMode.JOYSTICK);
         buttonScale = clamp(builder.buttonScale, MIN_BUTTON_SCALE, MAX_BUTTON_SCALE);
         verticalOffset = clamp(builder.verticalOffset, MIN_VERTICAL_OFFSET, MAX_VERTICAL_OFFSET);
         controlOpacity = clamp(builder.controlOpacity, MIN_CONTROL_OPACITY, MAX_CONTROL_OPACITY);
@@ -67,6 +70,7 @@ public final class AppSettings {
     public FilterMode filterMode() { return filterMode; }
     public RefreshMode refreshMode() { return refreshMode; }
     public LayoutPreset layoutPreset() { return layoutPreset; }
+    public DirectionControlMode directionControlMode() { return directionControlMode; }
     public float buttonScale() { return buttonScale; }
     public float verticalOffset() { return verticalOffset; }
     public float controlOpacity() { return controlOpacity; }
@@ -96,6 +100,7 @@ public final class AppSettings {
                 && filterMode == other.filterMode
                 && refreshMode == other.refreshMode
                 && layoutPreset == other.layoutPreset
+                && directionControlMode == other.directionControlMode
                 && hapticLevel == other.hapticLevel
                 && audioFocusPolicy == other.audioFocusPolicy
                 && localeTag.equals(other.localeTag)
@@ -103,7 +108,7 @@ public final class AppSettings {
     }
 
     @Override public int hashCode() {
-        return Objects.hash(aspectMode, filterMode, refreshMode, layoutPreset, buttonScale,
+        return Objects.hash(aspectMode, filterMode, refreshMode, layoutPreset, directionControlMode, buttonScale,
                 verticalOffset, controlOpacity, joystickScale, deadZone, hapticLevel,
                 distinctABHaptics, audioEnabled, audioFocusPolicy, localeTag,
                 autosaveEnabled, lastPlayedRomId);
@@ -123,11 +128,12 @@ public final class AppSettings {
         private FilterMode filterMode = FilterMode.EDGE_ENHANCED;
         private RefreshMode refreshMode = RefreshMode.AUTO;
         private LayoutPreset layoutPreset = LayoutPreset.STANDARD_BA;
+        private DirectionControlMode directionControlMode = DirectionControlMode.JOYSTICK;
         private float buttonScale = 1f;
         private float verticalOffset = 0f;
         private float controlOpacity = 0.78f;
         private float joystickScale = 1f;
-        private float deadZone = 0.15f;
+        private float deadZone = 0.22f;
         private HapticLevel hapticLevel = HapticLevel.LIGHT;
         private boolean distinctABHaptics = true;
         private boolean audioEnabled = true;
@@ -143,6 +149,7 @@ public final class AppSettings {
             filterMode = settings.filterMode;
             refreshMode = settings.refreshMode;
             layoutPreset = settings.layoutPreset;
+            directionControlMode = settings.directionControlMode;
             buttonScale = settings.buttonScale;
             verticalOffset = settings.verticalOffset;
             controlOpacity = settings.controlOpacity;
@@ -161,6 +168,7 @@ public final class AppSettings {
         public Builder filterMode(FilterMode value) { filterMode = value; return this; }
         public Builder refreshMode(RefreshMode value) { refreshMode = value; return this; }
         public Builder layoutPreset(LayoutPreset value) { layoutPreset = value; return this; }
+        public Builder directionControlMode(DirectionControlMode value) { directionControlMode = value; return this; }
         public Builder buttonScale(float value) { buttonScale = value; return this; }
         public Builder verticalOffset(float value) { verticalOffset = value; return this; }
         public Builder controlOpacity(float value) { controlOpacity = value; return this; }

@@ -1,11 +1,12 @@
 package com.flynes.emu.settings;
 
 import com.flynes.emu.input.HapticLevel;
+import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.video.RefreshMode;
 
 /** Versioned settings loader that validates all untrusted persisted values. */
 public final class SettingsRepository {
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
     public static final String PREFERENCES_NAME = "flynes_settings";
 
     private final SettingsStore store;
@@ -23,6 +24,8 @@ public final class SettingsRepository {
                 .refreshMode(enumValue(SettingsKeys.REFRESH, RefreshMode.class, defaults.refreshMode()))
                 .layoutPreset(enumValue(SettingsKeys.LAYOUT, LayoutPreset.class,
                         defaults.layoutPreset()))
+                .directionControlMode(enumValue(SettingsKeys.DIRECTION_MODE,
+                        DirectionControlMode.class, defaults.directionControlMode()))
                 .buttonScale(floatValue(SettingsKeys.BUTTON_SCALE, defaults.buttonScale()))
                 .verticalOffset(floatValue(SettingsKeys.VERTICAL_OFFSET,
                         defaults.verticalOffset()))
@@ -58,6 +61,7 @@ public final class SettingsRepository {
         store.putString(SettingsKeys.FILTER, settings.filterMode().name());
         store.putString(SettingsKeys.REFRESH, settings.refreshMode().name());
         store.putString(SettingsKeys.LAYOUT, settings.layoutPreset().name());
+        store.putString(SettingsKeys.DIRECTION_MODE, settings.directionControlMode().name());
         store.putString(SettingsKeys.BUTTON_SCALE, Float.toString(settings.buttonScale()));
         store.putString(SettingsKeys.VERTICAL_OFFSET, Float.toString(settings.verticalOffset()));
         store.putString(SettingsKeys.CONTROL_OPACITY, Float.toString(settings.controlOpacity()));

@@ -21,19 +21,33 @@ public final class HapticPattern {
         }
         int amplitude = amplitude(level);
         long duration = duration(level);
-        if (control == GamepadHitMap.Control.B && distinguishAB) {
-            return new HapticPattern(
-                    new long[]{0, duration, 12, duration},
-                    new int[]{0, amplitude, 0, amplitude});
+        if (control == GamepadHitMap.Control.B && !distinguishAB) {
+            control = GamepadHitMap.Control.A;
         }
-        if (control == GamepadHitMap.Control.START) {
-            return new HapticPattern(
-                    new long[]{0, duration + 3, 18, duration + 3},
-                    new int[]{0, amplitude, 0, amplitude});
+        switch (control) {
+            case UP: return pulse(amplitude, duration);
+            case DOWN: return pulse(amplitude, duration + 2);
+            case LEFT: return cadence(amplitude, 3, 7, duration);
+            case RIGHT: return cadence(amplitude, duration, 7, 3);
+            case A: return pulse(amplitude, duration + 1);
+            case B: return cadence(amplitude, Math.max(3, duration / 2), 9,
+                    Math.max(3, duration / 2));
+            case SELECT: return new HapticPattern(
+                    new long[]{0, 3, 8, 3, 8, 3},
+                    new int[]{0, amplitude, 0, amplitude, 0, amplitude});
+            case START: return cadence(amplitude, duration + 4, 14, 4);
+            case PAUSE: return pulse(amplitude, duration + 8);
+            default: return NONE;
         }
-        return new HapticPattern(
-                new long[]{0, duration},
-                new int[]{0, amplitude});
+    }
+
+    private static HapticPattern pulse(int amplitude, long duration) {
+        return new HapticPattern(new long[]{0, duration}, new int[]{0, amplitude});
+    }
+
+    private static HapticPattern cadence(int amplitude, long first, long gap, long second) {
+        return new HapticPattern(new long[]{0, first, gap, second},
+                new int[]{0, amplitude, 0, amplitude});
     }
 
     private static int amplitude(HapticLevel level) {

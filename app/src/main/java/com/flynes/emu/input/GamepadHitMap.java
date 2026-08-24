@@ -10,7 +10,7 @@ import java.util.Map;
 
 /** Ergonomic, immutable landscape hit map. Visual size and touch target are intentionally separate. */
 public final class GamepadHitMap {
-    public enum Control { NONE, UP, DOWN, LEFT, RIGHT, B, A, SELECT, START }
+    public enum Control { NONE, UP, DOWN, LEFT, RIGHT, B, A, SELECT, START, PAUSE }
     public enum Shape { CIRCLE, ROUNDED_SQUARE, PILL }
 
     public static final class Bounds {
@@ -54,14 +54,19 @@ public final class GamepadHitMap {
     private final Bounds safeBounds;
     private final Bounds dpadBounds;
     private final float density;
+    private final DirectionControlMode directionMode;
+    private final float deadZone;
     private final Map<Control, Target> targets;
     private final List<Target> controls;
 
     private GamepadHitMap(Bounds safeBounds, Bounds dpadBounds, float density,
+                          DirectionControlMode directionMode, float deadZone,
                           Map<Control, Target> targets) {
         this.safeBounds = safeBounds;
         this.dpadBounds = dpadBounds;
         this.density = density;
+        this.directionMode = directionMode;
+        this.deadZone = deadZone;
         this.targets = Collections.unmodifiableMap(new EnumMap<>(targets));
         this.controls = Collections.unmodifiableList(new ArrayList<>(targets.values()));
     }
@@ -112,7 +117,8 @@ public final class GamepadHitMap {
                 systemY, pillW, pillH, Shape.PILL));
 
         GamepadHitMap map = new GamepadHitMap(
-                new Bounds(safeLeft, safeTop, safeRight, safeBottom), dpad, density, values);
+                new Bounds(safeLeft, safeTop, safeRight, safeBottom), dpad, density,
+                DirectionControlMode.DPAD, .22f, values);
         List<String> errors = map.validate();
         if (!errors.isEmpty()) throw new IllegalArgumentException(join(errors));
         return map;
@@ -129,10 +135,23 @@ public final class GamepadHitMap {
                                            int insetLeft, int insetRight,
                                            int insetTop, int insetBottom,
                                            ControlLayoutV2 layout) {
+        return fromLayout(width, height, density, insetLeft, insetRight, insetTop,
+                insetBottom, layout, DirectionControlMode.DPAD, .22f);
+    }
+
+    public static GamepadHitMap fromLayout(int width, int height, float density,
+                                           int insetLeft, int insetRight,
+                                           int insetTop, int insetBottom,
+                                           ControlLayoutV2 layout,
+                                           DirectionControlMode directionMode,
+                                           float deadZone) {
+        if (directionMode == null || deadZone < .08f || deadZone > .45f) {
+            throw new IllegalArgumentException("invalid direction control settings");
+        }
         float safeLeft=insetLeft, safeTop=insetTop, safeRight=width-insetRight, safeBottom=height-insetBottom;
         float safeWidth=safeRight-safeLeft, safeHeight=safeBottom-safeTop;
         ControlLayoutV2.Placement d=layout.placement(ControlLayoutV2.Element.D_PAD);
-        float dSize=144f*density*d.scale();
+        float dSize=(directionMode==DirectionControlMode.JOYSTICK?128f:144f)*density*d.scale();
         float dCx=clamp(safeLeft+d.centerX()*safeWidth,safeLeft+dSize/2f,safeRight-dSize/2f);
         float dCy=clamp(safeTop+d.centerY()*safeHeight,safeTop+dSize/2f,safeBottom-dSize/2f);
         Bounds dpad=new Bounds(dCx-dSize/2f,dCy-dSize/2f,dCx+dSize/2f,dCy+dSize/2f);
@@ -146,7 +165,8 @@ public final class GamepadHitMap {
         addLayoutTarget(values,Control.B,ControlLayoutV2.Element.B,64f,64f,Shape.ROUNDED_SQUARE,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
         addLayoutTarget(values,Control.SELECT,ControlLayoutV2.Element.SELECT,72f,48f,Shape.PILL,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
         addLayoutTarget(values,Control.START,ControlLayoutV2.Element.START,72f,48f,Shape.PILL,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
-        return new GamepadHitMap(new Bounds(safeLeft,safeTop,safeRight,safeBottom),dpad,density,values);
+        return new GamepadHitMap(new Bounds(safeLeft,safeTop,safeRight,safeBottom),dpad,density,
+                directionMode,deadZone,values);
     }
 
     private static void addLayoutTarget(EnumMap<Control,Target> values,Control control,
@@ -191,6 +211,9 @@ public final class GamepadHitMap {
 
     /** Returns one or two adjacent directions. The small release margin prevents edge chatter. */
     public int directionBits(float x, float y, int previousBits) {
+        if (directionMode == DirectionControlMode.JOYSTICK) {
+            return joystickDirectionBits(x, y, previousBits);
+        }
         float release = previousBits == 0 ? 0f : 8f * density;
         Bounds active = dpadBounds.expanded(release);
         if (!active.contains(x, y)) return 0;
@@ -202,6 +225,21 @@ public final class GamepadHitMap {
         else if (dx >= threshold) bits |= InputBits.RIGHT;
         if (dy <= -threshold) bits |= InputBits.UP;
         else if (dy >= threshold) bits |= InputBits.DOWN;
+        return bits;
+    }
+
+    private int joystickDirectionBits(float x, float y, int previousBits) {
+        float dx = x - dpadBounds.centerX();
+        float dy = y - dpadBounds.centerY();
+        float radius = Math.min(dpadBounds.width(), dpadBounds.height()) / 2f;
+        float normalized = (float) Math.sqrt(dx * dx + dy * dy) / radius;
+        float threshold = previousBits == 0 ? deadZone : Math.max(.08f, deadZone - .06f);
+        if (normalized < threshold || normalized > 1.18f) return 0;
+        float ax = Math.abs(dx);
+        float ay = Math.abs(dy);
+        int bits = 0;
+        if (ax >= ay * .55f) bits |= dx < 0 ? InputBits.LEFT : InputBits.RIGHT;
+        if (ay >= ax * .55f) bits |= dy < 0 ? InputBits.UP : InputBits.DOWN;
         return bits;
     }
 

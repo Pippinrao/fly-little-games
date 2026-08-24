@@ -11,6 +11,9 @@
     <string name="load_game_failed">无法加载游戏</string>
     <string name="settings">设置</string>
     <string name="control_feedback">操作反馈</string>
+    <string name="direction_control">方向操控</string>
+    <string name="direction_joystick">固定拨杆（推荐）</string>
+    <string name="direction_dpad">经典方向键</string>
     <string name="haptic_off">关闭</string>
     <string name="haptic_light">轻</string>
     <string name="haptic_standard">标准</string>
@@ -167,6 +170,7 @@
     <string name="license_link_copied">已复制来源链接</string>
     <string name="license_source_unconfigured">未配置来源链接</string>
     <string name="control_dpad">方向键</string>
+    <string name="control_joystick">拨杆</string>
     <string name="control_up">上</string><string name="control_down">下</string>
     <string name="control_left">左</string><string name="control_right">右</string>
     <string name="control_a">A 键</string><string name="control_b">B 键</string>
