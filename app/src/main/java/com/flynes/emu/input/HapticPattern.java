@@ -16,8 +16,7 @@ public final class HapticPattern {
     public static HapticPattern forControl(GamepadHitMap.Control control,
                                            HapticLevel level,
                                            boolean distinguishAB) {
-        if (level == HapticLevel.OFF || control == GamepadHitMap.Control.NONE
-                || control == GamepadHitMap.Control.JOY) {
+        if (level == HapticLevel.OFF || control == GamepadHitMap.Control.NONE) {
             return NONE;
         }
         int amplitude = amplitude(level);

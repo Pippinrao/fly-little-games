@@ -1,6 +1,5 @@
 package com.flynes.emu;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.graphics.drawable.GradientDrawable;
@@ -11,12 +10,18 @@ import android.view.Gravity;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.ViewGroup;
+import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.activity.OnBackPressedCallback;
+import androidx.core.view.ViewCompat;
 
 import com.flynes.emu.input.InputRouter;
 import com.flynes.emu.data.RomIdentity;
@@ -54,8 +59,9 @@ public class MainActivity extends AppCompatActivity {
     private final EmulationSession session = new EmulationSession(core);
     private EmuView view;
     private GamepadView gamepad;
+    private ImageButton pauseButton;
     private InputRouter inputRouter;
-    private AlertDialog pauseDialog;
+    private FrameLayout pauseLayer;
     private AudioThread audio;
     private SaveRepository saves;
     private SettingsRepository settings;
@@ -111,6 +117,7 @@ public class MainActivity extends AppCompatActivity {
         gamepad.setInputRouter(inputRouter);
 
         root = new FrameLayout(this);
+        root.setBackgroundColor(0xFF121316);
         // Game surface: fixed 4:3 view sized to fit the screen and centered —
         // a MATCH_PARENT surface would stretch the 1024x960 (hq4x) buffer
         // non-uniformly on wide screens (the "stretched picture" complaint).
@@ -129,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        ImageButton pauseButton = createPauseButton();
+        pauseButton = createPauseButton();
         int pauseSize = Math.round(48 * getResources().getDisplayMetrics().density);
         int pauseMargin = Math.round(16 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams pauseParams = new FrameLayout.LayoutParams(pauseSize, pauseSize,
@@ -149,6 +156,12 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(root);
         root.requestApplyInsets();
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (pauseLayer != null) resumeFromPauseMenu();
+                else showPauseMenu();
+            }
+        });
 
         if (!core.create()) {
             toastAndFinish("Failed to create emulator core");
@@ -214,6 +227,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (pauseLayer == null) {
+            gamepad.setVisibility(View.VISIBLE);
+            pauseButton.setVisibility(View.VISIBLE);
+        }
         appSettings = settings.load();
         applyHapticSettings();
         applyRuntimeVideoSettings();
@@ -309,8 +326,8 @@ public class MainActivity extends AppCompatActivity {
         button.setPadding(dp(12), dp(12), dp(12), dp(12));
         GradientDrawable background = new GradientDrawable();
         background.setShape(GradientDrawable.OVAL);
-        background.setColor(0xC8323A4A);
-        background.setStroke(dp(1), 0xD0AAB6CB);
+        background.setColor(0xB81B1D22);
+        background.setStroke(dp(2), 0xFFFF6B5E);
         button.setBackground(background);
         button.setOnClickListener(v -> inputRouter.dispatch(InputRouter.AppAction.OPEN_PAUSE));
         return button;
@@ -338,45 +355,130 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showPauseMenu() {
-        if (isFinishing() || gamepad == null
-                || (pauseDialog != null && pauseDialog.isShowing())) return;
+        if (isFinishing() || gamepad == null || pauseLayer != null) return;
         inputRouter.cancelAll();
+        gamepad.reset();
         if (session.state() == SessionState.RUNNING) session.pause();
         stopRendering();
-        stopAudioThread();
-        pauseDialog = new AlertDialog.Builder(this)
-                .setTitle(R.string.pause_title)
-                .setItems(new String[]{getString(R.string.continue_game),
-                        getString(R.string.game_library),
-                        getString(R.string.settings),
-                        getString(R.string.license_information),
-                        getString(R.string.cancel)}, (d, which) -> {
-                    switch (which) {
-                        case 0:
-                            d.dismiss();
-                            resumeFromPauseMenu();
-                            break;
-                        case 1:
-                            d.dismiss();
-                            handleAppAction(InputRouter.AppAction.OPEN_LIBRARY);
-                            break;
-                        case 2:
-                            d.dismiss();
-                            handleAppAction(InputRouter.AppAction.OPEN_SETTINGS);
-                            break;
-                        case 3:
-                            d.dismiss();
-                            startActivity(new Intent(this, LicensesActivity.class));
-                            break;
-                        default:
-                            d.dismiss();
-                            break;
-                    }
-                })
-                .setOnCancelListener(d -> resumeFromPauseMenu())
-                .create();
-        pauseDialog.setOnDismissListener(d -> pauseDialog = null);
-        pauseDialog.show();
+        stopAudioForPauseAsync();
+        gamepad.setVisibility(View.INVISIBLE);
+        pauseButton.setVisibility(View.INVISIBLE);
+        pauseLayer = createPauseDrawer();
+        root.addView(pauseLayer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        pauseLayer.requestApplyInsets();
+        View scrim = pauseLayer.findViewById(R.id.pause_scrim);
+        View drawer = pauseLayer.findViewById(R.id.pause_drawer);
+        scrim.setAlpha(0f);
+        drawer.setTranslationX(drawer.getLayoutParams().width);
+        scrim.animate().alpha(1f).setDuration(180L).start();
+        drawer.animate().translationX(0f).setDuration(220L).start();
+    }
+
+    private FrameLayout createPauseDrawer() {
+        FrameLayout layer = new FrameLayout(this);
+        layer.setId(R.id.pause_layer);
+        layer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+
+        View scrim = new View(this);
+        scrim.setId(R.id.pause_scrim);
+        scrim.setContentDescription(getString(R.string.continue_game));
+        scrim.setBackgroundColor(0x8A000000);
+        scrim.setOnClickListener(v -> resumeFromPauseMenu());
+        layer.addView(scrim, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout drawer = new LinearLayout(this);
+        drawer.setId(R.id.pause_drawer);
+        drawer.setOrientation(LinearLayout.VERTICAL);
+        drawer.setGravity(Gravity.CENTER_VERTICAL);
+        android.view.WindowInsets currentInsets = root.getRootWindowInsets();
+        int currentRightInset = currentInsets == null ? 0
+                : currentInsets.getSystemWindowInsetRight();
+        drawer.setPadding(dp(24), dp(24), dp(24) + currentRightInset, dp(24));
+        drawer.setOnApplyWindowInsetsListener((content, insets) -> {
+            content.setPadding(dp(24), dp(24),
+                    dp(24) + insets.getSystemWindowInsetRight(), dp(24));
+            return insets;
+        });
+        GradientDrawable surface = new GradientDrawable();
+        surface.setColor(0xFF1B1D22);
+        surface.setStroke(dp(1), 0xFF34373F);
+        drawer.setBackground(surface);
+        drawer.setContentDescription(getString(R.string.pause_title));
+
+        TextView eyebrow = new TextView(this);
+        eyebrow.setText(R.string.pause_eyebrow);
+        eyebrow.setTextColor(0xFFFF6B5E);
+        eyebrow.setTextSize(12);
+        eyebrow.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        drawer.addView(eyebrow, matchWrap(dp(8)));
+        TextView title = new TextView(this);
+        title.setId(R.id.pause_game_title);
+        title.setText(R.string.builtin_game_name);
+        title.setTextColor(0xFFF4EFE6);
+        title.setTextSize(28);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        ViewCompat.setAccessibilityHeading(title, true);
+        drawer.addView(title, matchWrap(dp(24)));
+
+        Button resume = drawerButton(R.id.pause_continue, R.string.continue_game, true);
+        resume.setOnClickListener(v -> resumeFromPauseMenu());
+        drawer.addView(resume, matchHeight(dp(52), dp(12)));
+        Button center = drawerButton(R.id.pause_game_center, R.string.game_center_title, false);
+        center.setOnClickListener(v -> closePauseForNavigation(HomeActivity.class));
+        drawer.addView(center, matchHeight(dp(48), dp(8)));
+        Button settingsButton = drawerButton(R.id.pause_settings, R.string.settings, false);
+        settingsButton.setOnClickListener(v -> closePauseForNavigation(SettingsActivity.class));
+        drawer.addView(settingsButton, matchHeight(dp(48), 0));
+
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int drawerWidth = Math.min(dp(360), Math.max(dp(280), Math.round(screenWidth * .38f)));
+        FrameLayout.LayoutParams drawerParams = new FrameLayout.LayoutParams(
+                drawerWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END);
+        layer.addView(drawer, drawerParams);
+        drawer.requestApplyInsets();
+        return layer;
+    }
+
+    private Button drawerButton(int id, int text, boolean primary) {
+        Button button = new Button(this);
+        button.setId(id);
+        button.setText(text);
+        button.setTextSize(15);
+        button.setAllCaps(false);
+        button.setTextColor(primary ? 0xFF121316 : 0xFFF4EFE6);
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(14));
+        background.setColor(primary ? 0xFFFF6B5E : 0xFF25282F);
+        if (!primary) background.setStroke(dp(1), 0xFF555962);
+        button.setBackground(background);
+        return button;
+    }
+
+    private LinearLayout.LayoutParams matchWrap(int bottom) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.bottomMargin = bottom;
+        return params;
+    }
+
+    private LinearLayout.LayoutParams matchHeight(int height, int bottom) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, height);
+        params.bottomMargin = bottom;
+        return params;
+    }
+
+    private void closePauseForNavigation(Class<?> destination) {
+        removePauseLayer();
+        startActivity(new Intent(this, destination));
+    }
+
+    private void removePauseLayer() {
+        if (pauseLayer == null) return;
+        root.removeView(pauseLayer);
+        pauseLayer = null;
     }
 
     private void applyHapticSettings() {
@@ -387,6 +489,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void resumeFromPauseMenu() {
         if (isFinishing()) return;
+        removePauseLayer();
+        inputRouter.cancelAll();
+        gamepad.setVisibility(View.VISIBLE);
+        pauseButton.setVisibility(View.VISIBLE);
         if (session.state() == SessionState.PAUSED) session.resume();
         if (audio == null || !audio.isAlive()) {
             audio = new AudioThread(core, appSettings.audioEnabled());
@@ -481,6 +587,32 @@ public class MainActivity extends AppCompatActivity {
                     this, surface, appSettings.refreshMode(), 60.0988f);
             Log.i(TAG, "display refresh update=" + result);
         }
+    }
+
+    /** Stops the audio master without delaying the first drawer frame. */
+    private void stopAudioForPauseAsync() {
+        AudioThread stopping = audio;
+        if (stopping == null) return;
+        stopping.stopLoop();
+        Thread joiner = new Thread(() -> {
+            boolean dead = false;
+            try {
+                stopping.join(5000L);
+                dead = !stopping.isAlive();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            final boolean stopped = dead;
+            runOnUiThread(() -> {
+                if (audio != stopping || !stopped) return;
+                audio = null;
+                if (!isFinishing() && session.state() == SessionState.RUNNING) {
+                    audio = new AudioThread(core, appSettings.audioEnabled());
+                    audio.start();
+                }
+            });
+        }, "FlyNES-pause-audio-stop");
+        joiner.start();
     }
 
     private void updateViewport(int insetLeft, int insetRight) {

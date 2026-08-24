@@ -133,6 +133,17 @@ public final class FirstRunNavigationTest {
                 assertFullyVisible(holder.itemView.findViewById(R.id.card_title));
                 assertFullyVisible(holder.itemView.findViewById(R.id.card_meta));
             });
+            scenario.onActivity(activity -> activity.findViewById(R.id.open_sources).performClick());
+            scenario.onActivity(activity -> {
+                View copy = activity.findViewById(R.id.source_copy_scroll);
+                View cta = activity.findViewById(R.id.add_source);
+                Rect copyBounds = new Rect();
+                Rect ctaBounds = new Rect();
+                assertTrue(copy.getGlobalVisibleRect(copyBounds));
+                assertTrue(cta.getGlobalVisibleRect(ctaBounds));
+                assertTrue("source copy overlaps fixed CTA", copyBounds.bottom <= ctaBounds.top);
+                assertTouchTarget(cta);
+            });
         } finally {
             shell("settings put system font_scale 1.0");
         }

@@ -3,7 +3,6 @@ package com.flynes.emu;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
-import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
@@ -24,14 +23,13 @@ public final class StartAndPauseSeparationTest {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
                 GamepadView gamepad = activity.findViewById(R.id.gamepad);
-                float density = activity.getResources().getDisplayMetrics().density;
+                com.flynes.emu.input.GamepadHitMap.Target start = gamepad.hitMapForTest()
+                        .target(com.flynes.emu.input.GamepadHitMap.Control.START);
                 long now = SystemClock.uptimeMillis();
-                float startX = gamepad.getWidth() / 2f + 28f * density;
-                float startY = gamepad.getHeight() - 48f * density;
                 MotionEvent down = MotionEvent.obtain(
-                        now, now, MotionEvent.ACTION_DOWN, startX, startY, 0);
+                        now, now, MotionEvent.ACTION_DOWN, start.centerX(), start.centerY(), 0);
                 MotionEvent up = MotionEvent.obtain(
-                        now, now + 20, MotionEvent.ACTION_UP, startX, startY, 0);
+                        now, now + 20, MotionEvent.ACTION_UP, start.centerX(), start.centerY(), 0);
                 gamepad.dispatchTouchEvent(down);
                 gamepad.dispatchTouchEvent(up);
                 down.recycle();
@@ -39,9 +37,62 @@ public final class StartAndPauseSeparationTest {
             });
 
             onView(withText(R.string.pause_title)).check(doesNotExist());
+            final long[] openMillis = {0L};
+            scenario.onActivity(activity -> {
+                long before = SystemClock.uptimeMillis();
+                activity.findViewById(R.id.pause_button).performClick();
+                openMillis[0] = SystemClock.uptimeMillis() - before;
+            });
+            org.junit.Assert.assertTrue("pause drawer blocked main thread for " + openMillis[0] + "ms",
+                    openMillis[0] <= 260L);
+            SystemClock.sleep(240L);
+            onView(withId(R.id.pause_drawer)).check(matches(isDisplayed()));
+            onView(withId(R.id.pause_game_title)).check(matches(withText(R.string.builtin_game_name)));
+            scenario.onActivity(activity -> {
+                android.graphics.Rect buttonBounds = new android.graphics.Rect();
+                android.view.View continueButton = activity.findViewById(R.id.pause_continue);
+                org.junit.Assert.assertTrue(continueButton.getGlobalVisibleRect(buttonBounds));
+                android.view.WindowInsets insets = activity.findViewById(R.id.pause_layer)
+                        .getRootWindowInsets();
+                int navigationLeft = activity.findViewById(R.id.pause_layer).getWidth()
+                        - (insets == null ? 0 : insets.getSystemWindowInsetRight());
+                org.junit.Assert.assertTrue("continue enters system navigation bounds",
+                        buttonBounds.right <= navigationLeft);
+            });
+            onView(withId(R.id.pause_scrim)).perform(androidx.test.espresso.action.ViewActions.click());
+            onView(withId(R.id.pause_drawer)).check(doesNotExist());
+
             onView(withId(R.id.pause_button)).perform(androidx.test.espresso.action.ViewActions.click());
-            onView(withText(R.string.pause_title)).inRoot(isDialog())
-                    .check(matches(isDisplayed()));
+            SystemClock.sleep(240L);
+            onView(withId(R.id.pause_continue)).perform(androidx.test.espresso.action.ViewActions.click());
+            onView(withId(R.id.pause_drawer)).check(doesNotExist());
+
+            onView(withId(R.id.pause_button)).perform(androidx.test.espresso.action.ViewActions.click());
+            SystemClock.sleep(240L);
+            androidx.test.espresso.Espresso.pressBack();
+            onView(withId(R.id.pause_drawer)).check(doesNotExist());
+        }
+    }
+
+    @Test public void controlsKeepErgonomicBoundsAndPauseIsAppOnly() {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                GamepadView view = activity.findViewById(R.id.gamepad);
+                com.flynes.emu.input.GamepadHitMap map = view.hitMapForTest();
+                float density = activity.getResources().getDisplayMetrics().density;
+                org.junit.Assert.assertTrue(map.distanceBetween(
+                        map.target(com.flynes.emu.input.GamepadHitMap.Control.A),
+                        map.target(com.flynes.emu.input.GamepadHitMap.Control.B)) >= 24f * density);
+                // On compact/notched devices the safe insets consume part of the outer 15%;
+                // the system pills must still remain in their respective edge quarters.
+                org.junit.Assert.assertTrue(map.target(com.flynes.emu.input.GamepadHitMap.Control.SELECT).right()
+                        <= view.getWidth() * .25f);
+                org.junit.Assert.assertTrue(map.target(com.flynes.emu.input.GamepadHitMap.Control.START).left()
+                        >= view.getWidth() * .75f);
+                android.view.View pause = activity.findViewById(R.id.pause_button);
+                org.junit.Assert.assertTrue(pause.getWidth() >= 48f * density);
+                org.junit.Assert.assertTrue(pause.getHeight() >= 48f * density);
+            });
         }
     }
 }

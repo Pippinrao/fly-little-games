@@ -1,141 +1,198 @@
 package com.flynes.emu.input;
 
 import com.flynes.emu.settings.AppSettings;
-import com.flynes.emu.settings.LayoutPreset;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
+/** Ergonomic, immutable landscape hit map. Visual size and touch target are intentionally separate. */
 public final class GamepadHitMap {
-    public enum Control { NONE, JOY, B, A, SELECT, START }
+    public enum Control { NONE, UP, DOWN, LEFT, RIGHT, B, A, SELECT, START }
+    public enum Shape { CIRCLE, ROUNDED_SQUARE, PILL }
 
-    public static final class Circle {
-        private final Control control;
-        private final float cx;
-        private final float cy;
-        private final float radius;
-
-        public Circle(Control control, float cx, float cy, float radius) {
-            this.control = control;
-            this.cx = cx;
-            this.cy = cy;
-            this.radius = radius;
+    public static final class Bounds {
+        public final float left, top, right, bottom;
+        Bounds(float left, float top, float right, float bottom) {
+            this.left = left; this.top = top; this.right = right; this.bottom = bottom;
         }
-
-        public Control control() { return control; }
-        public float cx() { return cx; }
-        public float cy() { return cy; }
-        public float radius() { return radius; }
-
-        boolean contains(float x, float y) {
-            float dx = x - cx;
-            float dy = y - cy;
-            return dx * dx + dy * dy <= radius * radius;
-        }
-
-        boolean overlaps(Circle other) {
-            float dx = cx - other.cx;
-            float dy = cy - other.cy;
-            float sum = radius + other.radius;
-            return dx * dx + dy * dy < sum * sum;
-        }
+        public float centerX() { return (left + right) / 2f; }
+        public float centerY() { return (top + bottom) / 2f; }
+        public float width() { return right - left; }
+        public float height() { return bottom - top; }
+        boolean contains(float x, float y) { return x >= left && x <= right && y >= top && y <= bottom; }
+        boolean contains(Bounds value) { return value.left >= left && value.top >= top && value.right <= right && value.bottom <= bottom; }
+        Bounds expanded(float amount) { return new Bounds(left - amount, top - amount, right + amount, bottom + amount); }
     }
 
-    private final float left;
-    private final float top;
-    private final float right;
-    private final float bottom;
-    private final List<Circle> circles;
+    public static final class Target {
+        private final Control control;
+        private final Bounds bounds;
+        private final Shape shape;
 
-    private GamepadHitMap(float left, float top, float right, float bottom,
-                          List<Circle> circles) {
-        this.left = left;
-        this.top = top;
-        this.right = right;
-        this.bottom = bottom;
-        this.circles = Collections.unmodifiableList(new ArrayList<>(circles));
+        Target(Control control, Bounds bounds, Shape shape) {
+            this.control = control;
+            this.bounds = bounds;
+            this.shape = shape;
+        }
+        public Control control() { return control; }
+        public Shape shape() { return shape; }
+        public Bounds bounds() { return bounds; }
+        public float left() { return bounds.left; }
+        public float top() { return bounds.top; }
+        public float right() { return bounds.right; }
+        public float bottom() { return bounds.bottom; }
+        public float centerX() { return bounds.centerX(); }
+        public float centerY() { return bounds.centerY(); }
+        public float width() { return bounds.width(); }
+        public float height() { return bounds.height(); }
+        boolean contains(float x, float y) { return bounds.contains(x, y); }
+    }
+
+    private final Bounds safeBounds;
+    private final Bounds dpadBounds;
+    private final float density;
+    private final Map<Control, Target> targets;
+    private final List<Target> controls;
+
+    private GamepadHitMap(Bounds safeBounds, Bounds dpadBounds, float density,
+                          Map<Control, Target> targets) {
+        this.safeBounds = safeBounds;
+        this.dpadBounds = dpadBounds;
+        this.density = density;
+        this.targets = Collections.unmodifiableMap(new EnumMap<>(targets));
+        this.controls = Collections.unmodifiableList(new ArrayList<>(targets.values()));
     }
 
     public static GamepadHitMap standard(int width, int height, float density,
                                          int insetLeft, int insetRight,
                                          int insetTop, int insetBottom) {
-        return fromSettings(width, height, density, insetLeft, insetRight,
-                insetTop, insetBottom, AppSettings.defaults());
+        float safeLeft = insetLeft;
+        float safeTop = insetTop;
+        float safeRight = width - insetRight;
+        float safeBottom = height - insetBottom;
+        float dpadSize = 144f * density;
+        float dpadLeft = safeLeft + 16f * density;
+        float dpadTop = safeBottom - 16f * density - dpadSize;
+        Bounds dpad = new Bounds(dpadLeft, dpadTop, dpadLeft + dpadSize, dpadTop + dpadSize);
+
+        EnumMap<Control, Target> values = new EnumMap<>(Control.class);
+        float arm = 48f * density;
+        values.put(Control.UP, new Target(Control.UP,
+                new Bounds(dpad.centerX() - arm / 2f, dpad.top,
+                        dpad.centerX() + arm / 2f, dpad.centerY()), Shape.ROUNDED_SQUARE));
+        values.put(Control.DOWN, new Target(Control.DOWN,
+                new Bounds(dpad.centerX() - arm / 2f, dpad.centerY(),
+                        dpad.centerX() + arm / 2f, dpad.bottom), Shape.ROUNDED_SQUARE));
+        values.put(Control.LEFT, new Target(Control.LEFT,
+                new Bounds(dpad.left, dpad.centerY() - arm / 2f,
+                        dpad.centerX(), dpad.centerY() + arm / 2f), Shape.ROUNDED_SQUARE));
+        values.put(Control.RIGHT, new Target(Control.RIGHT,
+                new Bounds(dpad.centerX(), dpad.centerY() - arm / 2f,
+                        dpad.right, dpad.centerY() + arm / 2f), Shape.ROUNDED_SQUARE));
+
+        float aSize = 72f * density;
+        float bSize = 64f * density;
+        float aCx = safeRight - 52f * density;
+        float aCy = safeBottom - 132f * density;
+        float bCx = aCx - 88f * density;
+        float bCy = safeBottom - 48f * density;
+        values.put(Control.A, centered(Control.A, aCx, aCy, aSize, aSize, Shape.CIRCLE));
+        values.put(Control.B, centered(Control.B, bCx, bCy, bSize, bSize, Shape.ROUNDED_SQUARE));
+
+        float pillW = 72f * density;
+        float pillH = 48f * density;
+        float systemY = Math.max(safeTop + pillH / 2f + 8f * density,
+                dpad.top - 16f * density - pillH / 2f);
+        values.put(Control.SELECT, centered(Control.SELECT, dpad.centerX(), systemY,
+                pillW, pillH, Shape.PILL));
+        values.put(Control.START, centered(Control.START, safeRight - 43f * density,
+                systemY, pillW, pillH, Shape.PILL));
+
+        GamepadHitMap map = new GamepadHitMap(
+                new Bounds(safeLeft, safeTop, safeRight, safeBottom), dpad, density, values);
+        List<String> errors = map.validate();
+        if (!errors.isEmpty()) throw new IllegalArgumentException(join(errors));
+        return map;
     }
 
     public static GamepadHitMap fromSettings(int width, int height, float density,
                                              int insetLeft, int insetRight,
                                              int insetTop, int insetBottom,
-                                             AppSettings settings) {
-        float safeRight = width - insetRight;
-        float controlBottom = height - insetBottom - 24f * density;
-        float verticalShift = settings.verticalOffset() * 96f * density;
-        float actionRadius = Math.max(24f, 28f * settings.buttonScale()) * density;
-        float joystickRadius = Math.max(24f, 76f * settings.joystickScale()) * density;
-        Circle joy = new Circle(Control.JOY,
-                insetLeft + joystickRadius + 24f * density,
-                controlBottom - joystickRadius - verticalShift, joystickRadius);
-        Circle select = new Circle(Control.SELECT, width / 2f - 34f * density,
-                controlBottom - 24f * density, 24f * density);
-        Circle start = new Circle(Control.START, width / 2f + 34f * density,
-                controlBottom - 24f * density, 24f * density);
-        float rightCenter = safeRight - actionRadius - 4f * density;
-        float leftCenter = rightCenter - 2f * actionRadius - 16f * density;
-        float actionY = controlBottom - actionRadius - verticalShift;
-        Control rightControl = settings.layoutPreset() == LayoutPreset.MIRRORED_AB
-                ? Control.B : Control.A;
-        Control leftControl = rightControl == Control.A ? Control.B : Control.A;
-        Circle leftAction = new Circle(leftControl, leftCenter, actionY, actionRadius);
-        Circle rightAction = new Circle(rightControl, rightCenter, actionY, actionRadius);
-
-        GamepadHitMap map = new GamepadHitMap(insetLeft, insetTop,
-                width - insetRight, height - insetBottom,
-                List.of(joy, select, start, leftAction, rightAction));
-        List<String> errors = map.validate();
-        if (!errors.isEmpty()) {
-            throw new IllegalArgumentException(String.join("; ", errors));
-        }
-        return map;
+                                             AppSettings ignored) {
+        return standard(width, height, density, insetLeft, insetRight, insetTop, insetBottom);
     }
 
+    private static Target centered(Control control, float cx, float cy, float width,
+                                   float height, Shape shape) {
+        return new Target(control,
+                new Bounds(cx - width / 2f, cy - height / 2f, cx + width / 2f, cy + height / 2f),
+                shape);
+    }
+
+    public Target target(Control control) {
+        Target target = targets.get(control);
+        if (target == null) throw new IllegalArgumentException(control.name());
+        return target;
+    }
+    public List<Target> controls() { return controls; }
+    public Bounds dpadBounds() { return dpadBounds; }
+
     public Control hit(float x, float y) {
-        for (Circle circle : circles) {
-            if (circle.contains(x, y)) {
-                return circle.control;
-            }
+        for (Control control : new Control[]{Control.A, Control.B, Control.SELECT, Control.START}) {
+            if (target(control).contains(x, y)) return control;
         }
+        int direction = directionBits(x, y, 0);
+        if (direction == InputBits.UP) return Control.UP;
+        if (direction == InputBits.DOWN) return Control.DOWN;
+        if (direction == InputBits.LEFT) return Control.LEFT;
+        if (direction == InputBits.RIGHT) return Control.RIGHT;
         return Control.NONE;
     }
 
-    public Circle circle(Control control) {
-        for (Circle circle : circles) {
-            if (circle.control == control) {
-                return circle;
-            }
-        }
-        throw new IllegalArgumentException(control.name());
+    /** Returns one or two adjacent directions. The small release margin prevents edge chatter. */
+    public int directionBits(float x, float y, int previousBits) {
+        float release = previousBits == 0 ? 0f : 8f * density;
+        Bounds active = dpadBounds.expanded(release);
+        if (!active.contains(x, y)) return 0;
+        float dx = x - dpadBounds.centerX();
+        float dy = y - dpadBounds.centerY();
+        float threshold = (previousBits == 0 ? 18f : 12f) * density;
+        int bits = 0;
+        if (dx <= -threshold) bits |= InputBits.LEFT;
+        else if (dx >= threshold) bits |= InputBits.RIGHT;
+        if (dy <= -threshold) bits |= InputBits.UP;
+        else if (dy >= threshold) bits |= InputBits.DOWN;
+        return bits;
     }
 
-    public List<Circle> circles() {
-        return circles;
+    public float distanceBetween(Target first, Target second) {
+        float dx = first.centerX() - second.centerX();
+        float dy = first.centerY() - second.centerY();
+        float centerDistance = (float) Math.sqrt(dx * dx + dy * dy);
+        return Math.max(0f, centerDistance - Math.max(first.width(), first.height()) / 2f
+                - Math.max(second.width(), second.height()) / 2f);
     }
 
     public List<String> validate() {
         List<String> errors = new ArrayList<>();
-        for (int i = 0; i < circles.size(); i++) {
-            Circle first = circles.get(i);
-            if (first.cx - first.radius < left || first.cx + first.radius > right
-                    || first.cy - first.radius < top || first.cy + first.radius > bottom) {
-                errors.add(first.control + " outside safe rect");
-            }
-            for (int j = i + 1; j < circles.size(); j++) {
-                Circle second = circles.get(j);
-                if (first.overlaps(second)) {
-                    errors.add(first.control + " overlaps " + second.control);
-                }
-            }
+        for (Target target : controls) {
+            if (!safeBounds.contains(target.bounds)) errors.add(target.control + " outside safe rect");
+        }
+        if (distanceBetween(target(Control.A), target(Control.B)) < 24f * density) {
+            errors.add("A and B too close");
         }
         return Collections.unmodifiableList(errors);
+    }
+
+    private static String join(List<String> values) {
+        StringBuilder result = new StringBuilder();
+        for (String value : values) {
+            if (result.length() > 0) result.append("; ");
+            result.append(value);
+        }
+        return result.toString();
     }
 }

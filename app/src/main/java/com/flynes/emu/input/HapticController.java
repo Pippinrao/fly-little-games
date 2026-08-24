@@ -25,17 +25,22 @@ public final class HapticController {
     public void feedback(GamepadHitMap.Control control) {
         HapticPattern pattern = HapticPattern.forControl(control, level, distinguishAB);
         if (pattern.isNone()) return;
-        if (view.performHapticFeedback(feedbackConstant(control))) return;
-
         Vibrator vibrator = vibrator();
-        if (vibrator == null || !vibrator.hasVibrator()) return;
-        long[] timings = pattern.timings();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createWaveform(
-                    timings, pattern.amplitudes(), -1));
-        } else {
-            vibrator.vibrate(timings, -1);
+        if (vibrator != null && vibrator.hasVibrator()) {
+            try {
+                long[] timings = pattern.timings();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(
+                            timings, pattern.amplitudes(), -1));
+                } else {
+                    vibrator.vibrate(timings, -1);
+                }
+                return;
+            } catch (RuntimeException ignored) {
+                // Vendor implementations occasionally reject custom waveforms; use system feedback.
+            }
         }
+        view.performHapticFeedback(feedbackConstant(control));
     }
 
     private int feedbackConstant(GamepadHitMap.Control control) {

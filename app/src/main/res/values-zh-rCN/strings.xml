@@ -118,4 +118,6 @@
     <string name="remove">移除</string>
     <string name="source_operation_failed">无法更新此来源</string>
     <string name="missing_builtin_game">内置游戏当前不可用</string>
+    <string name="virtual_game_controls">游戏操控：方向键、B、A、选择和开始。</string>
+    <string name="pause_eyebrow">游戏已暂停</string>
 </resources>

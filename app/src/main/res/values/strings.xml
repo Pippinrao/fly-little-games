@@ -118,4 +118,6 @@
     <string name="remove">Remove</string>
     <string name="source_operation_failed">Could not update that source</string>
     <string name="missing_builtin_game">The built-in game is unavailable</string>
+    <string name="virtual_game_controls">Game controls. Direction pad, B, A, Select, and Start.</string>
+    <string name="pause_eyebrow">GAME PAUSED</string>
 </resources>

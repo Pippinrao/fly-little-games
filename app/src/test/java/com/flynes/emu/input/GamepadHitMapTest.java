@@ -1,75 +1,61 @@
 package com.flynes.emu.input;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-
-import com.flynes.emu.settings.AppSettings;
-import com.flynes.emu.settings.LayoutPreset;
 
 import org.junit.Test;
 
 public final class GamepadHitMapTest {
-    @Test
-    public void standardLayoutHasNoOverlaps() {
-        GamepadHitMap map = GamepadHitMap.standard(2340, 1080, 2.75f, 0, 132, 0, 0);
+    private static final float DENSITY = 2.75f;
+
+    @Test public void standardLayoutUsesClassicDpadAndErgonomicActionSizes() {
+        GamepadHitMap map = GamepadHitMap.standard(2340, 1080, DENSITY, 0, 132, 0, 0);
+        assertEquals(144f * DENSITY, map.dpadBounds().width(), .1f);
+        assertEquals(144f * DENSITY, map.dpadBounds().height(), .1f);
+        assertEquals(72f * DENSITY, map.target(GamepadHitMap.Control.A).width(), .1f);
+        assertEquals(64f * DENSITY, map.target(GamepadHitMap.Control.B).width(), .1f);
+        assertFalse(map.controls().contains(GamepadHitMap.Control.NONE));
         assertTrue(map.validate().toString(), map.validate().isEmpty());
     }
 
-    @Test
-    public void aAndBHaveAnUnambiguousGap() {
-        GamepadHitMap map = GamepadHitMap.standard(2340, 1080, 2.75f, 0, 132, 0, 0);
-        GamepadHitMap.Circle b = map.circle(GamepadHitMap.Control.B);
-        GamepadHitMap.Circle a = map.circle(GamepadHitMap.Control.A);
-
-        assertEquals(GamepadHitMap.Control.B, map.hit(b.cx(), b.cy()));
-        assertEquals(GamepadHitMap.Control.A, map.hit(a.cx(), a.cy()));
-        assertEquals(GamepadHitMap.Control.NONE,
-                map.hit((b.cx() + a.cx()) / 2f, b.cy()));
+    @Test public void aAndBAreDiagonalWithAtLeastTwentyFourDpGap() {
+        GamepadHitMap map = GamepadHitMap.standard(2340, 1080, DENSITY, 0, 132, 0, 0);
+        GamepadHitMap.Target a = map.target(GamepadHitMap.Control.A);
+        GamepadHitMap.Target b = map.target(GamepadHitMap.Control.B);
+        assertTrue(a.centerX() > b.centerX());
+        assertTrue(a.centerY() < b.centerY());
+        assertTrue(map.distanceBetween(a, b) >= 24f * DENSITY);
     }
 
-    @Test
-    public void rightInsetKeepsAInsideGestureSafeArea() {
-        int width = 2400;
-        int insetRight = 160;
-        GamepadHitMap map = GamepadHitMap.standard(width, 1080, 3f, 0, insetRight, 0, 0);
-        GamepadHitMap.Circle a = map.circle(GamepadHitMap.Control.A);
-
-        assertTrue(a.cx() + a.radius() <= width - insetRight);
+    @Test public void selectAndStartStayOutsideCentralSeventyPercent() {
+        int width = 2340;
+        GamepadHitMap map = GamepadHitMap.standard(width, 1080, DENSITY, 0, 132, 0, 0);
+        assertTrue(map.target(GamepadHitMap.Control.SELECT).right() <= width * .15f);
+        assertTrue(map.target(GamepadHitMap.Control.START).left() >= width * .85f);
+        assertTrue(map.target(GamepadHitMap.Control.SELECT).width() >= 72f * DENSITY);
+        assertTrue(map.target(GamepadHitMap.Control.START).height() >= 48f * DENSITY);
     }
 
-    @Test
-    public void maximumButtonScaleStillKeepsSixteenDpBetweenAAndB() {
-        float density = 2.75f;
-        AppSettings settings = AppSettings.defaults().toBuilder()
-                .buttonScale(AppSettings.MAX_BUTTON_SCALE).build();
-        GamepadHitMap map = GamepadHitMap.fromSettings(
-                2340, 1080, density, 0, 132, 0, 0, settings);
-        GamepadHitMap.Circle a = map.circle(GamepadHitMap.Control.A);
-        GamepadHitMap.Circle b = map.circle(GamepadHitMap.Control.B);
-        float gap = Math.abs(a.cx() - b.cx()) - a.radius() - b.radius();
-
-        assertEquals(16f * density, gap, 0.01f);
-        assertTrue(map.validate().toString(), map.validate().isEmpty());
+    @Test public void dpadDirectionsAndDiagonalAreResolvedWithoutOpposites() {
+        GamepadHitMap map = GamepadHitMap.standard(2340, 1080, DENSITY, 0, 132, 0, 0);
+        GamepadHitMap.Bounds d = map.dpadBounds();
+        assertEquals(InputBits.UP, map.directionBits(d.centerX(), d.top + 8, 0));
+        assertEquals(InputBits.DOWN, map.directionBits(d.centerX(), d.bottom - 8, 0));
+        assertEquals(InputBits.LEFT, map.directionBits(d.left + 8, d.centerY(), 0));
+        assertEquals(InputBits.RIGHT, map.directionBits(d.right - 8, d.centerY(), 0));
+        assertEquals(InputBits.UP | InputBits.LEFT,
+                map.directionBits(d.left + 12, d.top + 12, 0));
     }
 
-    @Test
-    public void mirroredPresetPlacesAOnTheLeft() {
-        AppSettings settings = AppSettings.defaults().toBuilder()
-                .layoutPreset(LayoutPreset.MIRRORED_AB).build();
-        GamepadHitMap map = GamepadHitMap.fromSettings(
-                2340, 1080, 2.75f, 0, 132, 0, 0, settings);
-
-        assertTrue(map.circle(GamepadHitMap.Control.A).cx()
-                < map.circle(GamepadHitMap.Control.B).cx());
-    }
-
-    @Test
-    public void longSystemLabelsUseCompactType() {
-        assertEquals(9f, GamepadVisualMetrics.labelSizeDp(
-                GamepadHitMap.Control.SELECT), 0f);
-        assertEquals(9f, GamepadVisualMetrics.labelSizeDp(
-                GamepadHitMap.Control.START), 0f);
-        assertEquals(20f, GamepadVisualMetrics.labelSizeDp(
-                GamepadHitMap.Control.A), 0f);
+    @Test public void dpadHysteresisRetainsDirectionNearThresholdThenCancelsOnExit() {
+        GamepadHitMap map = GamepadHitMap.standard(2340, 1080, DENSITY, 0, 132, 0, 0);
+        GamepadHitMap.Bounds d = map.dpadBounds();
+        assertEquals(InputBits.RIGHT, map.directionBits(
+                d.centerX() + 20f * DENSITY, d.centerY(), 0));
+        assertEquals(InputBits.RIGHT, map.directionBits(
+                d.centerX() + 13f * DENSITY, d.centerY(), InputBits.RIGHT));
+        assertEquals(0, map.directionBits(d.right + 13f * DENSITY,
+                d.centerY(), InputBits.RIGHT));
     }
 }

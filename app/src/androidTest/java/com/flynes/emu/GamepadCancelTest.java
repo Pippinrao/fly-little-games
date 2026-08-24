@@ -25,11 +25,12 @@ public final class GamepadCancelTest {
         view.setInputRouter(router);
         int width = 2340;
         int height = 1080;
-        float density = context.getResources().getDisplayMetrics().density;
         view.layout(0, 0, width, height);
+        com.flynes.emu.input.GamepadHitMap.Target a =
+                view.hitMapForTest().target(com.flynes.emu.input.GamepadHitMap.Control.A);
         long now = SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN,
-                width - 32f * density, height - 52f * density, 0);
+                a.centerX(), a.centerY(), 0);
         view.onTouchEvent(down);
         down.recycle();
 
@@ -48,11 +49,12 @@ public final class GamepadCancelTest {
         GamepadView view = new GamepadView(context);
         int width = 2340;
         int height = 1080;
-        float density = context.getResources().getDisplayMetrics().density;
         view.layout(0, 0, width, height);
+        com.flynes.emu.input.GamepadHitMap.Target a =
+                view.hitMapForTest().target(com.flynes.emu.input.GamepadHitMap.Control.A);
         long now = SystemClock.uptimeMillis();
-        float x = width - 32f * density;
-        float y = height - 52f * density;
+        float x = a.centerX();
+        float y = a.centerY();
         MotionEvent down = MotionEvent.obtain(
                 now, now, MotionEvent.ACTION_DOWN, x, y, 0);
         MotionEvent up = MotionEvent.obtain(
@@ -64,7 +66,7 @@ public final class GamepadCancelTest {
         up.recycle();
 
         assertEquals(InputBits.A, view.buttons());
-        SystemClock.sleep(90L);
+        SystemClock.sleep(40L);
         assertEquals(0, view.buttons());
     }
 }
