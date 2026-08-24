@@ -46,6 +46,19 @@ public record SourceScanResult(
                 throw new IllegalArgumentException("scan contains duplicate packages");
             }
         }
+        Set<String> packageOutcomeIds = new HashSet<>();
+        for (PackageOutcome item : packageOutcomes) {
+            if (!packageOutcomeIds.add(item.packageId())) {
+                throw new IllegalArgumentException("scan contains duplicate package outcomes");
+            }
+        }
+        Set<String> entryOutcomeIds = new HashSet<>();
+        for (EntryOutcome item : entryOutcomes) {
+            String key = item.packageId().length() + ":" + item.packageId() + item.entryId();
+            if (!entryOutcomeIds.add(key)) {
+                throw new IllegalArgumentException("scan contains duplicate entry outcomes");
+            }
+        }
         boolean fatal = false;
         for (ScanIssue issue : issues) fatal |= issue.severity() == ScanIssue.Severity.FATAL;
         if ((completeness == Completeness.FATAL) != fatal) {

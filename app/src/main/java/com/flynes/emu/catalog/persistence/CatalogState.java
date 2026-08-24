@@ -15,7 +15,7 @@ public record CatalogState(
         Map<String, SourceCatalogState> sources,
         Map<String, CanonicalUserState> userStates,
         long lastPlayedSequence) {
-    public static final int CURRENT_SCHEMA = 1;
+    public static final int CURRENT_SCHEMA = 2;
 
     public CatalogState {
         if (schemaVersion != CURRENT_SCHEMA || revision < 0 || lastPlayedSequence < 0) {
@@ -37,6 +37,9 @@ public record CatalogState(
             DomainValidation.requireNonBlank(item.getKey(), "canonical user-state id");
             if (item.getValue().lastPlayedSequence() > lastPlayedSequence) {
                 throw new IllegalArgumentException("canonical sequence exceeds global sequence");
+            }
+            if (item.getValue().favoriteUpdatedRevision() > revision) {
+                throw new IllegalArgumentException("favorite revision exceeds catalog revision");
             }
         }
     }

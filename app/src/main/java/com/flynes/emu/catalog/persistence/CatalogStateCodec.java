@@ -63,6 +63,7 @@ public final class CatalogStateCodec {
                 writeString(out, item.getKey());
                 CanonicalUserState user = item.getValue();
                 out.writeBoolean(user.favorite());
+                out.writeLong(user.favoriteUpdatedRevision());
                 out.writeLong(user.lastPlayedSequence());
                 out.writeInt(user.playCount());
             }
@@ -113,7 +114,7 @@ public final class CatalogStateCodec {
             for (int index = 0; index < userCount; index++) {
                 String id = readString(in);
                 CanonicalUserState user = new CanonicalUserState(
-                        in.readBoolean(), in.readLong(), in.readInt());
+                        in.readBoolean(), in.readLong(), in.readLong(), in.readInt());
                 if (users.put(id, user) != null) throw error(ErrorCode.INVALID_FIELD);
             }
             if (in.available() != 0) throw error(ErrorCode.INVALID_FIELD);

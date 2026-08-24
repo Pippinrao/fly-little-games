@@ -8,9 +8,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 
-/** Synchronized transaction boundary for durable catalog state and atomic catalog publication. */
+/** Private transaction boundary for durable catalog state and atomic catalog publication. */
 public final class CatalogRepository {
-    private CatalogState state;
+    private volatile CatalogState state;
+    private final Object transactionGate = new Object();
     private final CatalogStateStore store;
     private final GameCatalog catalog;
     private final RomSource fixedBuiltinSource;
@@ -24,99 +25,134 @@ public final class CatalogRepository {
         publish(initial);
     }
 
-    public synchronized CatalogState state() { return state; }
+    public CatalogState state() { return state; }
 
-    public synchronized void commitScan(SourceScanResult scan) throws RepositoryException {
-        final CatalogState next;
-        try { next = CatalogReconciler.reconcile(state, scan); }
-        catch (CatalogReconciler.ReconcileException failure) {
-            throw new RepositoryException(ErrorCode.STALE_OR_INVALID, failure);
+    public void commitScan(SourceScanResult scan) throws RepositoryException {
+        synchronized (transactionGate) {
+            final CatalogState next;
+            try { next = CatalogReconciler.reconcile(state, scan); }
+            catch (CatalogReconciler.ReconcileException failure) {
+                throw new RepositoryException(ErrorCode.STALE_OR_INVALID, failure);
+            }
+            commit(next);
         }
-        commit(next);
     }
 
-    public synchronized void addSource(RomSource source) throws RepositoryException {
-        commit(state.withSource(source));
+    public void addSource(RomSource source) throws RepositoryException {
+        synchronized (transactionGate) {
+            commit(state.withSource(source));
+        }
     }
 
-    public synchronized void reauthorizeSource(RomSource source) throws RepositoryException {
-        SourceCatalogState old = state.sources().get(source.id());
-        if (state.builtinSourceId().equals(source.id())) {
-            throw new RepositoryException(ErrorCode.BUILTIN_REMOVAL_REJECTED, null);
+    public void reauthorizeSource(RomSource source) throws RepositoryException {
+        synchronized (transactionGate) {
+            SourceCatalogState old = state.sources().get(source.id());
+            if (state.builtinSourceId().equals(source.id())) {
+                throw new RepositoryException(ErrorCode.BUILTIN_REMOVAL_REJECTED, null);
+            }
+            if (old == null) {
+                throw new RepositoryException(ErrorCode.SOURCE_NOT_FOUND, null);
+            }
+            LinkedHashMap<String, CatalogPackage> retained = new LinkedHashMap<>();
+            for (java.util.Map.Entry<String, CatalogPackage> item : old.packages().entrySet()) {
+                retained.put(item.getKey(), new CatalogPackage(
+                        item.getValue().physicalPackage(),
+                        CatalogPackage.Freshness.PRESERVED_STALE));
+            }
+            LinkedHashMap<String, SourceCatalogState> sources =
+                    new LinkedHashMap<>(state.sources());
+            sources.put(source.id(), new SourceCatalogState(
+                    source, retained, old.packageOutcomes(), old.entryOutcomes(), old.issues(),
+                    old.lastScanCompleteness(), old.lastScanToken()));
+            commit(state.replace(state.revision() + 1, sources,
+                    state.userStates(), state.lastPlayedSequence()));
         }
-        if (old == null || old.source().type() != source.type()) {
-            throw new RepositoryException(ErrorCode.SOURCE_NOT_FOUND, null);
-        }
-        LinkedHashMap<String, SourceCatalogState> sources = new LinkedHashMap<>(state.sources());
-        sources.put(source.id(), new SourceCatalogState(
-                source, old.packages(), old.packageOutcomes(), old.entryOutcomes(), old.issues(),
-                old.lastScanCompleteness(), old.lastScanToken()));
-        commit(state.replace(state.revision() + 1, sources,
-                state.userStates(), state.lastPlayedSequence()));
     }
 
-    public synchronized void removeSource(String sourceId) throws RepositoryException {
-        if (state.builtinSourceId().equals(sourceId)) {
-            throw new RepositoryException(ErrorCode.BUILTIN_REMOVAL_REJECTED, null);
+    public void removeSource(String sourceId) throws RepositoryException {
+        synchronized (transactionGate) {
+            if (state.builtinSourceId().equals(sourceId)) {
+                throw new RepositoryException(ErrorCode.BUILTIN_REMOVAL_REJECTED, null);
+            }
+            if (!state.sources().containsKey(sourceId)) {
+                throw new RepositoryException(ErrorCode.SOURCE_NOT_FOUND, null);
+            }
+            LinkedHashMap<String, SourceCatalogState> sources =
+                    new LinkedHashMap<>(state.sources());
+            sources.remove(sourceId);
+            java.util.Map<String, CanonicalUserState> users =
+                    CatalogReconciler.migrateUserStates(
+                            state, sources, state.userStates());
+            commit(state.replace(state.revision() + 1, sources,
+                    users, state.lastPlayedSequence()));
         }
-        if (!state.sources().containsKey(sourceId)) {
-            throw new RepositoryException(ErrorCode.SOURCE_NOT_FOUND, null);
-        }
-        LinkedHashMap<String, SourceCatalogState> sources = new LinkedHashMap<>(state.sources());
-        sources.remove(sourceId);
-        commit(state.replace(state.revision() + 1, sources,
-                state.userStates(), state.lastPlayedSequence()));
     }
 
-    public synchronized boolean setFavorite(String canonicalId, boolean favorite)
+    public boolean setFavorite(String canonicalId, boolean favorite)
             throws RepositoryException {
-        if (!containsCanonical(canonicalId)) return false;
-        LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>(state.userStates());
-        CanonicalUserState old = users.getOrDefault(canonicalId, CanonicalUserState.EMPTY);
-        users.put(canonicalId, old.withFavorite(favorite));
-        commit(state.replace(state.revision() + 1, state.sources(), users,
-                state.lastPlayedSequence()));
-        return true;
+        synchronized (transactionGate) {
+            if (!containsCanonical(canonicalId)) return false;
+            LinkedHashMap<String, CanonicalUserState> users =
+                    new LinkedHashMap<>(state.userStates());
+            CanonicalUserState old = users.getOrDefault(canonicalId, CanonicalUserState.EMPTY);
+            users.put(canonicalId, old.withFavorite(favorite, state.revision() + 1));
+            commit(state.replace(state.revision() + 1, state.sources(), users,
+                    state.lastPlayedSequence()));
+            return true;
+        }
     }
 
-    public synchronized boolean recordSuccessfulLaunch(String canonicalId)
+    public boolean recordSuccessfulLaunch(String canonicalId)
             throws RepositoryException {
-        if (!containsCanonical(canonicalId)) return false;
-        long sequence = Math.addExact(state.lastPlayedSequence(), 1);
-        LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>(state.userStates());
-        CanonicalUserState old = users.getOrDefault(canonicalId, CanonicalUserState.EMPTY);
-        users.put(canonicalId, old.launched(sequence));
-        commit(state.replace(state.revision() + 1, state.sources(), users, sequence));
-        return true;
+        synchronized (transactionGate) {
+            if (!containsCanonical(canonicalId)) return false;
+            long sequence = Math.addExact(state.lastPlayedSequence(), 1);
+            LinkedHashMap<String, CanonicalUserState> users =
+                    new LinkedHashMap<>(state.userStates());
+            CanonicalUserState old = users.getOrDefault(canonicalId, CanonicalUserState.EMPTY);
+            users.put(canonicalId, old.launched(sequence));
+            commit(state.replace(state.revision() + 1, state.sources(), users, sequence));
+            return true;
+        }
     }
 
-    public synchronized LoadResult load() throws RepositoryException {
-        final byte[] encoded;
-        try { encoded = store.read(); }
-        catch (IOException failure) { throw new RepositoryException(ErrorCode.STORE_READ_FAILED, failure); }
-        if (encoded == null) return new LoadResult(LoadStatus.NO_STATE, state, null);
-        final CatalogState decoded;
-        try { decoded = CatalogStateCodec.decode(encoded); }
-        catch (CatalogStateCodec.CodecException corrupt) {
-            return new LoadResult(LoadStatus.RECOVERY_NEEDED, state, corrupt.code());
+    public LoadResult load() throws RepositoryException {
+        synchronized (transactionGate) {
+            final byte[] encoded;
+            try { encoded = store.read(); }
+            catch (IOException failure) {
+                throw new RepositoryException(ErrorCode.STORE_READ_FAILED, failure);
+            }
+            if (encoded == null) return new LoadResult(LoadStatus.NO_STATE, state, null);
+            final CatalogState decoded;
+            try { decoded = CatalogStateCodec.decode(encoded); }
+            catch (CatalogStateCodec.CodecException corrupt) {
+                return new LoadResult(LoadStatus.RECOVERY_NEEDED, state, corrupt.code());
+            }
+            SourceCatalogState decodedBuiltin = decoded.sources().get(decoded.builtinSourceId());
+            if (!decoded.builtinSourceId().equals(fixedBuiltinSource.id())
+                    || decodedBuiltin == null
+                    || !sameStableSourceIdentity(decodedBuiltin.source(), fixedBuiltinSource)) {
+                return new LoadResult(
+                        LoadStatus.RECOVERY_NEEDED, state,
+                        CatalogStateCodec.ErrorCode.INVALID_FIELD);
+            }
+            try {
+                preflight(decoded);
+            } catch (RuntimeException invalid) {
+                return new LoadResult(
+                        LoadStatus.RECOVERY_NEEDED, state,
+                        CatalogStateCodec.ErrorCode.INVALID_FIELD);
+            }
+            publish(decoded);
+            state = decoded;
+            return new LoadResult(LoadStatus.LOADED, decoded, null);
         }
-        SourceCatalogState decodedBuiltin = decoded.sources().get(decoded.builtinSourceId());
-        if (!decoded.builtinSourceId().equals(fixedBuiltinSource.id())
-                || decodedBuiltin == null
-                || !sameStableSourceIdentity(decodedBuiltin.source(), fixedBuiltinSource)) {
-            return new LoadResult(
-                    LoadStatus.RECOVERY_NEEDED, state,
-                    CatalogStateCodec.ErrorCode.INVALID_FIELD);
-        }
-        state = decoded;
-        publish(decoded);
-        return new LoadResult(LoadStatus.LOADED, decoded, null);
     }
 
     private void commit(CatalogState next) throws RepositoryException {
         try {
-            new GameCatalog().publishPersistentState(
-                    projectedPackages(next), next.userStates(), next.lastPlayedSequence());
+            preflight(next);
         } catch (RuntimeException invalid) {
             throw new RepositoryException(ErrorCode.INVALID_STATE, invalid);
         }
@@ -133,6 +169,11 @@ public final class CatalogRepository {
 
     private void publish(CatalogState value) {
         catalog.publishPersistentState(
+                projectedPackages(value), value.userStates(), value.lastPlayedSequence());
+    }
+
+    private static void preflight(CatalogState value) {
+        new GameCatalog().publishPersistentState(
                 projectedPackages(value), value.userStates(), value.lastPlayedSequence());
     }
 

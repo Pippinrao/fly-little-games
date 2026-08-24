@@ -1,19 +1,27 @@
 package com.flynes.emu.catalog.persistence;
 
-public record CanonicalUserState(boolean favorite, long lastPlayedSequence, int playCount) {
-    public static final CanonicalUserState EMPTY = new CanonicalUserState(false, 0, 0);
+public record CanonicalUserState(
+        boolean favorite,
+        long favoriteUpdatedRevision,
+        long lastPlayedSequence,
+        int playCount) {
+    public static final CanonicalUserState EMPTY = new CanonicalUserState(false, 0, 0, 0);
 
     public CanonicalUserState {
-        if (lastPlayedSequence < 0 || playCount < 0) {
+        if (favoriteUpdatedRevision < 0 || lastPlayedSequence < 0 || playCount < 0) {
             throw new IllegalArgumentException("canonical user state must not be negative");
         }
     }
 
-    public CanonicalUserState withFavorite(boolean value) {
-        return new CanonicalUserState(value, lastPlayedSequence, playCount);
+    public CanonicalUserState withFavorite(boolean value, long revision) {
+        if (revision < favoriteUpdatedRevision) {
+            throw new IllegalArgumentException("favorite revision must be monotonic");
+        }
+        return new CanonicalUserState(value, revision, lastPlayedSequence, playCount);
     }
 
     public CanonicalUserState launched(long sequence) {
-        return new CanonicalUserState(favorite, sequence, Math.addExact(playCount, 1));
+        return new CanonicalUserState(
+                favorite, favoriteUpdatedRevision, sequence, Math.addExact(playCount, 1));
     }
 }

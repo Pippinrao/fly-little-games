@@ -326,6 +326,168 @@ public final class CatalogRepositoryTest {
         assertEquals(otherUri, repository.state().sources().get("tree").source());
     }
 
+    @Test
+    public void reauthorizeRetainsPackagesAsStaleUntilNewIdentityScansThem() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource original = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState initial = CatalogState.empty(builtin).withSource(original);
+        GameCatalog catalog = new GameCatalog();
+        CatalogRepository repository = new CatalogRepository(
+                initial, new MemoryStore(), catalog);
+        repository.commitScan(full(initial, original, 1,
+                pkg(original, "old-package", "game", 'A')));
+        assertTrue(catalog.resolveVariant("v-old-package").orElseThrow().isLaunchable());
+
+        RomSource reauthorized = new RomSource(
+                "tree", RomSource.Type.SAF_TREE, "source://new-tree",
+                RomSource.PermissionState.GRANTED);
+        repository.reauthorizeSource(reauthorized);
+        CatalogPackage retained = repository.state().sources().get("tree")
+                .packages().get("old-package");
+        assertEquals(CatalogPackage.Freshness.PRESERVED_STALE, retained.freshness());
+        assertEquals(original, retained.physicalPackage().source());
+        assertFalse(catalog.resolveVariant("v-old-package").orElseThrow().isLaunchable());
+
+        CatalogState stale = repository.state();
+        repository.commitScan(full(stale, reauthorized, 2,
+                pkg(reauthorized, "old-package", "game", 'A')));
+        assertEquals(CatalogPackage.Freshness.FRESH, repository.state().sources().get("tree")
+                .packages().get("old-package").freshness());
+        assertTrue(catalog.resolveVariant("v-old-package").orElseThrow().isLaunchable());
+    }
+
+    @Test
+    public void canonicalLineageRoundTripKeepsLatestStateWithoutResurrectionOrDoubleCount()
+            throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        CatalogState initial = CatalogState.empty(builtin);
+        CatalogRepository repository = new CatalogRepository(
+                initial, new MemoryStore(), new GameCatalog());
+        repository.commitScan(full(initial, builtin, 1,
+                pkg(builtin, "same", "canonical-a", 'A')));
+        repository.setFavorite("canonical-a", true);
+        repository.recordSuccessfulLaunch("canonical-a");
+
+        CatalogState a = repository.state();
+        repository.commitScan(full(a, builtin, 2,
+                pkg(builtin, "same", "canonical-b", 'A')));
+        repository.setFavorite("canonical-b", false);
+        repository.recordSuccessfulLaunch("canonical-b");
+
+        CatalogState b = repository.state();
+        repository.commitScan(full(b, builtin, 3,
+                pkg(builtin, "same", "canonical-a", 'A')));
+        CanonicalUserState latest = repository.state().userStates().get("canonical-a");
+        assertFalse(latest.favorite());
+        assertEquals(2, latest.playCount());
+        assertEquals(2, latest.lastPlayedSequence());
+        assertFalse(repository.state().userStates().containsKey("canonical-b"));
+    }
+
+    @Test
+    public void canonicalMergeCombinesDistinctLineagesOnceAndUsesLatestFavorite() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        CatalogState initial = CatalogState.empty(builtin);
+        CatalogRepository repository = new CatalogRepository(
+                initial, new MemoryStore(), new GameCatalog());
+        repository.commitScan(full(initial, builtin, 1,
+                pkg(builtin, "one", "canonical-a", 'A'),
+                pkg(builtin, "two", "canonical-b", 'B')));
+        repository.setFavorite("canonical-a", true);
+        repository.recordSuccessfulLaunch("canonical-a");
+        repository.setFavorite("canonical-b", false);
+        repository.recordSuccessfulLaunch("canonical-b");
+        repository.recordSuccessfulLaunch("canonical-b");
+
+        CatalogState split = repository.state();
+        repository.commitScan(full(split, builtin, 2,
+                pkg(builtin, "one", "merged", 'A'),
+                pkg(builtin, "two", "merged", 'B')));
+        CanonicalUserState merged = repository.state().userStates().get("merged");
+        assertFalse(merged.favorite());
+        assertEquals(3, merged.playCount());
+        assertEquals(3, merged.lastPlayedSequence());
+        assertEquals(1, repository.state().userStates().size());
+    }
+
+    @Test
+    public void loadRejectsChecksumValidGlobalDuplicateWithoutChangingLiveState() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource tree = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState initial = CatalogState.empty(builtin).withSource(tree);
+        MemoryStore store = new MemoryStore();
+        GameCatalog catalog = new GameCatalog();
+        CatalogRepository repository = new CatalogRepository(initial, store, catalog);
+        repository.commitScan(full(initial, builtin, 1,
+                pkg(builtin, "live", "live-game", 'A')));
+        CatalogState live = repository.state();
+
+        PhysicalPackage first = pkg(builtin, "duplicate", "first", 'B');
+        PhysicalPackage second = pkg(tree, "duplicate", "second", 'C');
+        java.util.LinkedHashMap<String, SourceCatalogState> sources =
+                new java.util.LinkedHashMap<>();
+        sources.put("builtin", sourceState(builtin, first));
+        sources.put("tree", sourceState(tree, second));
+        CatalogState invalid = new CatalogState(
+                CatalogState.CURRENT_SCHEMA, live.revision() + 1, "builtin", sources,
+                Collections.emptyMap(), 0);
+        store.bytes = CatalogStateCodec.encode(invalid);
+        byte[] preserved = store.bytes.clone();
+
+        CatalogRepository.LoadResult result = repository.load();
+        assertEquals(CatalogRepository.LoadStatus.RECOVERY_NEEDED, result.status());
+        assertEquals(CatalogStateCodec.ErrorCode.INVALID_FIELD, result.recoveryReason());
+        assertEquals(live, repository.state());
+        assertEquals("live-game", catalog.canonicalEntries().get(0).canonicalGame().id());
+        assertArrayEquals(preserved, store.bytes);
+    }
+
+    @Test
+    public void sourceScanRejectsDuplicatePackageAndEntryOutcomes() {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        CatalogState initial = CatalogState.empty(builtin);
+        PackageOutcome packageOutcome = new PackageOutcome(
+                "same", PackageOutcome.Status.SKIPPED, PackageOutcome.Reason.UNKNOWN_FORMAT);
+        assertThrows(IllegalArgumentException.class, () -> new SourceScanResult(
+                builtin.id(), initial.revision(), 1, SourceScanResult.Completeness.FULL,
+                builtin, Collections.emptyList(), List.of(packageOutcome, packageOutcome),
+                Collections.emptyList(), Collections.emptyList(), 2));
+        EntryOutcome entryOutcome = new EntryOutcome(
+                "same", "entry", EntryOutcome.Status.SKIPPED,
+                EntryOutcome.Reason.UNKNOWN_FORMAT);
+        assertThrows(IllegalArgumentException.class, () -> new SourceScanResult(
+                builtin.id(), initial.revision(), 1, SourceScanResult.Completeness.FULL,
+                builtin, Collections.emptyList(), List.of(packageOutcome),
+                List.of(entryOutcome, entryOutcome), Collections.emptyList(), 1));
+    }
+
+    @Test
+    public void sourceRemovalDropsOrphanedCanonicalUserState() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource tree = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState initial = CatalogState.empty(builtin).withSource(tree);
+        CatalogRepository repository = new CatalogRepository(
+                initial, new MemoryStore(), new GameCatalog());
+        repository.commitScan(full(initial, tree, 1,
+                pkg(tree, "tree-package", "tree-game", 'A')));
+        repository.setFavorite("tree-game", true);
+
+        repository.removeSource("tree");
+
+        assertFalse(repository.state().userStates().containsKey("tree-game"));
+    }
+
+    private static SourceCatalogState sourceState(
+            RomSource source, PhysicalPackage physicalPackage) {
+        return new SourceCatalogState(
+                source, java.util.Map.of(physicalPackage.id(), new CatalogPackage(
+                physicalPackage, CatalogPackage.Freshness.FRESH)),
+                List.of(new PackageOutcome(physicalPackage.id(), PackageOutcome.Status.INDEXED,
+                        PackageOutcome.Reason.INDEXED)),
+                Collections.emptyList(), Collections.emptyList(),
+                SourceScanResult.Completeness.FULL, 1);
+    }
+
     private static SourceScanResult full(
             CatalogState state, RomSource source, long token, PhysicalPackage... packages) {
         return new SourceScanResult(

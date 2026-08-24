@@ -9,7 +9,9 @@ import com.flynes.emu.catalog.ScanIssue;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 public final class CatalogReconciler {
     private CatalogReconciler() {
@@ -75,7 +77,7 @@ public final class CatalogReconciler {
         sources.put(scan.sourceId(), new SourceCatalogState(
                 scan.source(), next, scan.packageOutcomes(), scan.entryOutcomes(), scan.issues(),
                 scan.completeness(), scan.scanToken()));
-        Map<String, CanonicalUserState> users = migrateByPayloadHash(
+        Map<String, CanonicalUserState> users = migrateUserStates(
                 current, sources, current.userStates());
         return current.replace(current.revision() + 1, sources, users,
                 current.lastPlayedSequence());
@@ -108,36 +110,87 @@ public final class CatalogReconciler {
                         : RomSource.Availability.UNAVAILABLE);
     }
 
-    private static Map<String, CanonicalUserState> migrateByPayloadHash(
+    static Map<String, CanonicalUserState> migrateUserStates(
             CatalogState oldState,
             Map<String, SourceCatalogState> newSources,
             Map<String, CanonicalUserState> existing) {
-        TreeMap<String, String> oldCanonicalByHash = canonicalByHash(oldState.sources());
-        TreeMap<String, String> newCanonicalByHash = canonicalByHash(newSources);
-        LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>(existing);
-        for (Map.Entry<String, String> item : newCanonicalByHash.entrySet()) {
-            String oldCanonical = oldCanonicalByHash.get(item.getKey());
-            String newCanonical = item.getValue();
-            if (oldCanonical != null && !users.containsKey(newCanonical)) {
-                CanonicalUserState oldUser = users.get(oldCanonical);
-                if (oldUser != null) users.put(newCanonical, oldUser);
+        TreeMap<String, Set<String>> oldByHash = canonicalsByHash(oldState.sources());
+        TreeMap<String, Set<String>> newByHash = canonicalsByHash(newSources);
+        TreeMap<String, Set<String>> predecessors = new TreeMap<>();
+        for (Set<String> canonicalIds : newByHash.values()) {
+            for (String id : canonicalIds) predecessors.computeIfAbsent(
+                    id, ignored -> new TreeSet<>());
+        }
+        for (Map.Entry<String, Set<String>> item : newByHash.entrySet()) {
+            Set<String> oldIds = oldByHash.get(item.getKey());
+            if (oldIds == null) continue;
+            for (String newId : item.getValue()) predecessors.get(newId).addAll(oldIds);
+        }
+        Set<String> oldRepresented = representedCanonicals(oldState.sources());
+        for (String newId : predecessors.keySet()) {
+            if (oldRepresented.contains(newId)) predecessors.get(newId).add(newId);
+        }
+
+        TreeMap<String, String> ownerByPredecessor = new TreeMap<>();
+        for (Map.Entry<String, Set<String>> target : predecessors.entrySet()) {
+            for (String predecessor : target.getValue()) {
+                ownerByPredecessor.putIfAbsent(predecessor, target.getKey());
             }
         }
-        return Collections.unmodifiableMap(users);
+
+        LinkedHashMap<String, CanonicalUserState> migrated = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<String>> target : predecessors.entrySet()) {
+            TreeMap<String, CanonicalUserState> states = new TreeMap<>();
+            for (String predecessor : target.getValue()) {
+                if (!target.getKey().equals(ownerByPredecessor.get(predecessor))) continue;
+                CanonicalUserState value = existing.get(predecessor);
+                if (value != null) states.put(predecessor, value);
+            }
+            CanonicalUserState merged = mergeUserStates(states);
+            if (merged != null) migrated.put(target.getKey(), merged);
+        }
+        return Collections.unmodifiableMap(migrated);
     }
 
-    private static TreeMap<String, String> canonicalByHash(
+    private static TreeMap<String, Set<String>> canonicalsByHash(
             Map<String, SourceCatalogState> sources) {
-        TreeMap<String, String> values = new TreeMap<>();
+        TreeMap<String, Set<String>> values = new TreeMap<>();
         for (SourceCatalogState source : sources.values()) {
             for (CatalogPackage item : source.packages().values()) {
                 for (RomVariant variant : item.physicalPackage().variants()) {
-                    values.putIfAbsent(
-                            variant.hashes().payloadSha256(), variant.canonicalGame().id());
+                    values.computeIfAbsent(
+                            variant.hashes().payloadSha256(), ignored -> new TreeSet<>())
+                            .add(variant.canonicalGame().id());
                 }
             }
         }
         return values;
+    }
+
+    private static Set<String> representedCanonicals(
+            Map<String, SourceCatalogState> sources) {
+        TreeSet<String> represented = new TreeSet<>();
+        for (Set<String> ids : canonicalsByHash(sources).values()) represented.addAll(ids);
+        return represented;
+    }
+
+    private static CanonicalUserState mergeUserStates(
+            Map<String, CanonicalUserState> states) {
+        if (states.isEmpty()) return null;
+        boolean favorite = false;
+        long favoriteRevision = -1;
+        long lastPlayed = 0;
+        int playCount = 0;
+        for (CanonicalUserState value : states.values()) {
+            if (value.favoriteUpdatedRevision() > favoriteRevision) {
+                favorite = value.favorite();
+                favoriteRevision = value.favoriteUpdatedRevision();
+            }
+            lastPlayed = Math.max(lastPlayed, value.lastPlayedSequence());
+            playCount = Math.addExact(playCount, value.playCount());
+        }
+        return new CanonicalUserState(
+                favorite, Math.max(0, favoriteRevision), lastPlayed, playCount);
     }
 
     public enum ErrorCode { STALE_REVISION, STALE_SCAN_TOKEN, SOURCE_NOT_FOUND, INVALID_SCAN }

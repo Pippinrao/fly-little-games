@@ -47,6 +47,11 @@ public record SourceCatalogState(
             if (!item.physicalPackage().source().id().equals(source.id())) {
                 throw new IllegalArgumentException("package belongs to another source");
             }
+            if (item.freshness() == CatalogPackage.Freshness.FRESH
+                    && !item.physicalPackage().source().equals(source)) {
+                throw new IllegalArgumentException(
+                        "fresh package source identity differs from registry source");
+            }
         }
     }
 
