@@ -38,7 +38,7 @@ public final class DisplayModeController {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
                 && surface != null && surface.isValid()) {
-            surface.setFrameRate(sourceFps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+            surface.setFrameRate(sourceFps, frameRateCompatibility());
         }
         float requestedHz;
         String reason;
@@ -51,6 +51,27 @@ public final class DisplayModeController {
         }
         new DisplayStatusRepository(activity).save(new DisplayStatus(
                 requestedHz, current.getRefreshRate(), reason));
+        final float settledRequestedHz = requestedHz;
+        final String initialReason = reason;
+        activity.getWindow().getDecorView().postDelayed(() -> {
+            Display settledDisplay = activity.getWindowManager().getDefaultDisplay();
+            float actualHz = settledDisplay.getRefreshRate();
+            String settledReason = settledFallbackReason(
+                    settledRequestedHz, actualHz, initialReason);
+            new DisplayStatusRepository(activity).save(new DisplayStatus(
+                    settledRequestedHz, actualHz, settledReason));
+        }, 500L);
         return selectedId == 0 ? ApplyResult.FALLBACK_AUTO : ApplyResult.APPLIED;
+    }
+
+    static int frameRateCompatibility() {
+        return Surface.FRAME_RATE_COMPATIBILITY_DEFAULT;
+    }
+
+    static String settledFallbackReason(float requestedHz, float actualHz, String initialReason) {
+        if (requestedHz > 0f && Math.abs(requestedHz - actualHz) > 0.6f) {
+            return "SYSTEM_OR_DEVICE_FALLBACK";
+        }
+        return initialReason == null ? "" : initialReason;
     }
 }

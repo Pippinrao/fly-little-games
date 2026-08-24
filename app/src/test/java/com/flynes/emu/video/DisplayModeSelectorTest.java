@@ -36,4 +36,14 @@ public final class DisplayModeSelectorTest {
         assertEquals(1, DisplayModeSelector.select(
                 MODES, 2340, 1080, RefreshMode.HZ_60));
     }
+
+    @Test
+    public void autoPrefersStable60Over90When120IsUnavailable() {
+        DisplayCandidate[] modes = {
+                new DisplayCandidate(1, 2340, 1080, 60f),
+                new DisplayCandidate(2, 2340, 1080, 90f)
+        };
+        assertEquals(1, DisplayModeSelector.select(
+                modes, 2340, 1080, RefreshMode.AUTO));
+    }
 }

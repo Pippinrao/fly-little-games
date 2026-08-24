@@ -11,15 +11,22 @@ public final class DisplayModeSelector {
                              RefreshMode requested) {
         Objects.requireNonNull(modes, "modes");
         Objects.requireNonNull(requested, "requested");
+        if (requested == RefreshMode.AUTO) {
+            int preferred120 = selectTarget(modes, nativeWidth, nativeHeight, 120f);
+            return preferred120 != 0
+                    ? preferred120 : selectTarget(modes, nativeWidth, nativeHeight, 60f);
+        }
+        return selectTarget(modes, nativeWidth, nativeHeight, requested.targetHz());
+    }
+
+    private static int selectTarget(DisplayCandidate[] modes, int nativeWidth,
+                                    int nativeHeight, float targetHz) {
         DisplayCandidate best = null;
         for (DisplayCandidate mode : modes) {
             if (mode == null || !sameResolution(mode, nativeWidth, nativeHeight)) continue;
-            if (requested != RefreshMode.AUTO
-                    && Math.abs(mode.refreshRate() - requested.targetHz())
-                    > REFRESH_TOLERANCE_HZ) {
-                continue;
-            }
-            if (best == null || mode.refreshRate() > best.refreshRate()) best = mode;
+            if (Math.abs(mode.refreshRate() - targetHz) > REFRESH_TOLERANCE_HZ) continue;
+            if (best == null || Math.abs(mode.refreshRate() - targetHz)
+                    < Math.abs(best.refreshRate() - targetHz)) best = mode;
         }
         return best == null ? 0 : best.modeId();
     }
