@@ -29,6 +29,10 @@ public final class HomeContinuousLibraryTest {
                 assertEquals(2, layout.getSpanCount());
                 assertTrue(layout.canScrollHorizontally());
                 assertFalse(layout.canScrollVertically());
+                assertEquals(activity.getString(R.string.game_list),
+                        library.getContentDescription().toString());
+                assertFalse(library.getContentDescription().toString()
+                        .toLowerCase(java.util.Locale.ROOT).contains("page"));
             });
         }
     }

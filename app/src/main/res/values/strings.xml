@@ -82,15 +82,11 @@
     <string name="manage_sources">Game sources</string>
     <string name="close_search">Close search</string>
     <string name="close_sources">Close game sources</string>
-    <string name="game_list">Paged game library</string>
-    <string name="previous_page">Previous page</string>
-    <string name="next_page">Next page</string>
-    <string name="page_count">%1$d / %2$d</string>
+    <string name="game_list">Horizontally scrolling game library</string>
     <string name="start_game">Start game</string>
     <string name="continue_selected_game">Continue game</string>
     <string name="game_ready">Ready to play</string>
     <string name="game_unavailable">This version is not available</string>
-    <string name="game_count_status">%1$d games · page %2$d of %3$d</string>
     <string name="game_count_continuous">%1$d games · swipe horizontally to browse all</string>
     <plurals name="game_variant_count"><item quantity="one">%d version</item><item quantity="other">%d versions</item></plurals>
     <string name="loading_game_center">Loading your game center…</string>
