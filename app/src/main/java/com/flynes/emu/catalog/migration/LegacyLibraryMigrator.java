@@ -66,8 +66,6 @@ public final class LegacyLibraryMigrator {
             marker.markComplete();
             return new Result(Status.NEEDS_REAUTHORIZE, Collections.emptyList());
         }
-        if (existing != null) repository.reauthorizeSource(source);
-
         ArrayList<RowOutcome> rowOutcomes = new ArrayList<>();
         ArrayList<PackageCandidate> selected = selectUniqueRaw(
                 legacy.rows(), enumerated, rowOutcomes);
@@ -77,6 +75,11 @@ public final class LegacyLibraryMigrator {
         ArrayList<ScanIssue> issues = new ArrayList<>();
         for (PackageCandidate candidate : selected) {
             ScanResult one = scanner.scan(source, Collections.singletonList(candidate));
+            if (one.hasFatalIssue()) {
+                ArrayList<ScanIssue> fatalIssues = new ArrayList<>(issues);
+                fatalIssues.addAll(one.issues());
+                return new Result(fatalStatus(fatalIssues), rowOutcomes, fatalIssues);
+            }
             boolean raw = one.packages().size() == 1
                     && one.packages().get(0).packageFormat() == PackageFormat.RAW;
             if (raw) {
@@ -100,6 +103,7 @@ public final class LegacyLibraryMigrator {
         ScanResult migrated = new ScanResult(
                 packages, packageOutcomes, entryOutcomes, issues);
         long token = existing == null ? 1 : Math.addExact(existing.lastScanToken(), 1);
+        if (existing != null) repository.reauthorizeSource(source);
         SourceScanResult sourceScan = SourceScanResult.from(
                 source, repository.state().revision(), token,
                 SourceScanResult.Completeness.FULL, migrated, selected.size());
@@ -107,6 +111,16 @@ public final class LegacyLibraryMigrator {
         else repository.commitScan(sourceScan);
         marker.markComplete();
         return new Result(Status.MIGRATED, rowOutcomes);
+    }
+
+    private static Status fatalStatus(List<ScanIssue> issues) {
+        for (ScanIssue issue : issues) {
+            if (issue.code() == ScanIssue.Code.PERMISSION_REVOKED
+                    || issue.code() == ScanIssue.Code.SOURCE_UNAVAILABLE) {
+                return Status.NEEDS_REAUTHORIZE;
+            }
+        }
+        return Status.RECOVERY_NEEDED;
     }
 
     private static ArrayList<PackageCandidate> selectUniqueRaw(
@@ -168,10 +182,23 @@ public final class LegacyLibraryMigrator {
             String title, String contentLocator, String source, boolean zipped) {
     }
 
-    public record Result(Status status, List<RowOutcome> rowOutcomes) {
+    public record Result(
+            Status status, List<RowOutcome> rowOutcomes, List<ScanIssue> issues) {
+        public Result(Status status, List<RowOutcome> rowOutcomes) {
+            this(status, rowOutcomes, Collections.emptyList());
+        }
+
         public Result {
             status = DomainValidation.requireNonNull(status, "migration status");
             rowOutcomes = DomainValidation.immutableList(rowOutcomes, "legacy outcomes");
+            issues = DomainValidation.immutableList(issues, "migration issues");
+        }
+
+        public boolean hasFatalIssue() {
+            for (ScanIssue issue : issues) {
+                if (issue.severity() == ScanIssue.Severity.FATAL) return true;
+            }
+            return false;
         }
     }
 

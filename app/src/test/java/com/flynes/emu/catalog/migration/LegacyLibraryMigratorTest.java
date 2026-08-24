@@ -81,6 +81,34 @@ public final class LegacyLibraryMigratorTest {
         assertFalse(failed.marker.complete);
     }
 
+    @Test
+    public void fatalMatchedCandidateReturnsTypedPermissionLossWithoutAnyMutation()
+            throws Exception {
+        Fixture fixture = new Fixture();
+        LegacyLibraryMigrator.LegacySnapshot legacy = new LegacyLibraryMigrator.LegacySnapshot(
+                "content://provider/tree/root", false, List.of(
+                new LegacyLibraryMigrator.LegacyRow(
+                        "Private", "content://provider/document/private", "saf", false)));
+        PackageCandidate revoked = new PackageCandidate(
+                "private-document", "private.nes", "content://provider/document/private",
+                () -> { throw new SecurityException("sensitive provider message"); });
+        CatalogState before = fixture.repository.state();
+
+        LegacyLibraryMigrator.Result result = fixture.migrator.migrate(
+                legacy, true, List.of(revoked), fixture.repository, fixture.marker, true);
+
+        assertEquals(LegacyLibraryMigrator.Status.NEEDS_REAUTHORIZE, result.status());
+        assertTrue(result.hasFatalIssue());
+        assertTrue(result.issues().stream().anyMatch(issue ->
+                issue.code() == com.flynes.emu.catalog.ScanIssue.Code.PERMISSION_REVOKED
+                        && issue.severity()
+                        == com.flynes.emu.catalog.ScanIssue.Severity.FATAL));
+        assertFalse(result.toString().contains("sensitive provider message"));
+        assertEquals(before, fixture.repository.state());
+        assertEquals(0, fixture.store.writes);
+        assertFalse(fixture.marker.complete);
+    }
+
     private static byte[] ines() {
         byte[] rom = new byte[16 + 16_384];
         rom[0] = 'N'; rom[1] = 'E'; rom[2] = 'S'; rom[3] = 0x1A; rom[4] = 1;

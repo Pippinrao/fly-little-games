@@ -103,7 +103,8 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         }
         sources.verifyPersistedPermissions();
         LegacyLibraryMigrator.Result migration = migrateLegacyIfEligible(!storeExisted);
-        if (migration.status() == LegacyLibraryMigrator.Status.RECOVERY_NEEDED) {
+        if (migration.status() == LegacyLibraryMigrator.Status.RECOVERY_NEEDED
+                || migration.hasFatalIssue()) {
             return new BootstrapResult(load, migration);
         }
         ScanResult scanned = builtin.scan();
