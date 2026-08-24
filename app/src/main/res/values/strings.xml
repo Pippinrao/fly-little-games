@@ -97,6 +97,7 @@
     <string name="empty_category">No games in this category</string>
     <string name="empty_search">No games match your search</string>
     <string name="no_external_sources">Built-in game ready · add a folder for your own games</string>
+    <string name="no_external_sources_large_text">Built-in ready · add a folder</string>
     <string name="sources_heading">Your game sources</string>
     <string name="sources_summary">FlyNES reads folders you choose. It never changes or deletes your ROM files.</string>
     <string name="managed_sources">Managed sources</string>

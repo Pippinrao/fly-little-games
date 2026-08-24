@@ -11,13 +11,20 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ResolveInfo;
 import android.os.SystemClock;
+import android.graphics.Rect;
+import android.os.ParcelFileDescriptor;
+import android.text.Layout;
 import android.view.View;
+import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.flynes.emu.HomeActivity;
 import com.flynes.emu.R;
@@ -108,9 +115,69 @@ public final class FirstRunNavigationTest {
         assertEquals(HomeActivity.class.getName(), resolved.activityInfo.name);
     }
 
+    @Test public void largeFontKeepsStatusCardAndCtaFullyVisible() throws Exception {
+        shell("settings put system font_scale 2.0");
+        try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
+            final boolean[] ready = {false};
+            for (int attempt = 0; attempt < 80 && !ready[0]; attempt++) {
+                scenario.onActivity(activity -> ready[0] =
+                        activity.findViewById(R.id.launch_selected).isEnabled());
+                if (!ready[0]) SystemClock.sleep(100L);
+            }
+            scenario.onActivity(activity -> {
+                assertFullyVisible(activity.findViewById(R.id.library_status));
+                assertFullyVisible(activity.findViewById(R.id.launch_selected));
+                RecyclerView grid = activity.findViewById(R.id.game_grid);
+                RecyclerView.ViewHolder holder = grid.findViewHolderForAdapterPosition(0);
+                assertTrue("first large-font card was not laid out", holder != null);
+                assertFullyVisible(holder.itemView.findViewById(R.id.card_title));
+                assertFullyVisible(holder.itemView.findViewById(R.id.card_meta));
+            });
+        } finally {
+            shell("settings put system font_scale 1.0");
+        }
+    }
+
+    @Test public void bothLandscapeSensorDirectionsAreAllowed() {
+        try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
+            scenario.onActivity(activity -> {
+                assertEquals(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
+                        activity.getRequestedOrientation());
+                assertEquals(android.content.res.Configuration.ORIENTATION_LANDSCAPE,
+                        activity.getResources().getConfiguration().orientation);
+            });
+        }
+    }
+
     private static void assertTouchTarget(View view) {
         float density = view.getResources().getDisplayMetrics().density;
         assertTrue(view.getWidth() >= 48f * density);
         assertTrue(view.getHeight() >= 48f * density);
+    }
+
+    private static void assertFullyVisible(TextView view) {
+        Rect visible = new Rect();
+        assertTrue("text has no visible bounds", view.getGlobalVisibleRect(visible));
+        assertTrue("text is vertically clipped", visible.height() >= view.getHeight());
+        assertTrue("text is horizontally clipped", visible.width() >= view.getWidth());
+        Layout layout = view.getLayout();
+        assertTrue("text layout is missing", layout != null && layout.getLineCount() > 0);
+        assertEquals("text layout omitted characters", view.getText().length(),
+                layout.getLineEnd(layout.getLineCount() - 1));
+        assertTrue("text layout exceeds view height",
+                layout.getHeight() + view.getCompoundPaddingTop()
+                        + view.getCompoundPaddingBottom() <= view.getHeight());
+        int available = view.getWidth() - view.getCompoundPaddingLeft()
+                - view.getCompoundPaddingRight();
+        for (int line = 0; line < layout.getLineCount(); line++) {
+            assertTrue("text line exceeds view width", layout.getLineWidth(line) <= available + 1f);
+        }
+    }
+
+    private static void shell(String command) throws Exception {
+        try (ParcelFileDescriptor ignored = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().executeShellCommand(command)) {
+            SystemClock.sleep(400L);
+        }
     }
 }

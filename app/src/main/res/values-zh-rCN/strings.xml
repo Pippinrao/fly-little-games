@@ -97,6 +97,7 @@
     <string name="empty_category">此分类中没有游戏</string>
     <string name="empty_search">没有匹配的游戏</string>
     <string name="no_external_sources">内置游戏已就绪 · 添加目录即可浏览自己的游戏</string>
+    <string name="no_external_sources_large_text">内置游戏已就绪 · 可添加目录</string>
     <string name="sources_heading">你的游戏来源</string>
     <string name="sources_summary">FlyNES 只读取你选择的目录，不会修改或删除 ROM 文件。</string>
     <string name="managed_sources">已管理的来源</string>

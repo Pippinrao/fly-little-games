@@ -75,6 +75,7 @@ public final class HomeActivity extends AppCompatActivity {
     private long suppressCardClicksUntil;
     private float gestureDownX;
     private int pageSize = WIDE_PAGE_SIZE;
+    private boolean largeText;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -203,16 +204,20 @@ public final class HomeActivity extends AppCompatActivity {
         root.requestApplyInsets();
         float fontScale = getResources().getConfiguration().fontScale;
         int widthDp = getResources().getConfiguration().screenWidthDp;
-        pageSize = fontScale >= 1.8f || widthDp < 720 ? COMPACT_PAGE_SIZE : WIDE_PAGE_SIZE;
+        largeText = fontScale >= 1.8f;
+        pageSize = largeText || widthDp < 720 ? COMPACT_PAGE_SIZE : WIDE_PAGE_SIZE;
         GridLayoutManager layout = (GridLayoutManager) ((RecyclerView) findViewById(
                 R.id.game_grid)).getLayoutManager();
         layout.setSpanCount(pageSize == WIDE_PAGE_SIZE ? 3 : 2);
-        if (fontScale >= 1.8f) {
+        if (largeText) {
+            findViewById(R.id.game_center_heading).setVisibility(View.GONE);
+            findViewById(R.id.detail_art_label).setVisibility(View.GONE);
             findViewById(R.id.game_center_topbar).getLayoutParams().height = dp(80);
             findViewById(R.id.category_tabs).getLayoutParams().height = dp(64);
             int[] buttons = {R.id.category_recent, R.id.category_favorites,
                     R.id.category_all, R.id.category_builtin};
             for (int id : buttons) findViewById(id).getLayoutParams().height = dp(64);
+            findViewById(R.id.launch_selected).getLayoutParams().height = dp(64);
         }
     }
 
@@ -296,7 +301,8 @@ public final class HomeActivity extends AppCompatActivity {
             status.setText(hasExternalSource()
                     ? getString(R.string.game_count_status,
                     visible.size(), navigation.page() + 1, pages)
-                    : getString(R.string.no_external_sources));
+                    : getString(largeText ? R.string.no_external_sources_large_text
+                    : R.string.no_external_sources));
             renderDetail(entries.get(navigation.selectedCanonicalId()));
         }
     }
@@ -506,6 +512,7 @@ public final class HomeActivity extends AppCompatActivity {
             GameCatalogEntry entry = entries.get(item.canonicalId());
             String title = entry == null ? item.titleEn() : displayTitle(entry);
             holder.title.setText(title); holder.art.setText(title);
+            holder.art.setVisibility(largeText ? View.GONE : View.VISIBLE);
             holder.meta.setText(item.builtin() ? getString(R.string.builtin_badge)
                     : item.originalFilename());
             holder.itemView.setSelected(item.canonicalId().equals(selected));

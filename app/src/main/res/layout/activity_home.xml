@@ -28,7 +28,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
             <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="62" android:orientation="vertical">
-                <TextView android:id="@+id/library_status" android:layout_width="match_parent" android:layout_height="32dp" android:accessibilityLiveRegion="polite" android:gravity="center_vertical" android:textColor="@color/fly_on_surface_muted" />
+                <TextView android:id="@+id/library_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:accessibilityLiveRegion="polite" android:gravity="center_vertical" android:maxLines="2" android:minHeight="32dp" android:textColor="@color/fly_on_surface_muted" />
                 <androidx.recyclerview.widget.RecyclerView android:id="@+id/game_grid" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:contentDescription="@string/game_list" android:overScrollMode="never" android:padding="4dp" />
                 <LinearLayout android:layout_width="match_parent" android:layout_height="52dp" android:gravity="center" android:orientation="horizontal">
                     <com.google.android.material.button.MaterialButton android:id="@+id/page_previous" style="@style/Widget.Material3.Button.IconButton" android:layout_width="48dp" android:layout_height="48dp" android:contentDescription="@string/previous_page" app:icon="@drawable/ic_chevron_left" app:iconTint="@color/fly_on_surface" />
