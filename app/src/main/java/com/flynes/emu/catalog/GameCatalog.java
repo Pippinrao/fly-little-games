@@ -1,5 +1,7 @@
 package com.flynes.emu.catalog;
 
+import com.flynes.emu.catalog.persistence.CanonicalUserState;
+
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,6 +34,35 @@ public final class GameCatalog {
         }
     }
 
+    /** Atomically publishes a repository snapshot including persisted canonical user state. */
+    public boolean publishPersistentState(
+            List<PhysicalPackage> packages,
+            Map<String, CanonicalUserState> userStates,
+            long lastPlayedSequence) {
+        DomainValidation.requireNonNull(packages, "persistent packages");
+        DomainValidation.requireNonNull(userStates, "persistent user states");
+        if (lastPlayedSequence < 0) {
+            throw new IllegalArgumentException("last played sequence must not be negative");
+        }
+        synchronized (scanCommitGate) {
+            synchronized (this) {
+                Map<String, UserState> restored = new HashMap<>();
+                for (Map.Entry<String, CanonicalUserState> item : userStates.entrySet()) {
+                    CanonicalUserState value = item.getValue();
+                    restored.put(item.getKey(), new UserState(
+                            value.favorite(), value.lastPlayedSequence(), value.playCount()));
+                }
+                Snapshot previous = snapshot;
+                snapshot = buildSnapshot(
+                        ScanResult.success(packages, Collections.<ScanIssue>emptyList()),
+                        restored,
+                        lastPlayedSequence,
+                        Math.addExact(previous.version, 1L));
+            }
+            return true;
+        }
+    }
+
     private synchronized boolean applyScanResultUnderCommitGate(ScanResult result) {
         if (!result.replaceExistingCatalog()) {
             return false;
@@ -46,6 +77,19 @@ public final class GameCatalog {
                             entry.favorite(), entry.lastPlayedSequence(), entry.playCount()));
         }
 
+        snapshot = buildSnapshot(
+                result,
+                previousUserState,
+                previous.lastPlayedSequence,
+                Math.addExact(previous.version, 1L));
+        return true;
+    }
+
+    private static Snapshot buildSnapshot(
+            ScanResult result,
+            Map<String, UserState> userStates,
+            long lastPlayedSequence,
+            long version) {
         ArrayList<PhysicalPackage> packages = new ArrayList<>(result.packages());
         packages.sort(Comparator.comparing(PhysicalPackage::id));
         Set<String> packageIds = new HashSet<>();
@@ -86,7 +130,7 @@ public final class GameCatalog {
             }
             projectedVariants.sort(Comparator.comparing(GameVariant::variantId));
 
-            UserState state = previousUserState.getOrDefault(
+            UserState state = userStates.getOrDefault(
                     canonicalGame.id(), UserState.EMPTY);
             GameCatalogEntry entry = new GameCatalogEntry(
                     canonicalGame,
@@ -101,13 +145,12 @@ public final class GameCatalog {
             }
         }
 
-        snapshot = new Snapshot(
+        return new Snapshot(
                 immutableList(entries),
                 immutableMap(entriesById),
                 immutableMap(variantsById),
-                previous.lastPlayedSequence,
-                Math.addExact(previous.version, 1L));
-        return true;
+                lastPlayedSequence,
+                version);
     }
 
     public List<GameCatalogEntry> canonicalEntries() {
