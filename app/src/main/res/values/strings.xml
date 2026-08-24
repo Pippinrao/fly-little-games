@@ -120,4 +120,20 @@
     <string name="missing_builtin_game">The built-in game is unavailable</string>
     <string name="virtual_game_controls">Game controls. Direction pad, B, A, Select, and Start.</string>
     <string name="pause_eyebrow">GAME PAUSED</string>
+    <string name="control_layout_title">Control layout</string>
+    <string name="control_layout_summary">Move and resize controls on a safe game preview.</string>
+    <string name="control_layout_hint">Tap a control, then drag or resize it.</string>
+    <string name="control_layout_scale">Selected control size</string>
+    <string name="control_layout_opacity_label">Control opacity</string>
+    <string name="control_layout_test">Try controls now</string>
+    <string name="control_layout_undo">Undo</string>
+    <string name="control_layout_recommended">Recommended default</string>
+    <string name="control_layout_save">Save layout</string>
+    <string name="control_layout_discard">Discard</string>
+    <string name="control_layout_warning_small">Some controls are too small.</string>
+    <string name="control_layout_warning_overlap">Some controls overlap.</string>
+    <string name="control_layout_warning_gesture">A control enters the system gesture area.</string>
+    <string name="control_layout_warning_center">A control covers the central game area.</string>
+    <string name="control_layout_warning_save">This layout has ergonomic warnings. Save anyway?</string>
+    <string name="control_layout_keep_editing">Keep editing</string>
 </resources>

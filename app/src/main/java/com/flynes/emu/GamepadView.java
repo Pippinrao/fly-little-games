@@ -14,12 +14,14 @@ import android.view.WindowInsets;
 
 import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.input.GamepadInputState;
+import com.flynes.emu.input.ControlLayoutV2;
 import com.flynes.emu.input.HapticController;
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.input.InputBits;
 import com.flynes.emu.input.InputRouter;
 import com.flynes.emu.input.MinimumTap;
 import com.flynes.emu.settings.AppSettings;
+import com.flynes.emu.settings.ControlLayoutRepository;
 
 /** Classic NES controls. Every pointer is independently owned and always cancellable. */
 public class GamepadView extends View {
@@ -45,6 +47,7 @@ public class GamepadView extends View {
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final HapticController haptics;
     private AppSettings controlSettings = AppSettings.defaults();
+    private ControlLayoutV2 controlLayout;
     private GamepadHitMap hitMap;
     private GamepadInputState touchState;
     private InputRouter inputRouter;
@@ -58,6 +61,7 @@ public class GamepadView extends View {
         super(context);
         density = context.getResources().getDisplayMetrics().density;
         haptics = new HapticController(this);
+        controlLayout = new ControlLayoutRepository(context).load();
         setWillNotDraw(false);
         setFocusable(true);
         setClickable(true);
@@ -71,6 +75,7 @@ public class GamepadView extends View {
     }
     public void setControlSettings(AppSettings settings) {
         controlSettings = settings == null ? AppSettings.defaults() : settings;
+        controlLayout = new ControlLayoutRepository(getContext()).load();
         haptics.configure(controlSettings.hapticLevel(), controlSettings.distinctABHaptics());
         rebuildHitMap();
     }
@@ -104,8 +109,8 @@ public class GamepadView extends View {
 
     private void rebuildHitMap() {
         if (getWidth() <= 0 || getHeight() <= 0) return;
-        hitMap = GamepadHitMap.fromSettings(getWidth(), getHeight(), density,
-                insetLeft, insetRight, insetTop, insetBottom, controlSettings);
+        hitMap = GamepadHitMap.fromLayout(getWidth(), getHeight(), density,
+                insetLeft, insetRight, insetTop, insetBottom, controlLayout);
         touchState = new GamepadInputState(hitMap);
         recompute();
     }
@@ -172,7 +177,7 @@ public class GamepadView extends View {
             canvas.drawRoundRect(bounds, radius, radius, stroke);
         }
         label.setColor(withAlpha(pressed ? 0xFF121316 : Color.WHITE,
-                Math.round(controlSettings.controlOpacity() * 255f)));
+                Math.round(controlLayout.opacity() * 255f)));
         label.setTextSize((target.shape() == GamepadHitMap.Shape.PILL ? 11f : 22f) * density);
         label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         label.setTextAlign(Paint.Align.CENTER);
@@ -187,10 +192,10 @@ public class GamepadView extends View {
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth((accent ? 3f : 2f) * density);
         stroke.setColor(withAlpha(accent ? COLOR_CORAL : COLOR_OUTLINE,
-                Math.round(controlSettings.controlOpacity() * 255f)));
+                Math.round(controlLayout.opacity() * 255f)));
     }
-    private int idleAlpha() { return Math.round(controlSettings.controlOpacity() * 160f); }
-    private int pressedAlpha() { return Math.round(controlSettings.controlOpacity() * 255f); }
+    private int idleAlpha() { return Math.round(controlLayout.opacity() * 255f); }
+    private int pressedAlpha() { return Math.round(Math.max(.88f, controlLayout.opacity()) * 255f); }
     private static int withAlpha(int color, int alpha) {
         return (color & 0x00FFFFFF) | (Math.max(0, Math.min(255, alpha)) << 24);
     }

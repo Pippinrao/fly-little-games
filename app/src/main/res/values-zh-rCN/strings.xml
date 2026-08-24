@@ -120,4 +120,20 @@
     <string name="missing_builtin_game">内置游戏当前不可用</string>
     <string name="virtual_game_controls">游戏操控：方向键、B、A、选择和开始。</string>
     <string name="pause_eyebrow">游戏已暂停</string>
+    <string name="control_layout_title">操控布局</string>
+    <string name="control_layout_summary">在安全的游戏预览上移动和缩放按键。</string>
+    <string name="control_layout_hint">点选控件，然后拖动或调整大小。</string>
+    <string name="control_layout_scale">所选控件大小</string>
+    <string name="control_layout_opacity_label">控件透明度</string>
+    <string name="control_layout_test">即时试按</string>
+    <string name="control_layout_undo">撤销</string>
+    <string name="control_layout_recommended">恢复推荐布局</string>
+    <string name="control_layout_save">保存布局</string>
+    <string name="control_layout_discard">放弃</string>
+    <string name="control_layout_warning_small">部分控件过小。</string>
+    <string name="control_layout_warning_overlap">部分控件相互重叠。</string>
+    <string name="control_layout_warning_gesture">控件进入了系统手势区域。</string>
+    <string name="control_layout_warning_center">控件遮挡了中央游戏画面。</string>
+    <string name="control_layout_warning_save">当前布局存在人体工学警告，仍要保存吗？</string>
+    <string name="control_layout_keep_editing">继续编辑</string>
 </resources>

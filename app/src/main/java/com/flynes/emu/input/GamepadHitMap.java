@@ -125,6 +125,43 @@ public final class GamepadHitMap {
         return standard(width, height, density, insetLeft, insetRight, insetTop, insetBottom);
     }
 
+    public static GamepadHitMap fromLayout(int width, int height, float density,
+                                           int insetLeft, int insetRight,
+                                           int insetTop, int insetBottom,
+                                           ControlLayoutV2 layout) {
+        float safeLeft=insetLeft, safeTop=insetTop, safeRight=width-insetRight, safeBottom=height-insetBottom;
+        float safeWidth=safeRight-safeLeft, safeHeight=safeBottom-safeTop;
+        ControlLayoutV2.Placement d=layout.placement(ControlLayoutV2.Element.D_PAD);
+        float dSize=144f*density*d.scale();
+        float dCx=clamp(safeLeft+d.centerX()*safeWidth,safeLeft+dSize/2f,safeRight-dSize/2f);
+        float dCy=clamp(safeTop+d.centerY()*safeHeight,safeTop+dSize/2f,safeBottom-dSize/2f);
+        Bounds dpad=new Bounds(dCx-dSize/2f,dCy-dSize/2f,dCx+dSize/2f,dCy+dSize/2f);
+        EnumMap<Control,Target> values=new EnumMap<>(Control.class);
+        float arm=48f*density*d.scale();
+        values.put(Control.UP,new Target(Control.UP,new Bounds(dpad.centerX()-arm/2f,dpad.top,dpad.centerX()+arm/2f,dpad.centerY()),Shape.ROUNDED_SQUARE));
+        values.put(Control.DOWN,new Target(Control.DOWN,new Bounds(dpad.centerX()-arm/2f,dpad.centerY(),dpad.centerX()+arm/2f,dpad.bottom),Shape.ROUNDED_SQUARE));
+        values.put(Control.LEFT,new Target(Control.LEFT,new Bounds(dpad.left,dpad.centerY()-arm/2f,dpad.centerX(),dpad.centerY()+arm/2f),Shape.ROUNDED_SQUARE));
+        values.put(Control.RIGHT,new Target(Control.RIGHT,new Bounds(dpad.centerX(),dpad.centerY()-arm/2f,dpad.right,dpad.centerY()+arm/2f),Shape.ROUNDED_SQUARE));
+        addLayoutTarget(values,Control.A,ControlLayoutV2.Element.A,72f,72f,Shape.CIRCLE,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
+        addLayoutTarget(values,Control.B,ControlLayoutV2.Element.B,64f,64f,Shape.ROUNDED_SQUARE,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
+        addLayoutTarget(values,Control.SELECT,ControlLayoutV2.Element.SELECT,72f,48f,Shape.PILL,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
+        addLayoutTarget(values,Control.START,ControlLayoutV2.Element.START,72f,48f,Shape.PILL,layout,safeLeft,safeTop,safeWidth,safeHeight,density);
+        return new GamepadHitMap(new Bounds(safeLeft,safeTop,safeRight,safeBottom),dpad,density,values);
+    }
+
+    private static void addLayoutTarget(EnumMap<Control,Target> values,Control control,
+                                        ControlLayoutV2.Element element,float baseWidth,float baseHeight,
+                                        Shape shape,ControlLayoutV2 layout,float left,float top,
+                                        float width,float height,float density) {
+        ControlLayoutV2.Placement p=layout.placement(element);
+        float targetWidth=baseWidth*density*p.scale(),targetHeight=baseHeight*density*p.scale();
+        float cx=clamp(left+p.centerX()*width,left+targetWidth/2f,left+width-targetWidth/2f);
+        float cy=clamp(top+p.centerY()*height,top+targetHeight/2f,top+height-targetHeight/2f);
+        values.put(control,centered(control,cx,cy,targetWidth,targetHeight,shape));
+    }
+
+    private static float clamp(float value,float minimum,float maximum){return Math.max(minimum,Math.min(maximum,value));}
+
     private static Target centered(Control control, float cx, float cy, float width,
                                    float height, Shape shape) {
         return new Target(control,

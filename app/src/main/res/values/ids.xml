@@ -14,4 +14,14 @@
     <item name="haptic_standard" type="id" />
     <item name="haptic_strong" type="id" />
     <item name="haptic_distinct" type="id" />
+    <item name="control_layout_root" type="id" />
+    <item name="control_layout_preview" type="id" />
+    <item name="control_layout_warning" type="id" />
+    <item name="control_layout_scale" type="id" />
+    <item name="control_layout_opacity" type="id" />
+    <item name="control_layout_test" type="id" />
+    <item name="control_layout_undo" type="id" />
+    <item name="control_layout_default" type="id" />
+    <item name="control_layout_save" type="id" />
+    <item name="control_layout_discard" type="id" />
 </resources>

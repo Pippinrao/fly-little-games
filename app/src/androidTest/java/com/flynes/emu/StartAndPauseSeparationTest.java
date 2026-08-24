@@ -47,6 +47,7 @@ public final class StartAndPauseSeparationTest {
                     openMillis[0] <= 260L);
             SystemClock.sleep(240L);
             onView(withId(R.id.pause_drawer)).check(matches(isDisplayed()));
+            onView(withText(R.string.control_layout_title)).check(doesNotExist());
             onView(withId(R.id.pause_game_title)).check(matches(withText(R.string.builtin_game_name)));
             scenario.onActivity(activity -> {
                 android.graphics.Rect buttonBounds = new android.graphics.Rect();

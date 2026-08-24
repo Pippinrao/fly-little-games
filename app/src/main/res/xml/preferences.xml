@@ -7,12 +7,7 @@
         <ListPreference app:defaultValue="AUTO" app:entries="@array/refresh_entries" app:entryValues="@array/refresh_values" app:key="video.refresh" app:title="@string/refresh_rate" app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
     <PreferenceCategory app:title="@string/settings_controls">
-        <ListPreference app:defaultValue="STANDARD_BA" app:entries="@array/layout_entries" app:entryValues="@array/layout_values" app:key="controls.layout" app:title="@string/button_layout" app:useSimpleSummaryProvider="true" />
-        <SeekBarPreference android:max="140" app:defaultValue="100" app:key="ui.controls.button_percent" app:min="80" app:showSeekBarValue="true" app:title="@string/button_size" />
-        <SeekBarPreference android:max="25" app:defaultValue="0" app:key="ui.controls.vertical_percent" app:min="-25" app:showSeekBarValue="true" app:title="@string/button_vertical_offset" />
-        <SeekBarPreference android:max="100" app:defaultValue="78" app:key="ui.controls.opacity_percent" app:min="40" app:showSeekBarValue="true" app:title="@string/control_opacity" />
-        <SeekBarPreference android:max="140" app:defaultValue="100" app:key="ui.controls.joystick_percent" app:min="80" app:showSeekBarValue="true" app:title="@string/joystick_size" />
-        <SeekBarPreference android:max="45" app:defaultValue="15" app:key="ui.controls.dead_zone_percent" app:min="8" app:showSeekBarValue="true" app:title="@string/joystick_dead_zone" />
+        <Preference app:key="controls.layout_editor" app:summary="@string/control_layout_summary" app:title="@string/control_layout_title" />
         <ListPreference app:defaultValue="LIGHT" app:entries="@array/haptic_entries" app:entryValues="@array/haptic_values" app:key="controls.haptic_level" app:title="@string/haptic_level" app:useSimpleSummaryProvider="true" />
         <SwitchPreferenceCompat app:defaultValue="true" app:key="controls.distinct_ab" app:summary="@string/distinct_ab_summary" app:title="@string/distinct_ab_haptics" />
         <Preference app:key="controls.reset" app:summary="@string/reset_controls_summary" app:title="@string/reset_controls" />

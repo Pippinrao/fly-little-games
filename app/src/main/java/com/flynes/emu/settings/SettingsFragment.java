@@ -12,6 +12,7 @@ import androidx.preference.SeekBarPreference;
 
 import com.flynes.emu.HomeActivity;
 import com.flynes.emu.LicensesActivity;
+import com.flynes.emu.ControlLayoutActivity;
 import com.flynes.emu.R;
 
 /** Material preference surface backed by the single validated settings repository. */
@@ -61,6 +62,11 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
                 return true;
             });
         }
+        Preference layoutEditor = findPreference("controls.layout_editor");
+        if (layoutEditor != null) layoutEditor.setOnPreferenceClickListener(preference -> {
+            startActivity(new Intent(requireContext(), ControlLayoutActivity.class));
+            return true;
+        });
         Preference library = findPreference("general.library");
         if (library != null) {
             library.setOnPreferenceClickListener(preference -> {
