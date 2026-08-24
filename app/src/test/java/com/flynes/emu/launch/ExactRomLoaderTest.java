@@ -329,7 +329,7 @@ public final class ExactRomLoaderTest {
     @Test
     public void rawPayloadOverScannerLimitIsRejected() {
         byte[] oversized = new byte[(int) ScanLimits.defaults().maxPayloadBytes() + 1];
-        ExactRomLoader loader = loaderFor(oversized);
+        ExactRomLoader loader = loaderFor(oversized, payloadBoundaryTestLimits());
 
         ExactRomLoader.LoadException failure = assertThrows(
                 ExactRomLoader.LoadException.class,
@@ -354,7 +354,8 @@ public final class ExactRomLoaderTest {
     public void zipPayloadAtExactScannerLimitIsAccepted() throws Exception {
         byte[] exactLimit = new byte[(int) ScanLimits.defaults().maxPayloadBytes()];
         exactLimit[0] = 'N';
-        ExactRomLoader loader = loaderFor(storedZip(Map.of("game.nes", exactLimit)));
+        byte[] archive = storedZip(Map.of("game.nes", exactLimit));
+        ExactRomLoader loader = loaderFor(archive, payloadBoundaryTestLimits());
 
         byte[] loaded = loader.load(zipRequest(
                 "content://games/exact.zip", "game.nes", exactLimit));
@@ -366,7 +367,8 @@ public final class ExactRomLoaderTest {
     @Test
     public void compressedZipBombPayloadOverScannerLimitIsRejected() throws Exception {
         byte[] oversized = new byte[(int) ScanLimits.defaults().maxPayloadBytes() + 1];
-        ExactRomLoader loader = loaderFor(storedZip(Map.of("game.nes", oversized)));
+        byte[] archive = storedZip(Map.of("game.nes", oversized));
+        ExactRomLoader loader = loaderFor(archive, payloadBoundaryTestLimits());
 
         ExactRomLoader.LoadException failure = assertThrows(
                 ExactRomLoader.LoadException.class,
@@ -548,6 +550,25 @@ public final class ExactRomLoaderTest {
 
         assertCentralMutationInvalid(archive, "game.nes", 16, "game.nes", selected);
         assertCentralMutationInvalid(archive, "skipped.bin", 16, "game.nes", selected);
+    }
+
+    @Test
+    public void corruptedNonTargetPayloadIsNotInflatedOrRetainedDuringExactLoad() throws Exception {
+        byte[] selected = bytes("selected-rom");
+        byte[] skipped = new byte[1024 * 1024];
+        Arrays.fill(skipped, (byte) 0x5a);
+        LinkedHashMap<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("game.nes", selected);
+        entries.put("skipped.bin", skipped);
+        byte[] archive = zip(entries);
+        byte[] rawName = bytes("skipped.bin");
+        int local = localHeaderOffset(archive, rawName);
+        int nameLength = (archive[local + 26] & 0xff) | ((archive[local + 27] & 0xff) << 8);
+        int extraLength = (archive[local + 28] & 0xff) | ((archive[local + 29] & 0xff) << 8);
+        archive[local + 30 + nameLength + extraLength] ^= 0x01;
+
+        assertArrayEquals(selected, loaderFor(archive).load(zipRequest(
+                "content://games/lazy.zip", "game.nes", selected)));
     }
 
     @Test
@@ -773,6 +794,18 @@ public final class ExactRomLoaderTest {
         ScanLimits defaults = ScanLimits.defaults();
         return new ScanLimits(
                 64L * ScanLimits.MIB,
+                defaults.maxPayloadBytes(),
+                defaults.maxZipEntries(),
+                defaults.maxCumulativeInflatedBytes(),
+                defaults.maxNameBytes(),
+                defaults.maxCompressionRatio(),
+                defaults.ratioGuardThresholdBytes());
+    }
+
+    private static ScanLimits payloadBoundaryTestLimits() {
+        ScanLimits defaults = ScanLimits.defaults();
+        return new ScanLimits(
+                16L * ScanLimits.MIB,
                 defaults.maxPayloadBytes(),
                 defaults.maxZipEntries(),
                 defaults.maxCumulativeInflatedBytes(),

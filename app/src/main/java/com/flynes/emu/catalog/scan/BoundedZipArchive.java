@@ -19,8 +19,9 @@ import java.util.zip.Inflater;
 
 /**
  * One API24-safe ZIP implementation shared by catalog scanning and exact launch loading.
- * It validates EOCD, central/local identity, compression metadata, bounds, CRC, and sizes before
- * exposing any payload.
+ * It validates EOCD, central/local identity, compression metadata, descriptors, and declared
+ * bounds before exposing metadata. Payload bytes are inflated and integrity-checked only when the
+ * caller selects an entry, so the archive retains one physical byte array and no resident payloads.
  */
 public final class BoundedZipArchive {
     private static final long LOCAL_SIGNATURE = 0x04034B50L;
@@ -139,32 +140,21 @@ public final class BoundedZipArchive {
         centralEntries.sort(Comparator.comparingInt(CentralEntry::localHeaderOffset));
         long declaredInflated = 0;
         ArrayList<LocalEntry> localEntries = new ArrayList<>(centralEntries.size());
-        long previousPayloadEnd = -1;
+        long previousEntryEnd = -1;
         for (CentralEntry central : centralEntries) {
-            if (previousPayloadEnd > central.localHeaderOffset()) {
+            if (previousEntryEnd > central.localHeaderOffset()) {
                 throw invalid("ZIP local entries overlap");
             }
             LocalEntry local = validateLocalHeader(archive, central, centralOffset);
-            previousPayloadEnd = local.payloadEnd();
+            previousEntryEnd = local.entryEnd();
             declaredInflated = checkedInflated(
                     declaredInflated, central.uncompressedSize(), limits);
             localEntries.add(local);
         }
 
         ArrayList<Entry> entries = new ArrayList<>(localEntries.size());
-        long actualInflated = 0;
         for (LocalEntry local : localEntries) {
-            byte[] payload = inflate(archive, local, limits, actualInflated);
-            actualInflated = checkedInflated(actualInflated, payload.length, limits);
-            if (payload.length != local.central().uncompressedSize()) {
-                throw invalid("ZIP inflated size differs from central metadata");
-            }
-            CRC32 crc = new CRC32();
-            crc.update(payload);
-            if (crc.getValue() != local.central().crc32()) {
-                throw invalid("ZIP inflated CRC differs from central metadata");
-            }
-            entries.add(new Entry(local.central(), payload));
+            entries.add(new Entry(archive, local, limits));
         }
         return new Archive(archive, entries);
     }
@@ -249,7 +239,30 @@ public final class BoundedZipArchive {
                 || localUncompressed != central.uncompressedSize()) {
             throw invalid("ZIP local and central CRC or sizes differ");
         }
-        return new LocalEntry(central, (int) dataOffsetLong, payloadEnd);
+        long entryEnd = payloadEnd;
+        if ((localFlags & FLAG_DATA_DESCRIPTOR) != 0) {
+            requireRange(archive, (int) payloadEnd, 12, "ZIP data descriptor is truncated");
+            long first = unsignedInt(archive, (int) payloadEnd);
+            boolean signed = first == 0x08074B50L;
+            int valuesOffset = (int) payloadEnd + (signed ? 4 : 0);
+            if (signed) {
+                requireRange(archive, (int) payloadEnd, 16,
+                        "ZIP signed data descriptor is truncated");
+            }
+            long descriptorCrc = unsignedInt(archive, valuesOffset);
+            long descriptorCompressed = unsignedInt(archive, valuesOffset + 4);
+            long descriptorUncompressed = unsignedInt(archive, valuesOffset + 8);
+            if (descriptorCrc != central.crc32()
+                    || descriptorCompressed != central.compressedSize()
+                    || descriptorUncompressed != central.uncompressedSize()) {
+                throw invalid("ZIP data descriptor differs from central metadata");
+            }
+            entryEnd = payloadEnd + (signed ? 16L : 12L);
+            if (entryEnd > centralOffset) {
+                throw invalid("ZIP data descriptor overlaps the central directory");
+            }
+        }
+        return new LocalEntry(central, (int) dataOffsetLong, payloadEnd, entryEnd);
     }
 
     private static byte[] inflate(
@@ -400,12 +413,8 @@ public final class BoundedZipArchive {
         private final List<Entry> entries;
 
         private Archive(byte[] physicalBytes, List<Entry> entries) {
-            this.physicalBytes = physicalBytes.clone();
+            this.physicalBytes = physicalBytes;
             this.entries = Collections.unmodifiableList(new ArrayList<>(entries));
-        }
-
-        public byte[] physicalBytes() {
-            return physicalBytes.clone();
         }
 
         public List<Entry> entries() {
@@ -431,54 +440,76 @@ public final class BoundedZipArchive {
     }
 
     public static final class Entry {
-        private final CentralEntry central;
-        private final byte[] payload;
+        private final byte[] physicalBytes;
+        private final LocalEntry local;
+        private final ScanLimits limits;
 
-        private Entry(CentralEntry central, byte[] payload) {
-            this.central = central;
-            this.payload = payload.clone();
+        private Entry(byte[] physicalBytes, LocalEntry local, ScanLimits limits) {
+            this.physicalBytes = physicalBytes;
+            this.local = local;
+            this.limits = limits;
+        }
+
+        private CentralEntry central() {
+            return local.central();
         }
 
         public ZipEntryIdentity identity() {
-            return ZipEntryIdentity.fromRawName(central.rawName, central.localHeaderOffset);
+            return ZipEntryIdentity.fromRawName(
+                    central().rawName, central().localHeaderOffset);
         }
 
         public byte[] rawName() {
-            return central.rawName.clone();
+            return central().rawName.clone();
         }
 
         public byte[] centralExtra() {
-            return central.centralExtra.clone();
+            return central().centralExtra.clone();
         }
 
         public int flags() {
-            return central.flags;
+            return central().flags;
         }
 
         public int method() {
-            return central.method;
+            return central().method;
         }
 
         public long crc32() {
-            return central.crc32;
+            return central().crc32;
         }
 
         public long compressedSize() {
-            return central.compressedSize;
+            return central().compressedSize;
         }
 
         public long uncompressedSize() {
-            return central.uncompressedSize;
+            return central().uncompressedSize;
         }
 
         public boolean isDirectory() {
-            return central.rawName.length > 0
-                    && (central.rawName[central.rawName.length - 1] == '/'
-                    || central.rawName[central.rawName.length - 1] == '\\');
+            byte[] rawName = central().rawName;
+            return rawName.length > 0
+                    && (rawName[rawName.length - 1] == '/'
+                    || rawName[rawName.length - 1] == '\\');
         }
 
-        public byte[] payload() {
-            return payload.clone();
+        /** Allocates exactly one selected payload and verifies its declared size and CRC. */
+        public byte[] readPayload() throws ArchiveException {
+            if (central().uncompressedSize() > limits.maxPayloadBytes()) {
+                throw failure(Code.PAYLOAD_LIMIT_EXCEEDED,
+                        "ZIP entry exceeds the payload limit");
+            }
+            byte[] payload = inflate(physicalBytes, local, limits, 0);
+            if (payload.length != central().uncompressedSize()) {
+                throw invalid("ZIP inflated size differs from central metadata");
+            }
+            CRC32 crc = new CRC32();
+            crc.update(payload);
+            if (crc.getValue() != central().crc32()) {
+                throw invalid("ZIP inflated CRC differs from central metadata");
+            }
+            return payload;
         }
     }
 
@@ -493,7 +524,8 @@ public final class BoundedZipArchive {
             long uncompressedSize) {
     }
 
-    private record LocalEntry(CentralEntry central, int dataOffset, long payloadEnd) {
+    private record LocalEntry(
+            CentralEntry central, int dataOffset, long payloadEnd, long entryEnd) {
     }
 
     public enum Code {
@@ -501,6 +533,7 @@ public final class BoundedZipArchive {
         PACKAGE_LIMIT_EXCEEDED,
         ENTRY_LIMIT_EXCEEDED,
         INFLATED_LIMIT_EXCEEDED,
+        PAYLOAD_LIMIT_EXCEEDED,
         NAME_LIMIT_EXCEEDED,
         RATIO_LIMIT_EXCEEDED,
         ENCRYPTED,

@@ -1,6 +1,7 @@
 package com.flynes.emu.launch;
 
 import com.flynes.emu.catalog.CompatibilityState;
+import com.flynes.emu.catalog.CompatibilityDecision;
 import com.flynes.emu.catalog.DomainValidation;
 import com.flynes.emu.catalog.GameVariant;
 import com.flynes.emu.catalog.PackageFormat;
@@ -55,6 +56,8 @@ public record LaunchRequest(
         if (!compatibility.isPlayable()) {
             throw new IllegalArgumentException("launch request compatibility must be PLAYABLE");
         }
+        CompatibilityDecision.requireValidFor(
+                romFormat, CompatibilityDecision.playableNes());
         if (packageFormat == PackageFormat.ZIP) {
             entryPath = DomainValidation.requireNonBlank(entryPath, "ZIP entry path");
             if (zipEntryIdentity == null || zipNameEncoding == null) {

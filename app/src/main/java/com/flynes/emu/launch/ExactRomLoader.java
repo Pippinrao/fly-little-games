@@ -73,7 +73,7 @@ public final class ExactRomLoader {
                             ErrorCode.ZIP_ENTRY_IS_DIRECTORY,
                             "exact ZIP locator points to a directory");
                 }
-                payload = entry.payload();
+                payload = entry.readPayload();
             } catch (BoundedZipArchive.ArchiveException failure) {
                 throw map(failure);
             }
@@ -171,6 +171,7 @@ public final class ExactRomLoader {
             case PACKAGE_LIMIT_EXCEEDED -> ErrorCode.ZIP_SOURCE_LIMIT_EXCEEDED;
             case ENTRY_LIMIT_EXCEEDED -> ErrorCode.ZIP_ENTRY_LIMIT_EXCEEDED;
             case INFLATED_LIMIT_EXCEEDED -> ErrorCode.ZIP_INFLATED_LIMIT_EXCEEDED;
+            case PAYLOAD_LIMIT_EXCEEDED -> ErrorCode.PAYLOAD_TOO_LARGE;
             case NAME_LIMIT_EXCEEDED -> ErrorCode.ZIP_NAME_LIMIT_EXCEEDED;
             case RATIO_LIMIT_EXCEEDED -> ErrorCode.ZIP_RATIO_LIMIT_EXCEEDED;
             case ENTRY_MISSING -> ErrorCode.ZIP_ENTRY_MISSING;

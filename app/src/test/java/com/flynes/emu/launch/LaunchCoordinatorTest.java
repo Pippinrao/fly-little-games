@@ -144,7 +144,7 @@ public final class LaunchCoordinatorTest {
     @Test
     public void unresolvedAndNonPlayableVariantsReturnTypedFailuresWithoutOpening() {
         byte[] rom = bytes("valid-rom");
-        GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.UNSUPPORTED);
+        GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.INVALID);
         int[] opens = {0};
         ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
             opens[0]++;
@@ -326,7 +326,7 @@ public final class LaunchCoordinatorTest {
                 CompatibilityState.PLAYABLE,
                 RomSource.PermissionState.NEEDS_REAUTHORIZE);
         assertStaleMetadataRejected(
-                CompatibilityState.UNSUPPORTED,
+                CompatibilityState.INVALID,
                 RomSource.PermissionState.GRANTED);
     }
 
@@ -1009,7 +1009,7 @@ public final class LaunchCoordinatorTest {
     private static CompatibilityDecision decision(CompatibilityState state) {
         return state == CompatibilityState.PLAYABLE
                 ? CompatibilityDecision.playableNes()
-                : new CompatibilityDecision(state, CompatibilityReason.UNKNOWN_FORMAT);
+                : new CompatibilityDecision(state, CompatibilityReason.NES_HEADER_INVALID);
     }
 
     private static final class RecordingHistory implements LaunchHistory {

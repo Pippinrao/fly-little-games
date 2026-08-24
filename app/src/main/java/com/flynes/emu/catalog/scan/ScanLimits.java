@@ -27,7 +27,7 @@ public record ScanLimits(
 
     public static ScanLimits defaults() {
         return new ScanLimits(
-                32L * MIB,
+                8L * MIB,
                 8L * MIB,
                 2048,
                 32L * MIB,

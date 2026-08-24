@@ -78,6 +78,7 @@ final class RomPayloadParser {
         ArrayList<RomAnalysis.Warning> warnings = new ArrayList<>();
         if (!nes2 && hasDirtyLegacyHeader(payload)) {
             warnings.add(RomAnalysis.Warning.DIRTY_HEADER);
+            mapper = flags6 >>> 4;
         }
         long expected;
         try {
@@ -237,7 +238,8 @@ final class RomPayloadParser {
             }
             boolean prgChunk = payload[cursor] == 'P'
                     && payload[cursor + 1] == 'R'
-                    && payload[cursor + 2] == 'G';
+                    && payload[cursor + 2] == 'G'
+                    && isHexDigit(payload[cursor + 3]);
             long length = unsignedInt(payload, cursor + 4);
             cursor += 8;
             if (length > payload.length - cursor) {
@@ -271,6 +273,13 @@ final class RomPayloadParser {
                 format,
                 new CompatibilityDecision(CompatibilityState.INVALID, reason),
                 analysis);
+    }
+
+    private static boolean isHexDigit(byte value) {
+        int character = value & 0xff;
+        return (character >= '0' && character <= '9')
+                || (character >= 'A' && character <= 'F')
+                || (character >= 'a' && character <= 'f');
     }
 
     private static boolean hasDirtyLegacyHeader(byte[] payload) {

@@ -160,6 +160,16 @@ public final class RomPackageScanner {
             Collector collector) {
         String entryId = StableIds.entryOutcomeId(
                 envelope.packageId(), StableIds.RAW_LOCATOR);
+        if (isExecutableName(envelope.candidate().displayFilename())
+                || isExecutableName(envelope.candidate().contentLocator())) {
+            collector.entryOutcomes.add(new EntryOutcome(
+                    envelope.packageId(), entryId,
+                    EntryOutcome.Status.SKIPPED, EntryOutcome.Reason.EXECUTABLE));
+            collector.packageOutcomes.add(new PackageOutcome(
+                    envelope.packageId(), PackageOutcome.Status.SKIPPED,
+                    PackageOutcome.Reason.NO_SUPPORTED_PAYLOADS));
+            return;
+        }
         if (payload.length > limits.maxPayloadBytes()) {
             collector.entryOutcomes.add(new EntryOutcome(
                     envelope.packageId(), entryId,
@@ -215,7 +225,7 @@ public final class RomPackageScanner {
         PhysicalPackage physicalPackage = new PhysicalPackage(
                 envelope.packageId(),
                 source,
-                packageLocator(envelope.packageId()),
+                envelope.candidate().contentLocator(),
                 envelope.candidate().displayFilename(),
                 PackageFormat.RAW,
                 physicalSha256,
@@ -298,7 +308,22 @@ public final class RomPackageScanner {
                         EntryOutcome.Status.SKIPPED, EntryOutcome.Reason.INVALID_PATH));
                 continue;
             }
-            byte[] payload = entry.payload();
+            if (endsWithAsciiIgnoreCase(entry.identity().rawNameBytes(), ".exe")
+                    || isExecutableName(decoded.path())) {
+                collector.entryOutcomes.add(new EntryOutcome(
+                        envelope.packageId(), entryId,
+                        EntryOutcome.Status.SKIPPED, EntryOutcome.Reason.EXECUTABLE));
+                continue;
+            }
+            byte[] payload;
+            try {
+                payload = entry.readPayload();
+            } catch (BoundedZipArchive.ArchiveException failure) {
+                collector.errorPackage(
+                        source.id(), envelope.packageId(), mapPackageReason(failure.code()),
+                        ScanIssue.Code.INVALID_PACKAGE);
+                return;
+            }
             if (payload.length > limits.maxPayloadBytes()) {
                 payloadError = true;
                 collector.entryOutcomes.add(new EntryOutcome(
@@ -366,7 +391,7 @@ public final class RomPackageScanner {
             collector.packages.add(new PhysicalPackage(
                     envelope.packageId(),
                     source,
-                    packageLocator(envelope.packageId()),
+                    envelope.candidate().contentLocator(),
                     envelope.candidate().displayFilename(),
                     PackageFormat.ZIP,
                     physicalSha256,
@@ -481,7 +506,8 @@ public final class RomPackageScanner {
             fallback = ZipNameEncoding.CP437;
         } else {
             String gbCandidate = decodeStrictOrNull(rawName, Charset.forName("GB18030"));
-            fallback = containsHan(gbCandidate)
+            String cp437Candidate = decodeStrictOrNull(rawName, Charset.forName("IBM437"));
+            fallback = isLikelyGb18030(gbCandidate, cp437Candidate)
                     ? ZipNameEncoding.GB18030 : ZipNameEncoding.CP437;
         }
         ZipEntryNameDecoder.DecodedName rawDecoded = ZipEntryNameDecoder.decode(
@@ -507,7 +533,7 @@ public final class RomPackageScanner {
         }
     }
 
-    private static boolean containsHan(String value) {
+    private static boolean isLikelyGb18030(String value, String cp437Candidate) {
         if (value == null) {
             return false;
         }
@@ -517,9 +543,21 @@ public final class RomPackageScanner {
             Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
             if (script == Character.UnicodeScript.HAN) {
                 hanCount++;
-                if (hanCount >= 2) {
-                    return true;
-                }
+            }
+            offset += Character.charCount(codePoint);
+        }
+        if (hanCount >= 2) {
+            return true;
+        }
+        if (hanCount != 1 || cp437Candidate == null) {
+            return false;
+        }
+        for (int offset = 0; offset < cp437Candidate.length();) {
+            int codePoint = cp437Candidate.codePointAt(offset);
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(codePoint);
+            if (block == Character.UnicodeBlock.BOX_DRAWING
+                    || block == Character.UnicodeBlock.BLOCK_ELEMENTS) {
+                return true;
             }
             offset += Character.charCount(codePoint);
         }
@@ -635,8 +673,34 @@ public final class RomPackageScanner {
         return entry.identity().rawNameHex() + "@" + entry.identity().localHeaderOffset();
     }
 
-    private static String packageLocator(String packageId) {
-        return "scan://" + packageId;
+    private static boolean isExecutableName(String value) {
+        int query = value.indexOf('?');
+        if (query >= 0) {
+            value = value.substring(0, query);
+        }
+        int fragment = value.indexOf('#');
+        if (fragment >= 0) {
+            value = value.substring(0, fragment);
+        }
+        return value.toLowerCase(Locale.ROOT).endsWith(".exe");
+    }
+
+    private static boolean endsWithAsciiIgnoreCase(byte[] value, String suffix) {
+        if (value.length < suffix.length()) {
+            return false;
+        }
+        int start = value.length - suffix.length();
+        for (int index = 0; index < suffix.length(); index++) {
+            int actual = value[start + index] & 0xFF;
+            int expected = suffix.charAt(index);
+            if (actual >= 'A' && actual <= 'Z') {
+                actual += 'a' - 'A';
+            }
+            if (actual != expected) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean containsCountAboveOne(Map<String, Integer> counts) {
@@ -662,6 +726,7 @@ public final class RomPackageScanner {
             case PACKAGE_LIMIT_EXCEEDED -> PackageOutcome.Reason.PACKAGE_LIMIT_EXCEEDED;
             case ENTRY_LIMIT_EXCEEDED -> PackageOutcome.Reason.ZIP_ENTRY_LIMIT_EXCEEDED;
             case INFLATED_LIMIT_EXCEEDED -> PackageOutcome.Reason.ZIP_INFLATED_LIMIT_EXCEEDED;
+            case PAYLOAD_LIMIT_EXCEEDED -> PackageOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED;
             case NAME_LIMIT_EXCEEDED -> PackageOutcome.Reason.ZIP_NAME_LIMIT_EXCEEDED;
             case RATIO_LIMIT_EXCEEDED -> PackageOutcome.Reason.ZIP_RATIO_LIMIT_EXCEEDED;
             case INVALID_ZIP, ENCRYPTED, UNSUPPORTED_COMPRESSION, ENTRY_MISSING ->

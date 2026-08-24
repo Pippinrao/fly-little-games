@@ -30,6 +30,8 @@ public record RomVariant(
         romFormat = DomainValidation.requireNonNull(romFormat, "ROM format");
         compatibilityDecision = DomainValidation.requireNonNull(
                 compatibilityDecision, "compatibility decision");
+        compatibilityDecision = CompatibilityDecision.requireValidFor(
+                romFormat, compatibilityDecision);
         hashes = DomainValidation.requireNonNull(hashes, "ROM hashes");
         analysis = DomainValidation.requireNonNull(analysis, "ROM analysis");
         if ((zipEntryIdentity == null) != (zipNameEncoding == null)) {

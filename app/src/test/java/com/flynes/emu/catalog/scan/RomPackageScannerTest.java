@@ -23,6 +23,7 @@ import com.flynes.emu.catalog.ScanIssue;
 import com.flynes.emu.catalog.ScanResult;
 import com.flynes.emu.catalog.StableIds;
 import com.flynes.emu.catalog.TitleCandidate;
+import com.flynes.emu.catalog.ZipNameEncoding;
 import com.flynes.emu.launch.ExactRomLoader;
 import com.flynes.emu.launch.LaunchRequest;
 
@@ -182,6 +183,49 @@ public final class RomPackageScannerTest {
     }
 
     @Test
+    public void opaqueLocatorRoundTripsAndExecutableNamesNeverEnterTheCatalog() throws Exception {
+        byte[] payload = ines(1, 0, 0, 0, false, false, 0);
+        String locator = "memory://opaque/reopen-token-42";
+        PackageCandidate playable = new PackageCandidate(
+                "opaque-doc", "playable.nes", locator,
+                () -> new ByteArrayInputStream(payload));
+        ScanResult playableResult = scanner().scan(source(), List.of(playable));
+        PhysicalPackage physicalPackage = playableResult.packages().get(0);
+        assertEquals(locator, physicalPackage.sourceUri());
+        assertFalse(physicalPackage.id().contains(locator));
+
+        GameCatalog catalog = new GameCatalog();
+        catalog.applyScanResult(playableResult);
+        GameVariant variant = catalog.canonicalEntries().get(0).variants().get(0);
+        LaunchRequest request = LaunchRequest.forVariant(variant);
+        AtomicBoolean reopened = new AtomicBoolean();
+        ExactRomLoader loader = new ExactRomLoader((sourceId, contentLocator) -> {
+            assertEquals(source().id(), sourceId);
+            assertEquals(locator, contentLocator);
+            reopened.set(true);
+            return new ByteArrayInputStream(payload);
+        });
+        assertArrayEquals(payload, loader.load(request));
+        assertTrue(reopened.get());
+
+        byte[] zipRawExe = zip(StandardCharsets.UTF_8,
+                List.of(entry("evil.exe", payload)));
+        byte[] zipDisplayExe = zipWithUnicodePath(
+                "safe.nes", "evil.exe", payload);
+        ScanResult executableResult = scanner().scan(source(), List.of(
+                PackageCandidate.bytes("raw-exe", "evil.EXE", payload),
+                PackageCandidate.bytes("zip-raw-exe", "raw.zip", zipRawExe),
+                PackageCandidate.bytes("zip-display-exe", "display.zip", zipDisplayExe)));
+        assertTrue(executableResult.packages().isEmpty());
+        assertEquals(3, executableResult.packageOutcomes().size());
+        assertTrue(executableResult.packageOutcomes().stream().allMatch(item ->
+                item.status() == PackageOutcome.Status.SKIPPED));
+        assertEquals(3, executableResult.entryOutcomes().size());
+        assertTrue(executableResult.entryOutcomes().stream().allMatch(item ->
+                item.reason() == EntryOutcome.Reason.EXECUTABLE));
+    }
+
+    @Test
     public void zipAccountsDirectoriesUnsafePathsNestedArchivesExecutablesGbAndSidecars()
             throws Exception {
         byte[] nestedZip = zip(StandardCharsets.UTF_8,
@@ -252,7 +296,8 @@ public final class RomPackageScannerTest {
         byte[] first = ines(1, 0, 0, 0, false, false, 0);
         byte[] second = ines(1, 0, 0, 0, false, false, 1);
         PackageCandidate zeroRead = new PackageCandidate(
-                "a", "a.nes", () -> new ZeroThenDataInputStream(first));
+                "a", "a.nes", "memory://a",
+                () -> new ZeroThenDataInputStream(first));
         PackageCandidate normal = PackageCandidate.bytes("b", "b.nes", second);
 
         ScanResult forward = scanner().scan(source(), List.of(zeroRead, normal));
@@ -382,6 +427,7 @@ public final class RomPackageScannerTest {
         PackageCandidate candidate = new PackageCandidate(
                 "private-document-key",
                 "private-name.nes",
+                "memory://private-document",
                 () -> {
                     opened.set(true);
                     return new ByteArrayInputStream(ines(1, 0, 0, 0, false, false, 0));
@@ -404,6 +450,7 @@ public final class RomPackageScannerTest {
         ScanResult revoked = scanner().scan(source(), List.of(new PackageCandidate(
                 "revoked-document",
                 "revoked.nes",
+                "memory://revoked-document",
                 () -> {
                     throw new SecurityException("content://must-not-be-persisted");
                 })));
@@ -418,13 +465,15 @@ public final class RomPackageScannerTest {
 
     @Test
     public void parserCoversDirtyHeaderNes2MultiplierOverflowAndInvalidDiskFormats() {
-        byte[] dirty = ines(1, 0, 0x02, 0, true, true, 0);
+        byte[] dirty = ines(1, 0, 0xA2, 0xB0, true, true, 0);
         byte[] multiplierOverflow = nes2Exponential(62, 3, 0, 0, false, 0);
         byte[] headerlessFds = Arrays.copyOfRange(headeredFds(1), 16, 16 + 65_500);
         byte[] truncatedHeaderlessFds = Arrays.copyOf(headerlessFds, 100);
         byte[] zeroSideFds = headeredFds(0);
         byte[] truncatedFds = Arrays.copyOf(headeredFds(1), 100);
         byte[] invalidUnifChunk = Arrays.copyOf(unif(false), 36);
+        byte[] invalidPrgName = unif(true);
+        invalidPrgName[35] = 'Z';
 
         ScanResult result = scanner().scan(source(), List.of(
                 PackageCandidate.bytes("dirty", "dirty", dirty),
@@ -435,12 +484,14 @@ public final class RomPackageScannerTest {
                 PackageCandidate.bytes("zero-side", "zero-side", zeroSideFds),
                 PackageCandidate.bytes("truncated-fds", "truncated-fds", truncatedFds),
                 PackageCandidate.bytes("missing-prg", "missing-prg", unif(false)),
+                PackageCandidate.bytes("invalid-prg-name", "invalid-prg-name", invalidPrgName),
                 PackageCandidate.bytes("bad-chunk", "bad-chunk", invalidUnifChunk)));
 
         RomVariant dirtyVariant = variantByFilename(result, "dirty");
         assertTrue(dirtyVariant.analysis().trainer());
         assertTrue(dirtyVariant.analysis().battery());
         assertTrue(dirtyVariant.analysis().warnings().contains(RomAnalysis.Warning.DIRTY_HEADER));
+        assertEquals(10, dirtyVariant.analysis().mapper());
         assertEquals(CompatibilityReason.NES_SIZE_OVERFLOW,
                 variantByFilename(result, "overflow-7").compatibilityDecision().reason());
         assertEquals(CompatibilityReason.FDS_BIOS_API_NOT_IMPLEMENTED,
@@ -454,6 +505,9 @@ public final class RomPackageScannerTest {
                 variantByFilename(result, "truncated-fds").compatibilityDecision().reason());
         assertEquals(CompatibilityReason.UNIF_MISSING_PRG,
                 variantByFilename(result, "missing-prg").compatibilityDecision().reason());
+        assertEquals(CompatibilityReason.UNIF_MISSING_PRG,
+                variantByFilename(result, "invalid-prg-name")
+                        .compatibilityDecision().reason());
         assertEquals(CompatibilityReason.UNIF_INVALID_CHUNK,
                 variantByFilename(result, "bad-chunk").compatibilityDecision().reason());
     }
@@ -466,24 +520,28 @@ public final class RomPackageScannerTest {
                 rawEntry("Éclair.nes".getBytes(StandardCharsets.UTF_8), 0x0800, payload),
                 rawEntry("Grüße.nes".getBytes(Charset.forName("IBM437")), 0, payload),
                 rawEntry("魂斗罗.nes".getBytes(Charset.forName("GB18030")), 0, payload),
+                rawEntry("魂.nes".getBytes(Charset.forName("GB18030")), 0, payload),
                 rawEntry("SAME.nes".getBytes(StandardCharsets.US_ASCII), 0, payload),
                 rawEntry("same.nes".getBytes(StandardCharsets.US_ASCII), 0, payload),
                 rawEntry("same.nes".getBytes(StandardCharsets.US_ASCII), 0, payload));
         ScanResult result = scanner().scan(source(), List.of(
                 PackageCandidate.bytes("mixed-encoding", "mixed.zip", rawZip(entries))));
 
-        assertEquals(6, result.packages().get(0).variants().size());
+        assertEquals(7, result.packages().get(0).variants().size());
         assertTrue(result.packages().get(0).variants().stream()
                 .anyMatch(item -> "Éclair.nes".equals(item.entryPath())));
         assertTrue(result.packages().get(0).variants().stream()
                 .anyMatch(item -> "Grüße.nes".equals(item.entryPath())));
         assertTrue(result.packages().get(0).variants().stream()
                 .anyMatch(item -> "魂斗罗.nes".equals(item.entryPath())));
+        assertTrue(result.packages().get(0).variants().stream()
+                .anyMatch(item -> "魂.nes".equals(item.entryPath())
+                        && item.zipNameEncoding() == ZipNameEncoding.GB18030));
         assertTrue(result.issues().stream().anyMatch(item ->
                 item.code() == ScanIssue.Code.DUPLICATE_ENTRY_NAME));
         assertTrue(result.issues().stream().anyMatch(item ->
                 item.code() == ScanIssue.Code.CASE_COLLISION));
-        assertEquals(6, result.packages().get(0).variants().stream()
+        assertEquals(7, result.packages().get(0).variants().stream()
                 .map(item -> item.zipEntryIdentity().localHeaderOffset())
                 .distinct().count());
     }
