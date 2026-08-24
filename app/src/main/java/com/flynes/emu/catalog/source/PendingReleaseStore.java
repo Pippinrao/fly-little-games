@@ -6,24 +6,25 @@ import java.util.Map;
 
 /** Durable operational tombstones for SAF grants awaiting safe release. */
 public interface PendingReleaseStore {
-    Map<String, String> readAll() throws IOException;
-    void put(String sourceId, String locator) throws IOException;
-    void remove(String sourceId) throws IOException;
+    Map<String, PendingRelease> readAll() throws IOException;
+    void put(PendingRelease pending) throws IOException;
+    void remove(String actionId) throws IOException;
 
     static PendingReleaseStore inMemory() {
         return new PendingReleaseStore() {
-            private final LinkedHashMap<String, String> entries = new LinkedHashMap<>();
+            private final LinkedHashMap<String, PendingRelease> entries =
+                    new LinkedHashMap<>();
 
-            @Override public synchronized Map<String, String> readAll() {
+            @Override public synchronized Map<String, PendingRelease> readAll() {
                 return new LinkedHashMap<>(entries);
             }
 
-            @Override public synchronized void put(String sourceId, String locator) {
-                entries.put(sourceId, locator);
+            @Override public synchronized void put(PendingRelease pending) {
+                entries.put(pending.actionId(), pending);
             }
 
-            @Override public synchronized void remove(String sourceId) {
-                entries.remove(sourceId);
+            @Override public synchronized void remove(String actionId) {
+                entries.remove(actionId);
             }
         };
     }

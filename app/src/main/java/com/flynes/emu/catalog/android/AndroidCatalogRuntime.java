@@ -104,9 +104,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         }
         try {
             sources.retryPendingReleases();
-        } catch (CatalogRepository.RepositoryException
-                | IOException
-                | com.flynes.emu.catalog.source.ReadPermissionGateway.PermissionFailure ignored) {
+        } catch (SourceRegistry.PendingReleaseException ignored) {
             // Tombstone remains durable and will be retried on the next bootstrap.
         }
         sources.verifyPersistedPermissions();
