@@ -27,8 +27,8 @@ public final class AppLanguageTest {
                                 LocaleListCompat.forLanguageTags("zh-CN")));
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync();
                 SystemClock.sleep(300L);
-                onView(withText("你的游戏，你的操控。")).check(matches(isDisplayed()));
-                onView(withText("开始游戏")).check(matches(isDisplayed()));
+                onView(withText("游戏中心")).check(matches(isDisplayed()));
+                onView(withText("内置")).check(matches(isDisplayed()));
             } finally {
                 InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
                         AppCompatDelegate.setApplicationLocales(

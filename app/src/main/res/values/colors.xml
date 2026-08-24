@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="fly_background">#0B0D12</color>
-    <color name="fly_surface">#151A23</color>
-    <color name="fly_surface_variant">#212936</color>
-    <color name="fly_on_surface">#F3F6FA</color>
-    <color name="fly_on_surface_muted">#B7C0CE</color>
-    <color name="fly_primary">#63E6BE</color>
-    <color name="fly_on_primary">#06241B</color>
-    <color name="fly_secondary">#FFB86B</color>
+    <color name="fly_background">#121316</color>
+    <color name="fly_surface">#1B1D22</color>
+    <color name="fly_surface_variant">#292B31</color>
+    <color name="fly_on_surface">#F4EFE6</color>
+    <color name="fly_on_surface_muted">#BEB8AE</color>
+    <color name="fly_primary">#FF6B5E</color>
+    <color name="fly_on_primary">#121316</color>
+    <color name="fly_secondary">#E7A65A</color>
     <color name="fly_error">#FF6B6B</color>
     <color name="fly_scrim">#B3000000</color>
-    <color name="fly_outline">#6F7C90</color>
+    <color name="fly_outline">#8A857D</color>
+    <color name="fly_outline_soft">#24F4EFE6</color>
 </resources>

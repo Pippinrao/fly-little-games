@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape><solid android:color="@color/fly_surface_variant"/><stroke android:width="2dp" android:color="@color/fly_primary"/><corners android:radius="16dp"/></shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape><solid android:color="#3D3F45"/><stroke android:width="1dp" android:color="@color/fly_outline"/><corners android:radius="16dp"/></shape>
+    </item>
+    <item>
+        <shape><solid android:color="@color/fly_surface"/><stroke android:width="1dp" android:color="@color/fly_outline_soft"/><corners android:radius="16dp"/></shape>
+    </item>
+</selector>

@@ -163,14 +163,15 @@ public class MainActivity extends AppCompatActivity {
             Log.w(TAG, "database load failed");
         }
 
-        byte[] rom = readAsset(ROM_ASSET);
+        PendingGameLaunch.Payload pending = PendingGameLaunch.consume();
+        byte[] rom = pending == null ? readAsset(ROM_ASSET) : pending.bytes();
         if (rom == null) {
-            toastAndFinish("Missing ROM asset: " + ROM_ASSET);
+            toastAndFinish(getString(R.string.missing_builtin_game));
             return;
         }
         // rc < 0 = failure; 0/positive = success (warnings are positive).
         if (startPlaying(rom) < 0) {
-            toastAndFinish("Failed to load ROM");
+            toastAndFinish(getString(R.string.load_game_failed));
             return;
         }
     }
@@ -328,7 +329,7 @@ public class MainActivity extends AppCompatActivity {
                 resumeFromPauseMenu();
                 break;
             case OPEN_LIBRARY:
-                startActivityForResult(new Intent(this, GameLibraryActivity.class), REQ_LIBRARY);
+                startActivity(new Intent(this, HomeActivity.class));
                 break;
             case OPEN_SETTINGS:
                 startActivity(new Intent(this, SettingsActivity.class));

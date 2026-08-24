@@ -10,7 +10,7 @@ import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.SeekBarPreference;
 
-import com.flynes.emu.GameLibraryActivity;
+import com.flynes.emu.HomeActivity;
 import com.flynes.emu.LicensesActivity;
 import com.flynes.emu.R;
 
@@ -64,7 +64,9 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         Preference library = findPreference("general.library");
         if (library != null) {
             library.setOnPreferenceClickListener(preference -> {
-                startActivity(new Intent(requireContext(), GameLibraryActivity.class));
+                Intent sources = new Intent(requireContext(), HomeActivity.class);
+                sources.setAction(HomeActivity.ACTION_SHOW_SOURCES);
+                startActivity(sources);
                 return true;
             });
         }
