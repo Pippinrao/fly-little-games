@@ -12,6 +12,7 @@
  * Self-contained: stdio only, no external deps. Exit code 0 = PASS.
  */
 #include "nes/nes.h"
+#include "../src/nes_audio_clock.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -86,6 +87,19 @@ namespace
 
 int main(int argc, char** argv)
 {
+	// Audio sample cadence must preserve the fractional samples that do not fit
+	// in a single emulated frame. The accumulated error stays below one sample.
+	{
+		double remainder = 0.0;
+		uint64_t total = 0;
+		constexpr uint32_t frame_count = 60u * 30u * 60u;
+		for (uint32_t i = 0; i < frame_count; ++i)
+			total += nes_samples_for_next_frame(48000, 60.0988, remainder);
+		const double expected = static_cast<double>(frame_count) * 48000.0 / 60.0988;
+		const double error = total > expected ? total - expected : expected - total;
+		check(error < 1.0, "30-minute audio cadence stays within one sample");
+	}
+
 	const char* rom_path = (argc > 1) ? argv[1] : "core/tests/fixtures/from_below.nes";
 	const char* db_path  = (argc > 2) ? argv[2] : "core/tests/fixtures/NstDatabase.xml";
 	std::printf("=== FlyNES headless smoke test (Task 6) ===\n");

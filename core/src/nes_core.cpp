@@ -27,6 +27,7 @@
 #include "nes/nes.h"
 #include "nes_state.hpp"
 #include "nes_stream.hpp"
+#include "nes_audio_clock.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -207,6 +208,8 @@ namespace
 		nes_video_frame video_frame;          // nes_get_video_frame 返回的描述符
 		nes_config cfg;                       // favored_system / sample_rate / pixfmt
 		nes_video_filter filter;              // 运行时滤镜 (nes_set_video_format 设置, 缺省 NONE)
+		double audio_sample_remainder;         // 跨调用保留的分数样本
+		int audio_clock_mode;                  // PAL/NTSC 切换时重置分数样本
 
 		// 推式输入 → 拉式回调 (Pad::callback) 的桥 (t2b §0 #0)
 		std::atomic<uint32_t> input_buttons[NES_PORT_MAX];
@@ -241,6 +244,8 @@ namespace
 			  video_frame{},
 			  cfg{},
 			  filter(NES_FILTER_NONE),
+			  audio_sample_remainder(0.0),
+			  audio_clock_mode(-1),
 			  log_cb(nullptr),
 			  log_userdata(nullptr),
 			  file_io_cb(nullptr),
@@ -859,11 +864,16 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 	if (frames_run)      *frames_run = 0;
 	if (samples_written) *samples_written = 0;
 
-	// 模式正确帧率 (PAL 用 50.0070, 否则按 NTSC 60.0988; 用错会漂移)
-	const double fps = (ctx->machine.GetMode() == Nes::Api::Machine::PAL) ? 50.0070 : 60.0988;
-	const uint32_t per_frame = static_cast<uint32_t>(ctx->cfg.sample_rate / fps);
-	if (per_frame == 0)
-		return NES_ERR_INVALID_PARAM;
+	// 模式正确帧率 (PAL 用 50.0070, 否则按 NTSC 60.0988; 用错会漂移)。
+	// 分数样本跨 nes_run_frames 调用累计，模式变化时重新开始。
+	const int clock_mode = static_cast<int>(ctx->machine.GetMode());
+	if (ctx->audio_clock_mode != clock_mode)
+	{
+		ctx->audio_clock_mode = clock_mode;
+		ctx->audio_sample_remainder = 0.0;
+	}
+	const double fps = (clock_mode == static_cast<int>(Nes::Api::Machine::PAL))
+	                 ? 50.0070 : 60.0988;
 
 	// 视频输出: 正 pitch、自顶向下; 每帧写入 back buffer，完成后原子发布。
 	const int scale = filter_scale(ctx->filter);
@@ -873,7 +883,7 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 	Nes::Core::Input::Controllers pads;
 
 	// 音频输出: 无环形缓冲 (samples[1]/length[1] = 0)
-	Nes::Core::Sound::Output so(audio_out, per_frame);
+	Nes::Core::Sound::Output so(audio_out, 1);
 	so.samples[1] = nullptr;
 	so.length[1]  = 0;
 
@@ -883,6 +893,11 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 
 	for (i = 0; i < max_frames; ++i)
 	{
+		double next_remainder = ctx->audio_sample_remainder;
+		const uint32_t per_frame = nes_samples_for_next_frame(
+			ctx->cfg.sample_rate, fps, next_remainder);
+		if (per_frame == 0)
+			return NES_ERR_INVALID_PARAM;
 		// 音频缓冲满 → 提前停止 (写成 - written 避免 uint32 溢出)
 		if (per_frame > audio_cap_samples - written)
 			break;
@@ -897,6 +912,7 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 		const Nes::Result r = ctx->emulator.Execute(&vo, &so, &pads);
 		if (r != Nes::RESULT_OK)
 			last = r;
+		ctx->audio_sample_remainder = next_remainder;
 		{
 			std::lock_guard<std::mutex> lock(ctx->frame_mutex);
 			std::swap(ctx->published_index, ctx->write_index);
@@ -1025,6 +1041,7 @@ NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo)
 		return static_cast<int>(r);
 
 	ctx->cfg.sample_rate = sample_rate;
+	ctx->audio_sample_remainder = 0.0;
 	ctx->sound.SetSpeaker(Nes::Api::Sound::SPEAKER_MONO); // 保持 mono
 
 	return NES_OK;
