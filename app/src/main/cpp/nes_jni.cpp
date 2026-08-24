@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 #include "nes/nes.h"
 
@@ -210,6 +211,40 @@ Java_com_flynes_emu_NesCore_nativeRunFrames(JNIEnv* env, jclass, jlong handle,
         return static_cast<jint>(rc);
     // Success: return samples written so the Java audio loop knows how much to play.
     return static_cast<jint>(samples_written);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_flynes_emu_NesCore_nativeCopyVideoFrame(JNIEnv* env, jclass, jlong handle,
+                                                  jobject destination,
+                                                  jintArray metadata)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (!ctx || !destination || !metadata || env->GetArrayLength(metadata) < 5)
+        return static_cast<jlong>(NES_ERR_INVALID_PARAM);
+
+    void* pixels = env->GetDirectBufferAddress(destination);
+    const jlong capacity = env->GetDirectBufferCapacity(destination);
+    if (!pixels || capacity <= 0)
+        return static_cast<jlong>(NES_ERR_INVALID_PARAM);
+
+    nes_video_snapshot snapshot{};
+    snapshot.struct_size = sizeof(snapshot);
+    snapshot.version = NES_STRUCT_VERSION;
+    const int rc = nes_copy_video_frame(ctx, pixels, static_cast<size_t>(capacity), &snapshot);
+    if (rc < 0)
+        return static_cast<jlong>(rc);
+    if (snapshot.bytes_written > static_cast<size_t>(std::numeric_limits<jint>::max()))
+        return static_cast<jlong>(NES_ERR_BUFFER_TOO_SMALL);
+
+    const jint values[] = {
+        static_cast<jint>(snapshot.width),
+        static_cast<jint>(snapshot.height),
+        static_cast<jint>(snapshot.pitch),
+        static_cast<jint>(snapshot.format),
+        static_cast<jint>(snapshot.bytes_written)
+    };
+    env->SetIntArrayRegion(metadata, 0, 5, values);
+    return static_cast<jlong>(snapshot.sequence);
 }
 
 JNIEXPORT void JNICALL

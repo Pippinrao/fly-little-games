@@ -8,6 +8,7 @@ import java.util.Arrays;
 import com.flynes.emu.session.CoreFacade;
 import com.flynes.emu.data.RomIdentity;
 import com.flynes.emu.data.RomInfo;
+import com.flynes.emu.video.NativeFrameSource;
 
 /**
  * JNI wrapper around the FlyNES C ABI core (libnescore.so).
@@ -15,7 +16,7 @@ import com.flynes.emu.data.RomInfo;
  * One instance owns one emulator context. All native methods are static;
  * the context is carried as a jlong handle.
  */
-public final class NesCore implements CoreFacade {
+public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
     static {
         System.loadLibrary("nescore");
     }
@@ -45,6 +46,7 @@ public final class NesCore implements CoreFacade {
     private static native int[] nativeRomInfoNumbers(long h);
     private static native int nativeLoadDatabase(long h, byte[] xml);
     private static native int nativeRunFrames(long h, int maxFrames, ByteBuffer audio, int capSamples);
+    private static native long nativeCopyVideoFrame(long h, ByteBuffer destination, int[] metadata);
     private static native void nativeSetInput(long h, int buttons);
     private static native void nativeSetAudioFormat(long h, int rate, int stereo);
     private static native void nativeSetVideoFilter(long h, int filter);
@@ -121,6 +123,11 @@ public final class NesCore implements CoreFacade {
 
     @Override public int runOneFrame() {
         return runFrames(1);
+    }
+
+    @Override public long copyVideoFrame(ByteBuffer destination, int[] metadata) {
+        if (handle == 0) return -3; // NES_ERR_NOT_READY
+        return nativeCopyVideoFrame(handle, destination, metadata);
     }
 
     @Override public void setInput(int buttons) {
