@@ -234,6 +234,31 @@ int main(int argc, char** argv)
 		vf_ok = true;
 	}
 
+	// ---- 6a. race-free published frame snapshot -------------------------
+	{
+		nes_video_snapshot before{};
+		before.struct_size = sizeof(before);
+		std::vector<uint8_t> pixels(256u * 240u * 2u);
+		int rc = nes_copy_video_frame(nes, pixels.data(), pixels.size(), &before);
+		check(rc == NES_OK, "copy the current published video frame");
+		check(before.sequence > 0, "published frame has a positive sequence");
+		check(before.width == 256 && before.height == 240,
+		      "published frame describes the native viewport");
+		check(before.bytes_written == pixels.size(),
+		      "published frame reports the copied byte count");
+
+		uint32_t fr = 0, sw = 0;
+		rc = nes_run_frames(nes, 1, audio.data(), kAudioCap, &fr, &sw);
+		check(rc == NES_OK && fr == 1, "run exactly one frame before the next snapshot");
+
+		nes_video_snapshot after{};
+		after.struct_size = sizeof(after);
+		rc = nes_copy_video_frame(nes, pixels.data(), pixels.size(), &after);
+		check(rc == NES_OK, "copy the next published video frame");
+		check(after.sequence == before.sequence + 1,
+		      "published sequence advances exactly once per emulated frame");
+	}
+
 	// ---- 6b. video filter scaling ---------------------------------------
 	{
 		char buf[160];

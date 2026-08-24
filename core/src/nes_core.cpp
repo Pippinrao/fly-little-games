@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <new>
 #include <string>
 #include <vector>
@@ -197,8 +198,12 @@ namespace
 		Nes::Api::Cheats cheats;
 		Nes::Api::Fds fds;
 
-		uint8_t* framebuffer;                 // 256*scale x 240*scale x bpp
+		uint8_t* framebuffers[2];             // write buffer + immutable published buffer
 		size_t framebuffer_size;              // 当前帧缓冲分配字节数 (set_video_format 同步重分配)
+		uint32_t write_index;
+		uint32_t published_index;
+		uint64_t frame_sequence;
+		mutable std::mutex frame_mutex;
 		nes_video_frame video_frame;          // nes_get_video_frame 返回的描述符
 		nes_config cfg;                       // favored_system / sample_rate / pixfmt
 		nes_video_filter filter;              // 运行时滤镜 (nes_set_video_format 设置, 缺省 NONE)
@@ -228,8 +233,11 @@ namespace
 			  cartridge(emulator),
 			  cheats(emulator),
 			  fds(emulator),
-			  framebuffer(nullptr),
+			  framebuffers{nullptr, nullptr},
 			  framebuffer_size(0),
+			  write_index(0),
+			  published_index(1),
+			  frame_sequence(0),
 			  video_frame{},
 			  cfg{},
 			  filter(NES_FILTER_NONE),
@@ -251,7 +259,8 @@ namespace
 
 		~nes_ctx()
 		{
-			std::free(framebuffer);
+			std::free(framebuffers[0]);
+			std::free(framebuffers[1]);
 		}
 	};
 
@@ -462,7 +471,7 @@ namespace
 		ctx->video_frame.height = static_cast<uint32_t>(kScreenHeight * scale);
 		ctx->video_frame.format = ctx->cfg.pixfmt;
 		ctx->video_frame.pitch  = static_cast<int32_t>(ctx->video_frame.width * pixfmt_bpp(ctx->cfg.pixfmt));
-		ctx->video_frame.pixels = ctx->framebuffer;
+		ctx->video_frame.pixels = ctx->framebuffers[ctx->published_index];
 	}
 
 	void apply_audio_config(nes_ctx* ctx)
@@ -565,14 +574,14 @@ NES_API nes_t* nes_create(const nes_config* cfg)
 			ctx->cfg.pixfmt = cfg->pixfmt;
 	}
 
-	ctx->framebuffer = static_cast<uint8_t*>(
-		std::malloc(kScreenWidth * kScreenHeight * pixfmt_bpp(ctx->cfg.pixfmt)));
-	if (!ctx->framebuffer)
+	ctx->framebuffer_size = kScreenWidth * kScreenHeight * pixfmt_bpp(ctx->cfg.pixfmt);
+	ctx->framebuffers[0] = static_cast<uint8_t*>(std::calloc(1, ctx->framebuffer_size));
+	ctx->framebuffers[1] = static_cast<uint8_t*>(std::calloc(1, ctx->framebuffer_size));
+	if (!ctx->framebuffers[0] || !ctx->framebuffers[1])
 	{
 		delete ctx;
 		return nullptr;
 	}
-	ctx->framebuffer_size = kScreenWidth * kScreenHeight * pixfmt_bpp(ctx->cfg.pixfmt);
 	update_video_frame(ctx);
 
 	apply_render_state(ctx);
@@ -856,13 +865,8 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 	if (per_frame == 0)
 		return NES_ERR_INVALID_PARAM;
 
-	// 视频输出: 正 pitch、自顶向下; 不设 lock/unlock 回调
-	// (Output::Locker 无回调时仅要求 pixels && pitch, NstApiVideo.hpp:122-128)
-	// pitch 必须按滤镜放大后的行宽 (hq4x=1024 像素), 否则滤镜写出错位
+	// 视频输出: 正 pitch、自顶向下; 每帧写入 back buffer，完成后原子发布。
 	const int scale = filter_scale(ctx->filter);
-	Nes::Core::Video::Output vo(
-		ctx->framebuffer,
-		static_cast<long>(kScreenWidth * scale * pixfmt_bpp(ctx->cfg.pixfmt)));
 
 	// 输入: Pad::callback 已在 nes_create 注册 (推→拉桥), 此处只传对象;
 	// Controllers 默认构造为空, 设备状态 (Pad::state 等) 持在核心 Device 内, 每帧重建无副作用
@@ -886,10 +890,19 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 		// 每帧把输出位置重新指到当前写入偏移 (内核写你给的位置)
 		so.samples[0] = audio_out + written;
 		so.length[0]  = per_frame;
+		Nes::Core::Video::Output vo(
+			ctx->framebuffers[ctx->write_index],
+			static_cast<long>(kScreenWidth * scale * pixfmt_bpp(ctx->cfg.pixfmt)));
 
 		const Nes::Result r = ctx->emulator.Execute(&vo, &so, &pads);
 		if (r != Nes::RESULT_OK)
 			last = r;
+		{
+			std::lock_guard<std::mutex> lock(ctx->frame_mutex);
+			std::swap(ctx->published_index, ctx->write_index);
+			++ctx->frame_sequence;
+			update_video_frame(ctx);
+		}
 		written += so.length[0];
 	}
 
@@ -913,25 +926,49 @@ NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter
 	if (format != NES_PIXFMT_RGB565 || filter_to_render(filter) < 0)
 		return NES_ERR_NOT_IMPLEMENTED;
 
-	ctx->filter = filter;
-
-	// 先同步重分配后缓冲 (尺寸不变则复用; realloc 失败旧缓冲仍有效, 状态不变)
+	// 先分配两份候选缓冲；任一失败都保留现有视频状态。
 	const size_t fb_size = static_cast<size_t>(kScreenWidth  * scale)
 	                     * static_cast<size_t>(kScreenHeight * scale)
 	                     * pixfmt_bpp(format);
+	uint8_t* candidates[2] = {nullptr, nullptr};
 	if (fb_size != ctx->framebuffer_size)
 	{
-		uint8_t* fb = static_cast<uint8_t*>(std::realloc(ctx->framebuffer, fb_size));
-		if (!fb)
+		candidates[0] = static_cast<uint8_t*>(std::calloc(1, fb_size));
+		candidates[1] = static_cast<uint8_t*>(std::calloc(1, fb_size));
+		if (!candidates[0] || !candidates[1])
+		{
+			std::free(candidates[0]);
+			std::free(candidates[1]);
 			return NES_ERR_OUT_OF_MEMORY;
-		ctx->framebuffer = fb;
-		ctx->framebuffer_size = fb_size;
+		}
 	}
 
+	const nes_video_filter old_filter = ctx->filter;
+	const nes_pixfmt old_format = ctx->cfg.pixfmt;
+	ctx->filter = filter;
 	ctx->cfg.pixfmt = format;
 	const int rs_rc = apply_render_state(ctx); // bits.count=16, output size per filter, filter per ctx->filter
 	if (NES_FAILED(rs_rc))
+	{
+		ctx->filter = old_filter;
+		ctx->cfg.pixfmt = old_format;
+		apply_render_state(ctx);
+		std::free(candidates[0]);
+		std::free(candidates[1]);
 		return rs_rc;
+	}
+	if (candidates[0])
+	{
+		std::lock_guard<std::mutex> lock(ctx->frame_mutex);
+		std::free(ctx->framebuffers[0]);
+		std::free(ctx->framebuffers[1]);
+		ctx->framebuffers[0] = candidates[0];
+		ctx->framebuffers[1] = candidates[1];
+		ctx->write_index = 0;
+		ctx->published_index = 1;
+		ctx->framebuffer_size = fb_size;
+		update_video_frame(ctx);
+	}
 	update_video_frame(ctx);
 
 	return NES_OK;
@@ -943,6 +980,27 @@ NES_API const nes_video_frame* nes_get_video_frame(const nes_t* nes)
 		return nullptr;
 	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
 	return &ctx->video_frame;
+}
+
+NES_API int nes_copy_video_frame(const nes_t* nes, void* out, size_t cap,
+                                 nes_video_snapshot* snapshot)
+{
+	if (!nes || !out || !snapshot || snapshot->struct_size < sizeof(nes_video_snapshot))
+		return NES_ERR_INVALID_PARAM;
+	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
+	std::lock_guard<std::mutex> lock(ctx->frame_mutex);
+
+	snapshot->version = NES_STRUCT_VERSION;
+	snapshot->sequence = ctx->frame_sequence;
+	snapshot->width = ctx->video_frame.width;
+	snapshot->height = ctx->video_frame.height;
+	snapshot->format = ctx->video_frame.format;
+	snapshot->pitch = ctx->video_frame.pitch;
+	snapshot->bytes_written = ctx->framebuffer_size;
+	if (cap < ctx->framebuffer_size)
+		return NES_ERR_BUFFER_TOO_SMALL;
+	std::memcpy(out, ctx->framebuffers[ctx->published_index], ctx->framebuffer_size);
+	return NES_OK;
 }
 
 NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo)

@@ -170,6 +170,17 @@ typedef struct nes_video_frame {
     const void* pixels;        /* 指向壳内后缓冲, 下次 nes_run_frames 前有效 */
 } nes_video_frame;
 
+typedef struct nes_video_snapshot {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t sequence;
+    uint32_t width;
+    uint32_t height;
+    nes_pixfmt format;
+    int32_t pitch;
+    size_t bytes_written;
+} nes_video_snapshot;
+
 typedef struct nes_rom_info {
     uint32_t struct_size;
     uint32_t version;
@@ -221,6 +232,8 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 /* ---------------- 视频 / 音频 格式 ---------------- */
 NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter filter);
 NES_API const nes_video_frame* nes_get_video_frame(const nes_t* nes);
+NES_API int nes_copy_video_frame(const nes_t* nes, void* out, size_t cap,
+                                 nes_video_snapshot* snapshot);
 NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo); /* stereo: 0/1 */
 
 /* ---------------- 输入 (推式; 壳内转拉式回调) ---------------- */
