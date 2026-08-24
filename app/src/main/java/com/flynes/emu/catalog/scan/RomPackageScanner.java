@@ -259,6 +259,7 @@ public final class RomPackageScanner {
             return;
         }
 
+        Collector staged = new Collector();
         ArrayList<RomVariant> variants = new ArrayList<>();
         Map<String, Integer> rawNameCounts = new HashMap<>();
         Map<String, Set<String>> caseFoldedLocators = new HashMap<>();
@@ -275,7 +276,7 @@ public final class RomPackageScanner {
             try {
                 decoded = decodeEntryName(entry);
             } catch (IllegalArgumentException malformedName) {
-                collector.entryOutcomes.add(new EntryOutcome(
+                staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.SKIPPED,
                         EntryOutcome.Reason.INVALID_PATH));
@@ -289,30 +290,38 @@ public final class RomPackageScanner {
             }
             locators.add(rawLocator);
             if (decoded.unicodePathRejected()) {
-                collector.issues.add(new ScanIssue(
+                staged.issues.add(new ScanIssue(
                         ScanIssue.Code.UNICODE_PATH_REJECTED,
                         ScanIssue.Severity.WARNING,
                         source.id(),
                         envelope.packageId()));
             }
             if (entry.isDirectory()) {
-                collector.entryOutcomes.add(new EntryOutcome(
+                staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.SKIPPED, EntryOutcome.Reason.DIRECTORY));
                 continue;
             }
             if (!isSafeRelativePath(decoded.path())
                     || !isSafeRelativePath(decoded.rawPath())) {
-                collector.entryOutcomes.add(new EntryOutcome(
+                staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.SKIPPED, EntryOutcome.Reason.INVALID_PATH));
                 continue;
             }
             if (endsWithAsciiIgnoreCase(entry.identity().rawNameBytes(), ".exe")
                     || isExecutableName(decoded.path())) {
-                collector.entryOutcomes.add(new EntryOutcome(
+                staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.SKIPPED, EntryOutcome.Reason.EXECUTABLE));
+                continue;
+            }
+            if (entry.uncompressedSize() > limits.maxPayloadBytes()) {
+                payloadError = true;
+                staged.entryOutcomes.add(new EntryOutcome(
+                        envelope.packageId(), entryId,
+                        EntryOutcome.Status.ERROR,
+                        EntryOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED));
                 continue;
             }
             byte[] payload;
@@ -324,17 +333,9 @@ public final class RomPackageScanner {
                         ScanIssue.Code.INVALID_PACKAGE);
                 return;
             }
-            if (payload.length > limits.maxPayloadBytes()) {
-                payloadError = true;
-                collector.entryOutcomes.add(new EntryOutcome(
-                        envelope.packageId(), entryId,
-                        EntryOutcome.Status.ERROR,
-                        EntryOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED));
-                continue;
-            }
             RomPayloadParser.Parsed parsed = RomPayloadParser.parse(payload);
             if (parsed == null) {
-                collector.entryOutcomes.add(new EntryOutcome(
+                staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.SKIPPED,
                         unsupportedReason(payload)));
@@ -351,13 +352,13 @@ public final class RomPackageScanner {
                         decoded.encoding()));
             } catch (CanonicalResolutionException invalidOverride) {
                 canonicalResolutionError = true;
-                collector.entryOutcomes.add(new EntryOutcome(
+                staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.ERROR,
                         EntryOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED));
                 continue;
             }
-            collector.entryOutcomes.add(new EntryOutcome(
+            staged.entryOutcomes.add(new EntryOutcome(
                     envelope.packageId(), entryId,
                     EntryOutcome.Status.INDEXED,
                     parsed.compatibility().state()
@@ -366,21 +367,21 @@ public final class RomPackageScanner {
         }
 
         if (containsCountAboveOne(rawNameCounts)) {
-            collector.issues.add(new ScanIssue(
+            staged.issues.add(new ScanIssue(
                     ScanIssue.Code.DUPLICATE_ENTRY_NAME,
                     ScanIssue.Severity.WARNING,
                     source.id(),
                     envelope.packageId()));
         }
         if (containsSetAboveOne(caseFoldedLocators)) {
-            collector.issues.add(new ScanIssue(
+            staged.issues.add(new ScanIssue(
                     ScanIssue.Code.CASE_COLLISION,
                     ScanIssue.Severity.WARNING,
                     source.id(),
                     envelope.packageId()));
         }
         if (canonicalResolutionError) {
-            collector.issues.add(new ScanIssue(
+            staged.issues.add(new ScanIssue(
                     ScanIssue.Code.CANONICAL_ID_RESOLUTION_FAILED,
                     ScanIssue.Severity.WARNING,
                     source.id(),
@@ -388,7 +389,7 @@ public final class RomPackageScanner {
         }
         variants.sort(Comparator.comparing(RomVariant::id));
         if (!variants.isEmpty()) {
-            collector.packages.add(new PhysicalPackage(
+            staged.packages.add(new PhysicalPackage(
                     envelope.packageId(),
                     source,
                     envelope.candidate().contentLocator(),
@@ -396,22 +397,23 @@ public final class RomPackageScanner {
                     PackageFormat.ZIP,
                     physicalSha256,
                     variants));
-            collector.packageOutcomes.add(new PackageOutcome(
+            staged.packageOutcomes.add(new PackageOutcome(
                     envelope.packageId(), PackageOutcome.Status.INDEXED,
                     PackageOutcome.Reason.INDEXED));
         } else if (canonicalResolutionError) {
-            collector.packageOutcomes.add(new PackageOutcome(
+            staged.packageOutcomes.add(new PackageOutcome(
                     envelope.packageId(), PackageOutcome.Status.ERROR,
                     PackageOutcome.Reason.CANONICAL_ID_RESOLUTION_FAILED));
         } else if (payloadError) {
-            collector.packageOutcomes.add(new PackageOutcome(
+            staged.packageOutcomes.add(new PackageOutcome(
                     envelope.packageId(), PackageOutcome.Status.ERROR,
                     PackageOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED));
         } else {
-            collector.packageOutcomes.add(new PackageOutcome(
+            staged.packageOutcomes.add(new PackageOutcome(
                     envelope.packageId(), PackageOutcome.Status.SKIPPED,
                     PackageOutcome.Reason.NO_SUPPORTED_PAYLOADS));
         }
+        collector.merge(staged);
     }
 
     private RomVariant variant(
@@ -763,6 +765,13 @@ public final class RomPackageScanner {
                     packageId, PackageOutcome.Status.ERROR, reason));
             issues.add(new ScanIssue(
                     issueCode, ScanIssue.Severity.WARNING, sourceId, packageId));
+        }
+
+        void merge(Collector staged) {
+            packages.addAll(staged.packages);
+            packageOutcomes.addAll(staged.packageOutcomes);
+            entryOutcomes.addAll(staged.entryOutcomes);
+            issues.addAll(staged.issues);
         }
 
         ScanResult finish() {

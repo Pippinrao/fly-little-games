@@ -291,6 +291,82 @@ public final class RomPackageScannerTest {
                 outcome(result, StableIds.packageId(source().id(), "unknown")).status());
     }
 
+    @Test
+    public void oversizeZipEntryIsAccountedWithoutInflateAndDoesNotDropPlayableSibling()
+            throws Exception {
+        byte[] game = ines(1, 0, 0, 0, false, false, 0);
+        byte[] oversize = new byte[game.length + 1];
+        ScanLimits entryLimits = new ScanLimits(
+                128 * 1024,
+                game.length,
+                8,
+                128 * 1024,
+                1024,
+                200,
+                ScanLimits.MIB);
+        for (boolean gameFirst : new boolean[]{true, false}) {
+            RawZipEntry gameEntry = rawEntry(
+                    "game.nes".getBytes(StandardCharsets.US_ASCII), 0, game);
+            RawZipEntry sidecarEntry = rawEntry(
+                    "oversize.bin".getBytes(StandardCharsets.US_ASCII), 0, oversize);
+            List<RawZipEntry> entries = gameFirst
+                    ? List.of(gameEntry, sidecarEntry)
+                    : List.of(sidecarEntry, gameEntry);
+            byte[] archive = rawZip(entries);
+            corruptRawPayload(archive, entries, "oversize.bin");
+
+            ScanResult result = new RomPackageScanner(entryLimits).scan(source(), List.of(
+                    PackageCandidate.bytes(
+                            gameFirst ? "oversize-after" : "oversize-before",
+                            "mixed.zip",
+                            archive)));
+
+            assertEquals(1, result.packages().size());
+            assertEquals(1, result.packages().get(0).variants().size());
+            assertEquals("game.nes", result.packages().get(0).variants().get(0).entryPath());
+            assertEquals(PackageOutcome.Status.INDEXED, result.packageOutcomes().get(0).status());
+            assertEquals(2, result.entryOutcomes().size());
+            assertTrue(result.entryOutcomes().stream().anyMatch(item ->
+                    item.status() == EntryOutcome.Status.ERROR
+                            && item.reason() == EntryOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED));
+        }
+
+        ScanResult onlyOversize = new RomPackageScanner(entryLimits).scan(source(), List.of(
+                PackageCandidate.bytes(
+                        "only-oversize",
+                        "oversize.zip",
+                        rawZip(List.of(rawEntry(
+                                "oversize.bin".getBytes(StandardCharsets.US_ASCII),
+                                0,
+                                oversize))))));
+        assertTrue(onlyOversize.packages().isEmpty());
+        assertEquals(PackageOutcome.Status.ERROR,
+                onlyOversize.packageOutcomes().get(0).status());
+        assertEquals(PackageOutcome.Reason.PAYLOAD_LIMIT_EXCEEDED,
+                onlyOversize.packageOutcomes().get(0).reason());
+    }
+
+    @Test
+    public void laterPayloadIntegrityFailureRollsBackStagedIndexedOutcomes() throws Exception {
+        byte[] game = ines(1, 0, 0, 0, false, false, 0);
+        List<RawZipEntry> entries = List.of(
+                rawEntry("game.nes".getBytes(StandardCharsets.US_ASCII), 0, game),
+                rawEntry("later.bin".getBytes(StandardCharsets.US_ASCII), 0, new byte[32]));
+        byte[] archive = rawZip(entries);
+        corruptRawPayload(archive, entries, "later.bin");
+
+        ScanResult result = scanner().scan(source(), List.of(
+                PackageCandidate.bytes("late-corruption", "corrupt.zip", archive)));
+
+        assertTrue(result.packages().isEmpty());
+        assertEquals(1, result.packageOutcomes().size());
+        assertEquals(PackageOutcome.Status.ERROR, result.packageOutcomes().get(0).status());
+        assertEquals(PackageOutcome.Reason.INVALID_ZIP,
+                result.packageOutcomes().get(0).reason());
+        assertTrue(result.entryOutcomes().stream().noneMatch(item ->
+                item.status() == EntryOutcome.Status.INDEXED));
+    }
+
     @Test(timeout = 2000)
     public void zeroLengthBulkReadCannotHangAndProviderOrderCannotChangeResult() {
         byte[] first = ines(1, 0, 0, 0, false, false, 0);
@@ -898,6 +974,21 @@ public final class RomPackageScannerTest {
         writeU32(archive, localBytes.length);
         writeU16(archive, 0);
         return archive.toByteArray();
+    }
+
+    private static void corruptRawPayload(
+            byte[] archive, List<RawZipEntry> entries, String displayName) {
+        int localOffset = 0;
+        for (RawZipEntry entry : entries) {
+            int dataOffset = localOffset + 30 + entry.localRawName().length;
+            if (displayName.equals(
+                    new String(entry.localRawName(), StandardCharsets.US_ASCII))) {
+                archive[dataOffset] ^= 0x01;
+                return;
+            }
+            localOffset = dataOffset + entry.payload().length;
+        }
+        throw new AssertionError("raw ZIP entry was not found");
     }
 
     private static void writeU16(ByteArrayOutputStream output, int value) {
