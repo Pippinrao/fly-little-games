@@ -17,6 +17,10 @@ public final class StableIds {
         return "pkg:" + digest(sourceId, stableDocumentKey);
     }
 
+    public static String safSourceId(String treeLocator) {
+        return "source:" + digest("SAF_TREE", treeLocator);
+    }
+
     public static String variantId(
             String packageId, String exactRawLocator, String payloadSha256) {
         return "variant:" + digest(

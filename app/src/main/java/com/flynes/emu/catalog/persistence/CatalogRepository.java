@@ -44,6 +44,31 @@ public final class CatalogRepository {
         }
     }
 
+    /** Atomically registers a new source and publishes its first scan with one store write. */
+    public void addSourceWithScan(SourceScanResult scan) throws RepositoryException {
+        synchronized (transactionGate) {
+            if (scan.baseRevision() != state.revision()
+                    || state.sources().containsKey(scan.sourceId())
+                    || scan.source().type() == RomSource.Type.BUILTIN) {
+                throw new RepositoryException(ErrorCode.STALE_OR_INVALID, null);
+            }
+            CatalogState registered;
+            final CatalogState next;
+            try {
+                registered = state.withSource(scan.source());
+                SourceScanResult rebased = new SourceScanResult(
+                        scan.sourceId(), registered.revision(), scan.scanToken(),
+                        scan.completeness(), scan.source(), scan.packages(),
+                        scan.packageOutcomes(), scan.entryOutcomes(), scan.issues(),
+                        scan.candidateCount());
+                next = CatalogReconciler.reconcile(registered, rebased);
+            } catch (RuntimeException invalid) {
+                throw new RepositoryException(ErrorCode.STALE_OR_INVALID, invalid);
+            }
+            commit(next);
+        }
+    }
+
     public void reauthorizeSource(RomSource source) throws RepositoryException {
         synchronized (transactionGate) {
             SourceCatalogState old = state.sources().get(source.id());
