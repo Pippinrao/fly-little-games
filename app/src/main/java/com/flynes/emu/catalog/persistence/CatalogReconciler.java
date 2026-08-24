@@ -2,7 +2,9 @@ package com.flynes.emu.catalog.persistence;
 
 import com.flynes.emu.catalog.PackageOutcome;
 import com.flynes.emu.catalog.PhysicalPackage;
+import com.flynes.emu.catalog.RomSource;
 import com.flynes.emu.catalog.RomVariant;
+import com.flynes.emu.catalog.ScanIssue;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -19,8 +21,7 @@ public final class CatalogReconciler {
         }
         SourceCatalogState previous = current.sources().get(scan.sourceId());
         if (previous == null) throw new ReconcileException(ErrorCode.SOURCE_NOT_FOUND);
-        if (previous.source().type() == com.flynes.emu.catalog.RomSource.Type.BUILTIN
-                && !previous.source().equals(scan.source())) {
+        if (!previous.source().equals(scan.source())) {
             throw new ReconcileException(ErrorCode.INVALID_SCAN);
         }
         if (scan.scanToken() <= previous.lastScanToken()) {
@@ -35,16 +36,19 @@ public final class CatalogReconciler {
                         item.getValue().physicalPackage(), CatalogPackage.Freshness.PRESERVED_STALE));
             }
             sources.put(scan.sourceId(), new SourceCatalogState(
-                    scan.source(), preserved, scan.packageOutcomes(), scan.entryOutcomes(),
+                    failedSource(scan), preserved, scan.packageOutcomes(), scan.entryOutcomes(),
                     scan.issues(), scan.completeness(), scan.scanToken()));
             return current.replace(current.revision() + 1, sources,
                     current.userStates(), current.lastPlayedSequence());
         }
 
-        LinkedHashMap<String, CatalogPackage> next = scan.completeness()
-                == SourceScanResult.Completeness.FULL
-                ? new LinkedHashMap<>()
-                : new LinkedHashMap<>(previous.packages());
+        LinkedHashMap<String, CatalogPackage> next = new LinkedHashMap<>();
+        if (scan.completeness() == SourceScanResult.Completeness.PARTIAL) {
+            for (Map.Entry<String, CatalogPackage> item : previous.packages().entrySet()) {
+                next.put(item.getKey(), new CatalogPackage(
+                        item.getValue().physicalPackage(), CatalogPackage.Freshness.PRESERVED_STALE));
+            }
+        }
         Map<String, PhysicalPackage> scannedPackages = new TreeMap<>();
         for (PhysicalPackage item : scan.packages()) scannedPackages.put(item.id(), item);
         for (PackageOutcome outcome : scan.packageOutcomes()) {
@@ -83,6 +87,25 @@ public final class CatalogReconciler {
                     && outcome.status() == PackageOutcome.Status.INDEXED) return true;
         }
         return false;
+    }
+
+    private static RomSource failedSource(SourceScanResult scan) {
+        boolean permissionRevoked = false;
+        for (ScanIssue issue : scan.issues()) {
+            permissionRevoked |= issue.code()
+                    == ScanIssue.Code.PERMISSION_REVOKED;
+        }
+        RomSource source = scan.source();
+        permissionRevoked &= source.type()
+                == RomSource.Type.SAF_TREE;
+        return new RomSource(
+                source.id(), source.type(), source.uri(),
+                permissionRevoked
+                        ? RomSource.PermissionState.NEEDS_REAUTHORIZE
+                        : source.permissionState(),
+                permissionRevoked
+                        ? RomSource.Availability.PERMISSION_REQUIRED
+                        : RomSource.Availability.UNAVAILABLE);
     }
 
     private static Map<String, CanonicalUserState> migrateByPayloadHash(

@@ -33,7 +33,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class CatalogRepositoryTest {
     @Test
-    public void fullScanReplacesOnlyTargetFatalPreservesAndPackageErrorBecomesStale() {
+    public void fullScanReplacesOnlyTargetFatalPreservesAndPackageErrorBecomesStale()
+            throws Exception {
         RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
         RomSource a = source("a", RomSource.Type.SAF_TREE);
         RomSource b = source("b", RomSource.Type.SAF_TREE);
@@ -49,9 +50,7 @@ public final class CatalogRepositoryTest {
 
         SourceScanResult fatal = new SourceScanResult(
                 "a", replaced.revision(), 3, SourceScanResult.Completeness.FATAL,
-                new RomSource("a", RomSource.Type.SAF_TREE, "source://a",
-                        RomSource.PermissionState.NEEDS_REAUTHORIZE,
-                        RomSource.Availability.PERMISSION_REQUIRED),
+                a,
                 Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
                 List.of(new ScanIssue(ScanIssue.Code.PERMISSION_REVOKED,
                         ScanIssue.Severity.FATAL, "a", null)), 0);
@@ -60,6 +59,11 @@ public final class CatalogRepositoryTest {
         assertTrue(preserved.sources().get("b").packages().containsKey("b1"));
         assertEquals(RomSource.PermissionState.NEEDS_REAUTHORIZE,
                 preserved.sources().get("a").source().permissionState());
+
+        CatalogRepository reauthorizer = new CatalogRepository(
+                preserved, new MemoryStore(), new GameCatalog());
+        reauthorizer.reauthorizeSource(a);
+        preserved = reauthorizer.state();
 
         PackageOutcome error = new PackageOutcome(
                 "a2", PackageOutcome.Status.ERROR, PackageOutcome.Reason.IO_ERROR);
@@ -254,6 +258,72 @@ public final class CatalogRepositoryTest {
         assertFalse(scanner.isAlive()); assertFalse(remover.isAlive());
         if (unexpected.get() != null) throw new AssertionError(unexpected.get());
         assertFalse(repository.state().sources().containsKey("tree"));
+    }
+
+    @Test
+    public void partialScanDowngradesUnmentionedPackagesAndRefreshesOnlyIndexedOnes() {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource tree = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState state = CatalogState.empty(builtin).withSource(tree);
+        PhysicalPackage first = pkg(tree, "first", "g1", 'A');
+        PhysicalPackage second = pkg(tree, "second", "g2", 'B');
+        state = CatalogReconciler.reconcile(
+                state, full(state, tree, 1, first, second));
+        SourceScanResult partial = new SourceScanResult(
+                tree.id(), state.revision(), 2, SourceScanResult.Completeness.PARTIAL,
+                tree, List.of(first), List.of(new PackageOutcome(
+                "first", PackageOutcome.Status.INDEXED, PackageOutcome.Reason.INDEXED)),
+                Collections.emptyList(), Collections.emptyList(), 1);
+
+        CatalogState reconciled = CatalogReconciler.reconcile(state, partial);
+        assertEquals(CatalogPackage.Freshness.FRESH,
+                reconciled.sources().get("tree").packages().get("first").freshness());
+        CatalogPackage inherited = reconciled.sources().get("tree").packages().get("second");
+        assertEquals(CatalogPackage.Freshness.PRESERVED_STALE, inherited.freshness());
+        assertFalse(inherited.projectedPackage().source().isUsable());
+    }
+
+    @Test
+    public void scanSourceIdentityIsExactAndReauthorizeInvalidatesInFlightScan() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        RomSource original = source("tree", RomSource.Type.SAF_TREE);
+        CatalogState initial = CatalogState.empty(builtin).withSource(original);
+        RomSource otherUri = new RomSource(
+                "tree", RomSource.Type.SAF_TREE, "source://other",
+                RomSource.PermissionState.GRANTED);
+        assertThrows(IllegalArgumentException.class, () -> new SourceScanResult(
+                "tree", initial.revision(), 1, SourceScanResult.Completeness.FULL,
+                original, List.of(pkg(otherUri, "bad", "bad", 'A')),
+                List.of(new PackageOutcome("bad", PackageOutcome.Status.INDEXED,
+                        PackageOutcome.Reason.INDEXED)),
+                Collections.emptyList(), Collections.emptyList(), 1));
+        assertThrows(CatalogReconciler.ReconcileException.class,
+                () -> CatalogReconciler.reconcile(initial, full(
+                        initial, otherUri, 1, pkg(otherUri, "bad", "bad", 'A'))));
+        RomSource otherType = new RomSource(
+                "tree", RomSource.Type.BUILTIN, "source://tree",
+                RomSource.PermissionState.NOT_REQUIRED);
+        RomSource otherPermission = new RomSource(
+                "tree", RomSource.Type.SAF_TREE, "source://tree",
+                RomSource.PermissionState.NEEDS_REAUTHORIZE,
+                RomSource.Availability.PERMISSION_REQUIRED);
+        for (RomSource mismatch : List.of(otherType, otherPermission)) {
+            assertThrows(CatalogReconciler.ReconcileException.class,
+                    () -> CatalogReconciler.reconcile(initial, full(
+                            initial, mismatch, 1,
+                            pkg(mismatch, "bad-identity", "bad", 'B'))));
+        }
+
+        CatalogRepository repository = new CatalogRepository(
+                initial, new MemoryStore(), new GameCatalog());
+        SourceScanResult inFlight = full(
+                initial, original, 1, pkg(original, "old", "old", 'A'));
+        repository.reauthorizeSource(otherUri);
+        CatalogRepository.RepositoryException stale = assertThrows(
+                CatalogRepository.RepositoryException.class,
+                () -> repository.commitScan(inFlight));
+        assertEquals(CatalogRepository.ErrorCode.STALE_OR_INVALID, stale.code());
+        assertEquals(otherUri, repository.state().sources().get("tree").source());
     }
 
     private static SourceScanResult full(

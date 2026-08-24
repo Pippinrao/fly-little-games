@@ -103,7 +103,7 @@ public final class CatalogRepository {
         SourceCatalogState decodedBuiltin = decoded.sources().get(decoded.builtinSourceId());
         if (!decoded.builtinSourceId().equals(fixedBuiltinSource.id())
                 || decodedBuiltin == null
-                || !decodedBuiltin.source().equals(fixedBuiltinSource)) {
+                || !sameStableSourceIdentity(decodedBuiltin.source(), fixedBuiltinSource)) {
             return new LoadResult(
                     LoadStatus.RECOVERY_NEEDED, state,
                     CatalogStateCodec.ErrorCode.INVALID_FIELD);
@@ -161,6 +161,13 @@ public final class CatalogRepository {
             }
         }
         return false;
+    }
+
+    private static boolean sameStableSourceIdentity(RomSource first, RomSource second) {
+        return first.id().equals(second.id())
+                && first.type() == second.type()
+                && first.uri().equals(second.uri())
+                && first.permissionState() == second.permissionState();
     }
 
     public enum ErrorCode {

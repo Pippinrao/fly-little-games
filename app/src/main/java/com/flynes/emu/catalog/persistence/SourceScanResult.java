@@ -39,8 +39,8 @@ public record SourceScanResult(
         }
         Set<String> packageIds = new HashSet<>();
         for (PhysicalPackage item : packages) {
-            if (!sourceId.equals(item.source().id())) {
-                throw new IllegalArgumentException("scan package belongs to another source");
+            if (!source.equals(item.source())) {
+                throw new IllegalArgumentException("scan package source identity differs");
             }
             if (!packageIds.add(item.id())) {
                 throw new IllegalArgumentException("scan contains duplicate packages");
