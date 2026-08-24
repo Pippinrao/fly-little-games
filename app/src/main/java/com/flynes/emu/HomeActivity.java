@@ -10,7 +10,6 @@ import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -33,6 +32,7 @@ import com.flynes.emu.catalog.persistence.SourceCatalogState;
 import com.flynes.emu.catalog.persistence.SourceScanResult;
 import com.flynes.emu.gamecenter.GameCenterItem;
 import com.flynes.emu.gamecenter.GameCenterState;
+import com.flynes.emu.gamecenter.GameTitlePresentation;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 
@@ -50,8 +50,6 @@ public final class HomeActivity extends AppCompatActivity {
     public static final String ACTION_SHOW_SOURCES = "com.flynes.emu.action.SHOW_SOURCES";
     private static final int REQUEST_TREE = 4101;
     private static final String UI_PREFS = "game_center_ui";
-    private static final int WIDE_PAGE_SIZE = 6;
-    private static final int COMPACT_PAGE_SIZE = 4;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService waiter = Executors.newSingleThreadExecutor(runnable -> {
@@ -72,9 +70,6 @@ public final class HomeActivity extends AppCompatActivity {
     private View sourceContent;
     private MaterialButton launch;
     private boolean busy;
-    private long suppressCardClicksUntil;
-    private float gestureDownX;
-    private int pageSize = WIDE_PAGE_SIZE;
     private boolean largeText;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -128,7 +123,6 @@ public final class HomeActivity extends AppCompatActivity {
         out.putString("category", navigation.category().name());
         out.putString("query", navigation.query());
         out.putString("selected", navigation.selectedCanonicalId());
-        out.putIntArray("pages", navigation.pagesSnapshot());
     }
 
     @Override protected void onStop() {
@@ -162,8 +156,6 @@ public final class HomeActivity extends AppCompatActivity {
         findViewById(R.id.open_settings).setOnClickListener(
                 view -> startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.add_source).setOnClickListener(view -> chooseSource());
-        findViewById(R.id.page_previous).setOnClickListener(view -> movePage(-1));
-        findViewById(R.id.page_next).setOnClickListener(view -> movePage(1));
         launch.setOnClickListener(view -> launchSelected());
 
         searchInput.setText(navigation.query());
@@ -177,10 +169,11 @@ public final class HomeActivity extends AppCompatActivity {
         });
 
         RecyclerView grid = findViewById(R.id.game_grid);
-        grid.setLayoutManager(new GridLayoutManager(this, 3));
+        grid.setLayoutManager(new GridLayoutManager(
+                this, 2, RecyclerView.HORIZONTAL, false));
         gameAdapter = new GameCardAdapter();
         grid.setAdapter(gameAdapter);
-        grid.setOnTouchListener(this::handlePageGesture);
+        grid.setHasFixedSize(true);
 
         RecyclerView sources = findViewById(R.id.source_list);
         sources.setLayoutManager(new LinearLayoutManager(this));
@@ -205,10 +198,9 @@ public final class HomeActivity extends AppCompatActivity {
         float fontScale = getResources().getConfiguration().fontScale;
         int widthDp = getResources().getConfiguration().screenWidthDp;
         largeText = fontScale >= 1.8f;
-        pageSize = largeText || widthDp < 720 ? COMPACT_PAGE_SIZE : WIDE_PAGE_SIZE;
         GridLayoutManager layout = (GridLayoutManager) ((RecyclerView) findViewById(
                 R.id.game_grid)).getLayoutManager();
-        layout.setSpanCount(pageSize == WIDE_PAGE_SIZE ? 3 : 2);
+        layout.setSpanCount(largeText ? 1 : 2);
         if (largeText) {
             findViewById(R.id.game_center_heading).setVisibility(View.GONE);
             findViewById(R.id.detail_art_label).setVisibility(View.GONE);
@@ -228,19 +220,11 @@ public final class HomeActivity extends AppCompatActivity {
                 : state.getString("query", "");
         String selected = state == null ? preferencesValue("selected", null)
                 : state.getString("selected");
-        int[] pages = state == null ? readPages() : state.getIntArray("pages");
-        return GameCenterState.restore(category, query, selected, pages);
+        return GameCenterState.restore(category, query, selected);
     }
 
     private String preferencesValue(String key, String fallback) {
         return getSharedPreferences(UI_PREFS, MODE_PRIVATE).getString(key, fallback);
-    }
-
-    private int[] readPages() {
-        int[] values = new int[GameCenterState.Category.values().length];
-        SharedPreferences saved = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
-        for (int i = 0; i < values.length; i++) values[i] = saved.getInt("page_" + i, 0);
-        return values;
     }
 
     private void persistNavigation() {
@@ -248,8 +232,9 @@ public final class HomeActivity extends AppCompatActivity {
                 .putString("category", navigation.category().name())
                 .putString("query", navigation.query())
                 .putString("selected", navigation.selectedCanonicalId());
-        int[] pages = navigation.pagesSnapshot();
-        for (int i = 0; i < pages.length; i++) edit.putInt("page_" + i, pages[i]);
+        for (int i = 0; i < GameCenterState.Category.values().length; i++) {
+            edit.remove("page_" + i);
+        }
         edit.apply();
     }
 
@@ -286,21 +271,14 @@ public final class HomeActivity extends AppCompatActivity {
     private void renderGames() {
         if (gameAdapter == null) return;
         List<GameCenterItem> visible = visibleItems();
-        navigation.reconcile(visible, pageSize);
-        List<GameCenterItem> page = navigation.pageItems(visible, pageSize);
-        gameAdapter.submit(page, navigation.selectedCanonicalId());
-        int pages = Math.max(1, (visible.size() + pageSize - 1) / pageSize);
-        ((TextView) findViewById(R.id.page_indicator)).setText(
-                getString(R.string.page_count, navigation.page() + 1, pages));
-        findViewById(R.id.page_previous).setEnabled(navigation.canMovePrevious());
-        findViewById(R.id.page_next).setEnabled(navigation.canMoveNext(visible.size(), pageSize));
+        navigation.reconcile(visible);
+        gameAdapter.submit(visible, navigation.selectedCanonicalId());
         if (visible.isEmpty()) {
             showStatus(navigation.query().isEmpty() ? R.string.empty_category : R.string.empty_search);
             renderDetail(null);
         } else {
             status.setText(hasExternalSource()
-                    ? getString(R.string.game_count_status,
-                    visible.size(), navigation.page() + 1, pages)
+                    ? getString(R.string.game_count_continuous, visible.size())
                     : getString(largeText ? R.string.no_external_sources_large_text
                     : R.string.no_external_sources));
             renderDetail(entries.get(navigation.selectedCanonicalId()));
@@ -317,13 +295,16 @@ public final class HomeActivity extends AppCompatActivity {
             art.setText(R.string.app_name);
             launch.setEnabled(false); return;
         }
-        String display = displayTitle(entry);
+        GameTitlePresentation.Title presentation = titlePresentation(entry);
+        String display = presentation.primary();
         title.setText(display);
-        String secondary = secondaryTitle(entry, display);
-        subtitle.setText(secondary);
+        subtitle.setText(presentation.secondary());
         GameVariant variant = preferredVariant(entry);
-        meta.setText(variant == null ? getString(R.string.game_unavailable)
-                : variant.originalFilename());
+        meta.setText(variant == null
+                ? getString(R.string.game_unavailable)
+                : getResources().getQuantityString(
+                        R.plurals.game_variant_count, entry.variants().size(),
+                        entry.variants().size()));
         art.setText(display);
         launch.setEnabled(!busy && variant != null);
         launch.setText(entry.isRecent() ? R.string.continue_selected_game : R.string.start_game);
@@ -354,44 +335,13 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     private String displayTitle(GameCatalogEntry entry) {
-        boolean chinese = getResources().getConfiguration().getLocales().get(0)
-                .getLanguage().equals("zh");
-        String preferred = chinese ? entry.canonicalGame().zhHansTitle()
-                : entry.canonicalGame().englishTitle();
-        String fallback = chinese ? entry.canonicalGame().englishTitle()
-                : entry.canonicalGame().zhHansTitle();
-        if (!preferred.isEmpty()) return preferred;
-        if (!fallback.isEmpty()) return fallback;
-        return entry.variants().isEmpty() ? getString(R.string.game_unavailable)
-                : entry.variants().get(0).originalFilename();
+        return titlePresentation(entry).primary();
     }
 
-    private String secondaryTitle(GameCatalogEntry entry, String primary) {
-        String english = entry.canonicalGame().englishTitle();
-        String chinese = entry.canonicalGame().zhHansTitle();
-        if (!english.isEmpty() && !english.equals(primary)) return english;
-        if (!chinese.isEmpty() && !chinese.equals(primary)) return chinese;
-        return "";
-    }
-
-    private void movePage(int delta) {
-        List<GameCenterItem> visible = visibleItems();
-        navigation.movePage(delta, visible.size(), pageSize);
-        renderGames();
-    }
-
-    private boolean handlePageGesture(View touched, MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) gestureDownX = event.getX();
-        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-            float distance = event.getX() - gestureDownX;
-            if (Math.abs(distance) >= getResources().getDisplayMetrics().widthPixels * .15f) {
-                suppressCardClicksUntil = android.os.SystemClock.uptimeMillis() + 300;
-                movePage(distance < 0 ? 1 : -1);
-                return true;
-            }
-            touched.performClick();
-        }
-        return false;
+    private GameTitlePresentation.Title titlePresentation(GameCatalogEntry entry) {
+        return GameTitlePresentation.forLocale(
+                entry.canonicalGame(),
+                getResources().getConfiguration().getLocales().get(0));
     }
 
     private boolean hasExternalSource() {
@@ -502,24 +452,27 @@ public final class HomeActivity extends AppCompatActivity {
         @Override public GameCardHolder onCreateViewHolder(ViewGroup parent, int viewType) {
             View view = LayoutInflater.from(parent.getContext()).inflate(
                     R.layout.item_game_center_card, parent, false);
-            int columns = pageSize == WIDE_PAGE_SIZE ? 3 : 2;
-            view.getLayoutParams().width = Math.max(dp(120), parent.getWidth() / columns - dp(8));
-            view.getLayoutParams().height = Math.max(dp(112), parent.getHeight() / 2 - dp(8));
+            view.getLayoutParams().width = dp(largeText ? 232 : 168);
+            view.getLayoutParams().height = ViewGroup.LayoutParams.MATCH_PARENT;
             return new GameCardHolder(view);
         }
         @Override public void onBindViewHolder(GameCardHolder holder, int position) {
             GameCenterItem item = items.get(position);
             GameCatalogEntry entry = entries.get(item.canonicalId());
-            String title = entry == null ? item.titleEn() : displayTitle(entry);
+            GameTitlePresentation.Title presentation = entry == null
+                    ? new GameTitlePresentation.Title(item.titleEn(), item.titleZhHans(), false)
+                    : titlePresentation(entry);
+            String title = presentation.primary();
             holder.title.setText(title); holder.art.setText(title);
             holder.art.setVisibility(largeText ? View.GONE : View.VISIBLE);
-            holder.meta.setText(item.builtin() ? getString(R.string.builtin_badge)
-                    : item.originalFilename());
+            String metadata = presentation.secondary();
+            if (metadata.isEmpty() && item.builtin()) metadata = getString(R.string.builtin_badge);
+            holder.meta.setText(metadata);
+            holder.meta.setVisibility(metadata.isEmpty() ? View.GONE : View.VISIBLE);
             holder.itemView.setSelected(item.canonicalId().equals(selected));
             holder.itemView.setContentDescription(title + (holder.itemView.isSelected()
                     ? ", " + getString(R.string.game_ready) : ""));
             holder.itemView.setOnClickListener(view -> {
-                if (android.os.SystemClock.uptimeMillis() < suppressCardClicksUntil) return;
                 navigation.select(item.canonicalId()); renderGames();
             });
         }

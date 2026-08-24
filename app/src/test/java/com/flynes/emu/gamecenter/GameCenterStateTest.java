@@ -3,12 +3,9 @@ package com.flynes.emu.gamecenter;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 public final class GameCenterStateTest {
     private static final GameCenterItem BUILTIN = new GameCenterItem(
@@ -33,45 +30,36 @@ public final class GameCenterStateTest {
         assertEquals("mario", state.filtered(all).get(0).canonicalId());
     }
 
-    @Test public void remembersSelectionAndPageIndependentlyPerCategory() {
+    @Test public void remembersSelectionIndependentlyPerCategory() {
         GameCenterState state = new GameCenterState();
         state.select("mario");
-        state.setPage(3);
         state.setCategory(GameCenterState.Category.BUILTIN);
         state.select("builtin");
-        state.setPage(1);
 
         state.setCategory(GameCenterState.Category.ALL);
         assertEquals("mario", state.selectedCanonicalId());
-        assertEquals(3, state.page());
         state.setCategory(GameCenterState.Category.BUILTIN);
         assertEquals("builtin", state.selectedCanonicalId());
-        assertEquals(1, state.page());
     }
 
-    @Test public void restoreClampsPageAndRepairsMissingSelection() {
+    @Test public void restoreRepairsMissingSelectionWithoutPageState() {
         GameCenterState state = GameCenterState.restore(
-                "ALL", "zelda", "missing", new int[]{4, 3, 8, 2});
+                "ALL", "zelda", "missing");
         List<GameCenterItem> visible = Arrays.asList(BUILTIN, FAVORITE, OTHER);
 
-        state.reconcile(visible, 2);
+        state.reconcile(visible);
 
-        assertEquals(1, state.page());
         assertEquals("builtin", state.selectedCanonicalId());
         assertEquals("zelda", state.query());
     }
 
-    @Test public void paginatesWithoutTurningLibraryIntoVerticalList() {
+    @Test public void returnsTheEntireFilteredLibraryForContinuousScrolling() {
         GameCenterState state = new GameCenterState();
         state.setCategory(GameCenterState.Category.ALL);
         List<GameCenterItem> items = Arrays.asList(BUILTIN, FAVORITE, OTHER);
 
-        assertEquals(Arrays.asList(BUILTIN, FAVORITE), state.pageItems(items, 2));
-        assertTrue(state.canMoveNext(items.size(), 2));
-        assertFalse(state.canMovePrevious());
-        state.movePage(1, items.size(), 2);
-        assertEquals(Collections.singletonList(OTHER), state.pageItems(items, 2));
-        assertTrue(state.canMovePrevious());
-        assertFalse(state.canMoveNext(items.size(), 2));
+        assertEquals(items, state.filtered(items));
+        state.reconcile(items);
+        assertEquals("builtin", state.selectedCanonicalId());
     }
 }

@@ -91,6 +91,8 @@
     <string name="game_ready">Ready to play</string>
     <string name="game_unavailable">This version is not available</string>
     <string name="game_count_status">%1$d games · page %2$d of %3$d</string>
+    <string name="game_count_continuous">%1$d games · swipe horizontally to browse all</string>
+    <plurals name="game_variant_count"><item quantity="one">%d version</item><item quantity="other">%d versions</item></plurals>
     <string name="loading_game_center">Loading your game center…</string>
     <string name="launching_game">Starting %1$s…</string>
     <string name="launch_failed">Could not start the selected game. Try scanning its source again.</string>

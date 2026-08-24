@@ -430,11 +430,11 @@ public final class RomPackageScanner {
                 envelope.packageId(), locator, hashes.payloadSha256());
         String canonicalId = resolveCanonicalId(hashes.payloadSha256(), parsed.format());
         ArrayList<TitleCandidate> titles = new ArrayList<>(2);
-        titles.add(lowTitle(
+        titles.add(classifiedTitle(
                 titleFromPath(envelope.candidate().displayFilename()),
                 TitleCandidate.Origin.OUTER_FILENAME));
         if (entryPath != null) {
-            titles.add(lowTitle(
+            titles.add(classifiedTitle(
                     titleFromPath(entryPath),
                     TitleCandidate.Origin.ZIP_ENTRY_NAME));
         }
@@ -492,13 +492,28 @@ public final class RomPackageScanner {
                 || value >= '0' && value <= '9';
     }
 
-    private static TitleCandidate lowTitle(String value, TitleCandidate.Origin origin) {
+    private static TitleCandidate classifiedTitle(String value, TitleCandidate.Origin origin) {
         return new TitleCandidate(
                 value,
-                TitleCandidate.Language.UNKNOWN,
+                titleLanguage(value),
                 origin,
                 TitleCandidate.Confidence.LOW,
                 TitleCandidate.ReviewState.NEEDS_REVIEW);
+    }
+
+    private static TitleCandidate.Language titleLanguage(String value) {
+        boolean latin = false;
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+            if (script == Character.UnicodeScript.HAN) {
+                return TitleCandidate.Language.ZH_HANS;
+            }
+            latin |= Character.isLetter(codePoint)
+                    && script == Character.UnicodeScript.LATIN;
+            offset += Character.charCount(codePoint);
+        }
+        return latin ? TitleCandidate.Language.EN : TitleCandidate.Language.UNKNOWN;
     }
 
     private static DecodedEntryName decodeEntryName(BoundedZipArchive.Entry entry) {

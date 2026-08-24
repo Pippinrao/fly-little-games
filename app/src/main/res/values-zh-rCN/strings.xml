@@ -91,6 +91,8 @@
     <string name="game_ready">可以开始</string>
     <string name="game_unavailable">此版本当前不可用</string>
     <string name="game_count_status">%1$d 个游戏 · 第 %2$d/%3$d 页</string>
+    <string name="game_count_continuous">%1$d 个游戏 · 横向滑动浏览全部</string>
+    <plurals name="game_variant_count"><item quantity="other">%d 个版本</item></plurals>
     <string name="loading_game_center">正在加载游戏中心…</string>
     <string name="launching_game">正在启动 %1$s…</string>
     <string name="launch_failed">无法启动所选游戏，请重新扫描它的来源。</string>

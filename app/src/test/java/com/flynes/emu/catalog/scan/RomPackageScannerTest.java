@@ -67,7 +67,7 @@ public final class RomPackageScannerTest {
         assertEquals(0, variant.analysis().submapper());
         assertTrue(variant.analysis().battery());
         assertFalse(variant.analysis().trainer());
-        assertEquals(TitleCandidate.Language.UNKNOWN,
+        assertEquals(TitleCandidate.Language.ZH_HANS,
                 variant.canonicalGame().titleCandidates().get(0).language());
         assertEquals(TitleCandidate.Origin.OUTER_FILENAME,
                 variant.canonicalGame().titleCandidates().get(0).origin());
@@ -176,6 +176,10 @@ public final class RomPackageScannerTest {
                 .flatMap(item -> item.variants().stream())
                 .filter(item -> item.entryPath().endsWith("SECOND.nes"))
                 .findFirst().orElseThrow();
+        assertEquals("collection", catalog.canonicalEntries().stream()
+                .filter(item -> item.canonicalGame().id().equals(
+                        secondVariant.canonicalGameId()))
+                .findFirst().orElseThrow().canonicalGame().englishTitle());
         LaunchRequest request = LaunchRequest.forVariant(secondVariant);
         ExactRomLoader loader = new ExactRomLoader(
                 (sourceId, locator) -> new ByteArrayInputStream(archive));
