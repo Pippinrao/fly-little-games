@@ -1,25 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto">
-    <PreferenceCategory app:title="@string/settings_video">
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+    <PreferenceScreen app:key="section.display" app:title="@string/settings_display">
         <ListPreference app:defaultValue="FOUR_BY_THREE" app:entries="@array/aspect_entries" app:entryValues="@array/aspect_values" app:key="video.aspect" app:title="@string/aspect_mode" app:useSimpleSummaryProvider="true" />
         <ListPreference app:defaultValue="HQ4X" app:entries="@array/filter_entries" app:entryValues="@array/filter_values" app:key="video.filter" app:title="@string/filter_mode" app:useSimpleSummaryProvider="true" />
-        <ListPreference app:defaultValue="AUTO" app:entries="@array/refresh_entries" app:entryValues="@array/refresh_values" app:key="video.refresh" app:title="@string/refresh_rate" app:useSimpleSummaryProvider="true" />
-    </PreferenceCategory>
-    <PreferenceCategory app:title="@string/settings_controls">
+        <ListPreference app:defaultValue="AUTO" app:key="video.refresh" app:title="@string/refresh_rate" app:useSimpleSummaryProvider="true" />
+        <Preference app:key="display.status" app:selectable="false" app:title="@string/display_status" />
+        <Preference app:selectable="false" app:summary="@string/display_frames_note" app:title="@string/display_emulation_rate" />
+    </PreferenceScreen>
+    <PreferenceScreen app:key="section.controls" app:title="@string/settings_controls">
         <Preference app:key="controls.layout_editor" app:summary="@string/control_layout_summary" app:title="@string/control_layout_title" />
+        <Preference app:key="controls.haptic_preview" app:summary="@string/haptic_preview_summary" app:title="@string/haptic_preview" />
         <ListPreference app:defaultValue="LIGHT" app:entries="@array/haptic_entries" app:entryValues="@array/haptic_values" app:key="controls.haptic_level" app:title="@string/haptic_level" app:useSimpleSummaryProvider="true" />
         <SwitchPreferenceCompat app:defaultValue="true" app:key="controls.distinct_ab" app:summary="@string/distinct_ab_summary" app:title="@string/distinct_ab_haptics" />
         <Preference app:key="controls.reset" app:summary="@string/reset_controls_summary" app:title="@string/reset_controls" />
-    </PreferenceCategory>
-    <PreferenceCategory app:title="@string/settings_audio">
+    </PreferenceScreen>
+    <PreferenceScreen app:key="section.audio" app:title="@string/settings_audio">
         <SwitchPreferenceCompat app:defaultValue="true" app:key="audio.enabled" app:title="@string/audio_enabled" />
         <ListPreference app:defaultValue="PAUSE" app:entries="@array/audio_focus_entries" app:entryValues="@array/audio_focus_values" app:key="audio.focus_policy" app:title="@string/audio_focus" app:useSimpleSummaryProvider="true" />
-    </PreferenceCategory>
-    <PreferenceCategory app:title="@string/settings_general">
+    </PreferenceScreen>
+    <PreferenceScreen app:key="section.game_language" app:title="@string/settings_game_language">
         <ListPreference app:defaultValue="system" app:entries="@array/language_entries" app:entryValues="@array/language_values" app:key="general.locale" app:title="@string/app_language" app:useSimpleSummaryProvider="true" />
         <SwitchPreferenceCompat app:defaultValue="true" app:key="general.autosave" app:summary="@string/autosave_summary" app:title="@string/autosave" />
-        <Preference app:key="general.library" app:title="@string/manage_library" />
-        <Preference app:key="general.licenses" app:title="@string/license_information" />
-    </PreferenceCategory>
+        <Preference app:key="general.library" app:title="@string/manage_sources" />
+    </PreferenceScreen>
+    <PreferenceScreen app:key="section.about" app:title="@string/settings_about">
+        <Preference app:key="general.licenses" app:summary="@string/licenses_summary" app:title="@string/license_information" />
+        <Preference app:selectable="false" app:summary="@string/project_source_unconfigured" app:title="@string/project_source" />
+    </PreferenceScreen>
 </PreferenceScreen>

@@ -22,6 +22,8 @@ public final class ControlLayoutActivityTest {
     @Test public void settingsIsTheOnlyEntryAndOpensEditor() {
         try(ActivityScenario<SettingsActivity> scenario=ActivityScenario.launch(SettingsActivity.class)) {
             scenario.onActivity(activity -> {
+                activity.findViewById(R.id.settings_controls_master).performClick();
+                activity.getSupportFragmentManager().executePendingTransactions();
                 com.flynes.emu.settings.SettingsFragment fragment =
                         (com.flynes.emu.settings.SettingsFragment) activity.getSupportFragmentManager()
                                 .findFragmentById(R.id.settings_content);

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/licenses_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/fly_background" android:orientation="vertical">
+    <com.google.android.material.appbar.MaterialToolbar android:id="@+id/licenses_toolbar" android:layout_width="match_parent" android:layout_height="64dp"
+        android:background="@color/fly_surface" android:minHeight="48dp" app:navigationIcon="@drawable/ic_back"
+        app:navigationIconTint="@color/fly_on_surface" app:title="@string/license_information" app:titleTextColor="@color/fly_on_surface" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:baselineAligned="false" android:orientation="horizontal" android:padding="8dp">
+        <ScrollView android:layout_width="300dp" android:layout_height="match_parent" android:background="@color/fly_surface" android:fillViewport="true">
+            <LinearLayout android:id="@+id/license_list" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="8dp" />
+        </ScrollView>
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginStart="8dp" android:layout_weight="1" android:background="@color/fly_surface" android:orientation="vertical" android:padding="16dp">
+            <TextView android:id="@+id/license_heading" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/fly_on_surface" android:textSize="22sp" android:textStyle="bold" />
+            <TextView android:id="@+id/license_error" android:layout_width="match_parent" android:layout_height="wrap_content" android:accessibilityLiveRegion="polite" android:text="@string/license_read_failed" android:textColor="@color/fly_error" android:visibility="gone" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/license_retry" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="@string/license_retry" android:visibility="gone" />
+            <ScrollView android:id="@+id/license_text_scroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_marginTop="8dp" android:layout_weight="1">
+                <TextView android:id="@+id/license_text" android:layout_width="match_parent" android:layout_height="wrap_content" android:autoLink="web" android:linksClickable="true" android:textColor="@color/fly_on_surface_muted" android:textIsSelectable="true" android:textSize="14sp" />
+            </ScrollView>
+            <com.google.android.material.button.MaterialButton android:id="@+id/license_copy_link" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="@string/license_copy_link" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

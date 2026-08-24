@@ -136,4 +136,26 @@
     <string name="control_layout_warning_center">A control covers the central game area.</string>
     <string name="control_layout_warning_save">This layout has ergonomic warnings. Save anyway?</string>
     <string name="control_layout_keep_editing">Keep editing</string>
+    <string name="settings_display">Display</string>
+    <string name="settings_game_language">Game &amp; Language</string>
+    <string name="settings_about">About</string>
+    <string name="selected">selected</string>
+    <string name="display_status">Display status</string>
+    <string name="display_status_summary">Requested %1$d Hz · Actual %2$d Hz · %3$s</string>
+    <string name="display_no_fallback">No fallback</string>
+    <string name="display_fallback_unavailable">Requested mode unavailable</string>
+    <string name="display_emulation_rate">Emulation rate</string>
+    <string name="display_frames_note">NES gameplay remains near its native 60 fps. Higher display refresh improves presentation and input sampling; it does not create extra game frames.</string>
+    <string name="haptic_preview">Preview A / B haptics</string>
+    <string name="haptic_preview_summary">Plays A once, then the distinct B rhythm.</string>
+    <string name="licenses_summary">Components, license text, and source links</string>
+    <string name="project_source">FlyNES project source</string>
+    <string name="project_source_unconfigured">Public source link is not configured in this alpha build.</string>
+    <string name="license_components">Components</string>
+    <string name="license_text">License text</string>
+    <string name="license_retry">Retry</string>
+    <string name="license_read_failed">License text could not be read.</string>
+    <string name="license_copy_link">Copy source link</string>
+    <string name="license_link_copied">Source link copied</string>
+    <string name="license_source_unconfigured">Source link not configured</string>
 </resources>

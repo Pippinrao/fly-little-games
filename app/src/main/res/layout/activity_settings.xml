@@ -1,26 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/settings_root"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/fly_background"
-    android:orientation="vertical">
-
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/settings_toolbar"
-        android:layout_width="match_parent"
-        android:layout_height="64dp"
-        android:background="@color/fly_surface"
-        android:minHeight="@dimen/fly_touch_min"
-        app:navigationIcon="@drawable/ic_back"
-        app:navigationIconTint="@color/fly_on_surface"
-        app:title="@string/settings"
-        app:titleTextColor="@color/fly_on_surface" />
-
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/settings_content"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/settings_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/fly_background" android:orientation="vertical">
+    <com.google.android.material.appbar.MaterialToolbar android:id="@+id/settings_toolbar"
+        android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
+        android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
+        app:title="@string/settings" app:titleTextColor="@color/fly_on_surface" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:baselineAligned="false" android:orientation="horizontal" android:padding="8dp">
+        <ScrollView android:id="@+id/settings_master_scroll" android:layout_width="240dp" android:layout_height="match_parent"
+            android:background="@color/fly_surface" android:fillViewport="true">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="8dp">
+                <com.google.android.material.button.MaterialButton android:id="@+id/settings_display" style="@style/Widget.Material3.Button.TextButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical|start" android:text="@string/settings_display" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/settings_controls_master" style="@style/Widget.Material3.Button.TextButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical|start" android:text="@string/settings_controls" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/settings_audio_master" style="@style/Widget.Material3.Button.TextButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical|start" android:text="@string/settings_audio" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/settings_game_language" style="@style/Widget.Material3.Button.TextButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical|start" android:text="@string/settings_game_language" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/settings_about" style="@style/Widget.Material3.Button.TextButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical|start" android:text="@string/settings_about" />
+            </LinearLayout>
+        </ScrollView>
+        <androidx.fragment.app.FragmentContainerView android:id="@+id/settings_content" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_marginStart="8dp" android:layout_weight="1" android:background="@color/fly_surface" />
+    </LinearLayout>
 </LinearLayout>

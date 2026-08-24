@@ -2,45 +2,47 @@ package com.flynes.emu.settings;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.Display;
+import android.view.View;
 
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.os.LocaleListCompat;
 import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
-import androidx.preference.SeekBarPreference;
 
 import com.flynes.emu.HomeActivity;
 import com.flynes.emu.LicensesActivity;
 import com.flynes.emu.ControlLayoutActivity;
 import com.flynes.emu.R;
+import com.flynes.emu.input.GamepadHitMap;
+import com.flynes.emu.input.HapticController;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /** Material preference surface backed by the single validated settings repository. */
 public final class SettingsFragment extends PreferenceFragmentCompat {
-    private static final String UI_BUTTON_PERCENT = "ui.controls.button_percent";
-    private static final String UI_VERTICAL_PERCENT = "ui.controls.vertical_percent";
-    private static final String UI_OPACITY_PERCENT = "ui.controls.opacity_percent";
-    private static final String UI_JOYSTICK_PERCENT = "ui.controls.joystick_percent";
-    private static final String UI_DEAD_ZONE_PERCENT = "ui.controls.dead_zone_percent";
+    private static final String ARG_ROOT = "settings.root";
 
     private SettingsRepository repository;
 
+    public static SettingsFragment newInstance(String rootKey) {
+        SettingsFragment fragment = new SettingsFragment();
+        Bundle arguments = new Bundle();
+        arguments.putString(ARG_ROOT, rootKey);
+        fragment.setArguments(arguments);
+        return fragment;
+    }
+
     @Override public void onCreatePreferences(Bundle state, String rootKey) {
         getPreferenceManager().setSharedPreferencesName(SettingsRepository.PREFERENCES_NAME);
-        setPreferencesFromResource(R.xml.preferences, rootKey);
+        String selectedRoot = getArguments() == null ? rootKey : getArguments().getString(ARG_ROOT, rootKey);
+        setPreferencesFromResource(R.xml.preferences, selectedRoot);
         repository = new SettingsRepository(new SharedPreferencesSettingsStore(requireContext()));
-        AppSettings settings = repository.load();
-
-        bindSeek(UI_BUTTON_PERCENT, Math.round(settings.buttonScale() * 100f),
-                value -> settings().toBuilder().buttonScale(value / 100f).build());
-        bindSeek(UI_VERTICAL_PERCENT, Math.round(settings.verticalOffset() * 100f),
-                value -> settings().toBuilder().verticalOffset(value / 100f).build());
-        bindSeek(UI_OPACITY_PERCENT, Math.round(settings.controlOpacity() * 100f),
-                value -> settings().toBuilder().controlOpacity(value / 100f).build());
-        bindSeek(UI_JOYSTICK_PERCENT, Math.round(settings.joystickScale() * 100f),
-                value -> settings().toBuilder().joystickScale(value / 100f).build());
-        bindSeek(UI_DEAD_ZONE_PERCENT, Math.round(settings.deadZone() * 100f),
-                value -> settings().toBuilder().deadZone(value / 100f).build());
+        configureDisplay();
 
         ListPreference language = findPreference(SettingsKeys.LOCALE_TAG);
         if (language != null) {
@@ -67,6 +69,16 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
             startActivity(new Intent(requireContext(), ControlLayoutActivity.class));
             return true;
         });
+        Preference hapticPreview = findPreference("controls.haptic_preview");
+        if (hapticPreview != null) hapticPreview.setOnPreferenceClickListener(preference -> {
+            View host = requireActivity().findViewById(R.id.settings_content);
+            HapticController controller = new HapticController(host);
+            AppSettings current = settings();
+            controller.configure(current.hapticLevel(), current.distinctABHaptics());
+            controller.feedback(GamepadHitMap.Control.A);
+            host.postDelayed(() -> controller.feedback(GamepadHitMap.Control.B), 260L);
+            return true;
+        });
         Preference library = findPreference("general.library");
         if (library != null) {
             library.setOnPreferenceClickListener(preference -> {
@@ -89,17 +101,33 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         return repository.load();
     }
 
-    private void bindSeek(String key, int initial, SettingTransform transform) {
-        SeekBarPreference preference = findPreference(key);
-        if (preference == null) return;
-        preference.setValue(initial);
-        preference.setOnPreferenceChangeListener((ignored, value) -> {
-            repository.save(transform.apply((Integer) value));
-            return true;
-        });
-    }
-
-    private interface SettingTransform {
-        AppSettings apply(int value);
+    private void configureDisplay() {
+        ListPreference refresh = findPreference(SettingsKeys.REFRESH);
+        Preference status = findPreference("display.status");
+        if (refresh == null && status == null) return;
+        Display display = requireActivity().getWindowManager().getDefaultDisplay();
+        Set<Integer> supported = new LinkedHashSet<>();
+        for (Display.Mode mode : display.getSupportedModes()) {
+            int hz = Math.round(mode.getRefreshRate());
+            if (hz == 60 || hz == 90 || hz == 120) supported.add(hz);
+        }
+        if (refresh != null) {
+            List<String> labels = new ArrayList<>();
+            List<String> values = new ArrayList<>();
+            labels.add(getString(R.string.refresh_auto)); values.add("AUTO");
+            for (int hz : supported) { labels.add(hz + " Hz"); values.add("HZ_" + hz); }
+            refresh.setEntries(labels.toArray(new String[0]));
+            refresh.setEntryValues(values.toArray(new String[0]));
+        }
+        if (status != null) {
+            float actual = display.getMode().getRefreshRate();
+            AppSettings current = settings();
+            String mode = current.refreshMode().name();
+            float requested = "AUTO".equals(mode) ? actual : Float.parseFloat(mode.substring(3));
+            String fallback = Math.abs(requested - actual) > 1f
+                    ? getString(R.string.display_fallback_unavailable) : getString(R.string.display_no_fallback);
+            status.setSummary(getString(R.string.display_status_summary,
+                    Math.round(requested), Math.round(actual), fallback));
+        }
     }
 }
