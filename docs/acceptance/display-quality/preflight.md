@@ -75,7 +75,7 @@ The independent CPU oracle is named `mmpx-cpu-oracle-v1`. Task 5 must commit and
 - URL: `https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz`
 - archive SHA-256: `9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23`
 
-It rejects a moving `current/` URL, a wrong archive, an escaped extraction path, wrong/mismatched CMake or CTest, a stale generator/architecture, a missing VS generator/compiler, and unbounded child processes. It configures with `BUILD_SHARED_LIBS=OFF`, `Release`, an explicit install prefix, generator `Visual Studio 17 2022`, and architecture `x64`. Only the hashed `zlibstatic.lib` is a valid downstream host input; any shared output present in the upstream install is outside the gate and must not be substituted, nor may a system DLL be used.
+It rejects a moving `current/` URL, a wrong archive, output paths outside the repository-owned dependency root, reparse-point escapes, wrong/mismatched CMake or CTest, a stale generator/architecture, a missing VS generator/compiler, compiler/VS/toolset drift, and unbounded child processes. It configures with `BUILD_SHARED_LIBS=OFF`, `Release`, an explicit install prefix, generator `Visual Studio 17 2022`, and architecture `x64`, then builds only the `zlibstatic` target. The bootstrap creates a clean four-file static-only install itself and rejects any DLL, `zlib.lib` import library, reparse point, or unexpected file. It also applies MSVC `/Brepro` to compilation and static-library creation; two recreated-cache runs produced the same installed library hash. A system DLL is never a valid substitute.
 
 The canonical ignored preflight manifest records:
 
@@ -84,14 +84,19 @@ The canonical ignored preflight manifest records:
 | CMake | `3.22.1-g37088a8-dirty`; SHA-256 `41d609bae2a65a9a8e2060bb222d6e031d33c0546054d354137eb490933cb8ac` |
 | CTest | `3.22.1-g37088a8-dirty`; SHA-256 `9a52248ac13e32df80210528784eeddaac7977d77f242814c5b8b47feb6a92f3` |
 | Generator / architecture | `Visual Studio 17 2022` / `x64`; multi-config `true` |
-| Compiler | `MSVC 19.44.35227.0` |
-| Toolchain manifest | SHA-256 `a1ed9088ff3e280559d2360ed7f226b146bdb4ba6b3abcdefa981bbe3917f7ff` |
-| Extracted tree | canonical SHA-256 `f6d9cbb70868b9b28e218b454beac18a7caabbfeb8a738d7ba92af68bdbbcff2` |
+| Compiler | `MSVC 19.44.35227.0`; executable SHA-256 `9eb43db58d6d07b5f552ec11be86a01293df4589bba04ef383548add5f0fdc9f` |
+| VS instance / toolset / Windows SDK | `BuildTools` / `v143` / `10.0.26100.0` |
+| Toolchain manifest | SHA-256 `930b0d58fb115c44c9791d244e8c388fd4f986080c8bc02cd326f707da673c72` |
+| Extracted tree | canonical SHA-256 `61a712eab0f8b66e86ff99290b0e672fc2d701c4e7ad506d3e0fa3b8a304fcab` |
 | Installed `zlib.h` | SHA-256 `8a5579af72ea4f427ff00a4150f0ccb3fc5c1e4379f726e101133b1ab9fc600c` |
-| Installed `zlibstatic.lib` | SHA-256 `100046e63d7e44b8900e68b02fc17c590d0a3525561163eab9f144db82f43694` (observed in the final Task 0 bootstrap run) |
+| Installed `zconf.h` | SHA-256 `b4962930aabbbc4b54a67220b4b3ed2cae69a13688c06a564bda1bc7429d2ab2` |
+| Installed `zlibstatic.lib` | SHA-256 `64ebc5489d54d283af93a614c48c82443f9cf146b04db728c57a008f4a4f3a45` (identical across the final two recreated-cache runs) |
 | Installed license | SHA-256 `845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243` |
+| Exact four-file install tree | canonical SHA-256 `bbc819ff1ebcbe9006a2f2038b1dcd50f64cc5fa774bc685068df4aa40af924b` |
 
-On this host, default MSBuild FileTracker launch left a compiler process suspended after its tracker parent vanished. A direct compiler probe passed; default MSBuild timed out; and a fresh CMake probe completed only when `TrackFileAccess=false` was propagated into `try_compile`. The bootstrap therefore records and consistently applies `-DCMAKE_VS_GLOBALS=TrackFileAccess=false` and `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_VS_GLOBALS`, in addition to a fail-closed child timeout. This is a host-specific deterministic workaround, not a relaxed gate.
+On this host, default MSBuild FileTracker launch left a compiler process suspended after its tracker parent vanished. A direct compiler probe passed; default MSBuild timed out; and a fresh CMake probe completed only when `TrackFileAccess=false` was propagated into `try_compile`. The bootstrap therefore disables MSBuild node reuse and consistently applies `-DCMAKE_VS_GLOBALS=TrackFileAccess=false`, `-DCMAKE_TRY_COMPILE_CONFIGURATION=Release`, and `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_VS_GLOBALS;CMAKE_TRY_COMPILE_CONFIGURATION`, in addition to a fail-closed child timeout. Each child is created suspended, assigned to a kill-on-close Windows Job Object, then resumed; one monotonic deadline covers root exit, capped stdout/stderr drains, tree termination, and an `ActiveProcesses == 0` cleanup proof. A descendant that holds either redirected stream after its root exits is a bounded nonzero failure. A job-owned Visual Studio helper that does not hold either stream is terminated and proved gone before the root result is honored. This is a host-specific deterministic workaround and containment boundary, not a relaxed gate.
+
+The probe and zlib build directories are deleted and configured anew on every run after any stale generator/architecture check. The ignored manifest records both fresh `CMakeCCompiler.cmake` hashes/timestamps. In the final run, the probe identity was written at `2026-08-25T22:26:28.7815959Z`, the dependency identity at `2026-08-25T22:26:33.1605347Z`, the toolchain manifest at `2026-08-25T22:26:37.5832264Z`, and the preflight manifest at `2026-08-25T22:26:37.6004061Z`; both identity files have SHA-256 `98bdded1e548dbda5f379b3409a68fc0a6487ce0cbff98d01e95b2d850205cb2` and resolve to the same compiler executable/hash, VS instance, toolset, and SDK.
 
 All later Windows host commands must import ignored `.artifacts/host-deps/host-toolchain.psd1` and use its absolute `CMakeExe`, `CTestExe`, generator, and architecture. Bare PATH-dependent `cmake` or `ctest` is not accepted.
 
@@ -112,8 +117,8 @@ The exact ROM choices are no longer ambiguous, but certification remains blocked
 ## Gate evidence
 
 - Exact-Pester wrapper self-tests: `7 passed, 0 failed`. The wrapper imports only Pester `3.4.0` by `RequiredVersion`, rejects any other loaded version, recursively discovers only `*.Tests.ps1`, invokes explicit paths with `-PassThru`, and returns nonzero for a failed or empty fixture.
-- zlib bootstrap tests through the wrapper: `17 passed, 0 failed`, including wrong/mismatched tool versions, missing generator/compiler, stale generator/architecture, extraction containment, timeout, FileTracker propagation, and disposable-source coverage.
-- Real zlib bootstrap: completed successfully from a fresh output and completed successfully again idempotently.
+- zlib bootstrap tests through the wrapper: `39 passed, 0 failed`, including wrong/mismatched tool versions, missing generator/compiler, stale generator/architecture, outside/reparse/no-side-effect containment, inherited-pipe process-tree timeout/no-survivor proof, isolated-helper cleanup, Release try-compile and FileTracker propagation, fresh-cache recreation, atomic manifest-pair recovery, exact static-tree rejection, compiler/VS/toolset drift, and disposable-source coverage. The final inherited-pipe regression completed in `2.10 s` under its three-second bound.
+- Real zlib bootstrap: completed successfully twice with the final script from recreated probe/dependency caches in `12.06 s` and `11.67 s`; the installed static-library SHA-256 was identical, and the exact install contained no DLL or import library.
 - ROM schema validation: local, redacted, and example manifests all passed; local/redacted canonical IDs, selected/alternative hashes, fixed-state hashes, and scene instructions match.
 - Current app: `:app:assembleDebug` succeeded after initializing the already-pinned Nestopia submodule; APK install and cold launch succeeded on the named AVD.
 
