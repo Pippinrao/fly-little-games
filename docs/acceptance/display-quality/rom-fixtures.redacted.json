@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "manifestKind": "redacted",
+  "certificationStatus": "BLOCKED_UNRESOLVED_FIXTURES",
+  "instructions": [
+    "This committed view intentionally contains no ROM path, archive-entry path, device URI, ROM bytes, or save-state bytes.",
+    "Certification may begin only after every selectionStatus is resolved, every fixedSaveStateSha256 is non-null, and runtime SourceTiming matches this manifest."
+  ],
+  "fixtures": [
+    {
+      "canonicalId": "from-below-1-0",
+      "displayName": "From Below 1.0",
+      "selectionStatus": "resolved",
+      "variantSha256": "1a3ac4faf4b35640505344059ae5d91dae07cd47e1fb4d9d2a33c76391f1c555",
+      "alternativeVariantSha256": [],
+      "sourceTiming": {
+        "kind": "NTSC",
+        "nominalFramesPerSecond": 60.0988,
+        "evidence": "iNES timing bit is NTSC/default; runtime SourceTiming confirmation remains mandatory."
+      },
+      "fixedSaveStateSha256": null,
+      "sceneInstructions": [
+        "Load the fixed early-game state with the waterline, player, and falling piece visible.",
+        "Hold input neutral for 300 source frames before beginning the measurement window."
+      ],
+      "blockers": [
+        "No fixed save-state artifact or hash is available."
+      ]
+    },
+    {
+      "canonicalId": "super-mario-bros-pal",
+      "displayName": "Super Mario Bros.",
+      "selectionStatus": "resolved",
+      "variantSha256": "ec299b990e8bfee8ba46e3f61d63b2e1ae5b8a2e431de84e2e4bbd692dc53586",
+      "alternativeVariantSha256": [],
+      "sourceTiming": {
+        "kind": "PAL",
+        "nominalFramesPerSecond": 50.007,
+        "evidence": "The payload SHA-1 matches one Nestopia database entry marked NES-PAL and dump=ok; the local filename's J label is not trusted."
+      },
+      "fixedSaveStateSha256": null,
+      "sceneInstructions": [
+        "Load the fixed World 1-1 state immediately before the first Goomba enters the center half of the viewport.",
+        "Hold Right from frame 0 through frame 300 with no jump input."
+      ],
+      "blockers": [
+        "No fixed save-state artifact or hash is available."
+      ]
+    },
+    {
+      "canonicalId": "contra-nes-ntsc",
+      "displayName": "Contra",
+      "selectionStatus": "resolved",
+      "variantSha256": "26541a5550ee22deeb3d5484e4a96130219b58cff74d068fb1eb6567fa5e5519",
+      "alternativeVariantSha256": [],
+      "sourceTiming": {
+        "kind": "NTSC",
+        "nominalFramesPerSecond": 60.0988,
+        "evidence": "The payload SHA-1 matches one Nestopia database entry marked NES-NTSC and dump=ok."
+      },
+      "fixedSaveStateSha256": null,
+      "sceneInstructions": [
+        "Load the fixed Stage 1 state with the player at the left edge before the first ground enemy enters.",
+        "Hold Right for 240 source frames, adding B on frames 30 through 35 only."
+      ],
+      "blockers": [
+        "No fixed save-state artifact or hash is available."
+      ]
+    },
+    {
+      "canonicalId": "tetris-bullet-proof-famicom",
+      "displayName": "Tetris (Bullet-Proof Software)",
+      "selectionStatus": "resolved",
+      "variantSha256": "6552ed20b7297e0cc828b3b8c25c44064fc28d56d8c684bcb5b1cf29e76d01e6",
+      "alternativeVariantSha256": [
+        "e49a618645be2a57ce37035d17d4493c1bfae2984259f71ff664ec3a554f65ce",
+        "5e4b49d021a77206873e0ee39953370cf0f187594353665303e57ea77d0a58f6"
+      ],
+      "sourceTiming": {
+        "kind": "NTSC",
+        "nominalFramesPerSecond": 60.0988,
+        "evidence": "The selected payload SHA-1 matches one Nestopia database entry marked Famicom; database dump status is unknown."
+      },
+      "fixedSaveStateSha256": null,
+      "sceneInstructions": [
+        "Load the fixed state with a six-row uneven well and an I piece entering the playfield.",
+        "Hold input neutral for 120 source frames, then hold Left for 20 source frames."
+      ],
+      "blockers": [
+        "No fixed save-state artifact or hash is available."
+      ]
+    },
+    {
+      "canonicalId": "downtown-nekketsu-monogatari-famicom",
+      "displayName": "热血物语 / River City Ransom",
+      "selectionStatus": "resolved",
+      "variantSha256": "51a6172cbdb7d27af4150268e1635676e37950782fdc0c59bce319c757022076",
+      "alternativeVariantSha256": [
+        "51a6172cbdb7d27af4150268e1635676e37950782fdc0c59bce319c757022076",
+        "fe6541d00bfadc9ef37b0245de5c15a3f9b80d772a3672cdf9726230f42967ea"
+      ],
+      "sourceTiming": {
+        "kind": "NTSC",
+        "nominalFramesPerSecond": 60.0988,
+        "evidence": "The selected payload SHA-1 matches one Nestopia database entry marked Famicom; database dump status is unknown and runtime SourceTiming confirmation remains mandatory."
+      },
+      "fixedSaveStateSha256": null,
+      "sceneInstructions": [
+        "Load a fixed outdoor scrolling state with both player characters and at least two enemies visible.",
+        "Hold Right for 180 source frames, adding A on frames 60 through 65 only."
+      ],
+      "blockers": [
+        "No fixed save-state artifact or hash is available."
+      ]
+    }
+  ]
+}
