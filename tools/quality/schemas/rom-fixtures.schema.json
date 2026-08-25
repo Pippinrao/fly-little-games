@@ -126,6 +126,7 @@
           }
         },
         "localSources": {
+          "description": "Required only in the ignored local manifest and forbidden in redacted/example manifests.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -151,6 +152,40 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "manifestKind": { "const": "local" }
+        }
+      },
+      "then": {
+        "properties": {
+          "fixtures": {
+            "items": {
+              "required": ["localSources"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "manifestKind": { "enum": ["redacted", "example"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "fixtures": {
+            "items": {
+              "not": {
+                "required": ["localSources"]
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {

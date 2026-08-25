@@ -716,12 +716,16 @@ namespace FlyNes.Quality {
                 Task<string> stderrTask,
                 long deadline) {
             while (RemainingMilliseconds(deadline) > 0) {
-                if (GetActiveProcessCount(job) == 0 && stdoutTask.IsCompleted && stderrTask.IsCompleted) {
+                if (GetActiveProcessCount(job) == 0 &&
+                        (stdoutTask == null || stdoutTask.IsCompleted) &&
+                        (stderrTask == null || stderrTask.IsCompleted)) {
                     return true;
                 }
                 Thread.Sleep(Math.Min(10, RemainingMilliseconds(deadline)));
             }
-            return GetActiveProcessCount(job) == 0 && stdoutTask.IsCompleted && stderrTask.IsCompleted;
+            return GetActiveProcessCount(job) == 0 &&
+                (stdoutTask == null || stdoutTask.IsCompleted) &&
+                (stderrTask == null || stderrTask.IsCompleted);
         }
 
         private static bool AwaitDrains(
@@ -756,6 +760,8 @@ namespace FlyNes.Quality {
             IntPtr attributeList = IntPtr.Zero;
             IntPtr inheritedHandles = IntPtr.Zero;
             ProcessInformation process = new ProcessInformation();
+            SafeFileHandle stdoutSafeHandle = null;
+            SafeFileHandle stderrSafeHandle = null;
             FileStream stdoutStream = null;
             FileStream stderrStream = null;
             CancellationTokenSource cancellation = new CancellationTokenSource();
@@ -848,12 +854,16 @@ namespace FlyNes.Quality {
                     throw LastError("AssignProcessToJobObject");
                 }
                 jobOwnsProcess = true;
-                stdoutStream = new FileStream(
-                    new SafeFileHandle(stdoutRead, true), FileAccess.Read, 4096, false);
+                stdoutSafeHandle = new SafeFileHandle(stdoutRead, true);
                 stdoutRead = IntPtr.Zero;
-                stderrStream = new FileStream(
-                    new SafeFileHandle(stderrRead, true), FileAccess.Read, 4096, false);
+                stdoutStream = new FileStream(
+                    stdoutSafeHandle, FileAccess.Read, 4096, false);
+                stdoutSafeHandle = null;
+                stderrSafeHandle = new SafeFileHandle(stderrRead, true);
                 stderrRead = IntPtr.Zero;
+                stderrStream = new FileStream(
+                    stderrSafeHandle, FileAccess.Read, 4096, false);
+                stderrSafeHandle = null;
                 stdoutTask = Task.Run(
                     () => Drain(stdoutStream, captureLimitBytes, cancellation.Token));
                 stderrTask = Task.Run(
@@ -935,7 +945,7 @@ namespace FlyNes.Quality {
                         process.Process,
                         (uint)Math.Max(0, RemainingMilliseconds(deadline))) == WaitObject0;
                 }
-                if (stdoutTask != null && stderrTask != null && jobOwnsProcess) {
+                if (jobOwnsProcess) {
                     cleanupConfirmed = AwaitEmptyJobAndDrains(
                         job, stdoutTask, stderrTask, deadline);
                 }
@@ -949,7 +959,9 @@ namespace FlyNes.Quality {
             } finally {
                 cancellation.Cancel();
                 if (stdoutStream != null) stdoutStream.Dispose();
+                if (stdoutSafeHandle != null) stdoutSafeHandle.Dispose();
                 if (stderrStream != null) stderrStream.Dispose();
+                if (stderrSafeHandle != null) stderrSafeHandle.Dispose();
                 cancellation.Dispose();
                 if (stdoutRead != IntPtr.Zero) CloseHandle(stdoutRead);
                 if (stdoutWrite != IntPtr.Zero) CloseHandle(stdoutWrite);
@@ -1285,8 +1297,54 @@ function Write-ToolchainManifest {
     $content | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
-function Restore-ManifestPairTransaction {
+
+function Get-BootstrapTransactionArtifacts {
     param(
+        [Parameter(Mandatory = $true)][string] $InstallPending,
+        [Parameter(Mandatory = $true)][string] $InstallFinal,
+        [Parameter(Mandatory = $true)][string] $InstallRollback,
+        [Parameter(Mandatory = $true)][string] $ToolchainPending,
+        [Parameter(Mandatory = $true)][string] $PreflightPending,
+        [Parameter(Mandatory = $true)][string] $ToolchainFinal,
+        [Parameter(Mandatory = $true)][string] $PreflightFinal,
+        [Parameter(Mandatory = $true)][string] $ToolchainRollback,
+        [Parameter(Mandatory = $true)][string] $PreflightRollback
+    )
+
+    return @(
+        [pscustomobject]@{
+            Name = 'install'
+            Kind = 'Directory'
+            Pending = $InstallPending
+            Final = $InstallFinal
+            Rollback = $InstallRollback
+            OldHashProperty = 'oldInstallSha256'
+        },
+        [pscustomobject]@{
+            Name = 'toolchain manifest'
+            Kind = 'File'
+            Pending = $ToolchainPending
+            Final = $ToolchainFinal
+            Rollback = $ToolchainRollback
+            OldHashProperty = 'oldToolchainSha256'
+        },
+        [pscustomobject]@{
+            Name = 'preflight manifest'
+            Kind = 'File'
+            Pending = $PreflightPending
+            Final = $PreflightFinal
+            Rollback = $PreflightRollback
+            OldHashProperty = 'oldPreflightSha256'
+        }
+    )
+}
+
+function Assert-BootstrapTransactionPaths {
+    param(
+        [Parameter(Mandatory = $true)][string] $OutputRoot,
+        [Parameter(Mandatory = $true)][string] $InstallPending,
+        [Parameter(Mandatory = $true)][string] $InstallFinal,
+        [Parameter(Mandatory = $true)][string] $InstallRollback,
         [Parameter(Mandatory = $true)][string] $ToolchainPending,
         [Parameter(Mandatory = $true)][string] $PreflightPending,
         [Parameter(Mandatory = $true)][string] $ToolchainFinal,
@@ -1296,110 +1354,163 @@ function Restore-ManifestPairTransaction {
         [Parameter(Mandatory = $true)][string] $TransactionMarker
     )
 
-    $markerStagingPath = "$TransactionMarker.staging"
-    $temporaryPaths = @(
-        $ToolchainPending, $PreflightPending, $ToolchainRollback,
-        $PreflightRollback, $markerStagingPath)
-    $toolchainFinalExists = Test-Path -LiteralPath $ToolchainFinal -PathType Leaf
-    $preflightFinalExists = Test-Path -LiteralPath $PreflightFinal -PathType Leaf
-    if (-not (Test-Path -LiteralPath $TransactionMarker -PathType Leaf)) {
-        if ($toolchainFinalExists -ne $preflightFinalExists) {
-            throw 'The prior manifest pair is inconsistent; refusing recovery without a transaction marker.'
-        }
-        foreach ($temporaryPath in $temporaryPaths) {
-            if (Test-Path -LiteralPath $temporaryPath) {
-                if (-not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
-                    throw "Manifest transaction temporary path is not a file: $temporaryPath"
-                }
-                Remove-Item -LiteralPath $temporaryPath -Force
-            }
-        }
-        return
+    $resolvedRoot = [System.IO.Path]::GetFullPath($OutputRoot).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
+        throw "Bootstrap transaction output root does not exist: $resolvedRoot"
     }
-
-    $state = $null
-    try {
-        $state = Get-Content -LiteralPath $TransactionMarker -Raw | ConvertFrom-Json
+    Assert-NoReparsePointAncestors -Path $resolvedRoot `
+        -Label 'Bootstrap transaction output root'
+    $expectedLeafNames = [ordered]@{
+        InstallPending = 'zlib-1.3.1-install-staging'
+        InstallFinal = 'zlib-1.3.1-install'
+        InstallRollback = 'zlib-1.3.1-install.rollback'
+        ToolchainPending = 'host-toolchain.psd1.pending'
+        PreflightPending = 'zlib-1.3.1-preflight.json.pending'
+        ToolchainFinal = 'host-toolchain.psd1'
+        PreflightFinal = 'zlib-1.3.1-preflight.json'
+        ToolchainRollback = 'host-toolchain.psd1.rollback'
+        PreflightRollback = 'zlib-1.3.1-preflight.json.rollback'
+        TransactionMarker = 'manifest-publication.pending'
     }
-    catch {
-        $state = $null
-    }
-    $toolchainRollbackExists = Test-Path -LiteralPath $ToolchainRollback -PathType Leaf
-    $preflightRollbackExists = Test-Path -LiteralPath $PreflightRollback -PathType Leaf
-    if ($state -and $state.PSObject.Properties.Name -contains 'oldPairExisted') {
-        $oldPairExisted = [bool]$state.oldPairExisted
-    }
-    elseif ($state -and
-            $state.PSObject.Properties.Name -contains 'toolchainHadFinal' -and
-            $state.PSObject.Properties.Name -contains 'preflightHadFinal' -and
-            [bool]$state.toolchainHadFinal -eq [bool]$state.preflightHadFinal) {
-        $oldPairExisted = [bool]$state.toolchainHadFinal
-    }
-    elseif ($toolchainRollbackExists -and $preflightRollbackExists) {
-        # Compatibility for a torn marker or the literal marker used by the
-        # subprocess-free recovery regression.
-        $oldPairExisted = $true
-    }
-    else {
-        throw 'The manifest publication marker is unreadable and cannot safely recover without a complete rollback pair.'
-    }
-
-    if ($oldPairExisted) {
-        if (-not $toolchainRollbackExists -or -not $preflightRollbackExists) {
-            throw 'Cannot safely recover the prior manifest pair without a complete rollback pair.'
-        }
-        $toolchainRollbackHash = (Get-FileHash -LiteralPath $ToolchainRollback `
-                -Algorithm SHA256).Hash.ToLowerInvariant()
-        $preflightRollbackHash = (Get-FileHash -LiteralPath $PreflightRollback `
-                -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($state -and $state.PSObject.Properties.Name -contains 'oldToolchainSha256' -and
-                $toolchainRollbackHash -ne [string]$state.oldToolchainSha256) {
-            throw 'Cannot safely recover: the toolchain rollback hash changed.'
-        }
-        if ($state -and $state.PSObject.Properties.Name -contains 'oldPreflightSha256' -and
-                $preflightRollbackHash -ne [string]$state.oldPreflightSha256) {
-            throw 'Cannot safely recover: the preflight rollback hash changed.'
-        }
-        Copy-Item -LiteralPath $ToolchainRollback -Destination $ToolchainFinal -Force
-        Copy-Item -LiteralPath $PreflightRollback -Destination $PreflightFinal -Force
-        if ((Get-FileHash -LiteralPath $ToolchainFinal -Algorithm SHA256).Hash.ToLowerInvariant() `
-                -ne $toolchainRollbackHash -or
-                (Get-FileHash -LiteralPath $PreflightFinal -Algorithm SHA256).Hash.ToLowerInvariant() `
-                -ne $preflightRollbackHash) {
-            throw 'Cannot safely recover: restored manifest hashes do not match the rollback pair.'
+    foreach ($name in $expectedLeafNames.Keys) {
+        $actual = [System.IO.Path]::GetFullPath(
+            (Get-Variable -Name $name -ValueOnly)).TrimEnd('\')
+        $expected = [System.IO.Path]::GetFullPath(
+            (Join-Path $resolvedRoot $expectedLeafNames[$name])).TrimEnd('\')
+        if (-not $actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Bootstrap transaction '$name' must use the managed path '$expected'."
         }
     }
-    else {
-        if ($toolchainRollbackExists -or $preflightRollbackExists) {
-            throw 'Cannot safely recover a first publication with unexpected rollback files.'
-        }
-        foreach ($finalPath in @($ToolchainFinal, $PreflightFinal)) {
-            if (Test-Path -LiteralPath $finalPath) {
-                if (-not (Test-Path -LiteralPath $finalPath -PathType Leaf)) {
-                    throw "Manifest transaction final path is not a file: $finalPath"
-                }
-                Remove-Item -LiteralPath $finalPath -Force
-            }
-        }
-        if ((Test-Path -LiteralPath $ToolchainFinal) -or
-                (Test-Path -LiteralPath $PreflightFinal)) {
-            throw 'Cannot safely recover: a partial first manifest pair remains.'
-        }
+    $artifacts = Get-BootstrapTransactionArtifacts `
+        -InstallPending $InstallPending -InstallFinal $InstallFinal `
+        -InstallRollback $InstallRollback -ToolchainPending $ToolchainPending `
+        -PreflightPending $PreflightPending -ToolchainFinal $ToolchainFinal `
+        -PreflightFinal $PreflightFinal -ToolchainRollback $ToolchainRollback `
+        -PreflightRollback $PreflightRollback
+    $paths = [Collections.Generic.List[string]]::new()
+    foreach ($artifact in $artifacts) {
+        $paths.Add($artifact.Pending)
+        $paths.Add($artifact.Final)
+        $paths.Add($artifact.Rollback)
     }
-
-    Remove-Item -LiteralPath $TransactionMarker -Force
-    foreach ($temporaryPath in $temporaryPaths) {
-        if (Test-Path -LiteralPath $temporaryPath) {
-            if (-not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
-                throw "Manifest transaction temporary path is not a file: $temporaryPath"
-            }
-            Remove-Item -LiteralPath $temporaryPath -Force
+    $paths.Add($TransactionMarker)
+    $paths.Add("$TransactionMarker.staging")
+    $seen = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $paths) {
+        $resolved = Assert-PathWithinRoot -Root $resolvedRoot -Candidate $path `
+            -Label 'Bootstrap transaction artifact'
+        $parent = [System.IO.Path]::GetFullPath(
+            (Split-Path -Parent $resolved)).TrimEnd('\')
+        if (-not $parent.Equals($resolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Bootstrap transaction paths must be direct children of the output root: $resolved"
+        }
+        if (-not $seen.Add($resolved)) {
+            throw "Bootstrap transaction paths must be unique: $resolved"
         }
     }
 }
 
-function Publish-ManifestPair {
+function Test-BootstrapTransactionArtifact {
     param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][ValidateSet('Directory', 'File')]
+        [string] $Kind,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $expectedPathType = if ($Kind -eq 'Directory') { 'Container' } else { 'Leaf' }
+    if (-not (Test-Path -LiteralPath $Path -PathType $expectedPathType)) {
+        throw "$Label must be a $($Kind.ToLowerInvariant()): $Path"
+    }
+    return $true
+}
+
+function Get-BootstrapTransactionArtifactHash {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][ValidateSet('Directory', 'File')]
+        [string] $Kind,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    if (-not (Test-BootstrapTransactionArtifact -Path $Path -Kind $Kind -Label $Label)) {
+        throw "$Label is missing: $Path"
+    }
+    if ($Kind -eq 'Directory') { return Get-CanonicalTreeHash -Root $Path }
+    return Get-LowerSha256 -Path $Path
+}
+
+function Remove-BootstrapTransactionArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string] $OutputRoot,
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][ValidateSet('Directory', 'File')]
+        [string] $Kind,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    if ($Kind -eq 'Directory') {
+        Remove-ManagedDirectory -OutputRoot $OutputRoot -Path $Path -Label $Label
+    }
+    else {
+        Remove-ManagedFile -OutputRoot $OutputRoot -Path $Path -Label $Label
+    }
+}
+
+function Copy-BootstrapTransactionArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][string] $Destination,
+        [Parameter(Mandatory = $true)][ValidateSet('Directory', 'File')]
+        [string] $Kind,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    if (-not (Test-BootstrapTransactionArtifact -Path $Source -Kind $Kind -Label $Label)) {
+        throw "$Label source is missing: $Source"
+    }
+    if (Test-Path -LiteralPath $Destination) {
+        throw "$Label destination already exists: $Destination"
+    }
+    if ($Kind -eq 'Directory') {
+        Copy-Item -LiteralPath $Source -Destination $Destination -Recurse
+    }
+    else {
+        Copy-Item -LiteralPath $Source -Destination $Destination
+    }
+}
+
+function Move-BootstrapTransactionArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][string] $Destination,
+        [Parameter(Mandatory = $true)][ValidateSet('Directory', 'File')]
+        [string] $Kind,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    if (-not (Test-BootstrapTransactionArtifact -Path $Source -Kind $Kind -Label $Label)) {
+        throw "$Label source is missing: $Source"
+    }
+    if (Test-Path -LiteralPath $Destination) {
+        throw "$Label destination already exists: $Destination"
+    }
+    if ($Kind -eq 'Directory') {
+        [System.IO.Directory]::Move($Source, $Destination)
+    }
+    else {
+        [System.IO.File]::Move($Source, $Destination)
+    }
+}
+
+function Restore-BootstrapTransaction {
+    param(
+        [Parameter(Mandatory = $true)][string] $OutputRoot,
+        [Parameter(Mandatory = $true)][string] $InstallPending,
+        [Parameter(Mandatory = $true)][string] $InstallFinal,
+        [Parameter(Mandatory = $true)][string] $InstallRollback,
         [Parameter(Mandatory = $true)][string] $ToolchainPending,
         [Parameter(Mandatory = $true)][string] $PreflightPending,
         [Parameter(Mandatory = $true)][string] $ToolchainFinal,
@@ -1409,128 +1520,263 @@ function Publish-ManifestPair {
         [Parameter(Mandatory = $true)][string] $TransactionMarker
     )
 
-    if (-not (Test-Path -LiteralPath $ToolchainPending -PathType Leaf) -or
-            -not (Test-Path -LiteralPath $PreflightPending -PathType Leaf)) {
-        throw 'The pending manifest pair is incomplete; neither final manifest was changed.'
+    Assert-BootstrapTransactionPaths @PSBoundParameters
+    $artifacts = Get-BootstrapTransactionArtifacts `
+        -InstallPending $InstallPending -InstallFinal $InstallFinal `
+        -InstallRollback $InstallRollback -ToolchainPending $ToolchainPending `
+        -PreflightPending $PreflightPending -ToolchainFinal $ToolchainFinal `
+        -PreflightFinal $PreflightFinal -ToolchainRollback $ToolchainRollback `
+        -PreflightRollback $PreflightRollback
+    $markerStagingPath = "$TransactionMarker.staging"
+    $markerExists = Test-BootstrapTransactionArtifact -Path $TransactionMarker `
+        -Kind File -Label 'Bootstrap transaction marker'
+    if (-not $markerExists) {
+        $finalCount = @($artifacts | Where-Object {
+                Test-BootstrapTransactionArtifact -Path $_.Final -Kind $_.Kind `
+                    -Label "Final $($_.Name)"
+            }).Count
+        if ($finalCount -ne 0 -and $finalCount -ne $artifacts.Count) {
+            throw 'The prior install/manifest transaction is inconsistent without a journal.'
+        }
+        $rollbackCount = @($artifacts | Where-Object {
+                Test-BootstrapTransactionArtifact -Path $_.Rollback -Kind $_.Kind `
+                    -Label "Rollback $($_.Name)"
+            }).Count
+        if ($finalCount -eq 0 -and $rollbackCount -ne 0) {
+            throw 'Rollback artifacts without a journal or final triad are ambiguous; recovery is fail-closed.'
+        }
+        foreach ($artifact in $artifacts) {
+            Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                -Path $artifact.Pending -Kind $artifact.Kind `
+                -Label "Stale pending $($artifact.Name)"
+            Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                -Path $artifact.Rollback -Kind $artifact.Kind `
+                -Label "Stale rollback $($artifact.Name)"
+        }
+        Remove-ManagedFile -OutputRoot $OutputRoot -Path $markerStagingPath `
+            -Label 'Stale bootstrap transaction marker staging file'
+        return
     }
-    $allPaths = @(
-        $ToolchainPending, $PreflightPending, $ToolchainFinal, $PreflightFinal,
-        $ToolchainRollback, $PreflightRollback, $TransactionMarker)
-    $pairDirectory = [System.IO.Path]::GetFullPath(
-        (Split-Path -Parent $ToolchainPending)).TrimEnd('\')
-    foreach ($path in $allPaths) {
-        $pathDirectory = [System.IO.Path]::GetFullPath(
-            (Split-Path -Parent $path)).TrimEnd('\')
-        if (-not $pathDirectory.Equals(
-                $pairDirectory, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'All manifest transaction files must share one directory and volume.'
+
+    try {
+        $state = Get-Content -LiteralPath $TransactionMarker -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw 'The bootstrap transaction journal is unreadable; recovery is fail-closed.'
+    }
+    $requiredStateProperties = @(
+        'schemaVersion', 'oldStateExisted',
+        'oldInstallSha256', 'oldToolchainSha256', 'oldPreflightSha256',
+        'newInstallSha256', 'newToolchainSha256', 'newPreflightSha256')
+    foreach ($property in $requiredStateProperties) {
+        if ($state.PSObject.Properties.Name -notcontains $property) {
+            throw "The bootstrap transaction journal is missing '$property'."
         }
     }
-    if (Test-Path -LiteralPath $TransactionMarker) {
-        throw "A prior manifest publication transaction requires recovery: $TransactionMarker"
+    if ([int]$state.schemaVersion -ne 2 -or
+            $state.oldStateExisted -isnot [bool]) {
+        throw 'The bootstrap transaction journal schema is invalid.'
     }
-    $markerStagingPath = "$TransactionMarker.staging"
-    if (Test-Path -LiteralPath $markerStagingPath) {
-        throw "A stale manifest marker staging file requires recovery: $markerStagingPath"
-    }
-    foreach ($rollbackPath in @($ToolchainRollback, $PreflightRollback)) {
-        if (Test-Path -LiteralPath $rollbackPath) {
-            throw "A stale manifest rollback requires recovery: $rollbackPath"
+    foreach ($property in @(
+            'newInstallSha256', 'newToolchainSha256', 'newPreflightSha256')) {
+        if ([string]$state.$property -notmatch '^[0-9a-f]{64}$') {
+            throw "The bootstrap transaction journal has an invalid '$property'."
         }
     }
 
-    $toolchainHadFinal = Test-Path -LiteralPath $ToolchainFinal -PathType Leaf
-    $preflightHadFinal = Test-Path -LiteralPath $PreflightFinal -PathType Leaf
-    if ($toolchainHadFinal -ne $preflightHadFinal) {
-        throw 'The prior manifest pair is inconsistent; refusing publication without recovery.'
+    if ([bool]$state.oldStateExisted) {
+        foreach ($artifact in $artifacts) {
+            $expectedHash = [string]$state.($artifact.OldHashProperty)
+            if ($expectedHash -notmatch '^[0-9a-f]{64}$') {
+                throw "The bootstrap transaction journal lacks a valid old $($artifact.Name) hash."
+            }
+            $rollbackHash = Get-BootstrapTransactionArtifactHash `
+                -Path $artifact.Rollback -Kind $artifact.Kind `
+                -Label "Rollback $($artifact.Name)"
+            if ($rollbackHash -ne $expectedHash) {
+                throw "Rollback $($artifact.Name) hash changed; recovery is fail-closed."
+            }
+        }
+        foreach ($artifact in $artifacts) {
+            $expectedHash = [string]$state.($artifact.OldHashProperty)
+            Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                -Path $artifact.Final -Kind $artifact.Kind `
+                -Label "Partial final $($artifact.Name)"
+            Copy-BootstrapTransactionArtifact -Source $artifact.Rollback `
+                -Destination $artifact.Final -Kind $artifact.Kind `
+                -Label "Restored $($artifact.Name)"
+            $restoredHash = Get-BootstrapTransactionArtifactHash `
+                -Path $artifact.Final -Kind $artifact.Kind `
+                -Label "Restored $($artifact.Name)"
+            if ($restoredHash -ne $expectedHash) {
+                throw "Restored $($artifact.Name) hash does not match the journal."
+            }
+        }
     }
-    $oldPairExisted = $toolchainHadFinal
-    $toolchainPendingHash = (Get-FileHash -LiteralPath $ToolchainPending -Algorithm SHA256).Hash.ToLowerInvariant()
-    $preflightPendingHash = (Get-FileHash -LiteralPath $PreflightPending -Algorithm SHA256).Hash.ToLowerInvariant()
-    $oldToolchainHash = $null
-    $oldPreflightHash = $null
+    else {
+        foreach ($artifact in $artifacts) {
+            if (Test-BootstrapTransactionArtifact -Path $artifact.Rollback `
+                    -Kind $artifact.Kind -Label "Unexpected rollback $($artifact.Name)") {
+                throw 'A first-run transaction has unexpected rollback state; recovery is fail-closed.'
+            }
+        }
+        foreach ($artifact in $artifacts) {
+            Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                -Path $artifact.Final -Kind $artifact.Kind `
+                -Label "Partial first-run $($artifact.Name)"
+        }
+    }
+
+    foreach ($artifact in $artifacts) {
+        Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+            -Path $artifact.Pending -Kind $artifact.Kind `
+            -Label "Pending $($artifact.Name)"
+    }
+    Remove-ManagedFile -OutputRoot $OutputRoot -Path $markerStagingPath `
+        -Label 'Bootstrap transaction marker staging file'
+    Remove-ManagedFile -OutputRoot $OutputRoot -Path $TransactionMarker `
+        -Label 'Bootstrap transaction marker'
+    foreach ($artifact in $artifacts) {
+        Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+            -Path $artifact.Rollback -Kind $artifact.Kind `
+            -Label "Rollback $($artifact.Name)"
+    }
+}
+
+function Publish-BootstrapTransaction {
+    param(
+        [Parameter(Mandatory = $true)][string] $OutputRoot,
+        [Parameter(Mandatory = $true)][string] $InstallPending,
+        [Parameter(Mandatory = $true)][string] $InstallFinal,
+        [Parameter(Mandatory = $true)][string] $InstallRollback,
+        [Parameter(Mandatory = $true)][string] $ToolchainPending,
+        [Parameter(Mandatory = $true)][string] $PreflightPending,
+        [Parameter(Mandatory = $true)][string] $ToolchainFinal,
+        [Parameter(Mandatory = $true)][string] $PreflightFinal,
+        [Parameter(Mandatory = $true)][string] $ToolchainRollback,
+        [Parameter(Mandatory = $true)][string] $PreflightRollback,
+        [Parameter(Mandatory = $true)][string] $TransactionMarker,
+        [scriptblock] $FaultInjector
+    )
+
+    $pathParameters = @{}
+    foreach ($name in @(
+            'OutputRoot', 'InstallPending', 'InstallFinal', 'InstallRollback',
+            'ToolchainPending', 'PreflightPending', 'ToolchainFinal', 'PreflightFinal',
+            'ToolchainRollback', 'PreflightRollback', 'TransactionMarker')) {
+        $pathParameters[$name] = Get-Variable -Name $name -ValueOnly
+    }
+    Assert-BootstrapTransactionPaths @pathParameters
+    $artifacts = Get-BootstrapTransactionArtifacts `
+        -InstallPending $InstallPending -InstallFinal $InstallFinal `
+        -InstallRollback $InstallRollback -ToolchainPending $ToolchainPending `
+        -PreflightPending $PreflightPending -ToolchainFinal $ToolchainFinal `
+        -PreflightFinal $PreflightFinal -ToolchainRollback $ToolchainRollback `
+        -PreflightRollback $PreflightRollback
+    $markerStagingPath = "$TransactionMarker.staging"
+    if (Test-Path -LiteralPath $TransactionMarker) {
+        throw 'A prior bootstrap transaction requires recovery before publication.'
+    }
+    if (Test-Path -LiteralPath $markerStagingPath) {
+        throw 'A stale bootstrap transaction marker staging file requires recovery.'
+    }
+    $newHashes = @{}
+    foreach ($artifact in $artifacts) {
+        $newHashes[$artifact.Name] = Get-BootstrapTransactionArtifactHash `
+            -Path $artifact.Pending -Kind $artifact.Kind `
+            -Label "Pending $($artifact.Name)"
+        if (Test-Path -LiteralPath $artifact.Rollback) {
+            throw "A stale rollback $($artifact.Name) requires recovery."
+        }
+    }
+    $finalCount = @($artifacts | Where-Object {
+            Test-BootstrapTransactionArtifact -Path $_.Final -Kind $_.Kind `
+                -Label "Final $($_.Name)"
+        }).Count
+    if ($finalCount -ne 0 -and $finalCount -ne $artifacts.Count) {
+        throw 'The prior install/manifest transaction is inconsistent; publication is fail-closed.'
+    }
+    $oldStateExisted = $finalCount -eq $artifacts.Count
+    $oldHashes = @{}
     try {
-        if ($oldPairExisted) {
-            $oldToolchainHash = (Get-FileHash -LiteralPath $ToolchainFinal `
-                    -Algorithm SHA256).Hash.ToLowerInvariant()
-            $oldPreflightHash = (Get-FileHash -LiteralPath $PreflightFinal `
-                    -Algorithm SHA256).Hash.ToLowerInvariant()
-            Copy-Item -LiteralPath $ToolchainFinal -Destination $ToolchainRollback
-            Copy-Item -LiteralPath $PreflightFinal -Destination $PreflightRollback
-            if ((Get-FileHash -LiteralPath $ToolchainRollback -Algorithm SHA256).Hash.ToLowerInvariant() `
-                    -ne $oldToolchainHash -or
-                    (Get-FileHash -LiteralPath $PreflightRollback -Algorithm SHA256).Hash.ToLowerInvariant() `
-                    -ne $oldPreflightHash) {
-                throw 'Manifest rollback pair did not preserve the prior final bytes.'
+        if ($oldStateExisted) {
+            foreach ($artifact in $artifacts) {
+                $oldHashes[$artifact.Name] = Get-BootstrapTransactionArtifactHash `
+                    -Path $artifact.Final -Kind $artifact.Kind `
+                    -Label "Prior $($artifact.Name)"
+                Copy-BootstrapTransactionArtifact -Source $artifact.Final `
+                    -Destination $artifact.Rollback -Kind $artifact.Kind `
+                    -Label "Rollback $($artifact.Name)"
+                $rollbackHash = Get-BootstrapTransactionArtifactHash `
+                    -Path $artifact.Rollback -Kind $artifact.Kind `
+                    -Label "Rollback $($artifact.Name)"
+                if ($rollbackHash -ne $oldHashes[$artifact.Name]) {
+                    throw "Rollback $($artifact.Name) did not preserve the prior bytes."
+                }
             }
         }
         [ordered]@{
-            schemaVersion = 1
-            oldPairExisted = $oldPairExisted
-            oldToolchainSha256 = $oldToolchainHash
-            oldPreflightSha256 = $oldPreflightHash
-            newToolchainSha256 = $toolchainPendingHash
-            newPreflightSha256 = $preflightPendingHash
+            schemaVersion = 2
+            oldStateExisted = $oldStateExisted
+            oldInstallSha256 = $oldHashes['install']
+            oldToolchainSha256 = $oldHashes['toolchain manifest']
+            oldPreflightSha256 = $oldHashes['preflight manifest']
+            newInstallSha256 = $newHashes['install']
+            newToolchainSha256 = $newHashes['toolchain manifest']
+            newPreflightSha256 = $newHashes['preflight manifest']
         } | ConvertTo-Json | Set-Content -LiteralPath $markerStagingPath -Encoding utf8
         [System.IO.File]::Move($markerStagingPath, $TransactionMarker)
 
-        if ($oldPairExisted) {
-            [System.IO.File]::Move($ToolchainPending, $ToolchainFinal, $true)
-            [System.IO.File]::Move($PreflightPending, $PreflightFinal, $true)
+        if ($oldStateExisted) {
+            Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                -Path $artifacts[0].Final -Kind $artifacts[0].Kind `
+                -Label 'Prior install'
         }
-        else {
-            [System.IO.File]::Move($ToolchainPending, $ToolchainFinal)
-            [System.IO.File]::Move($PreflightPending, $PreflightFinal)
-        }
-        $toolchainFinalHash = (Get-FileHash -LiteralPath $ToolchainFinal -Algorithm SHA256).Hash.ToLowerInvariant()
-        $preflightFinalHash = (Get-FileHash -LiteralPath $PreflightFinal -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($toolchainFinalHash -ne $toolchainPendingHash -or
-                $preflightFinalHash -ne $preflightPendingHash) {
-            throw 'Published manifest pair does not match the validated pending pair.'
-        }
-        Remove-Item -LiteralPath $TransactionMarker -Force
-        foreach ($rollbackPath in @($ToolchainRollback, $PreflightRollback)) {
-            if (Test-Path -LiteralPath $rollbackPath -PathType Leaf) {
-                Remove-Item -LiteralPath $rollbackPath -Force
+        if ($FaultInjector) { & $FaultInjector 'AfterOldInstallRemoved' }
+        Move-BootstrapTransactionArtifact -Source $artifacts[0].Pending `
+            -Destination $artifacts[0].Final -Kind $artifacts[0].Kind `
+            -Label 'Published install'
+        if ($FaultInjector) { & $FaultInjector 'AfterInstallPublished' }
+
+        foreach ($artifact in @($artifacts | Select-Object -Skip 1)) {
+            if ($oldStateExisted) {
+                Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                    -Path $artifact.Final -Kind $artifact.Kind `
+                    -Label "Prior $($artifact.Name)"
             }
+            Move-BootstrapTransactionArtifact -Source $artifact.Pending `
+                -Destination $artifact.Final -Kind $artifact.Kind `
+                -Label "Published $($artifact.Name)"
+            if ($artifact.Name -eq 'toolchain manifest' -and $FaultInjector) {
+                & $FaultInjector 'AfterToolchainManifestPublished'
+            }
+        }
+        foreach ($artifact in $artifacts) {
+            $publishedHash = Get-BootstrapTransactionArtifactHash `
+                -Path $artifact.Final -Kind $artifact.Kind `
+                -Label "Published $($artifact.Name)"
+            if ($publishedHash -ne $newHashes[$artifact.Name]) {
+                throw "Published $($artifact.Name) does not match its pending hash."
+            }
+        }
+
+        Remove-ManagedFile -OutputRoot $OutputRoot -Path $TransactionMarker `
+            -Label 'Bootstrap transaction marker'
+        foreach ($artifact in $artifacts) {
+            Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
+                -Path $artifact.Rollback -Kind $artifact.Kind `
+                -Label "Committed rollback $($artifact.Name)"
         }
     }
     catch {
-        if (Test-Path -LiteralPath $TransactionMarker -PathType Leaf) {
-            if ($oldPairExisted) {
-                if (-not (Test-Path -LiteralPath $ToolchainRollback -PathType Leaf) -or
-                        -not (Test-Path -LiteralPath $PreflightRollback -PathType Leaf)) {
-                    throw 'Manifest publication failed and the complete rollback pair is unavailable.'
-                }
-                Copy-Item -LiteralPath $ToolchainRollback -Destination $ToolchainFinal -Force
-                Copy-Item -LiteralPath $PreflightRollback -Destination $PreflightFinal -Force
-                if ((Get-FileHash -LiteralPath $ToolchainFinal -Algorithm SHA256).Hash.ToLowerInvariant() `
-                        -ne $oldToolchainHash -or
-                        (Get-FileHash -LiteralPath $PreflightFinal -Algorithm SHA256).Hash.ToLowerInvariant() `
-                        -ne $oldPreflightHash) {
-                    throw 'Manifest publication failed and rollback verification also failed.'
-                }
-            }
-            else {
-                foreach ($finalPath in @($ToolchainFinal, $PreflightFinal)) {
-                    if (Test-Path -LiteralPath $finalPath -PathType Leaf) {
-                        Remove-Item -LiteralPath $finalPath -Force
-                    }
-                }
-            }
-            Remove-Item -LiteralPath $TransactionMarker -Force
+        $publicationError = $_
+        try {
+            Restore-BootstrapTransaction @pathParameters
         }
-        elseif (Test-Path -LiteralPath $markerStagingPath -PathType Leaf) {
-            Remove-Item -LiteralPath $markerStagingPath -Force
+        catch {
+            throw "Bootstrap publication failed and recovery also failed: $($_.Exception.Message)"
         }
-        foreach ($temporaryPath in @(
-                $ToolchainPending, $PreflightPending,
-                $ToolchainRollback, $PreflightRollback)) {
-            if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-                Remove-Item -LiteralPath $temporaryPath -Force
-            }
-        }
-        throw
+        throw $publicationError
     }
 }
 
@@ -1558,15 +1804,24 @@ $toolchainManifestRollbackPath = Assert-PathWithinRoot -Root $outputRoot `
 $preflightManifestRollbackPath = Assert-PathWithinRoot -Root $outputRoot `
     -Candidate (Join-Path $outputRoot 'zlib-1.3.1-preflight.json.rollback') `
     -Label 'zlib preflight manifest rollback'
+$installPrefix = Assert-PathWithinRoot -Root $outputRoot `
+    -Candidate (Join-Path $outputRoot 'zlib-1.3.1-install') `
+    -Label 'zlib static install directory'
+$installStagingDirectory = Assert-PathWithinRoot -Root $outputRoot `
+    -Candidate (Join-Path $outputRoot 'zlib-1.3.1-install-staging') `
+    -Label 'zlib static install staging directory'
+$installRollbackDirectory = Assert-PathWithinRoot -Root $outputRoot `
+    -Candidate (Join-Path $outputRoot 'zlib-1.3.1-install.rollback') `
+    -Label 'zlib static install rollback directory'
 $manifestTransactionMarkerPath = Assert-PathWithinRoot -Root $outputRoot `
     -Candidate (Join-Path $outputRoot 'manifest-publication.pending') `
     -Label 'Manifest publication marker'
-$manifestTransactionMarkerStagingPath = Assert-PathWithinRoot -Root $outputRoot `
-    -Candidate "$manifestTransactionMarkerPath.staging" `
-    -Label 'Manifest publication marker staging file'
-Restore-ManifestPairTransaction -ToolchainPending $toolchainManifestPendingPath `
-    -PreflightPending $preflightManifestPendingPath -ToolchainFinal $toolchainManifestPath `
-    -PreflightFinal $preflightManifestPath `
+Restore-BootstrapTransaction -OutputRoot $outputRoot `
+    -InstallPending $installStagingDirectory -InstallFinal $installPrefix `
+    -InstallRollback $installRollbackDirectory `
+    -ToolchainPending $toolchainManifestPendingPath `
+    -PreflightPending $preflightManifestPendingPath `
+    -ToolchainFinal $toolchainManifestPath -PreflightFinal $preflightManifestPath `
     -ToolchainRollback $toolchainManifestRollbackPath `
     -PreflightRollback $preflightManifestRollbackPath `
     -TransactionMarker $manifestTransactionMarkerPath
@@ -1744,12 +1999,6 @@ if ($configureSourceHash -ne $sourceTreeSha256) {
     throw "Disposable zlib configure source differs from the verified extracted tree: expected $sourceTreeSha256, found $configureSourceHash."
 }
 
-$installPrefix = Assert-PathWithinRoot -Root $outputRoot `
-    -Candidate (Join-Path $outputRoot 'zlib-1.3.1-install') `
-    -Label 'zlib static install directory'
-$installStagingDirectory = Assert-PathWithinRoot -Root $outputRoot `
-    -Candidate (Join-Path $outputRoot 'zlib-1.3.1-install-staging') `
-    -Label 'zlib static install staging directory'
 $configureArguments = @(
     '-G', $generator,
     '-A', $architecture,
@@ -1814,18 +2063,11 @@ Copy-Item -LiteralPath $builtStaticLibrary -Destination $stagedStaticLibrary
 Copy-Item -LiteralPath $sourceLicense -Destination $stagedLicense
 Assert-ExactStaticInstallTree -InstallRoot $installStagingDirectory
 
-Remove-ManagedDirectory -OutputRoot $outputRoot -Path $installPrefix `
-    -Label 'zlib static install directory'
-Move-Item -LiteralPath $installStagingDirectory -Destination $installPrefix
-$installPrefix = Assert-PathWithinRoot -Root $outputRoot -Candidate $installPrefix `
-    -Label 'zlib static install directory'
-Assert-ExactStaticInstallTree -InstallRoot $installPrefix
-
-$installedHeader = Join-Path $installPrefix 'include\zlib.h'
-$installedGeneratedHeader = Join-Path $installPrefix 'include\zconf.h'
-$installedStaticLibrary = Join-Path $installPrefix 'lib\zlibstatic.lib'
-$installedLicense = Join-Path $installPrefix 'share\licenses\zlib-1.3.1\LICENSE'
-$installTreeSha256 = Get-CanonicalTreeHash -Root $installPrefix
+$installedHeader = Join-Path $installStagingDirectory 'include\zlib.h'
+$installedGeneratedHeader = Join-Path $installStagingDirectory 'include\zconf.h'
+$installedStaticLibrary = Join-Path $installStagingDirectory 'lib\zlibstatic.lib'
+$installedLicense = Join-Path $installStagingDirectory 'share\licenses\zlib-1.3.1\LICENSE'
+$installTreeSha256 = Get-CanonicalTreeHash -Root $installStagingDirectory
 
 Write-ToolchainManifest -Path $toolchainManifestPendingPath -ResolvedCMake $tools.CMakeExe `
     -ResolvedCTest $tools.CTestExe -CMakeVersion $cmakeVersion -CTestVersion $ctestVersion `
@@ -1928,12 +2170,21 @@ if ([int]$pendingPreflightManifest.schemaVersion -ne 3 -or
             (Get-LowerSha256 -Path $toolchainManifestPendingPath)) {
     throw 'Pending preflight and host toolchain manifests failed cross-pair validation.'
 }
-Publish-ManifestPair -ToolchainPending $toolchainManifestPendingPath `
-    -PreflightPending $preflightManifestPendingPath -ToolchainFinal $toolchainManifestPath `
-    -PreflightFinal $preflightManifestPath `
+Publish-BootstrapTransaction -OutputRoot $outputRoot `
+    -InstallPending $installStagingDirectory -InstallFinal $installPrefix `
+    -InstallRollback $installRollbackDirectory `
+    -ToolchainPending $toolchainManifestPendingPath `
+    -PreflightPending $preflightManifestPendingPath `
+    -ToolchainFinal $toolchainManifestPath -PreflightFinal $preflightManifestPath `
     -ToolchainRollback $toolchainManifestRollbackPath `
     -PreflightRollback $preflightManifestRollbackPath `
     -TransactionMarker $manifestTransactionMarkerPath
+Assert-ExactStaticInstallTree -InstallRoot $installPrefix
+if ((Get-CanonicalTreeHash -Root $installPrefix) -ne $installTreeSha256) {
+    throw 'Published zlib install tree does not match the validated staging tree.'
+}
+Assert-PreviousManifestIntegrity -ManifestPath $preflightManifestPath `
+    -OutputRoot $outputRoot -ResolvedCMake $tools.CMakeExe -ResolvedCTest $tools.CTestExe
 
 Write-Host "Pinned zlib $zlibVersion host dependency is ready at $installPrefix"
 Write-Host "Preflight manifest: $preflightManifestPath"

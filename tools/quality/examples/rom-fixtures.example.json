@@ -3,7 +3,7 @@
   "manifestKind": "example",
   "certificationStatus": "BLOCKED_UNRESOLVED_FIXTURES",
   "instructions": [
-    "Copy this file to the ignored local manifest, add localSources there, and replace the illustrative hash with the exact payload hash.",
+    "Copy this file to the ignored local manifest, add the required localSources only there, and replace the illustrative hash with the exact payload hash; localSources is forbidden in committed redacted/example manifests.",
     "A fixture is not READY until its exact variant and fixed save state are both hashed."
   ],
   "fixtures": [

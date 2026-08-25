@@ -96,7 +96,6 @@
       "selectionStatus": "resolved",
       "variantSha256": "51a6172cbdb7d27af4150268e1635676e37950782fdc0c59bce319c757022076",
       "alternativeVariantSha256": [
-        "51a6172cbdb7d27af4150268e1635676e37950782fdc0c59bce319c757022076",
         "fe6541d00bfadc9ef37b0245de5c15a3f9b80d772a3672cdf9726230f42967ea"
       ],
       "sourceTiming": {

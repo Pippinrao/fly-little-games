@@ -77,6 +77,8 @@ The independent CPU oracle is named `mmpx-cpu-oracle-v1`. Task 5 must commit and
 
 It rejects a moving `current/` URL, a wrong archive, output paths outside the repository-owned dependency root, reparse-point escapes, wrong/mismatched CMake or CTest, a stale generator/architecture, a missing VS generator/compiler, compiler/VS/toolset drift, and unbounded child processes. It configures with `BUILD_SHARED_LIBS=OFF`, `Release`, an explicit install prefix, generator `Visual Studio 17 2022`, and architecture `x64`, then builds only the `zlibstatic` target. The bootstrap creates a clean four-file static-only install itself and rejects any DLL, `zlib.lib` import library, reparse point, or unexpected file. It also applies MSVC `/Brepro` to compilation and static-library creation; two recreated-cache runs produced the same installed library hash. A system DLL is never a valid substitute.
 
+The install directory and both manifests are published as one fixed-name rollback transaction. All three pending artifacts and, on upgrade, all three rollback copies are hash-verified before the journal marker is published. Marker deletion is the sole commit point. Startup recovery runs before previous-manifest integrity checks, always rolls a marked transaction back, is repeat-safe after another interruption, and fails closed on a corrupt journal, incomplete/corrupt rollback, noncanonical managed path, or reparse point. Subprocess fault injection kills the publisher after old-install removal, after new-install publication, and after publication of only the toolchain manifest; both first-run and upgrade recovery restore a consistent pre-run state without touching an unmanaged sentinel.
+
 The canonical ignored preflight manifest records:
 
 | Item | Frozen value |
@@ -86,7 +88,7 @@ The canonical ignored preflight manifest records:
 | Generator / architecture | `Visual Studio 17 2022` / `x64`; multi-config `true` |
 | Compiler | `MSVC 19.44.35227.0`; executable SHA-256 `9eb43db58d6d07b5f552ec11be86a01293df4589bba04ef383548add5f0fdc9f` |
 | VS instance / toolset / Windows SDK | `BuildTools` / `v143` / `10.0.26100.0` |
-| Toolchain manifest | SHA-256 `930b0d58fb115c44c9791d244e8c388fd4f986080c8bc02cd326f707da673c72` |
+| Toolchain manifest | SHA-256 `b1b9c16f76a885b8f84b3dcc3805eaebefff3101bd991e548ce9aabaa34998ec` |
 | Extracted tree | canonical SHA-256 `61a712eab0f8b66e86ff99290b0e672fc2d701c4e7ad506d3e0fa3b8a304fcab` |
 | Installed `zlib.h` | SHA-256 `8a5579af72ea4f427ff00a4150f0ccb3fc5c1e4379f726e101133b1ab9fc600c` |
 | Installed `zconf.h` | SHA-256 `b4962930aabbbc4b54a67220b4b3ed2cae69a13688c06a564bda1bc7429d2ab2` |
@@ -96,13 +98,15 @@ The canonical ignored preflight manifest records:
 
 On this host, default MSBuild FileTracker launch left a compiler process suspended after its tracker parent vanished. A direct compiler probe passed; default MSBuild timed out; and a fresh CMake probe completed only when `TrackFileAccess=false` was propagated into `try_compile`. The bootstrap therefore disables MSBuild node reuse and consistently applies `-DCMAKE_VS_GLOBALS=TrackFileAccess=false`, `-DCMAKE_TRY_COMPILE_CONFIGURATION=Release`, and `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_VS_GLOBALS;CMAKE_TRY_COMPILE_CONFIGURATION`, in addition to a fail-closed child timeout. Each child is created suspended, assigned to a kill-on-close Windows Job Object, then resumed; one monotonic deadline covers root exit, capped stdout/stderr drains, tree termination, and an `ActiveProcesses == 0` cleanup proof. A descendant that holds either redirected stream after its root exits is a bounded nonzero failure. A job-owned Visual Studio helper that does not hold either stream is terminated and proved gone before the root result is honored. This is a host-specific deterministic workaround and containment boundary, not a relaxed gate.
 
-The probe and zlib build directories are deleted and configured anew on every run after any stale generator/architecture check. The ignored manifest records both fresh `CMakeCCompiler.cmake` hashes/timestamps. In the final run, the probe identity was written at `2026-08-25T22:26:28.7815959Z`, the dependency identity at `2026-08-25T22:26:33.1605347Z`, the toolchain manifest at `2026-08-25T22:26:37.5832264Z`, and the preflight manifest at `2026-08-25T22:26:37.6004061Z`; both identity files have SHA-256 `98bdded1e548dbda5f379b3409a68fc0a6487ce0cbff98d01e95b2d850205cb2` and resolve to the same compiler executable/hash, VS instance, toolset, and SDK.
+The probe and zlib build directories are deleted and configured anew on every run after any stale generator/architecture check. The ignored manifest records both fresh `CMakeCCompiler.cmake` hashes/timestamps. In the final run, the probe identity was written at `2026-08-25T23:29:31.6818533Z`, the dependency identity at `2026-08-25T23:29:36.2502425Z`, the toolchain manifest at `2026-08-25T23:29:40.8153582Z`, and the preflight manifest at `2026-08-25T23:29:40.8328741Z`; both identity files have SHA-256 `98bdded1e548dbda5f379b3409a68fc0a6487ce0cbff98d01e95b2d850205cb2` and resolve to the same compiler executable/hash, VS instance, toolset, and SDK.
 
 All later Windows host commands must import ignored `.artifacts/host-deps/host-toolchain.psd1` and use its absolute `CMakeExe`, `CTestExe`, generator, and architecture. Bare PATH-dependent `cmake` or `ctest` is not accepted.
 
 ## Frozen ROM fixture identities
 
 The ignored local manifest was validated against [the committed schema](../../../tools/quality/schemas/rom-fixtures.schema.json), and its path-free projection was validated at [rom-fixtures.redacted.json](rom-fixtures.redacted.json). The committed example is at [rom-fixtures.example.json](../../../tools/quality/examples/rom-fixtures.example.json). The committed projection contains hashes and instructions only—no ROM source path, archive-entry path, device URI, or ROM/save-state bytes.
+
+The schema requires `localSources` for every fixture only when `manifestKind` is `local`, and forbids that entire property for `redacted` and `example` manifests. Regression cases reject both absolute and relative `packagePath` and `entryLeaf` leaks. A fixture's selected variant hash must not be repeated in its alternative list.
 
 | Canonical fixture | Variant status | Source timing | Fixed state |
 |---|---|---|---|
@@ -117,9 +121,10 @@ The exact ROM choices are no longer ambiguous, but certification remains blocked
 ## Gate evidence
 
 - Exact-Pester wrapper self-tests: `7 passed, 0 failed`. The wrapper imports only Pester `3.4.0` by `RequiredVersion`, rejects any other loaded version, recursively discovers only `*.Tests.ps1`, invokes explicit paths with `-PassThru`, and returns nonzero for a failed or empty fixture.
-- zlib bootstrap tests through the wrapper: `39 passed, 0 failed`, including wrong/mismatched tool versions, missing generator/compiler, stale generator/architecture, outside/reparse/no-side-effect containment, inherited-pipe process-tree timeout/no-survivor proof, isolated-helper cleanup, Release try-compile and FileTracker propagation, fresh-cache recreation, atomic manifest-pair recovery, exact static-tree rejection, compiler/VS/toolset drift, and disposable-source coverage. The final inherited-pipe regression completed in `2.10 s` under its three-second bound.
-- Real zlib bootstrap: completed successfully twice with the final script from recreated probe/dependency caches in `12.06 s` and `11.67 s`; the installed static-library SHA-256 was identical, and the exact install contained no DLL or import library.
-- ROM schema validation: local, redacted, and example manifests all passed; local/redacted canonical IDs, selected/alternative hashes, fixed-state hashes, and scene instructions match.
+- zlib bootstrap tests through the wrapper: `44 passed, 0 failed`, including wrong/mismatched tool versions, missing generator/compiler, stale generator/architecture, outside/reparse/no-side-effect containment, inherited-pipe process-tree timeout/no-survivor proof, isolated-helper cleanup, Release try-compile and FileTracker propagation, fresh-cache recreation, true first-run/upgrade crash recovery for all three transaction cut points, corrupt/orphaned-rollback fail-closed behavior, exact static-tree rejection, compiler/VS/toolset drift, and disposable-source coverage. The inherited-pipe regressions each remained under their three-second bound.
+- Real zlib bootstrap: the final two recreated-cache runs completed successfully in `12.02 s` and `12.57 s`; `zlibstatic.lib` remained SHA-256 `64ebc5489d54d283af93a614c48c82443f9cf146b04db728c57a008f4a4f3a45`, the exact install contained no DLL or import library, and no transaction temporary survived.
+- ROM schema validation: `13 passed, 0 failed`; local, redacted, and example manifests all passed, both committed manifest kinds reject all four path-leak cases, and local/redacted selected hashes do not recur in their alternative lists.
+- Complete pinned-Pester quality gate: `64 passed, 0 failed` in `71.19 s`; after tightening the SafeHandle ownership-transfer assertions, the final bootstrap-only rerun remained `44 passed, 0 failed` in `63.22 s`.
 - Current app: `:app:assembleDebug` succeeded after initializing the already-pinned Nestopia submodule; APK install and cold launch succeeded on the named AVD.
 
 The final commit gate must rerun both Pester files through the wrapper, the JVM baseline, manifest checks, PNG signature/hash checks, `git diff --check`, and a staged scan for absolute paths, URI values, ROM bytes, and unintended ignored artifacts.

@@ -198,6 +198,147 @@ function Get-ScriptFunctionBody {
     return $definition.Body.GetScriptBlock()
 }
 
+function Get-ScriptFunctionText {
+    param([Parameter(Mandatory = $true)][string] $Name)
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        $bootstrapPath, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) {
+        throw "Bootstrap script has parse errors: $($parseErrors[0].Message)"
+    }
+    $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq $Name
+        }, $true)
+    if (-not $definition) { return $null }
+    return $definition.Extent.Text
+}
+
+function Get-TransactionFunctionBundle {
+    $names = @(
+        'Get-LowerSha256',
+        'Assert-NoReparsePointAncestors',
+        'Assert-NoReparsePointsInTree',
+        'Assert-PathWithinRoot',
+        'Remove-ManagedDirectory',
+        'Remove-ManagedFile',
+        'Get-CanonicalTreeHash',
+        'Get-BootstrapTransactionArtifacts',
+        'Assert-BootstrapTransactionPaths',
+        'Test-BootstrapTransactionArtifact',
+        'Get-BootstrapTransactionArtifactHash',
+        'Remove-BootstrapTransactionArtifact',
+        'Copy-BootstrapTransactionArtifact',
+        'Move-BootstrapTransactionArtifact',
+        'Restore-BootstrapTransaction',
+        'Publish-BootstrapTransaction'
+    )
+    $definitions = [Collections.Generic.List[string]]::new()
+    foreach ($name in $names) {
+        $definition = Get-ScriptFunctionText -Name $name
+        if (-not $definition) { return $null }
+        $definitions.Add($definition)
+    }
+    return ($definitions -join [Environment]::NewLine)
+}
+
+function ConvertTo-PowerShellLiteral {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    return "'$($Value.Replace("'", "''"))'"
+}
+
+function New-TransactionFixture {
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [Parameter(Mandatory = $true)][bool] $ExistingInstall
+    )
+
+    New-Item -ItemType Directory -Path $Root -Force | Out-Null
+    $paths = [ordered]@{
+        OutputRoot = $Root
+        InstallPending = Join-Path $Root 'zlib-1.3.1-install-staging'
+        InstallFinal = Join-Path $Root 'zlib-1.3.1-install'
+        InstallRollback = Join-Path $Root 'zlib-1.3.1-install.rollback'
+        ToolchainPending = Join-Path $Root 'host-toolchain.psd1.pending'
+        PreflightPending = Join-Path $Root 'zlib-1.3.1-preflight.json.pending'
+        ToolchainFinal = Join-Path $Root 'host-toolchain.psd1'
+        PreflightFinal = Join-Path $Root 'zlib-1.3.1-preflight.json'
+        ToolchainRollback = Join-Path $Root 'host-toolchain.psd1.rollback'
+        PreflightRollback = Join-Path $Root 'zlib-1.3.1-preflight.json.rollback'
+        TransactionMarker = Join-Path $Root 'manifest-publication.pending'
+    }
+    New-Item -ItemType Directory -Path $paths.InstallPending | Out-Null
+    'new-install' | Set-Content -LiteralPath `
+        (Join-Path $paths.InstallPending 'identity.txt') -Encoding utf8
+    'new-toolchain' | Set-Content -LiteralPath $paths.ToolchainPending -Encoding utf8
+    'new-preflight' | Set-Content -LiteralPath $paths.PreflightPending -Encoding utf8
+    if ($ExistingInstall) {
+        New-Item -ItemType Directory -Path $paths.InstallFinal | Out-Null
+        'old-install' | Set-Content -LiteralPath `
+            (Join-Path $paths.InstallFinal 'identity.txt') -Encoding utf8
+        'old-toolchain' | Set-Content -LiteralPath $paths.ToolchainFinal -Encoding utf8
+        'old-preflight' | Set-Content -LiteralPath $paths.PreflightFinal -Encoding utf8
+    }
+    return [pscustomobject]$paths
+}
+
+function Invoke-TransactionWorker {
+    param(
+        [Parameter(Mandatory = $true)][pscustomobject] $Paths,
+        [Parameter(Mandatory = $true)][ValidateSet('Publish', 'Restore')]
+        [string] $Action,
+        [string] $CrashPoint = ''
+    )
+
+    $bundle = Get-TransactionFunctionBundle
+    if (-not $bundle) {
+        return [pscustomobject]@{
+            ExitCode = -900
+            Output = 'Required bootstrap transaction functions are missing.'
+        }
+    }
+    $arguments = [Collections.Generic.List[string]]::new()
+    foreach ($name in @(
+            'OutputRoot', 'InstallPending', 'InstallFinal', 'InstallRollback',
+            'ToolchainPending', 'PreflightPending', 'ToolchainFinal', 'PreflightFinal',
+            'ToolchainRollback', 'PreflightRollback', 'TransactionMarker')) {
+        $arguments.Add("-$name $(ConvertTo-PowerShellLiteral -Value $Paths.$name)")
+    }
+    $faultSource = if ($CrashPoint) {
+        $quotedCrashPoint = ConvertTo-PowerShellLiteral -Value $CrashPoint
+        @"
+`$faultInjector = {
+    param([string] `$point)
+    if (`$point -eq $quotedCrashPoint) {
+        [Diagnostics.Process]::GetCurrentProcess().Kill()
+        Start-Sleep -Seconds 30
+    }
+}
+"@
+    }
+    else { '$faultInjector = $null' }
+    $invocation = if ($Action -eq 'Publish') {
+        "Publish-BootstrapTransaction $($arguments -join ' ') -FaultInjector `$faultInjector"
+    }
+    else {
+        "Restore-BootstrapTransaction $($arguments -join ' ')"
+    }
+    $source = $bundle + [Environment]::NewLine + $faultSource + `
+        [Environment]::NewLine + $invocation
+    $workerPath = Join-Path $Paths.OutputRoot `
+        "transaction-$($Action.ToLowerInvariant())-$([Guid]::NewGuid().ToString('N')).ps1"
+    $source | Set-Content -LiteralPath $workerPath -Encoding utf8
+    $output = & $pwshExe -NoProfile -File $workerPath 2>&1 | Out-String
+    return [pscustomobject]@{
+        ExitCode = $LASTEXITCODE
+        Output = $output
+    }
+}
+
 function Get-ThrownMessage {
     param([Parameter(Mandatory = $true)][scriptblock] $Action)
 
@@ -527,6 +668,27 @@ Describe 'bootstrap_host_zlib.ps1 fatal validation' {
 
         $result.ExitCode | Should Be 0
         $result.StandardOutput | Should Match '^ctest version 3\.22\.1'
+    }
+
+    It 'transfers pipe handles exactly once and proves cleanup with partial drain setup' {
+        $source = Get-Content -LiteralPath $bootstrapPath -Raw
+
+        $source | Should Not Match `
+            'new FileStream\(\s*new SafeFileHandle\((?:stdout|stderr)Read, true\)'
+        $source | Should Match `
+            'stdoutSafeHandle\s*=\s*new SafeFileHandle\(stdoutRead, true\);\s*stdoutRead\s*=\s*IntPtr\.Zero;\s*stdoutStream\s*=\s*new FileStream\(\s*stdoutSafeHandle,[^;]+;\s*stdoutSafeHandle\s*=\s*null;'
+        $source | Should Match `
+            'stderrSafeHandle\s*=\s*new SafeFileHandle\(stderrRead, true\);\s*stderrRead\s*=\s*IntPtr\.Zero;\s*stderrStream\s*=\s*new FileStream\(\s*stderrSafeHandle,[^;]+;\s*stderrSafeHandle\s*=\s*null;'
+        $source | Should Match `
+            '\(stdoutTask\s*==\s*null\s*\|\|\s*stdoutTask\.IsCompleted\)'
+        $source | Should Match `
+            '\(stderrTask\s*==\s*null\s*\|\|\s*stderrTask\.IsCompleted\)'
+        $source | Should Match `
+            'if \(jobOwnsProcess\)\s*\{\s*cleanupConfirmed\s*=\s*AwaitEmptyJobAndDrains'
+        $source | Should Match `
+            'if \(stdoutStream != null\) stdoutStream\.Dispose\(\);\s*if \(stdoutSafeHandle != null\) stdoutSafeHandle\.Dispose\(\);'
+        $source | Should Match `
+            'if \(stderrStream != null\) stderrStream\.Dispose\(\);\s*if \(stderrSafeHandle != null\) stderrSafeHandle\.Dispose\(\);'
     }
 
     It 'cleans a non-pipe descendant without rejecting its successful root process' {
@@ -876,137 +1038,166 @@ CMAKE_GENERATOR_PLATFORM:INTERNAL=x64
         $message | Should Match 'PlatformToolset drift'
     }
 
-    It 'publishes the toolchain and preflight manifests only as a validated pair' {
-        $publisher = Get-ScriptFunctionBody -Name 'Publish-ManifestPair'
-        $publisher | Should Not BeNullOrEmpty
-        if (-not $publisher) { return }
-        $pairRoot = Join-Path $caseRoot 'manifest-pair'
-        New-Item -ItemType Directory -Path $pairRoot | Out-Null
-        $toolchainFinal = Join-Path $pairRoot 'host-toolchain.psd1'
-        $preflightFinal = Join-Path $pairRoot 'zlib-preflight.json'
-        $toolchainPending = Join-Path $pairRoot 'host-toolchain.pending'
-        $preflightPending = Join-Path $pairRoot 'zlib-preflight.pending'
-        $toolchainRollback = Join-Path $pairRoot 'host-toolchain.rollback'
-        $preflightRollback = Join-Path $pairRoot 'zlib-preflight.rollback'
-        $transactionMarker = Join-Path $pairRoot 'publication.pending'
-        'old-toolchain' | Set-Content -LiteralPath $toolchainFinal -Encoding utf8
-        'old-preflight' | Set-Content -LiteralPath $preflightFinal -Encoding utf8
-        'new-toolchain' | Set-Content -LiteralPath $toolchainPending -Encoding utf8
 
-        $missingPairError = Get-ThrownMessage {
-            & $publisher -ToolchainPending $toolchainPending `
-                -PreflightPending $preflightPending -ToolchainFinal $toolchainFinal `
-                -PreflightFinal $preflightFinal -ToolchainRollback $toolchainRollback `
-                -PreflightRollback $preflightRollback -TransactionMarker $transactionMarker
-        }
-        $missingPairError | Should Match 'pending manifest pair is incomplete'
-        (Get-Content -LiteralPath $toolchainFinal -Raw).Trim() | Should Be 'old-toolchain'
-        (Get-Content -LiteralPath $preflightFinal -Raw).Trim() | Should Be 'old-preflight'
+    foreach ($crashPoint in @(
+            'AfterOldInstallRemoved',
+            'AfterInstallPublished',
+            'AfterToolchainManifestPublished')) {
+        It "recovers idempotently from a real $crashPoint process crash" {
+            $bundle = Get-TransactionFunctionBundle
+            $bundle | Should Not BeNullOrEmpty
+            if (-not $bundle) { return }
 
-        'new-preflight' | Set-Content -LiteralPath $preflightPending -Encoding utf8
-        & $publisher -ToolchainPending $toolchainPending `
-            -PreflightPending $preflightPending -ToolchainFinal $toolchainFinal `
-            -PreflightFinal $preflightFinal -ToolchainRollback $toolchainRollback `
-            -PreflightRollback $preflightRollback -TransactionMarker $transactionMarker
+            foreach ($existingInstall in @($false, $true)) {
+                $mode = if ($existingInstall) { 'upgrade' } else { 'first-run' }
+                $transactionRoot = Join-Path $caseRoot "$mode-$crashPoint"
+                $paths = New-TransactionFixture -Root $transactionRoot `
+                    -ExistingInstall $existingInstall
+                $unmanaged = Join-Path $caseRoot "$mode-$crashPoint-unmanaged"
+                New-Item -ItemType Directory -Path $unmanaged | Out-Null
+                'keep' | Set-Content -LiteralPath (Join-Path $unmanaged 'sentinel.txt') -Encoding utf8
 
-        (Get-Content -LiteralPath $toolchainFinal -Raw).Trim() | Should Be 'new-toolchain'
-        (Get-Content -LiteralPath $preflightFinal -Raw).Trim() | Should Be 'new-preflight'
-        Test-Path -LiteralPath $toolchainRollback | Should Be $false
-        Test-Path -LiteralPath $preflightRollback | Should Be $false
-        Test-Path -LiteralPath $transactionMarker | Should Be $false
-    }
+                $crash = Invoke-TransactionWorker -Paths $paths -Action Publish `
+                    -CrashPoint $crashPoint
 
-    It 'rejects publication over a mixed prior manifest pair without mutation' {
-        $publisher = Get-ScriptFunctionBody -Name 'Publish-ManifestPair'
-        $publisher | Should Not BeNullOrEmpty
-        if (-not $publisher) { return }
-        $pairRoot = Join-Path $caseRoot 'mixed-manifest-pair'
-        New-Item -ItemType Directory -Path $pairRoot | Out-Null
-        $toolchainFinal = Join-Path $pairRoot 'host-toolchain.psd1'
-        $preflightFinal = Join-Path $pairRoot 'zlib-preflight.json'
-        $toolchainPending = Join-Path $pairRoot 'host-toolchain.pending'
-        $preflightPending = Join-Path $pairRoot 'zlib-preflight.pending'
-        $toolchainRollback = Join-Path $pairRoot 'host-toolchain.rollback'
-        $preflightRollback = Join-Path $pairRoot 'zlib-preflight.rollback'
-        $transactionMarker = Join-Path $pairRoot 'publication.pending'
-        'old-toolchain' | Set-Content -LiteralPath $toolchainFinal -Encoding utf8
-        'new-toolchain' | Set-Content -LiteralPath $toolchainPending -Encoding utf8
-        'new-preflight' | Set-Content -LiteralPath $preflightPending -Encoding utf8
+                $crash.ExitCode | Should Not Be 0
+                Test-Path -LiteralPath $paths.TransactionMarker -PathType Leaf |
+                    Should Be $true
 
-        $message = Get-ThrownMessage {
-            & $publisher -ToolchainPending $toolchainPending `
-                -PreflightPending $preflightPending -ToolchainFinal $toolchainFinal `
-                -PreflightFinal $preflightFinal -ToolchainRollback $toolchainRollback `
-                -PreflightRollback $preflightRollback -TransactionMarker $transactionMarker
-        }
+                $firstRecovery = Invoke-TransactionWorker -Paths $paths -Action Restore
+                $secondRecovery = Invoke-TransactionWorker -Paths $paths -Action Restore
 
-        $message | Should Match 'prior manifest pair is inconsistent'
-        (Get-Content -LiteralPath $toolchainFinal -Raw).Trim() | Should Be 'old-toolchain'
-        Test-Path -LiteralPath $preflightFinal | Should Be $false
-        Test-Path -LiteralPath $transactionMarker | Should Be $false
-    }
-
-    It 'restores the prior manifest pair after an interrupted publication' {
-        $restore = Get-ScriptFunctionBody -Name 'Restore-ManifestPairTransaction'
-        $restore | Should Not BeNullOrEmpty
-        if (-not $restore) { return }
-        $pairRoot = Join-Path $caseRoot 'manifest-recovery'
-        New-Item -ItemType Directory -Path $pairRoot | Out-Null
-        $toolchainFinal = Join-Path $pairRoot 'host-toolchain.psd1'
-        $preflightFinal = Join-Path $pairRoot 'zlib-preflight.json'
-        $toolchainPending = Join-Path $pairRoot 'host-toolchain.pending'
-        $preflightPending = Join-Path $pairRoot 'zlib-preflight.pending'
-        $toolchainRollback = Join-Path $pairRoot 'host-toolchain.rollback'
-        $preflightRollback = Join-Path $pairRoot 'zlib-preflight.rollback'
-        $transactionMarker = Join-Path $pairRoot 'publication.pending'
-        'partial-new-toolchain' | Set-Content -LiteralPath $toolchainFinal -Encoding utf8
-        'old-preflight' | Set-Content -LiteralPath $preflightFinal -Encoding utf8
-        'old-toolchain' | Set-Content -LiteralPath $toolchainRollback -Encoding utf8
-        'old-preflight' | Set-Content -LiteralPath $preflightRollback -Encoding utf8
-        'pending' | Set-Content -LiteralPath $toolchainPending -Encoding utf8
-        'pending' | Set-Content -LiteralPath $preflightPending -Encoding utf8
-        'in-progress' | Set-Content -LiteralPath $transactionMarker -Encoding utf8
-
-        & $restore -ToolchainPending $toolchainPending `
-            -PreflightPending $preflightPending -ToolchainFinal $toolchainFinal `
-            -PreflightFinal $preflightFinal -ToolchainRollback $toolchainRollback `
-            -PreflightRollback $preflightRollback -TransactionMarker $transactionMarker
-
-        (Get-Content -LiteralPath $toolchainFinal -Raw).Trim() | Should Be 'old-toolchain'
-        (Get-Content -LiteralPath $preflightFinal -Raw).Trim() | Should Be 'old-preflight'
-        foreach ($temporary in @(
-                $toolchainPending, $preflightPending, $toolchainRollback,
-                $preflightRollback, $transactionMarker)) {
-            Test-Path -LiteralPath $temporary | Should Be $false
+                $firstRecovery.ExitCode | Should Be 0
+                $secondRecovery.ExitCode | Should Be 0
+                if ($existingInstall) {
+                    (Get-Content -LiteralPath `
+                            (Join-Path $paths.InstallFinal 'identity.txt') -Raw).Trim() |
+                        Should Be 'old-install'
+                    (Get-Content -LiteralPath $paths.ToolchainFinal -Raw).Trim() |
+                        Should Be 'old-toolchain'
+                    (Get-Content -LiteralPath $paths.PreflightFinal -Raw).Trim() |
+                        Should Be 'old-preflight'
+                }
+                else {
+                    Test-Path -LiteralPath $paths.InstallFinal | Should Be $false
+                    Test-Path -LiteralPath $paths.ToolchainFinal | Should Be $false
+                    Test-Path -LiteralPath $paths.PreflightFinal | Should Be $false
+                }
+                foreach ($temporaryPath in @(
+                        $paths.InstallPending, $paths.InstallRollback,
+                        $paths.ToolchainPending, $paths.PreflightPending,
+                        $paths.ToolchainRollback, $paths.PreflightRollback,
+                        $paths.TransactionMarker, "$($paths.TransactionMarker).staging")) {
+                    Test-Path -LiteralPath $temporaryPath | Should Be $false
+                }
+                (Get-Content -LiteralPath (Join-Path $unmanaged 'sentinel.txt') -Raw).Trim() |
+                    Should Be 'keep'
+            }
         }
     }
 
-    It 'retains evidence when a corrupt publication marker has no complete rollback pair' {
-        $restore = Get-ScriptFunctionBody -Name 'Restore-ManifestPairTransaction'
-        $restore | Should Not BeNullOrEmpty
-        if (-not $restore) { return }
-        $pairRoot = Join-Path $caseRoot 'corrupt-manifest-recovery'
-        New-Item -ItemType Directory -Path $pairRoot | Out-Null
-        $toolchainFinal = Join-Path $pairRoot 'host-toolchain.psd1'
-        $preflightFinal = Join-Path $pairRoot 'zlib-preflight.json'
-        $toolchainPending = Join-Path $pairRoot 'host-toolchain.pending'
-        $preflightPending = Join-Path $pairRoot 'zlib-preflight.pending'
-        $toolchainRollback = Join-Path $pairRoot 'host-toolchain.rollback'
-        $preflightRollback = Join-Path $pairRoot 'zlib-preflight.rollback'
-        $transactionMarker = Join-Path $pairRoot 'publication.pending'
-        'partial-new-toolchain' | Set-Content -LiteralPath $toolchainFinal -Encoding utf8
-        '{torn' | Set-Content -LiteralPath $transactionMarker -Encoding utf8
+    It 'rejects a differently named in-root transaction artifact without deleting it' {
+        $transactionRoot = Join-Path $caseRoot 'in-root-unmanaged-transaction'
+        $paths = New-TransactionFixture -Root $transactionRoot -ExistingInstall $true
+        $unmanagedRollback = Join-Path $transactionRoot 'unmanaged-install-data'
+        New-Item -ItemType Directory -Path $unmanagedRollback | Out-Null
+        'keep' | Set-Content -LiteralPath `
+            (Join-Path $unmanagedRollback 'sentinel.txt') -Encoding utf8
+        $paths.InstallRollback = $unmanagedRollback
 
-        $message = Get-ThrownMessage {
-            & $restore -ToolchainPending $toolchainPending `
-                -PreflightPending $preflightPending -ToolchainFinal $toolchainFinal `
-                -PreflightFinal $preflightFinal -ToolchainRollback $toolchainRollback `
-                -PreflightRollback $preflightRollback -TransactionMarker $transactionMarker
-        }
+        $publish = Invoke-TransactionWorker -Paths $paths -Action Publish
+        $restore = Invoke-TransactionWorker -Paths $paths -Action Restore
 
-        $message | Should Match 'cannot safely recover.*complete rollback pair'
-        (Get-Content -LiteralPath $toolchainFinal -Raw).Trim() | Should Be 'partial-new-toolchain'
-        Test-Path -LiteralPath $transactionMarker | Should Be $true
+        $publish.ExitCode | Should Not Be 0
+        $restore.ExitCode | Should Not Be 0
+        (Get-Content -LiteralPath (Join-Path $unmanagedRollback 'sentinel.txt') -Raw).Trim() |
+            Should Be 'keep'
+        (Get-Content -LiteralPath $paths.ToolchainFinal -Raw).Trim() |
+            Should Be 'old-toolchain'
+        Test-Path -LiteralPath $paths.TransactionMarker | Should Be $false
+    }
+
+    It 'fails closed and preserves evidence when an install rollback hash is corrupt' {
+        $transactionRoot = Join-Path $caseRoot 'corrupt-install-rollback'
+        $paths = New-TransactionFixture -Root $transactionRoot -ExistingInstall $true
+        $crash = Invoke-TransactionWorker -Paths $paths -Action Publish `
+            -CrashPoint 'AfterOldInstallRemoved'
+        $crash.ExitCode | Should Not Be 0
+        'corrupt' | Add-Content -LiteralPath `
+            (Join-Path $paths.InstallRollback 'identity.txt') -Encoding utf8
+
+        $recovery = Invoke-TransactionWorker -Paths $paths -Action Restore
+
+        $recovery.ExitCode | Should Not Be 0
+        $recovery.Output | Should Match 'rollback install hash changed'
+        Test-Path -LiteralPath $paths.TransactionMarker -PathType Leaf | Should Be $true
+        Test-Path -LiteralPath $paths.InstallRollback -PathType Container | Should Be $true
+        Test-Path -LiteralPath $paths.InstallFinal | Should Be $false
+        (Get-Content -LiteralPath $paths.ToolchainFinal -Raw).Trim() |
+            Should Be 'old-toolchain'
+        (Get-Content -LiteralPath $paths.PreflightFinal -Raw).Trim() |
+            Should Be 'old-preflight'
+    }
+
+    It 'preserves ambiguous rollback evidence when no journal or final triad exists' {
+        $transactionRoot = Join-Path $caseRoot 'orphaned-first-run-rollback'
+        $paths = New-TransactionFixture -Root $transactionRoot -ExistingInstall $false
+        [IO.Directory]::Move($paths.InstallPending, $paths.InstallRollback)
+
+        $recovery = Invoke-TransactionWorker -Paths $paths -Action Restore
+
+        $recovery.ExitCode | Should Not Be 0
+        $recovery.Output | Should Match 'rollback.*without a journal'
+        Test-Path -LiteralPath $paths.InstallRollback -PathType Container | Should Be $true
+        Test-Path -LiteralPath $paths.ToolchainPending -PathType Leaf | Should Be $true
+        Test-Path -LiteralPath $paths.PreflightPending -PathType Leaf | Should Be $true
+    }
+
+    It 'rejects a nested install reparse point before publication or cleanup' {
+        $transactionRoot = Join-Path $caseRoot 'reparse-install-transaction'
+        $paths = New-TransactionFixture -Root $transactionRoot -ExistingInstall $true
+        $outside = Join-Path $caseRoot 'reparse-outside'
+        New-Item -ItemType Directory -Path $outside | Out-Null
+        'keep' | Set-Content -LiteralPath (Join-Path $outside 'sentinel.txt') -Encoding utf8
+        New-Item -ItemType Junction -Path (Join-Path $paths.InstallPending 'outside-link') `
+            -Target $outside | Out-Null
+
+        $publish = Invoke-TransactionWorker -Paths $paths -Action Publish
+        $restore = Invoke-TransactionWorker -Paths $paths -Action Restore
+
+        $publish.ExitCode | Should Not Be 0
+        $restore.ExitCode | Should Not Be 0
+        $publish.Output | Should Match 'reparse point'
+        $restore.Output | Should Match 'reparse point'
+        (Get-Content -LiteralPath (Join-Path $outside 'sentinel.txt') -Raw).Trim() |
+            Should Be 'keep'
+        Test-Path -LiteralPath $paths.InstallPending -PathType Container | Should Be $true
+        (Get-Content -LiteralPath $paths.ToolchainFinal -Raw).Trim() |
+            Should Be 'old-toolchain'
+    }
+
+    It 'rejects transaction paths outside its output root without side effects' {
+        $bundle = Get-TransactionFunctionBundle
+        $bundle | Should Not BeNullOrEmpty
+        if (-not $bundle) { return }
+        $transactionRoot = Join-Path $caseRoot 'contained-transaction'
+        $paths = New-TransactionFixture -Root $transactionRoot -ExistingInstall $true
+        $outsideRollback = Join-Path $caseRoot 'outside-install-rollback'
+        New-Item -ItemType Directory -Path $outsideRollback | Out-Null
+        'keep' | Set-Content -LiteralPath `
+            (Join-Path $outsideRollback 'sentinel.txt') -Encoding utf8
+        $paths.InstallRollback = $outsideRollback
+
+        $publish = Invoke-TransactionWorker -Paths $paths -Action Publish
+        $restore = Invoke-TransactionWorker -Paths $paths -Action Restore
+
+        $publish.ExitCode | Should Not Be 0
+        $restore.ExitCode | Should Not Be 0
+        (Get-Content -LiteralPath (Join-Path $outsideRollback 'sentinel.txt') -Raw).Trim() |
+            Should Be 'keep'
+        (Get-Content -LiteralPath $paths.ToolchainFinal -Raw).Trim() |
+            Should Be 'old-toolchain'
+        Test-Path -LiteralPath $paths.TransactionMarker | Should Be $false
     }
 
     It 'pins immutable zlib input and canonical configure/install arguments' {
@@ -1028,11 +1219,11 @@ CMAKE_GENERATOR_PLATFORM:INTERNAL=x64
         $source | Should Not Match "@\('--install'"
         $source | Should Match "'--config', 'Release'"
         $source | Should Match 'zlib-1\.3\.1-install/include/zconf\.h'
-        $staticTreeValidation = $source.LastIndexOf(
-            'Assert-ExactStaticInstallTree -InstallRoot $installPrefix')
+        $staticTreeValidation = $source.IndexOf(
+            'Assert-ExactStaticInstallTree -InstallRoot $installStagingDirectory')
         $pendingToolchainWrite = $source.IndexOf(
             'Write-ToolchainManifest -Path $toolchainManifestPendingPath')
-        $pairPublication = $source.LastIndexOf('Publish-ManifestPair')
+        $pairPublication = $source.LastIndexOf('Publish-BootstrapTransaction')
         $staticTreeValidation | Should BeGreaterThan -1
         $pendingToolchainWrite | Should BeGreaterThan $staticTreeValidation
         $pairPublication | Should BeGreaterThan $pendingToolchainWrite
