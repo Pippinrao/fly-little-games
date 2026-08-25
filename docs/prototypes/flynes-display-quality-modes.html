@@ -1,0 +1,1966 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>FlyNES · 显示与画质模式高仿真原型</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c0d0f;
+      --shell: #121316;
+      --surface: #1b1d22;
+      --surface-2: #22252b;
+      --surface-3: #292c33;
+      --text: #f4efe6;
+      --muted: #beb8ae;
+      --quiet: #918d86;
+      --accent: #ff6b5e;
+      --accent-soft: rgba(255, 107, 94, .14);
+      --accent-dark: #271311;
+      --line: rgba(244, 239, 230, .11);
+      --line-strong: rgba(244, 239, 230, .22);
+      --success: #75d7a1;
+      --warning: #f4c66b;
+      --danger: #ff8278;
+      --shadow: 0 32px 90px rgba(0, 0, 0, .46);
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --font-scale: 1;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { height: 100%; }
+
+    html, body {
+      min-width: 320px;
+      min-height: 100%;
+      margin: 0;
+      background:
+        radial-gradient(circle at 15% 8%, rgba(255, 107, 94, .10), transparent 34%),
+        radial-gradient(circle at 90% 90%, rgba(117, 215, 161, .06), transparent 32%),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
+      font-size: 16px;
+    }
+
+    body {
+      height: 100dvh;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    button, input { font: inherit; }
+
+    button {
+      color: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:focus-visible, input:focus-visible {
+      outline: 3px solid rgba(255, 107, 94, .68);
+      outline-offset: 3px;
+    }
+
+    .prototype-bar {
+      position: relative;
+      z-index: 40;
+      min-height: 56px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      padding: 8px max(16px, env(safe-area-inset-left));
+      border-bottom: 1px solid rgba(244, 239, 230, .08);
+      background: rgba(12, 13, 15, .92);
+      backdrop-filter: blur(20px);
+    }
+
+    .prototype-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 235px;
+      font-size: .8125rem;
+      color: var(--muted);
+    }
+
+    .prototype-title strong { color: var(--text); font-size: .875rem; }
+
+    .prototype-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(255, 107, 94, .11);
+    }
+
+    .scenario-group {
+      min-width: 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .scenario-button, .font-button {
+      min-height: 48px;
+      white-space: nowrap;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 14px;
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .scenario-button[aria-checked="true"], .font-button[aria-checked="true"] {
+      border-color: rgba(255, 107, 94, .55);
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+
+    .font-group {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+    }
+
+    .font-button {
+      min-width: 42px;
+      padding: 0 10px;
+    }
+
+    .page {
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      padding: 22px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      container-type: size;
+    }
+
+    .device {
+      position: relative;
+      width: min(2340px, 100cqw, calc(100cqh * 2.166667));
+      aspect-ratio: 2340 / 1080;
+      overflow: hidden;
+      border: 1px solid rgba(244, 239, 230, .16);
+      border-radius: 30px;
+      background: var(--shell);
+      box-shadow: var(--shadow);
+      font-size: calc(16px * var(--font-scale));
+    }
+
+    .device::before {
+      content: "";
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      border: 7px solid rgba(0, 0, 0, .26);
+      border-radius: inherit;
+      pointer-events: none;
+    }
+
+    .settings-shell {
+      height: 100%;
+      display: grid;
+      grid-template-columns: 252px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      scrollbar-gutter: stable;
+      padding: 28px 20px 22px;
+      border-right: 1px solid var(--line);
+      background: #15171b;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      background: var(--accent);
+      color: var(--accent-dark);
+      box-shadow: 0 10px 26px rgba(255, 107, 94, .20);
+    }
+
+    .brand-mark svg { width: 22px; height: 22px; }
+
+    .brand-copy { min-width: 0; }
+    .brand-name { font-size: 1.0625em; font-weight: 760; letter-spacing: .02em; }
+    .brand-sub { margin-top: 2px; font-size: .75em; color: var(--quiet); }
+
+    .nav-label {
+      margin: 22px 12px 8px;
+      color: var(--quiet);
+      font-size: .75em;
+      font-weight: 700;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-item {
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: 0;
+      border-radius: 13px;
+      padding: 0 14px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .nav-item svg { width: 20px; height: 20px; flex: 0 0 auto; }
+
+    .nav-item[aria-current="page"] {
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+
+    .nav-item[aria-current="page"] svg { color: var(--accent); }
+
+    .device-note {
+      margin-top: auto;
+      min-height: 48px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .018);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .device-note-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .75em;
+      font-weight: 650;
+    }
+
+    .device-note-row::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
+
+    .device-note p {
+      margin: 7px 0 0;
+      color: var(--quiet);
+      font-size: .75em;
+      line-height: 1.55;
+    }
+
+    .content {
+      min-width: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-color: rgba(244, 239, 230, .18) transparent;
+      scrollbar-width: thin;
+      padding: 28px clamp(24px, 3vw, 48px) 54px;
+    }
+
+    .content::-webkit-scrollbar { width: 8px; }
+    .content::-webkit-scrollbar-thumb { background: rgba(244, 239, 230, .16); border-radius: 999px; }
+
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      margin-bottom: 7px;
+      color: var(--accent);
+      font-size: .75em;
+      font-weight: 760;
+      letter-spacing: .12em;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      margin-bottom: 7px;
+      font-size: clamp(1.625em, 2.5vw, 2.375em);
+      line-height: 1.08;
+      letter-spacing: -.03em;
+    }
+
+    .page-intro {
+      max-width: 700px;
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: .8125em;
+      line-height: 1.65;
+    }
+
+    .truth-chip {
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(117, 215, 161, .28);
+      border-radius: 999px;
+      padding: 0 14px;
+      background: rgba(117, 215, 161, .08);
+      color: #a7e8c3;
+      font-size: .75em;
+      white-space: nowrap;
+    }
+
+    .truth-chip svg { width: 16px; height: 16px; }
+
+    .section-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+      margin: 28px 0 12px;
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-size: 1em;
+      letter-spacing: -.01em;
+    }
+
+    .section-heading p {
+      margin: 0;
+      color: var(--quiet);
+      font-size: .75em;
+    }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(170px, 1fr));
+      gap: 12px;
+    }
+
+    .preset-card {
+      position: relative;
+      min-height: 174px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      background: var(--surface);
+      text-align: left;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .preset-card:hover { transform: translateY(-2px); border-color: var(--line-strong); }
+
+    .preset-card[aria-checked="true"] {
+      border-color: rgba(255, 107, 94, .72);
+      background: linear-gradient(145deg, rgba(255, 107, 94, .11), var(--surface) 52%);
+      box-shadow: inset 0 0 0 1px rgba(255, 107, 94, .18);
+    }
+
+    .preset-card[aria-disabled="true"] {
+      cursor: not-allowed;
+    }
+
+    .preset-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .preset-icon {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      background: var(--surface-3);
+      color: var(--muted);
+    }
+
+    .preset-icon svg { width: 20px; height: 20px; }
+
+    .preset-card[aria-checked="true"] .preset-icon {
+      background: var(--accent);
+      color: var(--accent-dark);
+    }
+
+    .radio-mark {
+      width: 19px;
+      height: 19px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid var(--line-strong);
+      border-radius: 50%;
+    }
+
+    .radio-mark::after {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: transparent;
+    }
+
+    .preset-card[aria-checked="true"] .radio-mark { border-color: var(--accent); }
+    .preset-card[aria-checked="true"] .radio-mark::after { background: var(--accent); }
+
+    .preset-name-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 15px;
+    }
+
+    .preset-name { font-size: 1em; font-weight: 760; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      border-radius: 999px;
+      padding: 0 7px;
+      background: var(--surface-3);
+      color: var(--muted);
+      font-size: .75em;
+      font-weight: 740;
+      white-space: nowrap;
+    }
+
+    .badge.recommended { background: var(--accent-soft); color: #ff9c93; }
+    .badge.locked { background: rgba(244, 198, 107, .11); color: var(--warning); }
+
+    .preset-copy {
+      margin: 8px 0 14px;
+      color: var(--muted);
+      font-size: .75em;
+      line-height: 1.55;
+    }
+
+    .power-line {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--quiet);
+      font-size: .75em;
+    }
+
+    .power-meter { display: flex; gap: 3px; }
+    .power-meter i { width: 12px; height: 4px; border-radius: 99px; background: var(--surface-3); }
+    .power-meter i.on { background: var(--accent); }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(330px, .9fr);
+      gap: 12px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .status-panel { padding: 18px; }
+
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 15px;
+    }
+
+    .panel-title-row h3 { margin: 0; font-size: .875em; }
+
+    .live-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--success);
+      font-size: .75em;
+    }
+
+    .live-state::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 4px rgba(117, 215, 161, .09);
+    }
+
+    .live-state.warning { color: var(--warning); }
+    .live-state.danger { color: var(--danger); }
+    .live-state.simulated { color: var(--quiet); }
+    .live-state.simulated::before { background: var(--quiet); box-shadow: 0 0 0 4px rgba(145, 141, 134, .09); }
+    .live-state.simulated.warning { color: var(--warning); }
+    .live-state.simulated.danger { color: var(--danger); }
+    .live-state.warning::before { background: var(--warning); }
+    .live-state.danger::before { background: var(--danger); }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      min-width: 0;
+      min-height: 68px;
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: rgba(255, 255, 255, .025);
+    }
+
+    .metric-label { color: var(--quiet); font-size: .75em; }
+    .metric-value { margin-top: 7px; font-size: .9375em; font-weight: 720; white-space: nowrap; }
+    .metric-unit { margin-left: 3px; color: var(--muted); font-size: .75em; font-weight: 500; }
+
+    .pipeline-strip {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 16px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .018);
+      color: var(--quiet);
+      font-size: .75em;
+      line-height: 1.45;
+    }
+
+    .pipeline-strip strong { color: var(--text); font-weight: 700; }
+
+    .fallback-message {
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 12px;
+      border: 1px solid rgba(244, 198, 107, .18);
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: rgba(244, 198, 107, .07);
+      color: #e9d6ac;
+      font-size: .75em;
+      line-height: 1.5;
+    }
+
+    .fallback-message.show { display: flex; }
+    .fallback-message svg { flex: 0 0 auto; width: 17px; height: 17px; color: var(--warning); }
+    .fallback-message.info {
+      border-color: rgba(117, 215, 161, .18);
+      background: rgba(117, 215, 161, .06);
+      color: #cbe8d5;
+    }
+    .fallback-message.info svg { color: var(--success); }
+
+    .preview-panel {
+      position: relative;
+      min-height: 242px;
+      overflow: hidden;
+      padding: 14px;
+      background: #111318;
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      color: var(--quiet);
+      font-size: .75em;
+    }
+
+    .preview-tag {
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: rgba(255, 255, 255, .05);
+      color: var(--muted);
+    }
+
+    .game-screen {
+      position: relative;
+      height: 178px;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(244, 239, 230, .16);
+      border-radius: 10px;
+      background: #090a0d;
+    }
+
+    #gameCanvas {
+      width: auto;
+      height: 100%;
+      max-width: 100%;
+      aspect-ratio: 4 / 3;
+      display: block;
+      image-rendering: pixelated;
+    }
+
+    .scanlines {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(0, 0, 0, .17) 3px 4px);
+    }
+
+    .preview-caption {
+      position: absolute;
+      right: 22px;
+      bottom: 22px;
+      border-radius: 8px;
+      padding: 7px 9px;
+      background: rgba(12, 13, 15, .78);
+      color: var(--text);
+      font-size: .75em;
+      backdrop-filter: blur(8px);
+    }
+
+    .advanced-panel,
+    .aspect-panel {
+      padding: 18px;
+    }
+
+    .advanced-panel[hidden] { display: none; }
+
+    .setting-row {
+      display: grid;
+      grid-template-columns: 175px minmax(0, 1fr);
+      gap: 22px;
+      padding: 16px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .setting-row:first-of-type { border-top: 0; padding-top: 4px; }
+
+    .setting-label strong { display: block; font-size: .8125em; }
+    .setting-label span { display: block; margin-top: 5px; color: var(--quiet); font-size: .75em; line-height: 1.5; }
+
+    .choice-group {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 7px;
+    }
+
+    .choice {
+      position: relative;
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      padding: 8px 13px;
+      background: var(--surface-2);
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .choice[aria-checked="true"] {
+      border-color: rgba(255, 107, 94, .52);
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+
+    .choice:disabled {
+      opacity: .46;
+      cursor: not-allowed;
+      text-decoration: none;
+    }
+
+    .choice small {
+      display: block;
+      margin-top: -1px;
+      color: var(--warning);
+      font-size: .75em;
+      line-height: 1;
+    }
+
+    .toggle-row {
+      min-height: 46px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .switch {
+      position: relative;
+      width: 56px;
+      height: 48px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .switch::before {
+      content: "";
+      position: absolute;
+      top: 9px;
+      left: 3px;
+      width: 50px;
+      height: 29px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--surface-3);
+      transition: background 160ms ease;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 14px;
+      left: 8px;
+      width: 19px;
+      height: 19px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 160ms ease, background 160ms ease;
+    }
+
+    .switch[aria-checked="true"]::before { background: var(--accent); border-color: var(--accent); }
+    .switch[aria-checked="true"]::after { transform: translateX(21px); background: var(--accent-dark); }
+
+    .explain-panel {
+      padding: 18px;
+    }
+
+    .explain-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .explain-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(255, 255, 255, .022);
+    }
+
+    .explain-item svg { flex: 0 0 auto; width: 19px; height: 19px; color: var(--accent); }
+    .explain-item strong { display: block; font-size: .8125em; }
+    .explain-item p { margin: 4px 0 0; color: var(--quiet); font-size: .75em; line-height: 1.55; }
+
+    .toast {
+      position: fixed;
+      z-index: 80;
+      left: 50%;
+      bottom: 28px;
+      transform: translate(-50%, 20px);
+      max-width: min(430px, calc(100vw - 32px));
+      opacity: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      padding: 11px 16px;
+      background: #25282e;
+      box-shadow: 0 16px 60px rgba(0, 0, 0, .35);
+      color: var(--text);
+      font-size: calc(12px * var(--font-scale));
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    .modal-backdrop {
+      position: fixed;
+      z-index: 100;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(4, 5, 7, .76);
+      backdrop-filter: blur(12px);
+      font-size: calc(16px * var(--font-scale));
+    }
+
+    .modal-backdrop[hidden] { display: none; }
+
+    .modal {
+      width: min(520px, 100%);
+      max-height: calc(100vh - 48px);
+      overflow-y: auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 22px;
+      padding: 24px;
+      background: #1a1c21;
+      box-shadow: var(--shadow);
+    }
+
+    .modal-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: rgba(244, 198, 107, .12);
+      color: var(--warning);
+    }
+
+    .modal-icon svg { width: 23px; height: 23px; }
+    .modal h2 { margin: 18px 0 8px; font-size: 1.375em; }
+    .modal > p { color: var(--muted); font-size: .8125em; line-height: 1.65; }
+
+    .risk-list {
+      display: grid;
+      gap: 9px;
+      margin: 18px 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .risk-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      color: var(--muted);
+      font-size: .75em;
+      line-height: 1.55;
+    }
+
+    .risk-list svg { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; color: var(--accent); }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .modal-button {
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0 17px;
+      background: var(--surface-2);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .modal-button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--accent-dark);
+      font-weight: 760;
+    }
+
+    @media (max-width: 1180px) {
+      .settings-shell { grid-template-columns: 208px minmax(0, 1fr); }
+      .sidebar { padding-left: 14px; padding-right: 14px; }
+      .preset-grid { grid-template-columns: repeat(2, minmax(190px, 1fr)); }
+      .dashboard { grid-template-columns: 1fr; }
+      .preview-panel { min-height: 224px; }
+    }
+
+    @media (max-width: 1440px) {
+      .device {
+        width: min(1280px, 100cqw, calc(100cqh * 1.777778));
+        aspect-ratio: 16 / 9;
+      }
+    }
+
+    @media (max-height: 800px) {
+      .sidebar { padding-top: 18px; padding-bottom: 18px; }
+      .nav-label { margin-top: 14px; }
+      .device-note { padding: 10px; }
+      .device-note p { display: none; }
+    }
+
+    @media (max-width: 820px) {
+      .prototype-title { display: none; }
+      .font-group { display: none; }
+      .page { padding: 8px; }
+      .device { width: min(1280px, 100cqw, calc(100cqh * 1.777778)); border-radius: 22px; }
+      .settings-shell { grid-template-columns: 90px minmax(0, 1fr); }
+      .sidebar { padding: 18px 10px; }
+      .brand { justify-content: center; padding-left: 0; padding-right: 0; }
+      .brand-copy, .nav-label, .nav-item span, .device-note { display: none; }
+      .nav-item { justify-content: center; padding: 0; }
+      .content { padding: 22px 18px 48px; }
+      .page-header { display: block; }
+      .truth-chip { margin-top: 14px; }
+      .preset-grid { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+      .preset-card { min-width: 225px; scroll-snap-align: start; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .setting-row { grid-template-columns: 1fr; gap: 10px; }
+      .choice-group { justify-content: flex-start; }
+      .explain-grid { grid-template-columns: 1fr; }
+    }
+
+    body.font-2 .preset-grid { grid-template-columns: 1fr; }
+    body.font-2 .dashboard { grid-template-columns: 1fr; }
+    body.font-2 .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    body.font-2 .setting-row { grid-template-columns: 1fr; }
+    body.font-2 .choice-group { justify-content: flex-start; }
+    body.font-2 .preset-card { min-width: 0; }
+    body.font-2 .page-header { display: block; }
+    body.font-2 .truth-chip { margin-top: 14px; max-width: 100%; }
+
+    @media (min-width: 821px) {
+      body.font-2 .settings-shell { grid-template-columns: 300px minmax(0, 1fr); }
+    }
+
+    @media (max-width: 820px) {
+      body.font-2 .preset-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        overflow-x: visible;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 1ms !important; animation-duration: 1ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="prototype-bar" aria-label="原型状态控制栏">
+    <div class="prototype-title">
+      <span class="prototype-dot" aria-hidden="true"></span>
+      <span><strong>FlyNES 高仿真原型</strong><br>显示质量与功耗模式</span>
+    </div>
+    <div class="scenario-group" role="radiogroup" aria-label="构建能力">
+      <button class="scenario-button" role="radio" data-capability="current" aria-checked="true" tabindex="0">当前构建</button>
+      <button class="scenario-button" role="radio" data-capability="certified" aria-checked="false" tabindex="-1">认证后目标</button>
+    </div>
+    <div class="scenario-group" role="radiogroup" aria-label="运行约束">
+      <button class="scenario-button" role="radio" data-runtime="normal" aria-checked="true" tabindex="0">运行正常</button>
+      <button class="scenario-button" role="radio" data-runtime="system60" aria-checked="false" tabindex="-1">系统降至 60Hz</button>
+      <button class="scenario-button" role="radio" data-runtime="thermal" aria-checked="false" tabindex="-1">温控降档</button>
+    </div>
+    <div class="font-group" role="radiogroup" aria-label="字体缩放预览">
+      <button class="font-button" role="radio" data-font="1" aria-checked="true" tabindex="0">1.0×</button>
+      <button class="font-button" role="radio" data-font="1.3" aria-checked="false" tabindex="-1">1.3×</button>
+      <button class="font-button" role="radio" data-font="2" aria-checked="false" tabindex="-1">2.0×</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="device" aria-label="横屏设置页自适应画布模拟">
+      <div class="settings-shell">
+        <aside class="sidebar">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7.5h10a4 4 0 0 1 3.84 5.12l-1.14 3.9a2.3 2.3 0 0 1-3.92.9l-1.36-1.5H9.58l-1.36 1.5a2.3 2.3 0 0 1-3.92-.9l-1.14-3.9A4 4 0 0 1 7 7.5Z"/><path d="M8 10.2v3.6M6.2 12h3.6M15.8 11.2h.01M18 13h.01"/></svg>
+            </div>
+            <div class="brand-copy"><div class="brand-name">FlyNES</div><div class="brand-sub">SETTINGS</div></div>
+          </div>
+
+          <div class="nav-label">设置</div>
+          <nav class="nav-list" aria-label="设置分类">
+            <button class="nav-item" aria-current="page" aria-label="显示与画质">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>显示与画质</span>
+            </button>
+            <button class="nav-item" aria-label="操控" data-placeholder="操控设置不在本次原型范围内">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 7.5h10a4 4 0 0 1 3.84 5.12l-1.14 3.9a2.3 2.3 0 0 1-3.92.9l-1.36-1.5H9.58l-1.36 1.5a2.3 2.3 0 0 1-3.92-.9l-1.14-3.9A4 4 0 0 1 7 7.5Z"/><path d="M8 10v4M6 12h4M16 11h.01M18 13h.01"/></svg><span>操控</span>
+            </button>
+            <button class="nav-item" aria-label="音频" data-placeholder="音频设置不在本次原型范围内">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg><span>音频</span>
+            </button>
+            <button class="nav-item" aria-label="游戏与语言" data-placeholder="游戏与语言设置不在本次原型范围内">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg><span>游戏与语言</span>
+            </button>
+            <button class="nav-item" aria-label="关于" data-placeholder="关于页面不在本次原型范围内">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg><span>关于</span>
+            </button>
+          </nav>
+
+          <button class="device-note" type="button" data-placeholder="设备模式来自原型模拟；实机重连后才能采集真实能力。">
+            <div class="device-note-row" id="deviceState">V2324A 示例 · 当前构建</div>
+            <p>原型模拟 60 / 72 / 90 / 120Hz；真实模式需重新连接手机后采集。运行回退不会改变认证状态。</p>
+          </button>
+        </aside>
+
+        <section class="content" id="content">
+          <header class="page-header">
+            <div>
+              <div class="eyebrow">DISPLAY QUALITY</div>
+              <h1>显示与画质</h1>
+              <p class="page-intro">分别控制屏幕刷新、运动处理和像素重建。屏幕 120Hz 不会被写成 120 个独立游戏帧，所有回退都会显示实际原因。</p>
+            </div>
+            <div class="truth-chip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>
+              请求值与系统报告分开
+            </div>
+          </header>
+
+          <div class="section-heading">
+            <h2>选择使用偏好</h2>
+            <p>切换预设不会改变画面比例</p>
+          </div>
+
+          <div class="preset-grid" role="radiogroup" aria-label="显示质量模式">
+            <button class="preset-card" data-preset="eco" role="radio" aria-checked="false" tabindex="-1">
+              <span class="preset-top"><span class="preset-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 4C12 4 5 8 5 15c0 2 1 4 3 5 0-6 4-10 10-12-5 3-8 7-8 12 7 0 11-5 10-16Z"/></svg></span><span class="radio-mark"></span></span>
+              <span class="preset-name-row"><span class="preset-name">省电</span></span>
+              <span class="preset-copy">60Hz 原生节奏<br>像素原貌 · 最低额外处理</span>
+              <span class="power-line"><span id="ecoPower">预计功耗 · 低</span><span class="power-meter" id="ecoPowerMeter"><i class="on"></i><i></i><i></i><i></i></span></span>
+            </button>
+
+            <button class="preset-card" data-preset="balanced" role="radio" aria-checked="true" tabindex="0">
+              <span class="preset-top"><span class="preset-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M7 16l5-11 5 11M9 12h6"/></svg></span><span class="radio-mark"></span></span>
+              <span class="preset-name-row"><span class="preset-name">均衡</span><span class="badge recommended">推荐</span></span>
+              <span class="preset-copy" id="balancedCopy">60Hz 原生节奏<br>当前清晰缩放 · 重建待实现</span>
+              <span class="power-line"><span id="balancedPower">预计功耗 · 中低</span><span class="power-meter" id="balancedPowerMeter"><i class="on"></i><i class="on"></i><i></i><i></i></span></span>
+            </button>
+
+            <button class="preset-card" data-preset="extreme" role="radio" aria-checked="false" aria-disabled="true" tabindex="-1">
+              <span class="preset-top"><span class="preset-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg></span><span class="radio-mark"></span></span>
+              <span class="preset-name-row"><span class="preset-name">极致</span><span class="badge locked" id="extremeBadge">尚未实现</span></span>
+              <span class="preset-copy">120Hz 合成运动<br>ScaleFX 3× · 高功耗</span>
+              <span class="power-line"><span id="extremePower">预计功耗 · 高</span><span class="power-meter" id="extremePowerMeter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></span>
+            </button>
+
+            <button class="preset-card" data-preset="custom" role="radio" aria-checked="false" tabindex="-1">
+              <span class="preset-top"><span class="preset-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></svg></span><span class="radio-mark"></span></span>
+              <span class="preset-name-row"><span class="preset-name">自定义</span></span>
+              <span class="preset-copy">独立选择刷新、时间处理<br>像素重建与显示风格</span>
+              <span class="power-line"><span id="customPower">预计功耗 · 待测</span><span class="power-meter" id="customPowerMeter"><i></i><i></i><i></i><i></i></span></span>
+            </button>
+          </div>
+
+          <div class="section-heading">
+            <h2>配置结果推演</h2>
+            <p>仅验证信息层级；手机未连接，所有速率都不是实机成绩</p>
+          </div>
+
+          <div class="dashboard">
+            <article class="panel status-panel">
+              <div class="panel-title-row"><h3 id="statusTitle">均衡 · 模拟完整配置</h3><span class="live-state simulated" id="liveState">原型推演</span></div>
+              <div class="metric-grid">
+                <div class="metric"><div class="metric-label">核心标称产出</div><div class="metric-value"><span id="sourceFps">60.10</span><span class="metric-unit">fps · NTSC</span></div></div>
+                <div class="metric"><div class="metric-label">用户请求</div><div class="metric-value"><span id="displayRequest">60Hz</span></div></div>
+                <div class="metric"><div class="metric-label">保护后请求</div><div class="metric-value"><span id="displayEffective">60Hz</span></div></div>
+                <div class="metric"><div class="metric-label">系统报告活动模式</div><div class="metric-value"><span id="displayActual">模拟 60Hz</span></div></div>
+                <div class="metric"><div class="metric-label">唯一源帧上传</div><div class="metric-value"><span id="uniqueFps">≈59.98</span><span class="metric-unit">fps · 推演</span></div></div>
+                <div class="metric"><div class="metric-label">合成时隙提交</div><div class="metric-value"><span id="syntheticFps">≈0.00</span><span class="metric-unit">fps · 推演</span></div></div>
+                <div class="metric"><div class="metric-label">应用提交</div><div class="metric-value"><span id="submitFps">≈59.98</span><span class="metric-unit">fps · 推演</span></div></div>
+                <div class="metric"><div class="metric-label">像素处理</div><div class="metric-value"><span id="spatialMetric">Sharp</span><span class="metric-unit" id="spatialUnit">缩放</span></div></div>
+              </div>
+              <div class="pipeline-strip"><span>时间管线 <strong id="temporalState">即时原生</strong></span><span>音频对齐 <strong id="audioDelay">0 ms</strong></span><span>物理扫描 <strong>尚未连接实机验证</strong></span></div>
+              <div class="fallback-message" id="fallbackMessage" role="status" aria-live="polite" aria-atomic="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.6 2.6 17a2 2 0 0 0 1.74 3h15.32a2 2 0 0 0 1.74-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/></svg>
+                <span id="fallbackText"></span>
+              </div>
+            </article>
+
+            <article class="panel preview-panel">
+              <div class="preview-header"><span>交互状态示意 · 非算法效果预览</span><span class="preview-tag" id="previewTag">Sharp 缩放</span></div>
+              <div class="game-screen">
+                <canvas id="gameCanvas" width="256" height="240" aria-label="当前清晰缩放交互状态示意，不代表算法效果"></canvas>
+                <div class="scanlines" id="scanlines"></div>
+              </div>
+              <div class="preview-caption" id="previewCaption">原生时间 · 60Hz</div>
+            </article>
+          </div>
+
+          <div class="section-heading"><h2>画面比例</h2><p>独立保存，不随功耗预设改变</p></div>
+          <article class="panel aspect-panel">
+            <div class="setting-row">
+              <div class="setting-label"><strong>游戏画面比例</strong><span>4:3 适合电视观感；方形像素保留 256×240 几何；整数倍优先避免采样抖动。</span></div>
+              <div class="choice-group" role="radiogroup" aria-label="游戏画面比例">
+                <button class="choice" role="radio" data-group="aspect" data-value="fourThree" aria-checked="true" tabindex="0">4:3 显示</button>
+                <button class="choice" role="radio" data-group="aspect" data-value="square" aria-checked="false" tabindex="-1">方形像素</button>
+                <button class="choice" role="radio" data-group="aspect" data-value="integer" aria-checked="false" tabindex="-1">整数倍缩放</button>
+              </div>
+            </div>
+          </article>
+
+          <div class="section-heading"><h2>高级自定义</h2><p>选择“自定义”后展开</p></div>
+          <article class="panel advanced-panel" id="advancedPanel" hidden>
+            <div class="panel-title-row"><h3>独立调整</h3><span class="badge">按完整组合校验</span></div>
+
+            <div class="setting-row">
+              <div class="setting-label"><strong>屏幕刷新</strong><span>控制物理扫描机会，不代表独立游戏帧数。</span></div>
+              <div class="choice-group" role="radiogroup" aria-label="屏幕刷新">
+                <button class="choice" role="radio" data-group="refresh" data-value="system" aria-checked="false" tabindex="-1">跟随系统</button>
+                <button class="choice" role="radio" data-group="refresh" data-value="60" aria-checked="true" tabindex="0">60Hz</button>
+                <button class="choice" role="radio" data-group="refresh" data-value="90" aria-checked="false" tabindex="-1">90Hz<small>节奏不均</small></button>
+                <button class="choice" role="radio" data-group="refresh" data-value="120" aria-checked="false" tabindex="-1">120Hz<small>低延迟扫描</small></button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label"><strong>时间处理</strong><span>原生帧或实验合成中间帧；低延迟 120 属于屏幕刷新策略。</span></div>
+              <div class="choice-group" role="radiogroup" aria-label="时间处理">
+                <button class="choice" role="radio" data-group="temporal" data-value="native" aria-checked="true" tabindex="0">原生帧</button>
+                <button class="choice" role="radio" id="motionChoice" data-group="temporal" data-value="motion" aria-checked="false" tabindex="-1" disabled>运动补偿 120<small>尚未实现</small></button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label"><strong>像素重建</strong><span>改善放大与轮廓，不会恢复 ROM 中不存在的细节。</span></div>
+              <div class="choice-group" role="radiogroup" aria-label="像素重建">
+                <button class="choice" role="radio" data-group="spatial" data-value="nearest" aria-checked="false" tabindex="-1">像素原貌</button>
+                <button class="choice" role="radio" data-group="spatial" data-value="sharp" aria-checked="true" tabindex="0">清晰缩放</button>
+                <button class="choice" role="radio" id="mmpxChoice" data-group="spatial" data-value="mmpx" aria-checked="false" tabindex="-1" disabled>MMPX 2×<small>尚未实现</small></button>
+                <button class="choice" role="radio" id="scaleFxChoice" data-group="spatial" data-value="scalefx" aria-checked="false" tabindex="-1" disabled>ScaleFX 3×<small>尚未实现</small></button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label"><strong>CRT 显示风格</strong><span>扫描线和遮罩属于复古风格，不计入高清增强。</span></div>
+              <div class="toggle-row"><span id="crtState">关闭</span><button class="switch" id="crtSwitch" role="switch" aria-checked="false" aria-label="CRT 显示风格"></button></div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label"><strong>自适应保护</strong><span>温度、电量或持续掉帧时逐级降档；临界保护不可关闭。</span></div>
+              <div class="toggle-row"><span id="adaptiveState">开启</span><button class="switch" id="adaptiveSwitch" role="switch" aria-checked="true" aria-label="自适应功耗与温控保护"></button></div>
+            </div>
+          </article>
+
+          <div class="section-heading"><h2>能力说明</h2><p>不会把名词包装成效果</p></div>
+          <article class="panel explain-panel">
+            <div class="explain-grid">
+              <div class="explain-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12h16M15 7l5 5-5 5"/><circle cx="7" cy="12" r="3"/></svg>
+                <div><strong>120Hz 低延迟 ≠ 120 个游戏帧</strong><p>它缩短屏幕扫描机会；本原型 NTSC 约 60 个独立帧，PAL 则约 50，均不会凭空变成 120。</p></div>
+              </div>
+              <div class="explain-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+                <div><strong>像素重建 ≠ 恢复真实高清细节</strong><p>MMPX 和 ScaleFX 重构斜线与轮廓，不会创造原始卡带里没有的材质。</p></div>
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="riskModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="riskTitle" aria-describedby="riskDescription">
+      <div class="modal-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.6 2.6 17a2 2 0 0 0 1.74 3h15.32a2 2 0 0 0 1.74-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/></svg></div>
+      <h2 id="riskTitle">申请实验性运动补偿？</h2>
+      <p id="riskDescription">确认后会先等待同 generation 的 120Hz 报告稳定 3 秒，再预热并生成中间画面；它不是新的游戏逻辑帧。</p>
+      <ul class="risk-list">
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg><span>等待下一帧进行双向估计，增加约 16.7ms 基础画面延迟。</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg><span>精灵闪烁、场景切换和快速遮挡可能出现短暂伪影。</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg><span>温度、电量或帧时间不满足门限时会自动切回原生帧。</span></li>
+      </ul>
+      <div class="modal-actions"><button class="modal-button" id="cancelRisk">保持原生</button><button class="modal-button primary" id="acceptRisk">了解风险并继续</button></div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const state = {
+      capability: 'current',
+      runtime: 'normal',
+      preset: 'balanced',
+      aspect: 'fourThree',
+      refresh: '60',
+      temporal: 'native',
+      spatial: 'sharp',
+      crt: false,
+      adaptive: true,
+      motionConsentKey: null,
+      motionTransition: 'inactive'
+    };
+
+    let thermalDrainTimer = 0;
+    let motionLeaseTimer = 0;
+    let motionPrimeTimer = 0;
+    let motionRequestGeneration = 0;
+
+    const presetConfigs = {
+      eco: { refresh: '60', temporal: 'native', spatial: 'nearest', crt: false, adaptive: true },
+      extreme: { refresh: '120', temporal: 'motion', spatial: 'scalefx', crt: false, adaptive: true },
+      custom: null
+    };
+
+    function configForPreset(preset) {
+      if (preset === 'balanced') {
+        return {
+          refresh: '60',
+          temporal: 'native',
+          spatial: state.capability === 'certified' ? 'mmpx' : 'sharp',
+          crt: false,
+          adaptive: true
+        };
+      }
+      return presetConfigs[preset];
+    }
+
+    const labels = {
+      preset: { eco: '省电', balanced: '均衡', extreme: '极致', custom: '自定义' },
+      aspect: { fourThree: '4:3 显示', square: '方形像素', integer: '整数倍缩放' },
+      spatial: { nearest: ['Nearest', '原貌'], sharp: ['Sharp', '缩放'], mmpx: ['MMPX', '2×'], scalefx: ['ScaleFX', '3×'] }
+    };
+
+    const certifiedTargetConfigurations = new Set([
+      '60|native|mmpx|false|fourThree',
+      '120|native|mmpx|false|fourThree',
+      '60|native|scalefx|false|fourThree',
+      '120|motion|scalefx|false|fourThree',
+      '60|native|mmpx|false|square',
+      '120|native|mmpx|false|square',
+      '60|native|scalefx|false|square',
+      '120|motion|scalefx|false|square',
+      '60|native|mmpx|false|integer',
+      '120|native|mmpx|false|integer',
+      '60|native|scalefx|false|integer',
+      '120|motion|scalefx|false|integer'
+    ]);
+
+    const $ = selector => document.querySelector(selector);
+    const $$ = selector => [...document.querySelectorAll(selector)];
+    const toast = $('#toast');
+    let toastTimer = 0;
+    let previousFocus = null;
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1900);
+    }
+
+    function cancelMotionActivation() {
+      clearTimeout(motionLeaseTimer);
+      clearTimeout(motionPrimeTimer);
+      motionLeaseTimer = 0;
+      motionPrimeTimer = 0;
+      motionRequestGeneration += 1;
+    }
+
+    function canActivateRequestedMotion() {
+      return state.capability === 'certified'
+        && hasMotionConsent()
+        && state.runtime === 'normal'
+        && state.refresh === '120'
+        && state.temporal === 'motion'
+        && isTargetConfigurationQualified(state.refresh, state.temporal, state.spatial, state.crt);
+    }
+
+    function beginMotionActivation(fromBufferedHold = false) {
+      cancelMotionActivation();
+      const generation = motionRequestGeneration;
+      if (!canActivateRequestedMotion()) {
+        state.motionTransition = 'inactive';
+        render();
+        return;
+      }
+      state.motionTransition = fromBufferedHold ? 'recoveryWaiting' : 'waiting';
+      render();
+      motionLeaseTimer = setTimeout(() => {
+        if (generation !== motionRequestGeneration || !canActivateRequestedMotion()) return;
+        state.motionTransition = fromBufferedHold ? 'shadow' : 'priming';
+        render();
+        showToast(fromBufferedHold
+          ? '模拟 120Hz 报告已稳定 3 秒，开始非呈现 Shadow 试算'
+          : '模拟同 generation 的 120Hz 报告已稳定 3 秒，开始预热');
+        motionPrimeTimer = setTimeout(() => {
+          const expected = fromBufferedHold ? 'shadow' : 'priming';
+          if (generation !== motionRequestGeneration || !canActivateRequestedMotion() || state.motionTransition !== expected) return;
+          state.motionTransition = 'active';
+          render();
+          showToast(fromBufferedHold ? 'Shadow 门禁通过，运动补偿恢复推演' : '预热完成，运动补偿开始推演');
+        }, fromBufferedHold ? 2000 : 650);
+      }, 3000);
+    }
+
+    function selectChoice(group, value) {
+      $$(`[data-group="${group}"]`).forEach(button => {
+        const selected = button.dataset.value === value;
+        button.setAttribute('aria-checked', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+      });
+    }
+
+    function selectHarnessChoice(selector, dataKey, value) {
+      $$(selector).forEach(button => {
+        const selected = button.dataset[dataKey] === value;
+        button.setAttribute('aria-checked', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+      });
+    }
+
+    function updatePresetCards() {
+      $$('.preset-card').forEach(card => {
+        const selected = card.dataset.preset === state.preset;
+        card.setAttribute('aria-checked', String(selected));
+        card.tabIndex = selected ? 0 : -1;
+      });
+    }
+
+    function updateSwitches() {
+      $('#crtSwitch').setAttribute('aria-checked', String(state.crt));
+      $('#crtState').textContent = state.crt ? '开启' : '关闭';
+      $('#adaptiveSwitch').setAttribute('aria-checked', String(state.adaptive));
+      $('#adaptiveState').textContent = state.adaptive ? '开启' : '关闭（临界保护仍生效）';
+    }
+
+    function updateAvailability() {
+      const certified = state.capability === 'certified';
+      const extreme = $('[data-preset="extreme"]');
+      const badge = $('#extremeBadge');
+      const motion = $('#motionChoice');
+      const mmpx = $('#mmpxChoice');
+      const scaleFx = $('#scaleFxChoice');
+
+      extreme.setAttribute('aria-disabled', String(!certified));
+      badge.textContent = certified ? '实验 · 已认证' : '尚未实现';
+      badge.classList.toggle('locked', !certified);
+      motion.disabled = !certified;
+      mmpx.disabled = !certified;
+      scaleFx.disabled = !certified;
+      motion.innerHTML = certified ? '运动补偿 120<small>仅完整组合</small>' : '运动补偿 120<small>尚未实现</small>';
+      mmpx.innerHTML = certified ? 'MMPX 2×<small>2 组目标配置</small>' : 'MMPX 2×<small>尚未实现</small>';
+      scaleFx.innerHTML = certified ? 'ScaleFX 3×<small>2 组目标配置</small>' : 'ScaleFX 3×<small>尚未实现</small>';
+      $('#balancedCopy').innerHTML = certified
+        ? '60Hz 原生节奏<br>像素重建 · 认证后目标'
+        : '60Hz 原生节奏<br>清晰缩放 · 当前完整配置';
+      $('#deviceState').textContent = certified
+        ? 'V2324A 示例 · 目标已认证'
+        : 'V2324A 示例 · 当前构建';
+
+      if (!certified) {
+        cancelMotionActivation();
+        state.motionTransition = 'inactive';
+      }
+      if (!certified && state.preset === 'extreme') applyPreset('balanced', false);
+      if (!certified && state.preset === 'custom') {
+        if (state.temporal === 'motion') state.temporal = 'native';
+        if (state.spatial === 'mmpx' || state.spatial === 'scalefx') state.spatial = 'sharp';
+      }
+      selectChoice('temporal', state.temporal);
+      selectChoice('spatial', state.spatial);
+    }
+
+    function applyPreset(preset, fromUser = true) {
+      if (preset === 'extreme' && state.capability !== 'certified') {
+        showToast('当前构建尚未实现并认证极致模式');
+        return;
+      }
+      const extremeConsentKey = configurationKey('120', 'motion', 'scalefx', false);
+      if (preset === 'extreme' && state.motionConsentKey !== extremeConsentKey && fromUser) {
+        const constrained = state.runtime !== 'normal';
+        openRiskModal(
+          () => {
+            applyPreset('extreme', false);
+            const applied = effective();
+            showToast(applied.temporal === 'motion'
+              ? '极致模式已开启并应用完整认证组合'
+              : applied.temporal === 'waiting' || applied.temporal === 'priming'
+                ? '已保存极致偏好；正在等待新 generation 的 120Hz 报告稳定 3 秒'
+              : '已保存极致偏好；当前运行约束下运动补偿未启动');
+          },
+          constrained
+            ? '确认后会保存极致偏好；当前运行约束下不会启动运动补偿，条件恢复并重新通过门禁后才会生效。'
+            : `确认后将申请“120Hz + 运动补偿 + ScaleFX + ${labels.aspect[state.aspect]}”，先等待同 generation 的系统报告稳定 3 秒，再开始预热。它不是新的游戏逻辑帧。`,
+          constrained ? '保存实验性极致偏好？' : '申请实验性运动补偿？',
+          extremeConsentKey
+        );
+        return;
+      }
+      if (preset !== 'extreme' && configForPreset(preset)) state.motionConsentKey = null;
+      state.preset = preset;
+      const config = configForPreset(preset);
+      if (config) Object.assign(state, config);
+      if (!config || config.temporal !== 'motion') {
+        cancelMotionActivation();
+        state.motionTransition = 'inactive';
+      } else if (state.runtime !== 'normal') {
+        cancelMotionActivation();
+        state.motionTransition = 'inactive';
+      }
+      if (preset === 'custom' && state.capability === 'current') {
+        if (state.spatial === 'mmpx' || state.spatial === 'scalefx') state.spatial = 'sharp';
+        if (state.temporal === 'motion') state.temporal = 'native';
+      }
+      updatePresetCards();
+      updateSwitches();
+      $('#advancedPanel').hidden = preset !== 'custom';
+      selectChoice('refresh', state.refresh);
+      selectChoice('temporal', state.temporal);
+      selectChoice('spatial', state.spatial);
+      if (config?.temporal === 'motion' && state.runtime === 'normal') beginMotionActivation();
+      else render();
+      if (fromUser) showToast(`已切换为${labels.preset[preset]}模式`);
+    }
+
+    function setModalBackgroundInert(inert) {
+      $('.page').inert = inert;
+      $('.prototype-bar').inert = inert;
+    }
+
+    const defaultRiskDescription = $('#riskDescription').textContent;
+
+    function openRiskModal(onAccept, description = defaultRiskDescription, title = '申请实验性运动补偿？', consentKey = null) {
+      const backdrop = $('#riskModal');
+      previousFocus = document.activeElement;
+      backdrop._onAccept = onAccept;
+      backdrop._consentKey = consentKey;
+      $('#riskTitle').textContent = title;
+      $('#riskDescription').textContent = description;
+      backdrop.hidden = false;
+      setModalBackgroundInert(true);
+      $('#cancelRisk').focus();
+    }
+
+    function closeRiskModal(accepted) {
+      const backdrop = $('#riskModal');
+      const action = accepted ? backdrop._onAccept : null;
+      const consentKey = accepted ? backdrop._consentKey : null;
+      backdrop._onAccept = null;
+      backdrop._consentKey = null;
+      backdrop.hidden = true;
+      setModalBackgroundInert(false);
+      if (accepted) {
+        state.motionConsentKey = consentKey;
+        if (action) action();
+      }
+      if (previousFocus) previousFocus.focus();
+      previousFocus = null;
+    }
+
+    function appendFallback(existing, next) {
+      return existing ? `${existing} ${next}` : next;
+    }
+
+    function configurationKey(refresh, temporal, spatial, crt, aspect = state.aspect) {
+      return `${refresh}|${temporal}|${spatial}|${crt}|${aspect}`;
+    }
+
+    function hasMotionConsent(refresh = state.refresh, temporal = state.temporal, spatial = state.spatial, crt = state.crt, aspect = state.aspect) {
+      return temporal === 'motion'
+        && state.motionConsentKey === configurationKey(refresh, temporal, spatial, crt, aspect);
+    }
+
+    function isTargetConfigurationQualified(refresh, temporal, spatial, crt, aspect = state.aspect) {
+      if (temporal === 'native' && (spatial === 'nearest' || spatial === 'sharp')) return true;
+      return certifiedTargetConfigurations.has(configurationKey(refresh, temporal, spatial, crt, aspect));
+    }
+
+    function qualifiedMotionTarget() {
+      const candidates = [
+        { refresh: '120', temporal: 'motion', spatial: state.spatial, crt: state.crt },
+        { refresh: '120', temporal: 'motion', spatial: state.spatial, crt: false },
+        { refresh: '120', temporal: 'motion', spatial: 'scalefx', crt: false },
+        { refresh: '120', temporal: 'motion', spatial: 'mmpx', crt: false }
+      ];
+      return candidates.find(candidate => isTargetConfigurationQualified(
+        candidate.refresh, candidate.temporal, candidate.spatial, candidate.crt
+      ));
+    }
+
+    function applyQualifiedMotionTarget(target) {
+      const changes = [];
+      const retainedHold = state.motionTransition === 'hold';
+      if (state.refresh !== target.refresh) changes.push('屏幕刷新改为 120Hz');
+      if (state.spatial !== target.spatial) changes.push(`像素处理改为 ${labels.spatial[target.spatial][0]}`);
+      if (state.crt !== target.crt && !target.crt) changes.push('CRT 关闭');
+      state.preset = 'custom';
+      Object.assign(state, target);
+      cancelMotionActivation();
+      state.motionTransition = state.runtime !== 'normal' && retainedHold ? 'hold' : 'inactive';
+      updatePresetCards();
+      updateSwitches();
+      $('#advancedPanel').hidden = false;
+      selectChoice('refresh', state.refresh);
+      selectChoice('temporal', state.temporal);
+      selectChoice('spatial', state.spatial);
+      if (state.runtime === 'normal') beginMotionActivation();
+      else render();
+      const applied = effective();
+      const action = applied.temporal === 'motion'
+        ? '运动补偿已开启'
+        : applied.temporal === 'buffered'
+          ? '已保存运动补偿偏好；当前保持安全音画缓冲'
+          : applied.temporal === 'waiting' || applied.temporal === 'priming'
+            ? '已保存运动补偿偏好；正在验证同 generation 的 120Hz 报告'
+          : '已保存运动补偿偏好；当前运行约束下未启动';
+      showToast(changes.length ? `${action}；${changes.join('、')}` : action);
+    }
+
+    function resolveTargetConfiguration(refresh, temporal, spatial, crt) {
+      if (isTargetConfigurationQualified(refresh, temporal, spatial, crt)) {
+        return { refresh, temporal, spatial, crt, fallback: '' };
+      }
+
+      const requested = `${refresh === 'system' ? '跟随系统' : `${refresh}Hz`} + ${temporal === 'motion' ? '运动补偿' : '原生帧'} + ${labels.spatial[spatial][0]}${crt ? ' + CRT' : ''} + ${labels.aspect[state.aspect]}`;
+      let nextTemporal = temporal;
+      let nextSpatial = spatial;
+      let nextCrt = crt;
+
+      if (nextCrt && isTargetConfigurationQualified(refresh, nextTemporal, nextSpatial, false)) {
+        nextCrt = false;
+      } else {
+        if (nextTemporal === 'motion') nextTemporal = 'native';
+        if (!isTargetConfigurationQualified(refresh, nextTemporal, nextSpatial, nextCrt) && nextCrt && isTargetConfigurationQualified(refresh, nextTemporal, nextSpatial, false)) {
+          nextCrt = false;
+        }
+        if (!isTargetConfigurationQualified(refresh, nextTemporal, nextSpatial, nextCrt)) {
+          nextSpatial = 'sharp';
+          nextTemporal = 'native';
+        }
+      }
+
+      const applied = `${refresh === 'system' ? '跟随系统' : `${refresh}Hz`} + ${nextTemporal === 'motion' ? '运动补偿' : '原生帧'} + ${labels.spatial[nextSpatial][0]}${nextCrt ? ' + CRT' : ''} + ${labels.aspect[state.aspect]}`;
+      return {
+        refresh,
+        temporal: nextTemporal,
+        spatial: nextSpatial,
+        crt: nextCrt,
+        fallback: `所选组合“${requested}”没有完整配置认证，原型按同一解析门应用“${applied}”；不会把单项资格拼成已认证组合。`
+      };
+    }
+
+    function effective() {
+      const requestedLabel = state.refresh === 'system' ? '跟随系统' : `${state.refresh}Hz`;
+      let effectiveRefresh = state.refresh;
+      let actualRefresh = state.refresh === 'system' ? '90' : state.refresh;
+      let temporal = state.temporal;
+      let spatial = state.spatial;
+      let crt = state.crt;
+      let fallback = '';
+      let notice = '';
+
+      if (state.capability === 'current') {
+        if (spatial === 'mmpx' || spatial === 'scalefx') {
+          spatial = 'sharp';
+          fallback = appendFallback(fallback, '当前构建尚未实现所选像素重建，已使用清晰缩放。');
+        }
+        if (temporal === 'motion') {
+          temporal = 'native';
+          fallback = appendFallback(fallback, '当前构建尚未实现运动补偿，已保持原生帧。');
+        }
+      } else {
+        const qualified = resolveTargetConfiguration(effectiveRefresh, temporal, spatial, crt);
+        temporal = qualified.temporal;
+        spatial = qualified.spatial;
+        crt = qualified.crt;
+        fallback = appendFallback(fallback, qualified.fallback);
+      }
+      if (temporal === 'motion' && state.refresh !== '120') {
+        temporal = 'native';
+        fallback = appendFallback(fallback, '运动补偿需要 120Hz，已保持原生帧。');
+      }
+      if (state.runtime === 'normal' && temporal === 'motion') {
+        if (!hasMotionConsent()) {
+          temporal = 'native';
+          fallback = appendFallback(fallback, '完整配置身份已变化，原有运动补偿风险确认已失效；重新确认前保持即时原生。');
+        } else if (state.motionTransition === 'waiting') {
+          temporal = 'waiting';
+          notice = '运动补偿请求已保存；原型正在模拟新 request generation 的 120Hz 活动模式连续稳定 3 秒。计时完成前保持即时原生与 0ms 音频延迟。';
+        } else if (state.motionTransition === 'priming') {
+          temporal = 'priming';
+          notice = '同 generation 的模拟 120Hz 报告已连续稳定 3 秒；正在取得相邻真实帧并预热音画队列，尚未提交合成帧。';
+        } else if (state.motionTransition === 'recoveryWaiting') {
+          temporal = 'buffered';
+          notice = '旧活动模式已恢复；仍保持一帧音画缓冲，正在等待新 request generation 的 120Hz 报告连续稳定 3 秒。';
+        } else if (state.motionTransition === 'shadow') {
+          temporal = 'buffered';
+          notice = '新 generation 的模拟 120Hz 报告已稳定；正在做非呈现 Shadow 试算，真实帧仍沿缓冲时间线提交。';
+        } else if (state.motionTransition !== 'active') {
+          temporal = 'native';
+          notice = '运动补偿偏好已保存，但尚未取得新的同 generation 120Hz 稳定 lease；当前保持即时原生。';
+        }
+      }
+      if (state.runtime === 'system60') {
+        actualRefresh = '60';
+        const explicitMismatch = state.refresh !== 'system' && Math.abs(Number(state.refresh) - 60) > 1;
+        if (explicitMismatch && temporal === 'motion') {
+          if (state.motionTransition === 'hold') {
+            temporal = 'buffered';
+            fallback = appendFallback(fallback, `系统或设备策略未接受 ${state.refresh}Hz 请求；活动运动补偿已停止，当前保持同等音画延迟，像素处理继续生效。`);
+          } else {
+            temporal = 'native';
+            fallback = appendFallback(fallback, `系统或设备策略未接受 ${state.refresh}Hz 请求；运动补偿未启动，当前保持即时原生，像素处理继续生效。`);
+          }
+        } else if (explicitMismatch) {
+          fallback = appendFallback(fallback, `系统或设备策略未接受 ${state.refresh}Hz 请求；游戏仍保持原生时间。`);
+        }
+      }
+      if (state.runtime === 'thermal') {
+        const beforeProtection = { refresh: effectiveRefresh, temporal, spatial, crt };
+        const alreadySafe = beforeProtection.refresh === '60' && beforeProtection.temporal === 'native' && beforeProtection.spatial === 'nearest' && !beforeProtection.crt;
+        const changes = [];
+        if (beforeProtection.refresh !== '60') {
+          changes.push(`屏幕请求由 ${beforeProtection.refresh === 'system' ? '跟随系统' : `${beforeProtection.refresh}Hz`} 改为 60Hz`);
+        }
+        const requestedMotion = beforeProtection.temporal === 'motion';
+        const holdingMotionBuffer = requestedMotion && state.motionTransition === 'hold';
+        const drainedMotionBuffer = requestedMotion && state.motionTransition === 'drained';
+        if (holdingMotionBuffer) {
+          changes.push('运动补偿已停止，保持一帧音画缓冲并等待安全边界排空');
+        } else if (drainedMotionBuffer) {
+          changes.push('运动补偿已停止，一帧音画缓冲已在安全边界排空');
+        } else if (requestedMotion) {
+          changes.push('运动补偿因温控保护未启动');
+        }
+        if (beforeProtection.spatial !== 'nearest') {
+          changes.push(`像素处理由 ${labels.spatial[beforeProtection.spatial][0]} 改为 Nearest`);
+        }
+        if (beforeProtection.crt) changes.push('CRT 已关闭');
+        effectiveRefresh = '60';
+        actualRefresh = '60';
+        temporal = holdingMotionBuffer ? 'buffered' : 'native';
+        spatial = 'nearest';
+        crt = false;
+        if (alreadySafe) {
+          notice = '温控保护推演：当前已经是 60Hz + 原生帧 + Nearest，无需降档；用户偏好与有效配置一致。';
+        } else {
+          const resultingState = temporal === 'buffered'
+            ? '当前为缓冲原生保持，音频对齐约 16.7ms'
+            : '当前为即时原生，音频对齐 0ms';
+          fallback = `严重温控推演：${changes.join('；')}。${resultingState}；用户偏好没有被覆盖。`;
+        }
+      }
+      const effectiveRequestLabel = effectiveRefresh === 'system' ? '跟随系统' : `${effectiveRefresh}Hz${state.runtime === 'thermal' ? ' · 安全保护' : ''}`;
+      return { requestedLabel, effectiveRequestLabel, actualRefresh, temporal, spatial, crt, fallback, notice, transition: state.motionTransition };
+    }
+
+    function estimatePower(config, actualRefresh) {
+      const refresh = config.refresh === 'system' ? Number(actualRefresh || 90) : Number(config.refresh);
+      let score = refresh >= 115 ? 1 : refresh >= 85 ? .5 : 0;
+      if (config.spatial === 'sharp') score += .75;
+      if (config.spatial === 'mmpx') score += 1;
+      if (config.spatial === 'scalefx') score += 2;
+      if (config.temporal === 'motion') score += 2;
+      if (config.crt) score += .5;
+      const bars = score < .5 ? 1 : score < 1.5 ? 2 : score < 2.5 ? 3 : 4;
+      return { bars, label: ['低', '中低', '中', '高'][bars - 1] };
+    }
+
+    function paintPower(textSelector, meterSelector, config, actualRefresh, prefix = '预计功耗') {
+      const power = estimatePower(config, actualRefresh);
+      $(textSelector).textContent = `${prefix} · ${power.label}`;
+      $$(`${meterSelector} i`).forEach((item, index) => item.classList.toggle('on', index < power.bars));
+    }
+
+    function renderPower(e) {
+      paintPower('#ecoPower', '#ecoPowerMeter', presetConfigs.eco, '60');
+      paintPower('#balancedPower', '#balancedPowerMeter', configForPreset('balanced'), '60');
+      paintPower('#extremePower', '#extremePowerMeter', presetConfigs.extreme, '120');
+      if (state.preset !== 'custom') {
+        $('#customPower').textContent = '预计功耗 · 按配置';
+        $$('#customPowerMeter i').forEach(item => item.classList.remove('on'));
+        return;
+      }
+      paintPower('#customPower', '#customPowerMeter', { refresh: 'system', temporal: e.temporal === 'motion' ? 'motion' : 'native', spatial: e.spatial, crt: e.crt }, e.actualRefresh, '推演功耗');
+    }
+
+    function render() {
+      const e = effective();
+      const temporalLabels = {
+        motion: '运动补偿',
+        buffered: '缓冲原生保持',
+        waiting: '等待 120Hz 稳定 lease',
+        priming: '运动补偿预热',
+        native: '原生时间'
+      };
+      const temporalText = e.transition === 'recoveryWaiting'
+        ? '缓冲原生 · 等待新 lease'
+        : e.transition === 'shadow' ? '缓冲原生 · Shadow 试算'
+          : temporalLabels[e.temporal] || temporalLabels.native;
+      const synthetic = e.temporal === 'motion' && e.actualRefresh === '120' ? '59.91' : '0.00';
+      const submit = e.temporal === 'motion' && e.actualRefresh === '120' ? '119.89' : '59.98';
+      const spatial = labels.spatial[e.spatial];
+      const fallback = $('#fallbackMessage');
+      const live = $('#liveState');
+      const partial = Boolean(e.fallback);
+      const transitional = e.temporal === 'waiting' || e.temporal === 'priming' || e.transition === 'recoveryWaiting' || e.transition === 'shadow';
+      const message = e.fallback || e.notice;
+
+      $('#statusTitle').textContent = `${labels.preset[state.preset]} · ${partial ? '模拟部分回退' : transitional ? '模拟验证中' : '模拟完整配置'}`;
+      $('#displayRequest').textContent = e.requestedLabel;
+      $('#displayEffective').textContent = e.effectiveRequestLabel;
+      $('#displayActual').textContent = `模拟 ${e.actualRefresh}Hz`;
+      $('#syntheticFps').textContent = `≈${synthetic}`;
+      $('#submitFps').textContent = `≈${submit}`;
+      $('#spatialMetric').textContent = spatial[0];
+      $('#spatialUnit').textContent = spatial[1];
+      $('#temporalState').textContent = e.temporal === 'native' ? '即时原生' : temporalText;
+      $('#audioDelay').textContent = e.temporal === 'motion' || e.temporal === 'buffered'
+        ? '约 16.7 ms'
+        : e.temporal === 'priming' ? '预热中' : '0 ms';
+      $('#previewTag').textContent = `${spatial[0]} ${spatial[1]}`;
+      $('#previewCaption').textContent = `${temporalText} · ${e.actualRefresh}Hz · ${labels.aspect[state.aspect]}`;
+      fallback.classList.toggle('show', Boolean(message));
+      fallback.classList.toggle('info', Boolean(e.notice) && !partial);
+      $('#fallbackText').textContent = message;
+      live.className = `live-state simulated${partial ? state.runtime === 'thermal' ? ' danger' : ' warning' : transitional ? ' warning' : ''}`;
+      live.textContent = partial
+        ? (state.runtime === 'thermal' ? (e.temporal === 'buffered' ? '推演：正在安全排空' : '推演：安全降档完成') : '推演：部分回退')
+        : e.temporal === 'waiting' ? '推演：等待稳定 3 秒'
+          : e.temporal === 'priming' ? '推演：正在预热'
+            : e.transition === 'recoveryWaiting' ? '推演：保持缓冲并等待新 lease'
+              : e.transition === 'shadow' ? '推演：Shadow 试算中'
+            : e.notice ? '推演：无需降档' : '原型推演';
+      $('#scanlines').style.opacity = e.crt ? '.8' : '0';
+      $('#gameCanvas').style.aspectRatio = state.aspect === 'fourThree' ? '4 / 3' : '256 / 240';
+      $('#gameCanvas').setAttribute('aria-label', `${spatial[0]} ${spatial[1]}，${temporalText}，${labels.aspect[state.aspect]}交互状态示意，不代表算法效果`);
+      renderPower(e);
+      drawScene();
+    }
+
+    function setCapability(capability) {
+      if (state.capability !== capability) {
+        state.motionConsentKey = null;
+        cancelMotionActivation();
+        state.motionTransition = 'inactive';
+      }
+      state.capability = capability;
+      if (state.preset === 'balanced') Object.assign(state, configForPreset('balanced'));
+      selectHarnessChoice('[data-capability]', 'capability', capability);
+      updateAvailability();
+      updatePresetCards();
+      render();
+      showToast(capability === 'certified' ? '正在体验认证后目标能力' : '正在体验当前真实构建能力');
+    }
+
+    function setRuntime(runtime) {
+      clearTimeout(thermalDrainTimer);
+      const previousTemporal = effective().temporal;
+      const recoveringBufferedHold = runtime === 'normal' && previousTemporal === 'buffered';
+      cancelMotionActivation();
+      state.runtime = runtime;
+      if (runtime === 'normal') {
+        state.motionTransition = 'inactive';
+      } else if (previousTemporal === 'motion' || previousTemporal === 'buffered') {
+        state.motionTransition = 'hold';
+      } else {
+        state.motionTransition = 'inactive';
+      }
+      selectHarnessChoice('[data-runtime]', 'runtime', runtime);
+      if (runtime === 'normal' && state.temporal === 'motion' && canActivateRequestedMotion()) {
+        beginMotionActivation(recoveringBufferedHold);
+      } else {
+        render();
+      }
+      const names = { normal: '运行正常', system60: '系统降至 60Hz', thermal: '温控降档' };
+      showToast(runtime === 'normal' && state.temporal === 'motion'
+        ? `正在体验：${names[runtime]}；已发出新 generation，先稳定 3 秒`
+        : `正在体验：${names[runtime]}`);
+      if (runtime === 'thermal' && state.motionTransition === 'hold') {
+        thermalDrainTimer = setTimeout(() => {
+          if (state.runtime !== 'thermal') return;
+          state.motionTransition = 'drained';
+          render();
+          showToast('安全边界已到达，音画缓冲排空完成');
+        }, 1800);
+      }
+    }
+
+    function setCustom(group, value) {
+      if (group === 'aspect') {
+        const valueChanged = state.aspect !== value;
+        state.aspect = value;
+        if (valueChanged) {
+          state.motionConsentKey = null;
+          cancelMotionActivation();
+          state.motionTransition = 'inactive';
+        }
+        selectChoice('aspect', value);
+        render();
+        showToast(state.temporal === 'motion'
+          ? `画面比例已改为${labels.aspect[value]}；完整配置身份变化，需重新确认运动补偿`
+          : `画面比例已改为${labels.aspect[value]}；功耗预设保持不变`);
+        return;
+      }
+      if (group === 'temporal' && value === 'motion') {
+        const target = qualifiedMotionTarget();
+        if (!target) {
+          showToast('当前没有可应用的完整运动补偿认证组合');
+          return;
+        }
+        const targetLabel = `120Hz + 运动补偿 + ${labels.spatial[target.spatial][0]}${target.crt ? ' + CRT' : ''} + ${labels.aspect[state.aspect]}`;
+        const targetConsentKey = configurationKey(target.refresh, target.temporal, target.spatial, target.crt);
+        if (state.motionConsentKey !== targetConsentKey) {
+          openRiskModal(
+            () => applyQualifiedMotionTarget(target),
+            `确认后将申请完整认证组合“${targetLabel}”，先等待同 generation 的系统报告稳定 3 秒，再开始预热。它会生成中间画面，但不是新的游戏逻辑帧。`,
+            '申请实验性运动补偿？',
+            targetConsentKey
+          );
+          return;
+        }
+        applyQualifiedMotionTarget(target);
+        return;
+      }
+      const wasMotionRequested = state.temporal === 'motion';
+      const valueChanged = state[group] !== value;
+      state.preset = 'custom';
+      if (group === 'refresh' && value !== '120' && state.temporal === 'motion') {
+        state.temporal = 'native';
+        selectChoice('temporal', 'native');
+        showToast('刷新率离开 120Hz，时间处理已恢复原生帧');
+      }
+      state[group] = value;
+      if (wasMotionRequested && (valueChanged || state.temporal !== 'motion')) {
+        state.motionConsentKey = null;
+        cancelMotionActivation();
+        state.motionTransition = 'inactive';
+      }
+      updatePresetCards();
+      $('#advancedPanel').hidden = false;
+      selectChoice(group, value);
+      render();
+    }
+
+    function drawScene() {
+      const ctx = $('#gameCanvas').getContext('2d');
+      const palette = {
+        sky: '#4e7ec7', cloud: '#e9e2d2', hill: '#376f6b', hill2: '#264d4a',
+        ground: '#9a5138', ground2: '#d69455', dark: '#28202e', hero: '#ff6b5e',
+        hero2: '#f3c46c', leaf: '#75d7a1', white: '#f4efe6'
+      };
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = palette.sky; ctx.fillRect(0, 0, 256, 240);
+      ctx.fillStyle = palette.cloud;
+      [[18,28,34,12],[29,20,13,10],[188,36,42,12],[200,26,17,12]].forEach(rect => ctx.fillRect(...rect));
+      ctx.fillStyle = palette.hill2;
+      for (let x = 0; x < 256; x += 32) ctx.fillRect(x, 130 - (x % 64 ? 8 : 0), 42, 60);
+      ctx.fillStyle = palette.hill;
+      for (let x = 8; x < 256; x += 48) { ctx.fillRect(x, 120, 24, 62); ctx.fillRect(x + 6, 110, 12, 12); }
+      ctx.fillStyle = palette.ground; ctx.fillRect(0, 180, 256, 60);
+      ctx.fillStyle = palette.ground2;
+      for (let y = 186; y < 240; y += 10) for (let x = (y / 10) % 2 ? 0 : 8; x < 256; x += 16) ctx.fillRect(x, y, 8, 5);
+      ctx.fillStyle = palette.dark; ctx.fillRect(52, 158, 15, 23); ctx.fillRect(56, 151, 9, 8);
+      ctx.fillStyle = palette.hero; ctx.fillRect(54, 142, 10, 13); ctx.fillRect(50, 148, 6, 7); ctx.fillRect(64, 149, 5, 6);
+      ctx.fillStyle = palette.hero2; ctx.fillRect(57, 144, 6, 7); ctx.fillRect(61, 150, 5, 5);
+      ctx.fillStyle = palette.dark; ctx.fillRect(53, 176, 5, 6); ctx.fillRect(63, 176, 5, 6);
+      ctx.fillStyle = palette.leaf; ctx.fillRect(156, 158, 17, 23); ctx.fillRect(160, 148, 9, 11);
+      ctx.fillStyle = palette.white; ctx.fillRect(8, 8, 76, 12);
+      ctx.fillStyle = palette.dark; ctx.font = '8px monospace'; ctx.fillText('FLYNES  01', 11, 17);
+    }
+
+    function moveRadioFocus(button, direction) {
+      const group = button.closest('[role="radiogroup"]');
+      const enabled = [...group.querySelectorAll('[role="radio"]')].filter(item => !item.disabled);
+      const candidates = button.classList.contains('preset-card')
+        ? enabled
+        : enabled.filter(item => item.getAttribute('aria-disabled') !== 'true');
+      const index = candidates.indexOf(button);
+      const next = candidates[(index + direction + candidates.length) % candidates.length];
+      next.focus();
+      if (next.getAttribute('aria-disabled') === 'true') {
+        showToast('当前构建尚未实现并认证极致模式');
+        return;
+      }
+      next.click();
+    }
+
+    $$('.preset-card').forEach(card => {
+      card.addEventListener('click', () => applyPreset(card.dataset.preset));
+      card.addEventListener('keydown', event => {
+        if (['ArrowRight', 'ArrowDown'].includes(event.key)) { event.preventDefault(); moveRadioFocus(card, 1); }
+        if (['ArrowLeft', 'ArrowUp'].includes(event.key)) { event.preventDefault(); moveRadioFocus(card, -1); }
+      });
+    });
+    $$('[data-capability]').forEach(button => button.addEventListener('click', () => setCapability(button.dataset.capability)));
+    $$('[data-runtime]').forEach(button => button.addEventListener('click', () => setRuntime(button.dataset.runtime)));
+    $$('.font-button').forEach(button => button.addEventListener('click', () => {
+      const scale = button.dataset.font;
+      document.documentElement.style.setProperty('--font-scale', scale);
+      document.body.classList.toggle('font-2', scale === '2');
+      selectHarnessChoice('.font-button', 'font', scale);
+      showToast(`字体缩放预览 ${scale}×`);
+    }));
+
+    $$('.scenario-button, .font-button').forEach(button => button.addEventListener('keydown', event => {
+      if (['ArrowRight', 'ArrowDown'].includes(event.key)) { event.preventDefault(); moveRadioFocus(button, 1); }
+      if (['ArrowLeft', 'ArrowUp'].includes(event.key)) { event.preventDefault(); moveRadioFocus(button, -1); }
+    }));
+
+    $$('.choice').forEach(button => {
+      button.addEventListener('click', () => setCustom(button.dataset.group, button.dataset.value));
+      button.addEventListener('keydown', event => {
+        if (['ArrowRight', 'ArrowDown'].includes(event.key)) { event.preventDefault(); moveRadioFocus(button, 1); }
+        if (['ArrowLeft', 'ArrowUp'].includes(event.key)) { event.preventDefault(); moveRadioFocus(button, -1); }
+      });
+    });
+
+    $('#crtSwitch').addEventListener('click', () => {
+      state.crt = !state.crt;
+      if (state.motionConsentKey) {
+        state.motionConsentKey = null;
+        cancelMotionActivation();
+        state.motionTransition = 'inactive';
+      }
+      state.preset = 'custom';
+      updatePresetCards();
+      updateSwitches();
+      $('#advancedPanel').hidden = false;
+      render();
+      if (state.temporal === 'motion') showToast('CRT 改变了完整配置身份；需重新确认运动补偿');
+    });
+
+    $('#adaptiveSwitch').addEventListener('click', () => {
+      state.adaptive = !state.adaptive;
+      state.preset = 'custom';
+      updatePresetCards();
+      updateSwitches();
+      $('#advancedPanel').hidden = false;
+      render();
+      showToast(state.adaptive ? '已开启自适应保护' : '普通降档已关闭，临界保护仍生效');
+    });
+
+    $$('[data-placeholder]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.placeholder)));
+    $('#cancelRisk').addEventListener('click', () => closeRiskModal(false));
+    $('#acceptRisk').addEventListener('click', () => closeRiskModal(true));
+    $('#riskModal').addEventListener('click', event => { if (event.target === event.currentTarget) closeRiskModal(false); });
+    document.addEventListener('keydown', event => {
+      const modalOpen = !$('#riskModal').hidden;
+      if (event.key === 'Escape' && modalOpen) closeRiskModal(false);
+      if (event.key === 'Tab' && modalOpen) {
+        const controls = [$('#cancelRisk'), $('#acceptRisk')];
+        const current = controls.indexOf(document.activeElement);
+        event.preventDefault();
+        controls[(current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
+      }
+    });
+
+    updateAvailability();
+    updatePresetCards();
+    updateSwitches();
+    render();
+  </script>
+</body>
+</html>
