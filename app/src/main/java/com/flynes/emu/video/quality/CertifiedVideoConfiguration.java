@@ -1,5 +1,8 @@
 package com.flynes.emu.video.quality;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Objects;
 
 public final class CertifiedVideoConfiguration {
@@ -41,4 +44,21 @@ public final class CertifiedVideoConfiguration {
     public long certifiedAtEpochMs() { return certifiedAtEpochMs; }
     public long validUntilEpochMs() { return validUntilEpochMs; }
     public String evidenceManifestSha256() { return evidenceManifestSha256; }
+
+    public String certificateIdentitySha256(String profileId) {
+        String canonical = Objects.requireNonNull(profileId, "profileId") + '|'
+                + configurationId + '|' + key.canonicalSha256() + '|'
+                + evidenceManifestSha256 + '|' + certifiedAtEpochMs + '|'
+                + validUntilEpochMs + '|' + buildImplementationHash + '|'
+                + algorithmImplementationHash;
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(64);
+            for (byte value : digest) hex.append(String.format("%02x", value & 0xff));
+            return hex.toString();
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
 }
