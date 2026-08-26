@@ -9,6 +9,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.settings.AppSettings;
+import com.flynes.emu.settings.DisplaySettingsFragment;
 import com.flynes.emu.settings.SettingsKeys;
 import com.flynes.emu.settings.SettingsFragment;
 import com.flynes.emu.settings.SettingsRepository;
@@ -67,12 +68,14 @@ public final class SettingsActivity extends AppCompatActivity {
         selected = section;
         getPreferences(MODE_PRIVATE).edit().putString(PREF_SECTION, section.name()).apply();
         String tag = "settings:" + section.rootKey();
-        SettingsFragment fragment = (SettingsFragment) getSupportFragmentManager().findFragmentByTag(tag);
-        if (fragment == null) fragment = SettingsFragment.newInstance(section.rootKey());
+        androidx.fragment.app.Fragment fragment =
+                getSupportFragmentManager().findFragmentByTag(tag);
+        if (fragment == null) fragment = section == SettingsSection.DISPLAY
+                ? new DisplaySettingsFragment() : SettingsFragment.newInstance(section.rootKey());
         androidx.fragment.app.FragmentTransaction transaction =
                 getSupportFragmentManager().beginTransaction();
         for (androidx.fragment.app.Fragment existing : getSupportFragmentManager().getFragments()) {
-            if (existing instanceof SettingsFragment) transaction.hide(existing);
+            transaction.hide(existing);
         }
         if (fragment.isAdded()) transaction.show(fragment);
         else transaction.add(R.id.settings_content, fragment, tag);

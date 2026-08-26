@@ -175,4 +175,41 @@
     <string name="control_left">左</string><string name="control_right">右</string>
     <string name="control_a">A 键</string><string name="control_b">B 键</string>
     <string name="control_select">Select 键</string><string name="control_start">Start 键</string>
+    <string name="display_quality_title">画质与功耗</string>
+    <string name="display_quality_subtitle">选择完整预设，或逐项调整。FlyNES 会分别展示用户请求、系统实际模式和物理证据。</string>
+    <string name="video_preset_power">省电 · 低功耗</string>
+    <string name="video_preset_power_summary">60 Hz · 原生帧 · 最近邻像素</string>
+    <string name="video_preset_balanced">均衡 · 推荐</string>
+    <string name="video_preset_balanced_summary">60 Hz · 原生帧 · 锐化缩放</string>
+    <string name="video_preset_extreme_locked">极致 · 已锁定</string>
+    <string name="video_preset_extreme_summary">需要本机完整实验室资格证据</string>
+    <string name="video_preset_custom">自定义</string>
+    <string name="video_preset_custom_summary">分别选择刷新率、时间与空间处理</string>
+    <string name="video_custom_axes">自定义画面管线</string>
+    <string name="video_temporal_mode">帧呈现</string>
+    <string name="video_spatial_mode">像素重建</string>
+    <string name="video_post_effect">后处理</string>
+    <string name="video_temporal_native">原生帧</string>
+    <string name="video_temporal_motion">运动补偿 60→120 · 需要资格验证</string>
+    <string name="video_spatial_nearest">最近邻 · 最低功耗</string>
+    <string name="video_spatial_sharp">锐化双线性 · 推荐</string>
+    <string name="video_spatial_mmpx">MMPX · 需要资格验证</string>
+    <string name="video_spatial_scalefx">ScaleFX 3× · 需要实验室验证</string>
+    <string name="video_post_none">无</string>
+    <string name="video_post_crt">CRT 扫描线</string>
+    <string name="video_adaptive_protection">自适应温控与电量保护</string>
+    <string name="video_runtime_status">当前实际状态</string>
+    <string name="video_status_request_format">用户请求 · %1$s</string>
+    <string name="video_status_protection_idle">保护后请求 · 等待游戏会话</string>
+    <string name="video_status_system_format">系统报告活动模式 · %1$d × %2$d · %3$.2f Hz</string>
+    <string name="video_status_runtime_idle">当前管线 · 未运行</string>
+    <string name="video_status_evidence_unverified">物理扫描证据 · 未验证 · 高级模式保持锁定</string>
+    <string name="video_status_power_format">预计功耗 · %1$s</string>
+    <string name="video_power_low">低</string>
+    <string name="video_power_medium_low">中低</string>
+    <string name="video_power_medium">中</string>
+    <string name="video_power_high">高</string>
+    <string name="video_extreme_locked_title">这台设备尚未获得“极致”资格</string>
+    <string name="video_extreme_locked_message">当前构建没有与本手机、驱动、显示模式和算法组合完全匹配的实验室证书。“均衡”模式仍可完整使用。</string>
+    <string name="ok">确定</string>
 </resources>

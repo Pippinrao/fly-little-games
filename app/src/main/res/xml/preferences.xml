@@ -1,12 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
-    <PreferenceScreen app:key="section.display" app:title="@string/settings_display">
-        <ListPreference app:defaultValue="FOUR_BY_THREE" app:entries="@array/aspect_entries" app:entryValues="@array/aspect_values" app:key="video.aspect" app:persistent="false" app:title="@string/aspect_mode" app:useSimpleSummaryProvider="true" />
-        <ListPreference app:defaultValue="EDGE_ENHANCED" app:entries="@array/filter_entries" app:entryValues="@array/filter_values" app:key="video.filter" app:persistent="false" app:title="@string/filter_mode" app:useSimpleSummaryProvider="true" />
-        <ListPreference app:defaultValue="AUTO" app:key="video.refresh" app:persistent="false" app:title="@string/refresh_rate" app:useSimpleSummaryProvider="true" />
-        <Preference app:key="display.status" app:selectable="false" app:title="@string/display_status" />
-        <Preference app:selectable="false" app:summary="@string/display_frames_note" app:title="@string/display_emulation_rate" />
-    </PreferenceScreen>
     <PreferenceScreen app:key="section.controls" app:title="@string/settings_controls">
         <ListPreference app:defaultValue="JOYSTICK" app:entries="@array/direction_control_entries" app:entryValues="@array/direction_control_values" app:key="controls.direction_mode" app:title="@string/direction_control" app:useSimpleSummaryProvider="true" />
         <Preference app:key="controls.layout_editor" app:summary="@string/control_layout_summary" app:title="@string/control_layout_title" />

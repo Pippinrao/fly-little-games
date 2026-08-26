@@ -175,4 +175,41 @@
     <string name="control_left">Left</string><string name="control_right">Right</string>
     <string name="control_a">A button</string><string name="control_b">B button</string>
     <string name="control_select">Select button</string><string name="control_start">Start button</string>
+    <string name="display_quality_title">Picture quality &amp; power</string>
+    <string name="display_quality_subtitle">Choose a complete preset or tune each axis. FlyNES reports requests, active modes, and evidence separately.</string>
+    <string name="video_preset_power">Power saver · Low</string>
+    <string name="video_preset_power_summary">60 Hz · Native frames · Nearest pixels</string>
+    <string name="video_preset_balanced">Balanced · Recommended</string>
+    <string name="video_preset_balanced_summary">60 Hz · Native frames · Sharp scaling</string>
+    <string name="video_preset_extreme_locked">Extreme · Locked</string>
+    <string name="video_preset_extreme_summary">Requires exact device-lab qualification</string>
+    <string name="video_preset_custom">Custom</string>
+    <string name="video_preset_custom_summary">Choose refresh, temporal and spatial processing</string>
+    <string name="video_custom_axes">Custom pipeline</string>
+    <string name="video_temporal_mode">Frame presentation</string>
+    <string name="video_spatial_mode">Pixel reconstruction</string>
+    <string name="video_post_effect">Post effect</string>
+    <string name="video_temporal_native">Native frames</string>
+    <string name="video_temporal_motion">Motion compensation 60→120 · Qualification required</string>
+    <string name="video_spatial_nearest">Nearest · Lowest power</string>
+    <string name="video_spatial_sharp">Sharp bilinear · Recommended</string>
+    <string name="video_spatial_mmpx">MMPX · Qualification required</string>
+    <string name="video_spatial_scalefx">ScaleFX 3× · Device-lab required</string>
+    <string name="video_post_none">None</string>
+    <string name="video_post_crt">CRT scanlines</string>
+    <string name="video_adaptive_protection">Adaptive thermal and battery protection</string>
+    <string name="video_runtime_status">What is actually happening</string>
+    <string name="video_status_request_format">User request · %1$s</string>
+    <string name="video_status_protection_idle">Protection-adjusted request · Waiting for a game session</string>
+    <string name="video_status_system_format">System-reported active mode · %1$d × %2$d · %3$.2f Hz</string>
+    <string name="video_status_runtime_idle">Current pipeline · Not running</string>
+    <string name="video_status_evidence_unverified">Physical scan evidence · UNVERIFIED · Advanced modes stay locked</string>
+    <string name="video_status_power_format">Estimated power · %1$s</string>
+    <string name="video_power_low">Low</string>
+    <string name="video_power_medium_low">Medium-low</string>
+    <string name="video_power_medium">Medium</string>
+    <string name="video_power_high">High</string>
+    <string name="video_extreme_locked_title">Extreme is not qualified on this device</string>
+    <string name="video_extreme_locked_message">This build has no exact device-lab certificate for the current phone, driver, display mode and algorithm combination. Balanced remains fully available.</string>
+    <string name="ok">OK</string>
 </resources>

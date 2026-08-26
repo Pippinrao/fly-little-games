@@ -36,7 +36,8 @@ public final class SettingsMasterDetailTest {
             scenario.onActivity(activity->{
                 activity.findViewById(R.id.settings_controls_master).performClick();
                 activity.getSupportFragmentManager().executePendingTransactions();
-                com.flynes.emu.settings.SettingsFragment fragment=visibleFragment(activity);
+                com.flynes.emu.settings.SettingsFragment fragment=
+                        (com.flynes.emu.settings.SettingsFragment) visibleFragment(activity);
                 fragment.findPreference("controls.reset").performClick();
             });
             scenario.onActivity(activity->{
@@ -52,13 +53,13 @@ public final class SettingsMasterDetailTest {
     @Test public void allFiveMasterSectionsSwitchTheDetailPane() {
         try (ActivityScenario<SettingsActivity> scenario = ActivityScenario.launch(SettingsActivity.class)) {
             scenario.onActivity(activity -> {
-                assertSection(activity, R.id.settings_display, "display.status");
+                assertDisplaySection(activity);
                 androidx.fragment.app.Fragment display = visibleFragment(activity);
                 assertSection(activity, R.id.settings_controls_master, "controls.layout_editor");
                 assertSection(activity, R.id.settings_audio_master, "audio.enabled");
                 assertSection(activity, R.id.settings_game_language, "general.locale");
                 assertSection(activity, R.id.settings_about, "general.licenses");
-                assertSection(activity, R.id.settings_display, "display.status");
+                assertDisplaySection(activity);
                 org.junit.Assert.assertSame(display, visibleFragment(activity));
             });
         }
@@ -102,14 +103,26 @@ public final class SettingsMasterDetailTest {
     private static void assertSection(SettingsActivity activity, int buttonId, String preferenceKey) {
         activity.findViewById(buttonId).performClick();
         activity.getSupportFragmentManager().executePendingTransactions();
-        com.flynes.emu.settings.SettingsFragment fragment = visibleFragment(activity);
+        androidx.fragment.app.Fragment visible = visibleFragment(activity);
+        org.junit.Assert.assertTrue(visible instanceof com.flynes.emu.settings.SettingsFragment);
+        com.flynes.emu.settings.SettingsFragment fragment =
+                (com.flynes.emu.settings.SettingsFragment) visible;
         org.junit.Assert.assertNotNull(fragment.findPreference(preferenceKey));
     }
 
-    private static com.flynes.emu.settings.SettingsFragment visibleFragment(SettingsActivity activity) {
+    private static void assertDisplaySection(SettingsActivity activity) {
+        activity.findViewById(R.id.settings_display).performClick();
+        activity.getSupportFragmentManager().executePendingTransactions();
+        androidx.fragment.app.Fragment visible = visibleFragment(activity);
+        org.junit.Assert.assertTrue(visible instanceof
+                com.flynes.emu.settings.DisplaySettingsFragment);
+        org.junit.Assert.assertNotNull(visible.requireView().findViewById(
+                R.id.video_preset_balanced));
+    }
+
+    private static androidx.fragment.app.Fragment visibleFragment(SettingsActivity activity) {
         for (androidx.fragment.app.Fragment fragment : activity.getSupportFragmentManager().getFragments()) {
-            if (fragment instanceof com.flynes.emu.settings.SettingsFragment && !fragment.isHidden())
-                return (com.flynes.emu.settings.SettingsFragment) fragment;
+            if (!fragment.isHidden()) return fragment;
         }
         throw new AssertionError("no visible settings fragment");
     }
