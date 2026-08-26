@@ -202,7 +202,11 @@
     <string name="video_status_request_format">User request · %1$s</string>
     <string name="video_status_protection_idle">Protection-adjusted request · Waiting for a game session</string>
     <string name="video_status_system_format">System-reported active mode · %1$d × %2$d · %3$.2f Hz</string>
+    <string name="video_status_system_unknown">System-reported active mode · UNKNOWN</string>
     <string name="video_status_runtime_idle">Current pipeline · Not running</string>
+    <string name="video_status_protection_runtime">Protection-adjusted runtime · %1$s · %2$d fallback reason(s)</string>
+    <string name="video_status_runtime_format">Current pipeline · source %1$.2f fps · copied unique %2$.2f fps · texture uploads %3$.2f fps</string>
+    <string name="video_status_runtime_stale_format">Last session (STALE) · source %1$.2f fps · copied unique %2$.2f fps · texture uploads %3$.2f fps</string>
     <string name="video_status_evidence_unverified">Physical scan evidence · UNVERIFIED · Advanced modes stay locked</string>
     <string name="video_status_power_format">Estimated power · %1$s</string>
     <string name="video_power_low">Low</string>

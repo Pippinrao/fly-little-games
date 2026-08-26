@@ -6,8 +6,9 @@ import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 
-import com.flynes.emu.settings.DisplayStatus;
-import com.flynes.emu.settings.DisplayStatusRepository;
+import com.flynes.emu.video.quality.DisplayModeCapability;
+import com.flynes.emu.video.quality.PhysicalRefreshPolicy;
+import com.flynes.emu.video.status.DisplayStatusMonitor;
 
 public final class DisplayModeController {
     public enum ApplyResult { APPLIED, FALLBACK_AUTO }
@@ -15,6 +16,12 @@ public final class DisplayModeController {
     private DisplayModeController() { }
 
     public static ApplyResult followSystem(Activity activity, Surface surface, float sourceFps) {
+        return followSystem(activity, surface, sourceFps, null, 0L, false);
+    }
+
+    public static ApplyResult followSystem(Activity activity, Surface surface, float sourceFps,
+                                           DisplayStatusMonitor monitor, long surfaceEpoch,
+                                           boolean motionRequired) {
         WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
         attributes.preferredDisplayModeId = 0;
         activity.getWindow().setAttributes(attributes);
@@ -22,14 +29,20 @@ public final class DisplayModeController {
                 && surface != null && surface.isValid()) {
             surface.setFrameRate(sourceFps, frameRateCompatibility());
         }
-        float actual = activity.getWindowManager().getDefaultDisplay().getRefreshRate();
-        new DisplayStatusRepository(activity).save(
-                new DisplayStatus(actual, actual, "FOLLOW_SYSTEM"));
+        if (monitor != null) monitor.request(surfaceEpoch,
+                PhysicalRefreshPolicy.FOLLOW_SYSTEM, null, motionRequired);
         return ApplyResult.FALLBACK_AUTO;
     }
 
     public static ApplyResult apply(Activity activity, Surface surface,
                                     RefreshMode requested, float sourceFps) {
+        return apply(activity, surface, requested, sourceFps, null, 0L, false);
+    }
+
+    public static ApplyResult apply(Activity activity, Surface surface,
+                                    RefreshMode requested, float sourceFps,
+                                    DisplayStatusMonitor monitor, long surfaceEpoch,
+                                    boolean motionRequired) {
         Display display = activity.getWindowManager().getDefaultDisplay();
         Display.Mode current = display.getMode();
         Display.Mode[] supported = display.getSupportedModes();
@@ -42,9 +55,9 @@ public final class DisplayModeController {
 
         int selectedId = DisplayModeSelector.select(candidates,
                 current.getPhysicalWidth(), current.getPhysicalHeight(), requested);
-        float selectedHz = 0f;
+        DisplayCandidate selected = null;
         for (DisplayCandidate candidate : candidates) if (candidate.modeId() == selectedId) {
-            selectedHz = candidate.refreshRate(); break;
+            selected = candidate; break;
         }
         WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
         attributes.preferredDisplayModeId = selectedId;
@@ -54,28 +67,20 @@ public final class DisplayModeController {
                 && surface != null && surface.isValid()) {
             surface.setFrameRate(sourceFps, frameRateCompatibility());
         }
-        float requestedHz;
-        String reason;
-        if (requested == RefreshMode.AUTO) {
-            requestedHz = selectedHz > 0f ? selectedHz : current.getRefreshRate();
-            reason = selectedHz > 0f ? "AUTO_BEST_SUPPORTED" : "AUTO_SYSTEM_FALLBACK";
-        } else {
-            requestedHz = requested.targetHz();
-            reason = selectedId == 0 ? "MODE_UNAVAILABLE" : "";
+        if (monitor != null) {
+            DisplayModeCapability requestedMode = selected == null ? null
+                    : new DisplayModeCapability(selected.modeId(), selected.width(),
+                    selected.height(), Math.round(selected.refreshRate() * 1_000f));
+            monitor.request(surfaceEpoch, policy(requested), requestedMode, motionRequired);
         }
-        new DisplayStatusRepository(activity).save(new DisplayStatus(
-                requestedHz, current.getRefreshRate(), reason));
-        final float settledRequestedHz = requestedHz;
-        final String initialReason = reason;
-        activity.getWindow().getDecorView().postDelayed(() -> {
-            Display settledDisplay = activity.getWindowManager().getDefaultDisplay();
-            float actualHz = settledDisplay.getRefreshRate();
-            String settledReason = settledFallbackReason(
-                    settledRequestedHz, actualHz, initialReason);
-            new DisplayStatusRepository(activity).save(new DisplayStatus(
-                    settledRequestedHz, actualHz, settledReason));
-        }, 500L);
         return selectedId == 0 ? ApplyResult.FALLBACK_AUTO : ApplyResult.APPLIED;
+    }
+
+    private static PhysicalRefreshPolicy policy(RefreshMode mode) {
+        if (mode == RefreshMode.HZ_60) return PhysicalRefreshPolicy.HZ_60;
+        if (mode == RefreshMode.HZ_90) return PhysicalRefreshPolicy.HZ_90;
+        if (mode == RefreshMode.HZ_120) return PhysicalRefreshPolicy.HZ_120;
+        return PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE;
     }
 
     static int frameRateCompatibility() {

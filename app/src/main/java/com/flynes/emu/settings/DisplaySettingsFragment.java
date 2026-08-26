@@ -2,6 +2,7 @@ package com.flynes.emu.settings;
 
 import android.content.res.ColorStateList;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.view.Display;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -28,6 +29,10 @@ import com.flynes.emu.video.quality.TemporalMode;
 import com.flynes.emu.video.quality.VideoPreferences;
 import com.flynes.emu.video.quality.VideoQualityPreset;
 import com.flynes.emu.video.status.DisplayCapabilitiesReader;
+import com.flynes.emu.video.status.DisplayStatusMonitor;
+import com.flynes.emu.video.status.StatusFreshness;
+import com.flynes.emu.video.status.VideoRuntimeStatus;
+import com.flynes.emu.video.status.VideoStatusRepository;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
@@ -58,6 +63,7 @@ public final class DisplaySettingsFragment extends Fragment {
     private MaterialSwitch adaptiveSwitch;
     private final List<PhysicalRefreshPolicy> availableRefreshPolicies = new ArrayList<>();
     private boolean binding;
+    private VideoStatusRepository.Subscription statusSubscription;
 
     @Nullable @Override public View onCreateView(@NonNull LayoutInflater inflater,
                                                  @Nullable ViewGroup container,
@@ -100,6 +106,20 @@ public final class DisplaySettingsFragment extends Fragment {
         render(repository.load());
         bindChanges();
         renderStatus(view, repository.load());
+    }
+
+    @Override public void onStart() {
+        super.onStart();
+        statusSubscription = VideoStatusRepository.process().observe(
+                runnable -> requireActivity().runOnUiThread(runnable), this::renderRuntimeStatus);
+    }
+
+    @Override public void onStop() {
+        if (statusSubscription != null) {
+            statusSubscription.close();
+            statusSubscription = null;
+        }
+        super.onStop();
     }
 
     private void bindSpinnerAdapters() {
@@ -229,7 +249,34 @@ public final class DisplaySettingsFragment extends Fragment {
                 R.string.video_status_evidence_unverified);
         ((TextView) root.findViewById(R.id.video_status_power)).setText(getString(
                 R.string.video_status_power_format, estimatedPower(video)));
+        VideoRuntimeStatus runtime = VideoStatusRepository.process().current();
+        if (runtime != null) renderRuntimeStatus(runtime);
     }
+
+    private void renderRuntimeStatus(VideoRuntimeStatus status) {
+        View root = getView();
+        if (root == null) return;
+        StatusFreshness freshness = status.freshnessAt(SystemClock.elapsedRealtime(),
+                DisplayStatusMonitor.MOTION_LEASE_MS);
+        if (status.systemReportedActiveMode() == null) {
+            ((TextView) root.findViewById(R.id.video_status_system)).setText(
+                    R.string.video_status_system_unknown);
+        } else {
+            DisplayModeCapability mode = status.systemReportedActiveMode();
+            ((TextView) root.findViewById(R.id.video_status_system)).setText(getString(
+                    R.string.video_status_system_format, mode.width(), mode.height(),
+                    mode.refreshMilliHz() / 1000.0f));
+        }
+        ((TextView) root.findViewById(R.id.video_status_protection)).setText(getString(
+                R.string.video_status_protection_runtime,
+                status.runtimeTemporalState().name(), status.fallbacks().size()));
+        int runtimeString = freshness == StatusFreshness.FRESH
+                ? R.string.video_status_runtime_format : R.string.video_status_runtime_stale_format;
+        ((TextView) root.findViewById(R.id.video_status_runtime)).setText(getString(runtimeString,
+                status.sourceNominalFps(), status.copiedUniqueSourceFps(),
+                status.textureUploadFps()));
+    }
+
 
     private String presetLabel(VideoQualityPreset preset) {
         switch (preset) {

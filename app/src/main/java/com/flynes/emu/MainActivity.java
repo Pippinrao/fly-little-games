@@ -2,7 +2,11 @@ package com.flynes.emu;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.display.DisplayManager;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
@@ -44,12 +48,23 @@ import com.flynes.emu.video.GlFrameView;
 import com.flynes.emu.video.NativeFrameSource;
 import com.flynes.emu.video.ViewportLayout;
 import com.flynes.emu.video.quality.LegacyVideoRuntimeAdapter;
+import com.flynes.emu.video.platform.AndroidDisplayPlatformFacade;
+import com.flynes.emu.video.quality.DisplayObservation;
+import com.flynes.emu.video.quality.FallbackReason;
+import com.flynes.emu.video.quality.RuntimeTemporalState;
+import com.flynes.emu.video.quality.SourceTiming;
+import com.flynes.emu.video.status.DisplayStatusMonitor;
+import com.flynes.emu.video.status.VideoStatusAccumulator;
+import com.flynes.emu.video.status.VideoStatusRepository;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Stage-0 vertical slice: load the bundled homebrew ROM, render via
@@ -85,6 +100,40 @@ public class MainActivity extends AppCompatActivity {
         return thread;
     });
     private CoverCaptureCoordinator coverCapture;
+    private final VideoStatusAccumulator videoStatus = new VideoStatusAccumulator();
+    private final Handler statusHandler = new Handler(Looper.getMainLooper());
+    private final ScheduledExecutorService displayPollExecutor =
+            Executors.newSingleThreadScheduledExecutor(runnable -> daemonThread(
+                    runnable, "flynes-display-poll"));
+    private final ScheduledExecutorService displaySafetyExecutor =
+            Executors.newSingleThreadScheduledExecutor(runnable -> daemonThread(
+                    runnable, "flynes-display-safety"));
+    private DisplayStatusMonitor displayMonitor;
+    private DisplayManager displayManager;
+    private boolean displayListenerRegistered;
+    private volatile long surfaceEpoch;
+    private volatile DisplayObservation lastDisplayObservation;
+    private volatile RuntimeTemporalState requestedRuntimeTemporalState =
+            RuntimeTemporalState.IMMEDIATE_NATIVE;
+    private final Runnable publishVideoStatus = new Runnable() {
+        @Override public void run() {
+            if (!rendering) return;
+            VideoStatusRepository.process().publish(videoStatus.snapshot(
+                    SystemClock.elapsedRealtime()));
+            statusHandler.postDelayed(this, 500L);
+        }
+    };
+    private final DisplayManager.DisplayListener displayListener =
+            new DisplayManager.DisplayListener() {
+        @Override public void onDisplayAdded(int displayId) { }
+        @Override public void onDisplayChanged(int displayId) {
+            if (getWindowManager().getDefaultDisplay().getDisplayId() == displayId
+                    && displayMonitor != null) displayMonitor.onDisplayChanged();
+        }
+        @Override public void onDisplayRemoved(int displayId) {
+            if (displayMonitor != null) displayMonitor.invalidate();
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -95,24 +144,56 @@ public class MainActivity extends AppCompatActivity {
         Log.i(TAG, "legacy autosave migration=" + LegacySaveMigrator.migrate(this, saves));
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
+        displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        displayMonitor = new DisplayStatusMonitor(new AndroidDisplayPlatformFacade(
+                getWindowManager().getDefaultDisplay()), SystemClock::elapsedRealtime,
+                scheduler(displayPollExecutor), scheduler(displaySafetyExecutor),
+                new DisplayStatusMonitor.Listener() {
+                    @Override public void onObservation(DisplayObservation observation) {
+                        lastDisplayObservation = observation;
+                        videoStatus.onDisplayState(observation.requestedPolicy(),
+                                observation.requestedMode(),
+                                observation.systemReportedActiveMode());
+                        videoStatus.publishTransition(surfaceEpoch,
+                                observation.requestGeneration(), requestedRuntimeTemporalState,
+                                0, 0f);
+                    }
+                    @Override public void onUnknown(long generation, long observedAtElapsedMs) {
+                        DisplayObservation previous = lastDisplayObservation;
+                        videoStatus.onDisplayState(previous == null
+                                        ? com.flynes.emu.video.quality.PhysicalRefreshPolicy.FOLLOW_SYSTEM
+                                        : previous.requestedPolicy(),
+                                previous == null ? null : previous.requestedMode(), null);
+                        videoStatus.onFallback(FallbackReason.DISPLAY_OBSERVATION_STALE);
+                    }
+                    @Override public void onMotionLeaseExpired(long epoch, long generation) {
+                        videoStatus.publishTransition(epoch, generation,
+                                RuntimeTemporalState.FALLBACK, 0, 0f);
+                        videoStatus.onFallback(FallbackReason.DISPLAY_OBSERVATION_STALE);
+                    }
+                    @Override public void onPersistentPolicyMismatch(long generation) {
+                        videoStatus.onFallback(FallbackReason.SYSTEM_OR_DEVICE_POLICY);
+                    }
+                });
+
         framePublisher = new FramePublisher(new NativeFrameSource(core, 4 * 1024 * 1024));
-        view = new GlFrameView(this, framePublisher);
+        framePublisher.addObserver(frame -> videoStatus.onSourceFrameCopied(frame.sequence()));
+        view = new GlFrameView(this, framePublisher, videoStatus);
         view.setId(R.id.game_surface);
         view.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(SurfaceHolder holder) {
-                LegacyVideoRuntimeAdapter video = runtimeVideo();
-                DisplayModeController.ApplyResult result = video.followsSystemRefresh()
-                        ? DisplayModeController.followSystem(MainActivity.this,
-                                holder.getSurface(), 60.0988f)
-                        : DisplayModeController.apply(MainActivity.this, holder.getSurface(),
-                                video.displayRefresh(), 60.0988f);
+                surfaceEpoch = Math.addExact(surfaceEpoch, 1L);
+                DisplayModeController.ApplyResult result = requestDisplay(holder.getSurface());
                 Log.i(TAG, "display refresh request=" + result);
             }
 
             @Override public void surfaceChanged(SurfaceHolder holder, int format,
                                                  int width, int height) { }
 
-            @Override public void surfaceDestroyed(SurfaceHolder holder) { }
+            @Override public void surfaceDestroyed(SurfaceHolder holder) {
+                surfaceEpoch = Math.addExact(surfaceEpoch, 1L);
+                if (displayMonitor != null) displayMonitor.invalidate();
+            }
         });
         gamepad = new GamepadView(this);
         applyHapticSettings();
@@ -241,6 +322,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        registerDisplayListener();
         if (pauseLayer == null) {
             gamepad.setVisibility(View.VISIBLE);
             pauseButton.setVisibility(View.VISIBLE);
@@ -279,6 +361,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        unregisterDisplayListener();
+        if (displayMonitor != null) displayMonitor.invalidate();
         if (session.state() == SessionState.RUNNING) session.pause();
         stopRendering();
         gamepad.reset();
@@ -309,6 +393,11 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        unregisterDisplayListener();
+        statusHandler.removeCallbacks(publishVideoStatus);
+        if (displayMonitor != null) displayMonitor.close();
+        displayPollExecutor.shutdownNow();
+        displaySafetyExecutor.shutdownNow();
         if (coverCapture != null) framePublisher.removeObserver(coverCapture);
         coverExecutor.shutdownNow();
         stopRendering();
@@ -609,11 +698,21 @@ public class MainActivity extends AppCompatActivity {
                 ? 0 : gamepad.getRootWindowInsets().getSystemWindowInsetRight());
         Surface surface = view.getHolder().getSurface();
         if (surface != null && surface.isValid()) {
-            DisplayModeController.ApplyResult result = video.followsSystemRefresh()
-                    ? DisplayModeController.followSystem(this, surface, 60.0988f)
-                    : DisplayModeController.apply(this, surface, video.displayRefresh(), 60.0988f);
+            DisplayModeController.ApplyResult result = requestDisplay(surface);
             Log.i(TAG, "display refresh update=" + result);
         }
+    }
+
+    private DisplayModeController.ApplyResult requestDisplay(Surface surface) {
+        LegacyVideoRuntimeAdapter video = runtimeVideo();
+        requestedRuntimeTemporalState = video.temporalState();
+        boolean motionRequested = video.requestedTemporalMode()
+                == com.flynes.emu.video.quality.TemporalMode.MOTION_INTERPOLATION;
+        return video.followsSystemRefresh()
+                ? DisplayModeController.followSystem(this, surface, 60.0988f,
+                        displayMonitor, surfaceEpoch, motionRequested)
+                : DisplayModeController.apply(this, surface, video.displayRefresh(), 60.0988f,
+                        displayMonitor, surfaceEpoch, motionRequested);
     }
 
     private LegacyVideoRuntimeAdapter runtimeVideo() {
@@ -667,6 +766,13 @@ public class MainActivity extends AppCompatActivity {
     private void startRendering() {
         if (!rendering) {
             rendering = true;
+            RomInfo info = core.romInfo();
+            SourceTiming timing = info != null && !info.ntsc()
+                    ? SourceTiming.PAL_50 : SourceTiming.NTSC_60_0988;
+            videoStatus.beginWindow(SystemClock.elapsedRealtime(), timing,
+                    timing == SourceTiming.PAL_50 ? 50f : 60.0988f);
+            statusHandler.removeCallbacks(publishVideoStatus);
+            statusHandler.post(publishVideoStatus);
             view.onResume();
         }
     }
@@ -674,8 +780,38 @@ public class MainActivity extends AppCompatActivity {
     private void stopRendering() {
         if (rendering) {
             rendering = false;
+            statusHandler.removeCallbacks(publishVideoStatus);
+            VideoStatusRepository.process().publish(videoStatus.snapshot(
+                    SystemClock.elapsedRealtime()));
             view.onPause();
         }
+    }
+
+    private void registerDisplayListener() {
+        if (displayListenerRegistered || displayManager == null) return;
+        displayManager.registerDisplayListener(displayListener, statusHandler);
+        displayListenerRegistered = true;
+    }
+
+    private void unregisterDisplayListener() {
+        if (!displayListenerRegistered || displayManager == null) return;
+        displayManager.unregisterDisplayListener(displayListener);
+        displayListenerRegistered = false;
+    }
+
+    private static DisplayStatusMonitor.Scheduler scheduler(
+            ScheduledExecutorService executor) {
+        return (runnable, delayMs) -> {
+            ScheduledFuture<?> future = executor.schedule(runnable, delayMs,
+                    TimeUnit.MILLISECONDS);
+            return () -> future.cancel(false);
+        };
+    }
+
+    private static Thread daemonThread(Runnable runnable, String name) {
+        Thread thread = new Thread(runnable, name);
+        thread.setDaemon(true);
+        return thread;
     }
 
     // ------------------------------------------------------------------

@@ -50,6 +50,22 @@ public final class GlCapabilities {
     public boolean knownForAdvancedRendering() {
         return activeContextMajorVersion >= 3 && maxTextureSize > 0 && fragmentHighp;
     }
+    public int activeContextMajorVersion() { return activeContextMajorVersion; }
+    public int activeContextMinorVersion() { return activeContextMinorVersion; }
+    public String vendor() { return vendor; }
+    public String renderer() { return renderer; }
+    public String version() { return version; }
+    public Set<String> extensions() { return extensions; }
+    public int maxTextureSize() { return maxTextureSize; }
+    public boolean fragmentHighp() { return fragmentHighp; }
+    public boolean halfFloatColorFramebufferRenderable() {
+        return halfFloatColorFramebufferRenderable;
+    }
+    public boolean halfFloatColorFramebufferFilterable() {
+        return halfFloatColorFramebufferFilterable;
+    }
+    public boolean floatColorFramebufferRenderable() { return floatColorFramebufferRenderable; }
+    public boolean disjointTimerQuery() { return disjointTimerQuery; }
     public boolean supportsEs31Compute() { return supportsEs31Compute; }
     public boolean canCreateOwnedEs31Presenter() { return canCreateOwnedEs31Presenter; }
 }

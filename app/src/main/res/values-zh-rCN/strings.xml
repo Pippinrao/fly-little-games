@@ -202,7 +202,11 @@
     <string name="video_status_request_format">用户请求 · %1$s</string>
     <string name="video_status_protection_idle">保护后请求 · 等待游戏会话</string>
     <string name="video_status_system_format">系统报告活动模式 · %1$d × %2$d · %3$.2f Hz</string>
+    <string name="video_status_system_unknown">系统报告活动模式 · 未知</string>
     <string name="video_status_runtime_idle">当前管线 · 未运行</string>
+    <string name="video_status_protection_runtime">保护后运行状态 · %1$s · %2$d 个回退原因</string>
+    <string name="video_status_runtime_format">当前管线 · 源 %1$.2f fps · 唯一帧复制 %2$.2f fps · 纹理上传 %3$.2f fps</string>
+    <string name="video_status_runtime_stale_format">上次会话（已过期）· 源 %1$.2f fps · 唯一帧复制 %2$.2f fps · 纹理上传 %3$.2f fps</string>
     <string name="video_status_evidence_unverified">物理扫描证据 · 未验证 · 高级模式保持锁定</string>
     <string name="video_status_power_format">预计功耗 · %1$s</string>
     <string name="video_power_low">低</string>

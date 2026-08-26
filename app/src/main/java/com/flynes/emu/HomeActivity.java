@@ -36,6 +36,7 @@ import com.flynes.emu.cover.AndroidCoverRepository;
 import com.flynes.emu.gamecenter.GameCenterItem;
 import com.flynes.emu.gamecenter.GameCenterState;
 import com.flynes.emu.gamecenter.GameTitlePresentation;
+import com.flynes.emu.gamecenter.HomeHeaderLayoutPolicy;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 
@@ -47,6 +48,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Unified, landscape-first Game Center and source manager. */
 public final class HomeActivity extends AppCompatActivity {
@@ -212,11 +214,15 @@ public final class HomeActivity extends AppCompatActivity {
         float fontScale = getResources().getConfiguration().fontScale;
         int widthDp = getResources().getConfiguration().screenWidthDp;
         largeText = fontScale >= 1.8f;
+        boolean compactHeader = HomeHeaderLayoutPolicy.compact(fontScale,
+                getResources().getConfiguration().getLocales().get(0));
         GridLayoutManager layout = (GridLayoutManager) ((RecyclerView) findViewById(
                 R.id.game_grid)).getLayoutManager();
         layout.setSpanCount(largeText ? 1 : 2);
-        if (largeText) {
+        if (compactHeader) {
             findViewById(R.id.game_center_heading).setVisibility(View.GONE);
+        }
+        if (largeText) {
             findViewById(R.id.detail_art).setVisibility(View.GONE);
             findViewById(R.id.detail_meta).setVisibility(View.GONE);
             findViewById(R.id.game_center_topbar).getLayoutParams().height = dp(80);
@@ -364,16 +370,21 @@ public final class HomeActivity extends AppCompatActivity {
         image.setImageDrawable(null);
         image.setVisibility(View.GONE);
         fallback.setVisibility(View.VISIBLE);
-        coverLoader.execute(() -> {
-            Bitmap bitmap = covers.load(canonicalId);
-            main.post(() -> {
-                if (isDestroyed() || !canonicalId.equals(image.getTag())) return;
-                if (bitmap == null) return;
-                image.setImageBitmap(bitmap);
-                image.setVisibility(View.VISIBLE);
-                fallback.setVisibility(View.GONE);
+        if (isDestroyed()) return;
+        try {
+            coverLoader.execute(() -> {
+                Bitmap bitmap = covers.load(canonicalId);
+                main.post(() -> {
+                    if (isDestroyed() || !canonicalId.equals(image.getTag())) return;
+                    if (bitmap == null) return;
+                    image.setImageBitmap(bitmap);
+                    image.setVisibility(View.VISIBLE);
+                    fallback.setVisibility(View.GONE);
+                });
             });
-        });
+        } catch (RejectedExecutionException shutdownRace) {
+            if (!isDestroyed()) throw shutdownRace;
+        }
     }
 
     private void launchSelected() {
@@ -477,8 +488,16 @@ public final class HomeActivity extends AppCompatActivity {
 
     private <T> void await(Future<T> future, Success<T> success, Failure failure) {
         waiter.execute(() -> {
-            try { T value = future.get(); main.post(() -> success.accept(value)); }
-            catch (Exception error) { main.post(() -> failure.accept(error)); }
+            try {
+                T value = future.get();
+                main.post(() -> {
+                    if (!isDestroyed()) success.accept(value);
+                });
+            } catch (Exception error) {
+                main.post(() -> {
+                    if (!isDestroyed()) failure.accept(error);
+                });
+            }
         });
     }
 

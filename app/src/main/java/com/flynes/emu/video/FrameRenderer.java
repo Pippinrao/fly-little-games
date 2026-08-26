@@ -4,6 +4,7 @@ import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 
 import com.flynes.emu.settings.FilterMode;
+import com.flynes.emu.video.status.VideoStatusAccumulator;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -74,6 +75,7 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
     };
 
     private final FramePublisher publisher;
+    private final VideoStatusAccumulator statusAccumulator;
     private final FloatBuffer vertices;
     private volatile FilterMode filterMode = FilterMode.EDGE_ENHANCED;
     private FilterMode activeFilterMode;
@@ -87,7 +89,12 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
     private int outputHeight;
 
     public FrameRenderer(FramePublisher publisher) {
+        this(publisher, null);
+    }
+
+    public FrameRenderer(FramePublisher publisher, VideoStatusAccumulator statusAccumulator) {
         this.publisher = publisher;
+        this.statusAccumulator = statusAccumulator;
         vertices = ByteBuffer.allocateDirect(QUAD.length * Float.BYTES)
                 .order(ByteOrder.nativeOrder()).asFloatBuffer();
         vertices.put(QUAD).position(0);
@@ -196,6 +203,7 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
             GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0,
                     frame.width(), frame.height(), glFormat, glType, pixels);
         }
+        if (statusAccumulator != null) statusAccumulator.onTextureUploaded();
     }
 
     private void applyTextureFilter() {

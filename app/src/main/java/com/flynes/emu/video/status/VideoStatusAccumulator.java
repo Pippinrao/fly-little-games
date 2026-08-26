@@ -9,7 +9,8 @@ import com.flynes.emu.video.quality.RuntimeTemporalState;
 import com.flynes.emu.video.quality.SourceTiming;
 import com.flynes.emu.video.quality.VideoConfigurationKey;
 
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -40,6 +41,7 @@ public final class VideoStatusAccumulator {
     private long cadenceAdjustments;
     private float safetyFallbackRatio;
     private ThermalBand thermalBand = ThermalBand.NONE;
+    private final Set<FallbackReason> fallbacks = new LinkedHashSet<>();
 
     public synchronized void beginWindow(long startedAtElapsedRealtimeMs,
                                          SourceTiming sourceTiming,
@@ -49,6 +51,7 @@ public final class VideoStatusAccumulator {
         this.sourceNominalFps = sourceNominalFps;
         coreFrames = textureUploads = synthesisSlots = motionWarpedSlots = bufferSubmissions = 0L;
         copiedSourceSequences.clear();
+        fallbacks.clear();
     }
 
     public synchronized void onCoreFrameProduced(long sequence) { coreFrames++; }
@@ -77,6 +80,9 @@ public final class VideoStatusAccumulator {
     }
 
     public synchronized void onThermalBand(ThermalBand band) { thermalBand = band; }
+    public synchronized void onFallback(FallbackReason fallback) {
+        if (fallback != null) fallbacks.add(fallback);
+    }
 
     public synchronized void publishStableConfiguration(
             long newSurfaceEpoch, long newDisplayRequestGeneration,
@@ -121,6 +127,6 @@ public final class VideoStatusAccumulator {
                 bufferSubmissions / divisor, safetyFallbackRatio, runtimeTemporalState,
                 videoDelayFrames, audioDelayMs, videoQueueDepth, audioQueueDepthSamples,
                 temporalTransition, cadenceAdjustments, thermalBand, StatusFreshness.FRESH,
-                nowElapsedRealtimeMs, Collections.<FallbackReason>emptyList());
+                nowElapsedRealtimeMs, new ArrayList<>(fallbacks));
     }
 }
