@@ -11,6 +11,7 @@ import com.flynes.emu.video.quality.VideoPreferences;
 import com.flynes.emu.video.quality.VideoQualityPreset;
 
 import java.util.Map;
+import java.util.Objects;
 
 /** Versioned settings loader with one-snapshot reads and atomic canonical commits. */
 public final class SettingsRepository {
@@ -20,6 +21,8 @@ public final class SettingsRepository {
     private final SettingsStore store;
     private SettingsBatch pendingBatch;
     private AppSettings pendingSettings;
+    private Object pendingBaseSchema;
+    private Object pendingBaseGeneration;
 
     public SettingsRepository(SettingsStore store) {
         if (store == null) throw new IllegalArgumentException("store must not be null");
@@ -28,20 +31,26 @@ public final class SettingsRepository {
 
     public AppSettings load() {
         Map<String, ?> raw = store.snapshot();
-        if (pendingBatch != null) {
-            if (store.commit(pendingBatch)) {
-                AppSettings result = pendingSettings;
-                pendingBatch = null;
-                pendingSettings = null;
-                return result;
-            }
-            return pendingSettings;
-        }
-
         Object schemaValue = raw.get(SettingsKeys.SCHEMA);
         if (schemaValue instanceof Integer && (Integer) schemaValue > SCHEMA_VERSION) {
+            clearPending();
             return AppSettings.defaults();
         }
+        if (pendingBatch != null) {
+            if (!Objects.equals(schemaValue, pendingBaseSchema)
+                    || !Objects.equals(raw.get(SettingsKeys.COMMIT_GENERATION),
+                    pendingBaseGeneration)) {
+                clearPending();
+            } else {
+                if (store.commit(pendingBatch)) {
+                    AppSettings result = pendingSettings;
+                    clearPending();
+                    return result;
+                }
+                return pendingSettings;
+            }
+        }
+
         if (schemaValue instanceof Integer && (Integer) schemaValue == SCHEMA_VERSION) {
             return loadSchemaFour(raw);
         }
@@ -52,17 +61,23 @@ public final class SettingsRepository {
         if (settings == null) throw new IllegalArgumentException("settings must not be null");
         Map<String, ?> raw = store.snapshot();
         Object schema = raw.get(SettingsKeys.SCHEMA);
-        if (schema instanceof Integer && (Integer) schema > SCHEMA_VERSION) return false;
-        return commitOrRemember(settings, canonicalBatch(settings, nextGeneration(raw)));
+        if (schema instanceof Integer && (Integer) schema > SCHEMA_VERSION) {
+            clearPending();
+            return false;
+        }
+        return commitOrRemember(settings, canonicalBatch(settings, nextGeneration(raw)), raw);
     }
 
     private AppSettings migrateLegacy(Map<String, ?> raw) {
         boolean hasDisplay = raw.containsKey(SettingsKeys.ASPECT)
                 || raw.containsKey(SettingsKeys.LEGACY_FILTER)
                 || raw.containsKey(SettingsKeys.LEGACY_REFRESH);
-        VideoPreferences video = hasDisplay ? migrateLegacyVideo(raw) : VideoPreferences.defaults();
+        Integer schema = raw.get(SettingsKeys.SCHEMA) instanceof Integer
+                ? (Integer) raw.get(SettingsKeys.SCHEMA) : null;
+        VideoPreferences video = hasDisplay
+                ? migrateLegacyVideo(raw, schema) : VideoPreferences.defaults();
         AppSettings settings = readCommon(raw, video);
-        commitOrRemember(settings, canonicalBatch(settings, nextGeneration(raw)));
+        commitOrRemember(settings, canonicalBatch(settings, nextGeneration(raw)), raw);
         return settings;
     }
 
@@ -86,23 +101,26 @@ public final class SettingsRepository {
         AppSettings settings = readCommon(raw, video);
         if (!(raw.get(SettingsKeys.COMMIT_GENERATION) instanceof Integer)
                 || !validEnum(raw, SettingsKeys.ASPECT, AspectMode.class)) repair = true;
-        if (repair) commitOrRemember(settings, canonicalBatch(settings, nextGeneration(raw)));
+        if (repair)
+            commitOrRemember(settings, canonicalBatch(settings, nextGeneration(raw)), raw);
         return settings;
     }
 
-    private static VideoPreferences migrateLegacyVideo(Map<String, ?> raw) {
+    private static VideoPreferences migrateLegacyVideo(Map<String, ?> raw, Integer schema) {
         String filter = string(raw, SettingsKeys.LEGACY_FILTER, "");
         SpatialMode spatial = SpatialMode.SHARP_BILINEAR;
         PostEffect effect = PostEffect.NONE;
         if ("NEAREST".equals(filter)) spatial = SpatialMode.NEAREST;
-        else if ("CRT".equals(filter)) effect = PostEffect.CRT;
+        else if ("CRT".equals(filter) && (schema == null || schema <= 0 || schema >= 2))
+            effect = PostEffect.CRT;
 
         String refresh = string(raw, SettingsKeys.LEGACY_REFRESH, "AUTO");
         PhysicalRefreshPolicy policy;
         if ("AUTO".equals(refresh)) policy = PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE;
+        else if ("HZ_60".equals(refresh)) policy = PhysicalRefreshPolicy.HZ_60;
         else if ("HZ_90".equals(refresh)) policy = PhysicalRefreshPolicy.HZ_90;
         else if ("HZ_120".equals(refresh)) policy = PhysicalRefreshPolicy.HZ_120;
-        else policy = PhysicalRefreshPolicy.HZ_60;
+        else policy = PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE;
         return new VideoPreferences(VideoQualityPreset.CUSTOM,
                 new CustomVideoSettings(policy, TemporalMode.NATIVE, spatial, effect), true);
     }
@@ -141,15 +159,24 @@ public final class SettingsRepository {
                 .build();
     }
 
-    private boolean commitOrRemember(AppSettings settings, SettingsBatch batch) {
+    private boolean commitOrRemember(AppSettings settings, SettingsBatch batch,
+                                     Map<String, ?> base) {
         if (store.commit(batch)) {
-            pendingSettings = null;
-            pendingBatch = null;
+            clearPending();
             return true;
         }
         pendingSettings = settings;
         pendingBatch = batch;
+        pendingBaseSchema = base.get(SettingsKeys.SCHEMA);
+        pendingBaseGeneration = base.get(SettingsKeys.COMMIT_GENERATION);
         return false;
+    }
+
+    private void clearPending() {
+        pendingSettings = null;
+        pendingBatch = null;
+        pendingBaseSchema = null;
+        pendingBaseGeneration = null;
     }
 
     private static SettingsBatch canonicalBatch(AppSettings settings, int generation) {

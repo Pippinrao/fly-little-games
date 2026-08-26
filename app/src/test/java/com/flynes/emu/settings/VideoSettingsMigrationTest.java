@@ -56,7 +56,9 @@ public final class VideoSettingsMigrationTest {
                 VideoPreferences video = migrated.videoPreferences();
                 assertEquals(VideoQualityPreset.CUSTOM, video.preset());
                 assertEquals(SpatialMode.valueOf(filter[1]), video.custom().spatialMode());
-                assertEquals(PostEffect.valueOf(filter[2]), video.custom().postEffect());
+                PostEffect expectedEffect = schema == 1 && "CRT".equals(filter[0])
+                        ? PostEffect.NONE : PostEffect.valueOf(filter[2]);
+                assertEquals(expectedEffect, video.custom().postEffect());
                 assertEquals(PhysicalRefreshPolicy.valueOf(refresh[1]),
                         video.custom().refreshPolicy());
                 assertEquals(TemporalMode.NATIVE, video.custom().temporalMode());
@@ -180,6 +182,68 @@ public final class VideoSettingsMigrationTest {
         assertEquals(newer, repository.load());
         assertEquals("SQUARE_PIXELS", store.values.get(SettingsKeys.ASPECT));
         assertEquals(1, store.commitCount);
+    }
+
+    @Test public void pendingMigrationNeverOverwritesAFutureSchema() {
+        AtomicMemoryStore store = new AtomicMemoryStore()
+                .put(SettingsKeys.SCHEMA, 1)
+                .put(SettingsKeys.LEGACY_FILTER, "NEAREST");
+        SettingsRepository repository = new SettingsRepository(store);
+        store.failNext = true;
+        repository.load();
+        assertEquals(1, store.commitAttempts);
+
+        store.put(SettingsKeys.SCHEMA, 5)
+                .put(SettingsKeys.COMMIT_GENERATION, 12);
+
+        assertEquals(AppSettings.defaults(), repository.load());
+        assertEquals(Integer.valueOf(5), store.values.get(SettingsKeys.SCHEMA));
+        assertEquals(1, store.commitAttempts);
+    }
+
+    @Test public void pendingSaveNeverOverwritesANewerSchemaFourGeneration() {
+        AtomicMemoryStore store = validSchemaFour(VideoQualityPreset.BALANCED);
+        SettingsRepository repository = new SettingsRepository(store);
+        store.failNext = true;
+        assertFalse(repository.save(AppSettings.defaults().toBuilder()
+                .aspectMode(AspectMode.INTEGER_SCALE).build()));
+
+        store.put(SettingsKeys.COMMIT_GENERATION, 10)
+                .put(SettingsKeys.ASPECT, "SQUARE_PIXELS")
+                .put(SettingsKeys.VIDEO_QUALITY_PRESET, "EXTREME");
+
+        AppSettings loaded = repository.load();
+        assertEquals(AspectMode.SQUARE_PIXELS, loaded.aspectMode());
+        assertEquals(VideoQualityPreset.EXTREME, loaded.videoPreferences().preset());
+        assertEquals(Integer.valueOf(10), store.values.get(SettingsKeys.COMMIT_GENERATION));
+        assertEquals(1, store.commitAttempts);
+    }
+
+    @Test public void migrationVocabularyIsSchemaAwareAndInvalidRefreshUsesAuto() {
+        AtomicMemoryStore schemaOne = new AtomicMemoryStore()
+                .put(SettingsKeys.SCHEMA, 1)
+                .put(SettingsKeys.LEGACY_FILTER, "CRT")
+                .put(SettingsKeys.LEGACY_REFRESH, "DEFAULT");
+        VideoPreferences old = new SettingsRepository(schemaOne).load().videoPreferences();
+        assertEquals(SpatialMode.SHARP_BILINEAR, old.custom().spatialMode());
+        assertEquals(PostEffect.NONE, old.custom().postEffect());
+        assertEquals(PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE,
+                old.custom().refreshPolicy());
+
+        AtomicMemoryStore schemaTwo = new AtomicMemoryStore()
+                .put(SettingsKeys.SCHEMA, 2)
+                .put(SettingsKeys.LEGACY_FILTER, "CRT");
+        assertEquals(PostEffect.CRT, new SettingsRepository(schemaTwo).load()
+                .videoPreferences().custom().postEffect());
+
+        AtomicMemoryStore markerless = new AtomicMemoryStore()
+                .put(SettingsKeys.LEGACY_FILTER, "CRT");
+        assertEquals(PostEffect.CRT, new SettingsRepository(markerless).load()
+                .videoPreferences().custom().postEffect());
+
+        AtomicMemoryStore markerOnly = new AtomicMemoryStore().put(SettingsKeys.SCHEMA, 1);
+        assertEquals(VideoQualityPreset.BALANCED,
+                new SettingsRepository(markerOnly).load().videoPreferences().preset());
     }
 
     @Test public void balancedRoundTripPreservesCustomRequestWithoutInjectingMmpx() {
