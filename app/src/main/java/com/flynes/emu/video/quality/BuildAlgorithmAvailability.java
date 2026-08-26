@@ -33,7 +33,10 @@ public final class BuildAlgorithmAvailability {
     public boolean mmpxIncluded() { return mmpxIncluded; }
     public boolean scaleFxIncluded() { return scaleFxIncluded; }
     public boolean motionCompensationIncluded() { return motionCompensationIncluded; }
+    public int mmpxOracleVersion() { return mmpxOracleVersion; }
     public String mmpxImplementationHash() { return mmpxImplementationHash; }
+    public String scaleFxUpstreamCommit() { return scaleFxUpstreamCommit; }
     public String scaleFxImplementationHash() { return scaleFxImplementationHash; }
+    public int motionAlgorithmVersion() { return motionAlgorithmVersion; }
     public String motionImplementationHash() { return motionImplementationHash; }
 }
