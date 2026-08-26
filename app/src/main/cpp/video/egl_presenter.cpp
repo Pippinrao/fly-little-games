@@ -3,6 +3,8 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -12,30 +14,39 @@ EglPresenter::EglPresenter(AAssetManager* assets)
         : assets_(assets), thread_(&EglPresenter::thread_main, this) {}
 
 EglPresenter::~EglPresenter() {
-    {
-        std::unique_lock lock(mutex_);
-        accepting_frames_ = false;
-        pending_frame_.reset();
+    if (thread_.joinable()) thread_.join();
+}
+
+bool EglPresenter::shutdown() {
+    std::unique_lock lock(mutex_);
+    accepting_frames_ = false;
+    pending_frame_.reset();
+    if (!stopping_) {
         stopping_ = true;
         const auto id = ++command_id_;
-        commands_.push_back({Command::STOP, id, 0, nullptr, 0, 0});
+        commands_.push_back({Command::STOP, id, 0, nullptr, 0, 0, 0.0f});
         wake_.notify_one();
-        acknowledged_.wait(lock, [&] { return acknowledged_id_ >= id; });
     }
-    if (thread_.joinable()) thread_.join();
+    const bool exited = acknowledged_.wait_for(lock, std::chrono::milliseconds(1200),
+                                                [&] { return thread_exited_; });
+    lock.unlock();
+    if (exited && thread_.joinable()) thread_.join();
+    return exited;
 }
 
 bool EglPresenter::surface_created(ANativeWindow* window, std::uint64_t epoch) {
     if (!window) return false;
     std::unique_lock lock(mutex_);
-    if (stopping_ || !coordinator_.begin_create(epoch)) {
+    if (stopping_ || epoch == 0 || epoch <= ui_surface_epoch_) {
         ANativeWindow_release(window);
         return false;
     }
+    ui_surface_epoch_ = epoch;
+    ui_surface_state_ = UiSurfaceState::ACTIVE;
     accepting_frames_ = false;
     pending_frame_.reset();
     const auto id = ++command_id_;
-    commands_.push_back({Command::CREATE, id, epoch, window, 0, 0});
+    commands_.push_back({Command::CREATE, id, epoch, window, 0, 0, 0.0f});
     wake_.notify_one();
     // EGL window creation must not block SurfaceView.surfaceCreated() on the UI thread.
     return true;
@@ -44,21 +55,31 @@ bool EglPresenter::surface_created(ANativeWindow* window, std::uint64_t epoch) {
 void EglPresenter::surface_changed(int width, int height, std::uint64_t epoch) {
     if (width <= 0 || height <= 0) return;
     std::unique_lock lock(mutex_);
-    if (stopping_ || !coordinator_.is_active(epoch)) return;
+    if (stopping_ || ui_surface_state_ != UiSurfaceState::ACTIVE
+            || epoch != ui_surface_epoch_) return;
     const auto id = ++command_id_;
-    commands_.push_back({Command::RESIZE, id, epoch, nullptr, width, height});
+    commands_.push_back({Command::RESIZE, id, epoch, nullptr, width, height, 0.0f});
     wake_.notify_one();
 }
 
-void EglPresenter::surface_destroyed(std::uint64_t epoch) {
+bool EglPresenter::surface_destroyed(std::uint64_t epoch) {
     std::unique_lock lock(mutex_);
-    if (stopping_ || !coordinator_.begin_destroy(epoch)) return;
+    if (stopping_ || ui_surface_state_ != UiSurfaceState::ACTIVE
+            || epoch != ui_surface_epoch_) return false;
+    ui_surface_state_ = UiSurfaceState::DESTROYING;
+    destroy_result_available_ = false;
+    destroy_result_epoch_ = epoch;
+    destroy_clear_succeeded_ = false;
     accepting_frames_ = false;
     pending_frame_.reset();
     const auto id = ++command_id_;
-    commands_.push_back({Command::DESTROY, id, epoch, nullptr, 0, 0});
+    commands_.push_back({Command::DESTROY, id, epoch, nullptr, 0, 0, 0.0f});
     wake_.notify_one();
-    acknowledged_.wait(lock, [&] { return acknowledged_id_ >= id || stopping_; });
+    const bool completed = acknowledged_.wait_for(lock, std::chrono::milliseconds(1200), [&] {
+        return (destroy_result_available_ && destroy_result_epoch_ == epoch) || thread_exited_;
+    });
+    return completed && destroy_result_available_ && destroy_result_epoch_ == epoch
+            && destroy_clear_succeeded_;
 }
 
 bool EglPresenter::enqueue(const void* pixels, std::size_t capacity,
@@ -125,6 +146,76 @@ void EglPresenter::reset_sequence() {
     last_enqueued_sequence_ = 0;
 }
 
+bool EglPresenter::request_frame_rate(std::uint64_t epoch, float source_fps) {
+    if (!std::isfinite(source_fps) || source_fps <= 0.0f) return false;
+    std::unique_lock lock(mutex_);
+    if (stopping_ || ui_surface_state_ != UiSurfaceState::ACTIVE
+            || epoch != ui_surface_epoch_) return false;
+    const auto id = ++command_id_;
+    pending_result_waiters_.insert(id);
+    commands_.push_back({Command::VOTE_FRAME_RATE, id, epoch, nullptr,
+                         0, 0, source_fps});
+    wake_.notify_one();
+    const bool completed = acknowledged_.wait_for(lock, std::chrono::milliseconds(750), [&] {
+        return command_results_.find(id) != command_results_.end() || thread_exited_;
+    });
+    if (!completed) {
+        pending_result_waiters_.erase(id);
+        return false;
+    }
+    auto result = command_results_.find(id);
+    if (result == command_results_.end()) {
+        pending_result_waiters_.erase(id);
+        return false;
+    }
+    const bool succeeded = result->second;
+    command_results_.erase(result);
+    pending_result_waiters_.erase(id);
+    return succeeded;
+}
+
+bool EglPresenter::clear_frame_rate(std::uint64_t epoch) {
+    std::unique_lock lock(mutex_);
+    if (stopping_ || epoch != ui_surface_epoch_) return false;
+    if (ui_surface_state_ == UiSurfaceState::DESTROYING) {
+        const bool completed = acknowledged_.wait_for(lock, std::chrono::milliseconds(500), [&] {
+            return (destroy_result_available_ && destroy_result_epoch_ == epoch)
+                    || thread_exited_;
+        });
+        return completed && destroy_result_available_ && destroy_result_epoch_ == epoch
+                && destroy_clear_succeeded_;
+    }
+    if (ui_surface_state_ == UiSurfaceState::EMPTY) {
+        if (destroy_result_available_ && destroy_result_epoch_ == epoch
+                && destroy_clear_succeeded_) return true;
+        // A destroy can finish before its bounded platform clear. Re-enter the
+        // render thread so the coordinator can observe the original pending token.
+    }
+    if (ui_surface_state_ != UiSurfaceState::ACTIVE
+            && ui_surface_state_ != UiSurfaceState::EMPTY) return false;
+    const auto id = ++command_id_;
+    pending_result_waiters_.insert(id);
+    commands_.push_back({Command::CLEAR_FRAME_RATE, id, epoch, nullptr,
+                         0, 0, 0.0f});
+    wake_.notify_one();
+    const bool completed = acknowledged_.wait_for(lock, std::chrono::milliseconds(500), [&] {
+        return command_results_.find(id) != command_results_.end() || thread_exited_;
+    });
+    if (!completed) {
+        pending_result_waiters_.erase(id);
+        return false;
+    }
+    auto result = command_results_.find(id);
+    if (result == command_results_.end()) {
+        pending_result_waiters_.erase(id);
+        return false;
+    }
+    const bool succeeded = result->second;
+    command_results_.erase(result);
+    pending_result_waiters_.erase(id);
+    return succeeded;
+}
+
 void EglPresenter::thread_main() {
     for (;;) {
         std::unique_ptr<StagedFrame> frame;
@@ -134,6 +225,7 @@ void EglPresenter::thread_main() {
         ANativeWindow* window = nullptr;
         int width = 0;
         int height = 0;
+        float frame_rate = 0.0f;
         int filter = 0;
         {
             std::unique_lock lock(mutex_);
@@ -147,6 +239,7 @@ void EglPresenter::thread_main() {
                 window = pending.window;
                 width = pending.width;
                 height = pending.height;
+                frame_rate = pending.frame_rate;
             } else if (pending_frame_ && active_ && surface_ready_) {
                 frame = std::move(pending_frame_);
                 filter = requested_filter_ == failed_filter_
@@ -161,9 +254,15 @@ void EglPresenter::thread_main() {
 
         if (command != Command::NONE) {
             bool created = false;
+            bool command_succeeded = true;
             if (command == Command::CREATE) {
-                destroy_egl();
-                created = create_egl(window);
+                created = coordinator_.begin_create(epoch);
+                if (created) {
+                    destroy_egl();
+                    created = create_egl(window);
+                } else if (window) {
+                    ANativeWindow_release(window);
+                }
                 if (created) {
                     int native_width = ANativeWindow_getWidth(active_window_);
                     int native_height = ANativeWindow_getHeight(active_window_);
@@ -171,8 +270,30 @@ void EglPresenter::thread_main() {
                 }
             } else if (command == Command::RESIZE) {
                 if (surface_ != EGL_NO_SURFACE) pipeline_.resize(width, height);
+            } else if (command == Command::VOTE_FRAME_RATE) {
+                auto result = coordinator_.request_frame_rate(epoch, active_window_, frame_rate);
+                metrics_.on_frame_rate_vote(static_cast<int>(std::lround(frame_rate * 1000.0f)),
+                                            static_cast<int>(result));
+                command_succeeded = result == PresentationCoordinator::FrameRateVoteResult::APPLIED;
+            } else if (command == Command::CLEAR_FRAME_RATE) {
+                auto result = coordinator_.clear_frame_rate(epoch, active_window_);
+                metrics_.on_frame_rate_vote(0, static_cast<int>(result));
+                command_succeeded = result == PresentationCoordinator::FrameRateVoteResult::CLEARED
+                        || result == PresentationCoordinator::FrameRateVoteResult::UNSUPPORTED;
             } else if (command == Command::DESTROY || command == Command::STOP) {
+                const std::uint64_t destroy_epoch = command == Command::STOP
+                        ? coordinator_.epoch() : epoch;
+                const bool destroying = coordinator_.begin_destroy(destroy_epoch);
+                if (active_window_) {
+                    auto result = coordinator_.clear_frame_rate(destroy_epoch, active_window_);
+                    metrics_.on_frame_rate_vote(0, static_cast<int>(result));
+                    command_succeeded = result
+                            == PresentationCoordinator::FrameRateVoteResult::CLEARED
+                            || result
+                            == PresentationCoordinator::FrameRateVoteResult::UNSUPPORTED;
+                }
                 destroy_egl();
+                if (destroying) coordinator_.complete_destroy(destroy_epoch);
             }
             {
                 std::lock_guard lock(mutex_);
@@ -184,8 +305,26 @@ void EglPresenter::thread_main() {
                 } else if (command == Command::DESTROY) {
                     surface_ready_ = false;
                     accepting_frames_ = false;
+                    if (ui_surface_epoch_ == epoch) ui_surface_state_ = UiSurfaceState::EMPTY;
+                    destroy_result_epoch_ = epoch;
+                    destroy_clear_succeeded_ = command_succeeded;
+                    destroy_result_available_ = true;
+                }
+                if (command == Command::CLEAR_FRAME_RATE
+                        || command == Command::VOTE_FRAME_RATE) {
+                    if (command == Command::CLEAR_FRAME_RATE
+                            && destroy_result_available_
+                            && destroy_result_epoch_ <= epoch
+                            && command_succeeded) {
+                        destroy_clear_succeeded_ = true;
+                    }
+                    if (pending_result_waiters_.find(command_id)
+                            != pending_result_waiters_.end()) {
+                        command_results_[command_id] = command_succeeded;
+                    }
                 }
                 acknowledged_id_ = std::max(acknowledged_id_, command_id);
+                if (command == Command::STOP) thread_exited_ = true;
                 acknowledged_.notify_all();
             }
             if (command == Command::STOP) return;

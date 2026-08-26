@@ -44,8 +44,13 @@ public final class DisplayQualityResolverBaselineTest {
                 TemporalMode.NATIVE, SpatialMode.SHARP_BILINEAR, PostEffect.NONE);
         VideoPreferences requested = new VideoPreferences(VideoQualityPreset.CUSTOM, custom, true);
 
+        RuntimeConstraints rejected = new RuntimeConstraints(SourceTiming.NTSC_60_0988,
+                new DisplayObservation(1L, PhysicalRefreshPolicy.HZ_90, mode(2, 90_000),
+                        activeMode(60_000), 9_500L, 4_000L), false, 80, 35.0f,
+                ThermalBand.NONE, true, Collections.emptySet(),
+                RuntimeTemporalState.IMMEDIATE_NATIVE);
         EffectiveVideoConfig result = resolve(requested, BuildAlgorithmAvailability.baseOnly(),
-                constraints(activeMode(60_000)));
+                rejected);
 
         assertEquals(90_000, result.requestedDisplayMode().refreshMilliHz());
         assertEquals(60_000, result.systemReportedActiveMode().refreshMilliHz());
@@ -70,6 +75,20 @@ public final class DisplayQualityResolverBaselineTest {
         assertTrue(result.fallbacks().contains(FallbackReason.CONFIGURATION_UNVERIFIED));
         assertNotNull(result.resolvedConfigurationId());
         assertNotNull(result.resolvedConfigurationKey());
+    }
+
+    @Test public void nativeTime120WithoutPhysicalCertificateFallsBackToSixty() {
+        CustomVideoSettings custom = new CustomVideoSettings(PhysicalRefreshPolicy.HZ_120,
+                TemporalMode.NATIVE, SpatialMode.SHARP_BILINEAR, PostEffect.NONE);
+        VideoPreferences requested = new VideoPreferences(VideoQualityPreset.CUSTOM, custom, true);
+
+        EffectiveVideoConfig result = resolve(requested, BuildAlgorithmAvailability.baseOnly(),
+                constraints(activeMode(60_000)));
+
+        assertEquals(PhysicalRefreshPolicy.HZ_60, result.effectiveRefresh());
+        assertEquals(60_000, result.requestedDisplayMode().refreshMilliHz());
+        assertEquals(SpatialMode.SHARP_BILINEAR, result.effectiveSpatial());
+        assertTrue(result.fallbacks().contains(FallbackReason.CONFIGURATION_UNVERIFIED));
     }
 
     @Test public void severeAndCriticalThermalSignalsRequestSafetyWithoutFakingActiveMode() {

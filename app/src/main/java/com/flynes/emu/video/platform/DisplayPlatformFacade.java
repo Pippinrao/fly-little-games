@@ -28,4 +28,7 @@ public interface DisplayPlatformFacade {
 
     Mode currentMode();
     List<Mode> supportedModes();
+    default void setPreferredDisplayModeId(int modeId) {
+        throw new UnsupportedOperationException("display requests are unavailable");
+    }
 }

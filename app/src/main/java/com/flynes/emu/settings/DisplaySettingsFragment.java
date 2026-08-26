@@ -132,6 +132,10 @@ public final class DisplaySettingsFragment extends Fragment {
                 new AndroidDisplayPlatformFacade(display), GlCapabilities.unknown());
         for (DisplayModeCapability mode : capabilities.sameResolutionModes()) {
             PhysicalRefreshPolicy policy = policyFor(mode.refreshMilliHz());
+            // 120 Hz remains certification-only until a signed physical-device
+            // evidence profile is installed. The instrumentation hook exercises it
+            // without exposing an uncertified production choice.
+            if (policy == PhysicalRefreshPolicy.HZ_120) continue;
             if (policy != null && !availableRefreshPolicies.contains(policy)) {
                 availableRefreshPolicies.add(policy);
                 refreshLabels.add(Math.round(mode.refreshMilliHz() / 1000.0f) + " Hz");

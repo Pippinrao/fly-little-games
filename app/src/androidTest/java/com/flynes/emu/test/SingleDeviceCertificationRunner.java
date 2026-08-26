@@ -17,23 +17,32 @@ public final class SingleDeviceCertificationRunner extends AndroidJUnitRunner {
     @Override public void onCreate(Bundle arguments) {
         this.arguments = arguments == null ? new Bundle() : new Bundle(arguments);
         authorized = false;
-        if (!this.arguments.getBoolean("flynesCertification", false)) {
+        if (!certificationRequested()) {
             this.arguments.putString("notAnnotation", DeviceCertification.class.getName());
         }
         super.onCreate(this.arguments);
     }
 
     @Override public void onStart() {
-        if (arguments.getBoolean("flynesCertification", false)) {
+        if (certificationRequested()) {
             String expectedSerial = arguments.getString("authorizedSerial", "").trim();
             String expectedModel = arguments.getString("authorizedModel", "").trim();
             String actualSerial = shell("getprop ro.serialno").trim();
             String actualModel = shell("getprop ro.product.model").trim();
+            String qemu = shell("getprop ro.kernel.qemu").trim();
+            String bootQemu = shell("getprop ro.boot.qemu").trim();
+            String hardware = shell("getprop ro.hardware").trim().toLowerCase();
+            String fingerprint = shell("getprop ro.build.fingerprint").trim().toLowerCase();
             if (expectedSerial.isEmpty() || expectedModel.isEmpty()
                     || !expectedSerial.equals(actualSerial) || !expectedModel.equals(actualModel)) {
                 throw new IllegalStateException("Certification device mismatch: expected serial/model "
                         + expectedSerial + "/" + expectedModel + " but found "
                         + actualSerial + "/" + actualModel);
+            }
+            if ("1".equals(qemu) || "1".equals(bootQemu) || hardware.contains("ranchu")
+                    || hardware.contains("goldfish") || fingerprint.contains("generic")) {
+                throw new IllegalStateException(
+                        "Certification requires a physical device, not an emulator");
             }
             authorized = true;
         }
@@ -41,6 +50,11 @@ public final class SingleDeviceCertificationRunner extends AndroidJUnitRunner {
     }
 
     static boolean isAuthorized() { return authorized; }
+
+    private boolean certificationRequested() {
+        Object value = arguments.get("flynesCertification");
+        return value != null && "true".equals(value.toString());
+    }
 
     private String shell(String command) {
         try (ParcelFileDescriptor descriptor = getUiAutomation().executeShellCommand(command);

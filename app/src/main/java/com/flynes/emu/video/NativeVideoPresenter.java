@@ -8,18 +8,20 @@ import com.flynes.emu.settings.FilterMode;
 import java.nio.ByteBuffer;
 
 /** Java lifecycle boundary for the single native EGL presenter. */
-public final class NativeVideoPresenter implements AutoCloseable {
+public final class NativeVideoPresenter implements AutoCloseable, FrameRateRequestTarget {
     interface Bridge {
         long create();
-        void destroy(long handle);
+        boolean destroy(long handle);
         boolean surfaceCreated(long handle, Surface surface, long epoch);
         void surfaceChanged(long handle, int width, int height, long epoch);
-        void surfaceDestroyed(long handle, long epoch);
+        boolean surfaceDestroyed(long handle, long epoch);
         boolean enqueue(long handle, ByteBuffer pixels, long sequence, int width, int height,
                         int pitch, int format, int bytes);
         void setFilter(long handle, int filter);
         void setActive(long handle, boolean active);
         void resetSequence(long handle);
+        boolean requestFrameRate(long handle, long epoch, float sourceFps);
+        boolean clearFrameRate(long handle, long epoch);
         NativePresenterStats stats(long handle);
     }
 
@@ -27,15 +29,15 @@ public final class NativeVideoPresenter implements AutoCloseable {
         private final AssetManager assets;
         JniBridge(AssetManager assets) { this.assets = assets; }
         @Override public long create() { return nativeCreate(assets); }
-        @Override public void destroy(long handle) { nativeDestroy(handle); }
+        @Override public boolean destroy(long handle) { return nativeDestroy(handle); }
         @Override public boolean surfaceCreated(long handle, Surface surface, long epoch) {
             return nativeSurfaceCreated(handle, surface, epoch);
         }
         @Override public void surfaceChanged(long handle, int width, int height, long epoch) {
             nativeSurfaceChanged(handle, width, height, epoch);
         }
-        @Override public void surfaceDestroyed(long handle, long epoch) {
-            nativeSurfaceDestroyed(handle, epoch);
+        @Override public boolean surfaceDestroyed(long handle, long epoch) {
+            return nativeSurfaceDestroyed(handle, epoch);
         }
         @Override public boolean enqueue(long handle, ByteBuffer pixels, long sequence,
                                          int width, int height, int pitch, int format, int bytes) {
@@ -48,11 +50,18 @@ public final class NativeVideoPresenter implements AutoCloseable {
             nativeSetActive(handle, active);
         }
         @Override public void resetSequence(long handle) { nativeResetSequence(handle); }
+        @Override public boolean requestFrameRate(long handle, long epoch, float sourceFps) {
+            return nativeRequestFrameRate(handle, epoch, sourceFps);
+        }
+        @Override public boolean clearFrameRate(long handle, long epoch) {
+            return nativeClearFrameRate(handle, epoch);
+        }
         @Override public NativePresenterStats stats(long handle) {
             long[] values = nativeGetStats(handle);
-            return values == null || values.length < 9 ? NativePresenterStats.EMPTY
+            return values == null || values.length < 11 ? NativePresenterStats.EMPTY
                     : new NativePresenterStats(values[0], values[1], values[2], values[3],
-                            values[4], values[5], (int) values[6], (int) values[7], values[8]);
+                            values[4], values[5], (int) values[6], (int) values[7], values[8],
+                            (int) values[9], (int) values[10]);
         }
     }
 
@@ -93,10 +102,11 @@ public final class NativeVideoPresenter implements AutoCloseable {
         }
     }
 
-    public synchronized void surfaceDestroyed(long epoch) {
-        if (handle == 0L || !surfaceReady || epoch != activeEpoch) return;
-        surfaceReady = false;
-        bridge.surfaceDestroyed(handle, epoch);
+    public synchronized boolean surfaceDestroyed(long epoch) {
+        if (handle == 0L || !surfaceReady || epoch != activeEpoch) return false;
+        boolean confirmed = bridge.surfaceDestroyed(handle, epoch);
+        if (confirmed) surfaceReady = false;
+        return confirmed;
     }
 
     public synchronized void onFrameAvailable(long sequence) {
@@ -123,6 +133,17 @@ public final class NativeVideoPresenter implements AutoCloseable {
         if (handle != 0L) bridge.resetSequence(handle);
     }
 
+    @Override public synchronized boolean requestFrameRate(long epoch, float sourceFps) {
+        return handle != 0L && surfaceReady && epoch == activeEpoch
+                && Float.isFinite(sourceFps) && sourceFps > 0f
+                && bridge.requestFrameRate(handle, epoch, sourceFps);
+    }
+
+    @Override public synchronized boolean clearFrameRate(long epoch) {
+        return handle != 0L && surfaceReady && epoch == activeEpoch
+                && bridge.clearFrameRate(handle, epoch);
+    }
+
     public synchronized NativePresenterStats stats() {
         return handle == 0L ? NativePresenterStats.EMPTY : bridge.stats(handle);
     }
@@ -132,20 +153,25 @@ public final class NativeVideoPresenter implements AutoCloseable {
     @Override public synchronized void close() {
         if (handle == 0L) return;
         surfaceReady = false;
+        // Native intentionally retains its self-contained worker only when bounded
+        // shutdown cannot prove exit; deleting it would risk a use-after-free.
         bridge.destroy(handle);
         handle = 0L;
     }
 
     private static native long nativeCreate(AssetManager assets);
-    private static native void nativeDestroy(long handle);
+    private static native boolean nativeDestroy(long handle);
     private static native boolean nativeSurfaceCreated(long handle, Surface surface, long epoch);
     private static native void nativeSurfaceChanged(long handle, int width, int height, long epoch);
-    private static native void nativeSurfaceDestroyed(long handle, long epoch);
+    private static native boolean nativeSurfaceDestroyed(long handle, long epoch);
     private static native boolean nativeEnqueue(long handle, ByteBuffer pixels, long sequence,
                                                 int width, int height, int pitch, int format,
                                                 int bytes);
     private static native void nativeSetFilter(long handle, int filter);
     private static native void nativeSetActive(long handle, boolean active);
     private static native void nativeResetSequence(long handle);
+    private static native boolean nativeRequestFrameRate(long handle, long epoch,
+                                                         float sourceFps);
+    private static native boolean nativeClearFrameRate(long handle, long epoch);
     private static native long[] nativeGetStats(long handle);
 }

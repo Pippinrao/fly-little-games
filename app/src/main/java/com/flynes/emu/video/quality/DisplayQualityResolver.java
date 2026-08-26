@@ -86,15 +86,10 @@ public final class DisplayQualityResolver {
             fallbacks.add(FallbackReason.DISPLAY_MODE_UNAVAILABLE);
             resolvedMode = activeMode;
             if (activeMode != null) effectiveRefresh = policyFor(activeMode.refreshMilliHz());
-        } else if (activeMode != null && refresh != PhysicalRefreshPolicy.FOLLOW_SYSTEM
-                && Math.abs(activeMode.refreshMilliHz() - requestedMode.refreshMilliHz())
-                > REFRESH_TOLERANCE_MILLIHZ) {
-            fallbacks.add(FallbackReason.DISPLAY_MODE_REJECTED);
-            resolvedMode = activeMode;
-            effectiveRefresh = policyFor(activeMode.refreshMilliHz());
         }
 
-        if (isAdvanced(temporal, spatial)) {
+        boolean certificationRequired = isAdvanced(refresh, temporal, spatial);
+        if (certificationRequired) {
             FallbackReason capabilityFailure = capabilityFailure(
                     temporal, spatial, build, capabilities.gl());
             Qualification qualification = null;
@@ -116,10 +111,31 @@ public final class DisplayQualityResolver {
                 temporal = TemporalMode.NATIVE;
                 spatial = SpatialMode.SHARP_BILINEAR;
                 post = PostEffect.NONE;
+                if (refresh == PhysicalRefreshPolicy.HZ_120) {
+                    refresh = PhysicalRefreshPolicy.HZ_60;
+                    requestedMode = selectMode(refresh, capabilities,
+                            constraints.displayObservation());
+                    resolvedMode = requestedMode == null ? activeMode : requestedMode;
+                    effectiveRefresh = requestedMode == null && activeMode != null
+                            ? policyFor(activeMode.refreshMilliHz()) : refresh;
+                }
                 fallbacks.add(capabilityFailure != null ? capabilityFailure
                         : fallbackFor(qualification == null
                         ? EvidenceInvalidReason.CERTIFICATE_MISSING
                         : qualification.invalidReason));
+            }
+        }
+        if (requestedMode != null && activeMode != null
+                && persistentModeMismatch(refresh, requestedMode,
+                constraints.displayObservation())) {
+            addFallbackOnce(fallbacks, FallbackReason.DISPLAY_MODE_REJECTED);
+            resolvedMode = activeMode;
+            effectiveRefresh = policyFor(activeMode.refreshMilliHz());
+            if (advancedConfigurationId != null) {
+                advancedConfigurationId = null;
+                temporal = TemporalMode.NATIVE;
+                spatial = SpatialMode.SHARP_BILINEAR;
+                post = PostEffect.NONE;
             }
         }
         if (!constraints.runtimeFailures().isEmpty()) {
@@ -215,6 +231,17 @@ public final class DisplayQualityResolver {
                 <= REFRESH_TOLERANCE_MILLIHZ;
     }
 
+    private static boolean persistentModeMismatch(PhysicalRefreshPolicy requestedPolicy,
+                                                  DisplayModeCapability requestedMode,
+                                                  DisplayObservation observation) {
+        if (requestedPolicy == PhysicalRefreshPolicy.FOLLOW_SYSTEM || observation == null
+                || observation.systemReportedActiveMode() == null
+                || observation.stableForMs() < 3_000L
+                || observation.requestedPolicy() != requestedPolicy
+                || !sameMode(observation.requestedMode(), requestedMode)) return false;
+        return !sameMode(observation.systemReportedActiveMode(), requestedMode);
+    }
+
     private static void addFallbackOnce(List<FallbackReason> fallbacks,
                                         FallbackReason reason) {
         if (reason != null && !fallbacks.contains(reason)) fallbacks.add(reason);
@@ -241,8 +268,10 @@ public final class DisplayQualityResolver {
         }
     }
 
-    private static boolean isAdvanced(TemporalMode temporal, SpatialMode spatial) {
-        return temporal == TemporalMode.MOTION_INTERPOLATION
+    private static boolean isAdvanced(PhysicalRefreshPolicy refresh,
+                                      TemporalMode temporal, SpatialMode spatial) {
+        return refresh == PhysicalRefreshPolicy.HZ_120
+                || temporal == TemporalMode.MOTION_INTERPOLATION
                 || spatial == SpatialMode.MMPX || spatial == SpatialMode.SCALEFX;
     }
 

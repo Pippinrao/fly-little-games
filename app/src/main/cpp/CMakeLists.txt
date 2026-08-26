@@ -50,3 +50,8 @@ if(NOT EGL_LIB OR NOT GLES2_LIB)
     message(FATAL_ERROR "Native presenter requires EGL and GLESv2")
 endif()
 target_link_libraries(nescore ${EGL_LIB} ${GLES2_LIB})
+
+find_library(DL_LIB dl)
+if(DL_LIB)
+    target_link_libraries(nescore ${DL_LIB})
+endif()

@@ -61,6 +61,56 @@ public final class DisplayQualityResolverQualificationTest {
         assertTrue(untrustedResult.fallbacks().contains(FallbackReason.TIME_BOOTSTRAP_REQUIRED));
     }
 
+    @Test public void qualifiedNative120RequestsDesiredModeThenFallsBackAtomically() {
+        Fixture clockFixture = fixture(AspectMode.FOUR_BY_THREE,
+                EvidenceLevel.COMPATIBILITY_AND_POWER, "mmpx-hash",
+                NOW_EPOCH_MS - 1_000L, NOW_EPOCH_MS + 10_000L);
+        DisplayModeCapability mode60 = new DisplayModeCapability(1, 2340, 1080, 60_000);
+        DisplayModeCapability mode120 = new DisplayModeCapability(2, 2340, 1080, 120_000);
+        VideoConfigurationKey key120 = new VideoConfigurationKey(SourceTiming.NTSC_60_0988,
+                2340, 1080, 2, 120_000, TemporalMode.NATIVE,
+                SpatialMode.SHARP_BILINEAR, PostEffect.NONE, AspectMode.FOUR_BY_THREE);
+        CertifiedVideoConfiguration certificate = new CertifiedVideoConfiguration(
+                "native-120-qualified", key120, EvidenceLevel.COMPATIBILITY_AND_POWER,
+                "build-profile-hash", "", NOW_EPOCH_MS - 1_000L,
+                NOW_EPOCH_MS + 10_000L,
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        DeviceQualityProfile profile = profile(certificate, "build-profile-hash");
+        DeviceIdentity identity = new DeviceIdentity("Google", "Pixel", "build-fingerprint",
+                "vendor", "renderer", "version", "driver-fingerprint");
+        DisplayCapabilities display = new DisplayCapabilities(2340, 1080,
+                Arrays.asList(mode60, mode120), knownGl());
+        VideoPreferences requested = new VideoPreferences(VideoQualityPreset.CUSTOM,
+                new CustomVideoSettings(PhysicalRefreshPolicy.HZ_120, TemporalMode.NATIVE,
+                        SpatialMode.SHARP_BILINEAR, PostEffect.NONE), true);
+
+        EffectiveVideoConfig switching = new DisplayQualityResolver().resolve(requested,
+                AspectMode.FOUR_BY_THREE, display, BuildAlgorithmAvailability.baseOnly(),
+                constraints(mode60, mode120, 0L), identity, profile, clockFixture.clock, 2_000L);
+        assertEquals(PhysicalRefreshPolicy.HZ_120, switching.effectiveRefresh());
+        assertEquals(mode120, switching.requestedDisplayMode());
+        assertEquals(key120, switching.resolvedConfigurationKey());
+        assertEquals("native-120-qualified", switching.resolvedConfigurationId());
+
+        EffectiveVideoConfig rejected = new DisplayQualityResolver().resolve(requested,
+                AspectMode.FOUR_BY_THREE, display, BuildAlgorithmAvailability.baseOnly(),
+                constraints(mode60, mode120, 4_000L), identity, profile,
+                clockFixture.clock, 5_000L);
+        assertEquals(PhysicalRefreshPolicy.HZ_60, rejected.effectiveRefresh());
+        assertEquals(60_000, rejected.resolvedConfigurationKey().refreshMilliHz());
+        assertTrue(rejected.resolvedConfigurationId().startsWith("builtin:"));
+        assertTrue(rejected.fallbacks().contains(FallbackReason.DISPLAY_MODE_REJECTED));
+    }
+
+    private static RuntimeConstraints constraints(DisplayModeCapability active,
+                                                  DisplayModeCapability requested,
+                                                  long stableForMs) {
+        return new RuntimeConstraints(SourceTiming.NTSC_60_0988,
+                new DisplayObservation(1L, PhysicalRefreshPolicy.HZ_120, requested, active,
+                        1_500L, stableForMs), false, 80, 35.0f, ThermalBand.NONE,
+                true, Collections.emptySet(), RuntimeTemporalState.IMMEDIATE_NATIVE);
+    }
+
     private static Fixture fixture(AspectMode aspectMode, EvidenceLevel level,
                                    String algorithmHash, long certifiedAt, long validUntil) {
         DisplayModeCapability mode60 = new DisplayModeCapability(1, 2340, 1080, 60_000);

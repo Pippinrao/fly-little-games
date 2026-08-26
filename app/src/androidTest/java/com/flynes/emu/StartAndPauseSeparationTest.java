@@ -44,9 +44,27 @@ public final class StartAndPauseSeparationTest {
                 openMillis[0] = SystemClock.uptimeMillis() - before;
             });
             org.junit.Assert.assertTrue("pause drawer blocked main thread for " + openMillis[0] + "ms",
-                    openMillis[0] <= 260L);
+                    openMillis[0] <= 150L);
             SystemClock.sleep(240L);
             onView(withId(R.id.pause_drawer)).check(matches(isDisplayed()));
+            long clearDeadline = SystemClock.uptimeMillis() + 2_000L;
+            com.flynes.emu.video.NativePresenterStats pauseStats =
+                    com.flynes.emu.video.NativePresenterStats.EMPTY;
+            while (SystemClock.uptimeMillis() < clearDeadline) {
+                final java.util.concurrent.atomic.AtomicReference<
+                        com.flynes.emu.video.NativePresenterStats> observed =
+                        new java.util.concurrent.atomic.AtomicReference<>();
+                scenario.onActivity(activity -> observed.set(((
+                        com.flynes.emu.video.GameSurfaceView) activity.findViewById(
+                        R.id.game_surface)).presenterStats()));
+                pauseStats = observed.get();
+                if (pauseStats.requestedFrameRateMilliHz() == 0) break;
+                SystemClock.sleep(25L);
+            }
+            org.junit.Assert.assertEquals(0, pauseStats.requestedFrameRateMilliHz());
+            org.junit.Assert.assertEquals(
+                    com.flynes.emu.video.NativePresenterStats.FRAME_RATE_VOTE_CLEARED,
+                    pauseStats.frameRateVoteStatus());
             onView(withText(R.string.control_layout_title)).check(doesNotExist());
             onView(withId(R.id.pause_game_title)).check(matches(withText(R.string.builtin_game_name)));
             scenario.onActivity(activity -> {

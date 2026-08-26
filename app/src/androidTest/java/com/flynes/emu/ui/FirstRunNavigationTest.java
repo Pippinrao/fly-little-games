@@ -108,10 +108,22 @@ public final class FirstRunNavigationTest {
 
     @Test public void selectedGameCanBeAddedToAndSeenInFavorites() {
         try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
+            // The game-center category is intentionally persisted. Establish a
+            // selected built-in game so this test is independent of prior runs.
+            onView(withId(R.id.category_builtin)).perform(click());
             waitUntilEnabled(scenario, R.id.favorite_toggle);
+            String addFavorite = scenarioText(scenario, R.string.add_favorite);
+            String removeFavorite = scenarioText(scenario, R.string.remove_favorite);
+            final boolean[] alreadyFavorite = {false};
+            scenario.onActivity(activity -> alreadyFavorite[0] = removeFavorite.contentEquals(
+                    activity.findViewById(R.id.favorite_toggle).getContentDescription()));
+            if (alreadyFavorite[0]) {
+                onView(withId(R.id.favorite_toggle)).perform(click());
+                waitForContentDescription(scenario, R.id.favorite_toggle, addFavorite);
+                waitUntilEnabled(scenario, R.id.favorite_toggle);
+            }
             onView(withId(R.id.favorite_toggle)).perform(click());
-            waitForContentDescription(scenario, R.id.favorite_toggle,
-                    scenarioText(scenario, R.string.remove_favorite));
+            waitForContentDescription(scenario, R.id.favorite_toggle, removeFavorite);
             onView(withId(R.id.category_favorites)).perform(click());
             onView(withId(R.id.detail_title)).check(matches(withText("From Below")));
         }

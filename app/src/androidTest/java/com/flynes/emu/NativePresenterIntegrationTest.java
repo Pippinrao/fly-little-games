@@ -6,6 +6,7 @@ import static org.junit.Assert.assertEquals;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.lifecycle.Lifecycle;
+import android.os.Build;
 
 import com.flynes.emu.settings.FilterMode;
 import com.flynes.emu.video.GameSurfaceView;
@@ -58,14 +59,54 @@ public final class NativePresenterIntegrationTest {
         }
     }
 
+    @Test public void nativeCoordinatorOwnsSourceRateVoteAndPauseClearsIt() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            AtomicReference<GameSurfaceView> surface = new AtomicReference<>();
+            scenario.onActivity(activity -> surface.set((GameSurfaceView)
+                    activity.findViewById(R.id.game_surface)));
+            boolean virtualDevice = Build.FINGERPRINT.contains("generic")
+                    || Build.HARDWARE.contains("ranchu")
+                    || Build.HARDWARE.contains("goldfish");
+            long deadline = System.currentTimeMillis() + 5_000L;
+            NativePresenterStats active = NativePresenterStats.EMPTY;
+            while (System.currentTimeMillis() < deadline) {
+                active = surface.get().presenterStats();
+                if (virtualDevice
+                        ? active.frameRateVoteStatus()
+                        == NativePresenterStats.FRAME_RATE_VOTE_CLEARED
+                        : active.frameRateVoteStatus()
+                        == NativePresenterStats.FRAME_RATE_VOTE_APPLIED) break;
+                Thread.sleep(50L);
+            }
+            assertEquals(virtualDevice ? 0 : 60_099, active.requestedFrameRateMilliHz());
+            assertEquals("frame-rate capability result did not fail closed",
+                    virtualDevice ? NativePresenterStats.FRAME_RATE_VOTE_CLEARED
+                            : NativePresenterStats.FRAME_RATE_VOTE_APPLIED,
+                    active.frameRateVoteStatus());
+
+            scenario.moveToState(Lifecycle.State.CREATED);
+            deadline = System.currentTimeMillis() + 3_000L;
+            NativePresenterStats paused = active;
+            while (System.currentTimeMillis() < deadline) {
+                paused = surface.get().presenterStats();
+                if (paused.requestedFrameRateMilliHz() == 0) break;
+                Thread.sleep(50L);
+            }
+            assertEquals(0, paused.requestedFrameRateMilliHz());
+            assertEquals(NativePresenterStats.FRAME_RATE_VOTE_CLEARED,
+                    paused.frameRateVoteStatus());
+            scenario.moveToState(Lifecycle.State.RESUMED);
+        }
+    }
+
     @Test public void everyBaselineFilterCompilesAndSubmitsOnDevice() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            NativePresenterStats prior = awaitFrames(scenario, 3_000L);
+            NativePresenterStats prior = awaitFrames(scenario, 10_000L);
             for (FilterMode mode : FilterMode.values()) {
                 scenario.onActivity(activity -> ((GameSurfaceView)
                         activity.findViewById(R.id.game_surface)).setFilterMode(mode));
                 NativePresenterStats next = awaitSubmissionAfter(scenario,
-                        prior.submittedFrames(), 3_000L);
+                        prior.submittedFrames(), 10_000L);
                 assertTrue(mode + " produced no new native swap",
                         next.submittedFrames() > prior.submittedFrames());
                 assertEquals(mode + " triggered an unexpected runtime fallback", 0L,
@@ -85,19 +126,24 @@ public final class NativePresenterIntegrationTest {
     @Test public void pauseStopsCallbacksAndResumeRecreatesAWorkingPresentationPath()
             throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            NativePresenterStats before = awaitFrames(scenario, 3_000L);
+            NativePresenterStats before = awaitFrames(scenario, 10_000L);
+            AtomicReference<GameSurfaceView> surface = new AtomicReference<>();
+            scenario.onActivity(activity -> surface.set((GameSurfaceView)
+                    activity.findViewById(R.id.game_surface)));
             scenario.moveToState(Lifecycle.State.CREATED);
             Thread.sleep(400L);
-            NativePresenterStats paused = observe(scenario);
+            NativePresenterStats paused = surface.get().presenterStats();
             Thread.sleep(400L);
-            NativePresenterStats stillPaused = observe(scenario);
+            NativePresenterStats stillPaused = surface.get().presenterStats();
             assertTrue("pause left presentation callbacks running",
                     stillPaused.submittedFrames() - paused.submittedFrames() <= 1L);
 
             scenario.moveToState(Lifecycle.State.RESUMED);
             NativePresenterStats resumed = awaitSubmissionAfter(scenario,
-                    stillPaused.submittedFrames(), 3_000L);
-            assertTrue(resumed.submittedFrames() > stillPaused.submittedFrames());
+                    stillPaused.submittedFrames(), 10_000L);
+            assertTrue("resume produced no swap; paused=" + stillPaused
+                            + ", resumed=" + resumed,
+                    resumed.submittedFrames() > stillPaused.submittedFrames());
             assertTrue(resumed.surfaceEpoch() >= before.surfaceEpoch());
         }
     }

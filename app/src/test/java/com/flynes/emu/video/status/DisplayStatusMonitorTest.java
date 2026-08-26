@@ -80,6 +80,33 @@ public final class DisplayStatusMonitorTest {
         assertFalse(followSystem.listener.persistentMismatch);
     }
 
+    @Test public void nativeFixedModePollsWithoutMotionAndComparesFullModeIdentity() {
+        Fixture fixture = new Fixture();
+        fixture.platform.current = new DisplayPlatformFacade.Mode(7, 1920, 1080, 120f);
+        fixture.monitor.request(2L, PhysicalRefreshPolicy.HZ_120,
+                mode(2, 120_000), false);
+        assertEquals(1, fixture.poll.pending());
+
+        fixture.clock.now = DisplayStatusMonitor.PERSISTENT_MISMATCH_MS;
+        fixture.poll.runDue();
+        assertTrue("same Hz with different mode id/resolution must be rejected",
+                fixture.listener.persistentMismatch);
+    }
+
+    @Test public void sameModeToleratesRefreshReportingJitter() {
+        Fixture fixture = new Fixture();
+        fixture.platform.current = platformMode(2, 119.999f);
+        fixture.monitor.request(2L, PhysicalRefreshPolicy.HZ_120,
+                mode(2, 120_000), true);
+
+        fixture.clock.now = DisplayStatusMonitor.PERSISTENT_MISMATCH_MS;
+        fixture.poll.runDue();
+
+        assertFalse("same mode must tolerate system refresh rounding",
+                fixture.listener.persistentMismatch);
+        assertEquals(0, fixture.listener.expiredCount);
+    }
+
     @Test public void timeRollbackPublishesUnknown() {
         Fixture fixture = new Fixture();
         fixture.clock.now = 100L;

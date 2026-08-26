@@ -8,7 +8,8 @@ import android.view.SurfaceView;
 import com.flynes.emu.settings.FilterMode;
 
 /** Surface-only view. NativeVideoPresenter is the sole EGL and buffer-swap owner. */
-public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.Callback {
+public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.Callback,
+        FrameRateRequestTarget {
     public interface Listener {
         void onSurfaceAvailable(Surface surface, long epoch);
         void onSurfaceLost(long epoch);
@@ -17,6 +18,7 @@ public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.
     private final NativeVideoPresenter presenter;
     private final Listener listener;
     private long epoch;
+    private boolean hasFrameRateVote;
 
     public GameSurfaceView(Context context, FramePublisher publisher, Listener listener) {
         super(context);
@@ -28,6 +30,8 @@ public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.
     }
 
     @Override public void surfaceCreated(SurfaceHolder holder) {
+        // Do not discard an unconfirmed old-epoch vote. The new epoch's first
+        // clear/request must settle the native pending token before changing mode.
         long nextEpoch = Math.addExact(epoch, 1L);
         if (!presenter.surfaceCreated(holder.getSurface(), nextEpoch)) return;
         epoch = nextEpoch;
@@ -39,7 +43,10 @@ public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.
     }
 
     @Override public void surfaceDestroyed(SurfaceHolder holder) {
-        presenter.surfaceDestroyed(epoch);
+        boolean confirmed = presenter.surfaceDestroyed(epoch);
+        // Keep tracking a potentially live vote when the bounded destroy times out;
+        // the listener's clear path must not release the Java window preference early.
+        if (confirmed) hasFrameRateVote = false;
         if (listener != null) listener.onSurfaceLost(epoch);
     }
 
@@ -48,7 +55,23 @@ public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.
     public void onResume() { presenter.setActive(true); }
     public void onPause() { presenter.setActive(false); }
     public void resetSequence() { presenter.resetSequence(); }
+    @Override public boolean requestFrameRate(long surfaceEpoch, float sourceFps) {
+        // Track the attempt as a potential vote: a timeout can race a late platform
+        // apply, so the caller must be able to issue a compensating clear.
+        hasFrameRateVote = true;
+        boolean accepted = presenter.requestFrameRate(surfaceEpoch, sourceFps);
+        return accepted;
+    }
+    @Override public boolean clearFrameRate(long surfaceEpoch) {
+        if (!hasFrameRateVote) return true;
+        boolean cleared = presenter.clearFrameRate(surfaceEpoch);
+        if (cleared) hasFrameRateVote = false;
+        return cleared;
+    }
     public NativePresenterStats presenterStats() { return presenter.stats(); }
     public long surfaceEpoch() { return epoch; }
-    public void release() { presenter.close(); }
+    public void release() {
+        hasFrameRateVote = false;
+        presenter.close();
+    }
 }

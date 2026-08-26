@@ -51,6 +51,7 @@ import com.flynes.emu.video.NativeInputSample;
 import com.flynes.emu.video.GameSurfaceView;
 import com.flynes.emu.video.NativePresenterStats;
 import com.flynes.emu.video.NativeFrameSource;
+import com.flynes.emu.video.RefreshMode;
 import com.flynes.emu.video.ViewportLayout;
 import com.flynes.emu.video.quality.LegacyVideoRuntimeAdapter;
 import com.flynes.emu.video.quality.BuildAlgorithmAvailability;
@@ -82,6 +83,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -134,6 +136,8 @@ public class MainActivity extends AppCompatActivity {
     private final ScheduledExecutorService displaySafetyExecutor =
             Executors.newSingleThreadScheduledExecutor(runnable -> daemonThread(
                     runnable, "flynes-display-safety"));
+    private final ExecutorService displayLifecycleExecutor = Executors.newSingleThreadExecutor(
+            runnable -> daemonThread(runnable, "flynes-display-lifecycle"));
     private final ExecutorService qualityProbeExecutor = Executors.newSingleThreadExecutor(
             runnable -> daemonThread(runnable, "flynes-quality-probe"));
     private final GlCapabilityProbe glCapabilityProbe =
@@ -153,6 +157,14 @@ public class MainActivity extends AppCompatActivity {
     private volatile DisplayObservation lastDisplayObservation;
     private volatile RuntimeTemporalState requestedRuntimeTemporalState =
             RuntimeTemporalState.IMMEDIATE_NATIVE;
+    private long appliedDisplayEpoch = -1L;
+    private RefreshMode appliedRefreshMode;
+    private boolean appliedFollowSystem;
+    private int appliedSourceMilliHz;
+    private final AtomicLong displayRequestGeneration = new AtomicLong();
+    private final AtomicLong displayFallbackRetryToken = new AtomicLong();
+    private boolean displayModeRejectedForSession;
+    private long lastLoggedDisplayRequestGeneration = -1L;
     private final Runnable publishVideoStatus = new Runnable() {
         @Override public void run() {
             if (!rendering) return;
@@ -190,6 +202,19 @@ public class MainActivity extends AppCompatActivity {
                 new DisplayStatusMonitor.Listener() {
                     @Override public void onObservation(DisplayObservation observation) {
                         lastDisplayObservation = observation;
+                        if (observation.requestGeneration()
+                                != lastLoggedDisplayRequestGeneration
+                                && observation.requestedMode() != null) {
+                            lastLoggedDisplayRequestGeneration = observation.requestGeneration();
+                            com.flynes.emu.video.quality.DisplayModeCapability requested =
+                                    observation.requestedMode();
+                            Log.i(TAG, "EVIDENCE_DISPLAY_REQUEST generation="
+                                    + observation.requestGeneration() + " policy="
+                                    + observation.requestedPolicy().name() + " modeId="
+                                    + requested.modeId() + " width=" + requested.width()
+                                    + " height=" + requested.height() + " refreshMilliHz="
+                                    + requested.refreshMilliHz());
+                        }
                         videoStatus.onDisplayState(observation.requestedPolicy(),
                                 observation.requestedMode(),
                                 observation.systemReportedActiveMode());
@@ -225,6 +250,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                     @Override public void onPersistentPolicyMismatch(long generation) {
                         videoStatus.onFallback(FallbackReason.SYSTEM_OR_DEVICE_POLICY);
+                        runOnUiThread(() -> handlePersistentDisplayMismatch(generation));
                     }
                 });
 
@@ -243,11 +269,12 @@ public class MainActivity extends AppCompatActivity {
         view = new GameSurfaceView(this, framePublisher, new GameSurfaceView.Listener() {
             @Override public void onSurfaceAvailable(Surface surface, long epoch) {
                 surfaceEpoch = epoch;
-                DisplayModeController.ApplyResult result = requestDisplay(surface);
+                DisplayModeController.ApplyResult result = requestDisplay();
                 Log.i(TAG, "display refresh request=" + result + " epoch=" + epoch);
             }
 
             @Override public void onSurfaceLost(long epoch) {
+                clearDisplayRequest(epoch);
                 if (surfaceEpoch == epoch && displayMonitor != null) displayMonitor.invalidate();
             }
         });
@@ -427,6 +454,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        clearDisplayRequest(surfaceEpoch);
         unregisterDisplayListener();
         if (displayMonitor != null) displayMonitor.invalidate();
         if (session.state() == SessionState.RUNNING) session.pause();
@@ -466,6 +494,7 @@ public class MainActivity extends AppCompatActivity {
         frameDispatchThread.shutdownNow();
         displayPollExecutor.shutdownNow();
         displaySafetyExecutor.shutdownNow();
+        displayLifecycleExecutor.shutdownNow();
         qualityProbeExecutor.shutdownNow();
         if (coverCapture != null) framePublisher.removeObserver(coverCapture);
         coverExecutor.shutdownNow();
@@ -534,6 +563,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void showPauseMenu() {
         if (isFinishing() || gamepad == null || pauseLayer != null) return;
+        beginPauseDisplayClear(surfaceEpoch);
+        if (displayMonitor != null) displayMonitor.invalidate();
         inputRouter.cancelAll();
         gamepad.reset();
         if (session.state() == SessionState.RUNNING) session.pause();
@@ -681,6 +712,7 @@ public class MainActivity extends AppCompatActivity {
             audio.start();
         }
         startRendering();
+        scheduleDisplayReapplyAfterPause();
     }
 
     // ------------------------------------------------------------------
@@ -770,22 +802,152 @@ public class MainActivity extends AppCompatActivity {
                 ? 0 : gamepad.getRootWindowInsets().getSystemWindowInsetRight());
         Surface surface = view.getHolder().getSurface();
         if (surface != null && surface.isValid()) {
-            DisplayModeController.ApplyResult result = requestDisplay(surface);
+            DisplayModeController.ApplyResult result = requestDisplay();
             Log.i(TAG, "display refresh update=" + result);
         }
         calibrateClockDomain();
     }
 
-    private DisplayModeController.ApplyResult requestDisplay(Surface surface) {
+    private DisplayModeController.ApplyResult requestDisplay() {
+        if (pauseLayer != null) return DisplayModeController.ApplyResult.FAILED;
         LegacyVideoRuntimeAdapter video = runtimeVideo();
+        boolean certificationHookAllowed = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                && getIntent() != null;
+        String certificationMode = certificationHookAllowed ? getIntent().getStringExtra(
+                "com.flynes.emu.extra.CERTIFY_NATIVE_TIME_MODE") : null;
+        boolean certifyNative120 = "120".equals(certificationMode);
+        boolean certifyNative60 = "60".equals(certificationMode);
+        boolean followsSystem = !(certifyNative120 || certifyNative60)
+                && video.followsSystemRefresh();
+        RefreshMode requestedRefresh = certifyNative120 ? RefreshMode.HZ_120
+                : certifyNative60 ? RefreshMode.HZ_60 : video.displayRefresh();
+        if (displayModeRejectedForSession && !followsSystem) {
+            requestedRefresh = RefreshMode.HZ_60;
+        }
         requestedRuntimeTemporalState = video.temporalState();
         boolean motionRequested = video.requestedTemporalMode()
                 == com.flynes.emu.video.quality.TemporalMode.MOTION_INTERPOLATION;
-        return video.followsSystemRefresh()
-                ? DisplayModeController.followSystem(this, surface, 60.0988f,
-                        displayMonitor, surfaceEpoch, motionRequested)
-                : DisplayModeController.apply(this, surface, video.displayRefresh(), 60.0988f,
-                        displayMonitor, surfaceEpoch, motionRequested);
+        float sourceFps = runtimeSourceTiming == SourceTiming.PAL_50 ? 50f : 60.0988f;
+        int sourceMilliHz = Math.round(sourceFps * 1_000f);
+        Log.i(TAG, "EVIDENCE_SOURCE_TIMING=" + runtimeSourceTiming.name()
+                + " sourceMilliHz=" + sourceMilliHz);
+        if (appliedDisplayEpoch == surfaceEpoch
+                && appliedFollowSystem == followsSystem
+                && appliedRefreshMode == requestedRefresh
+                && appliedSourceMilliHz == sourceMilliHz) {
+            return appliedFollowSystem ? DisplayModeController.ApplyResult.FALLBACK_AUTO
+                    : DisplayModeController.ApplyResult.APPLIED;
+        }
+        AndroidDisplayPlatformFacade platform = new AndroidDisplayPlatformFacade(
+                getWindow(), getWindowManager().getDefaultDisplay());
+        displayRequestGeneration.incrementAndGet();
+        if (followsSystem) {
+            DisplayModeController.ApplyResult result = DisplayModeController.followSystem(
+                    platform, view, surfaceEpoch);
+            if (result != DisplayModeController.ApplyResult.FAILED) {
+                appliedDisplayEpoch = surfaceEpoch;
+                appliedRefreshMode = null;
+                appliedFollowSystem = true;
+                appliedSourceMilliHz = sourceMilliHz;
+                if (displayMonitor != null) displayMonitor.request(surfaceEpoch,
+                        com.flynes.emu.video.quality.PhysicalRefreshPolicy.FOLLOW_SYSTEM,
+                        null, motionRequested);
+            }
+            return result;
+        }
+        DisplayModeController.ApplyResult result = DisplayModeController.apply(
+                platform, view, requestedRefresh, sourceFps,
+                surfaceEpoch, displayMonitor, motionRequested);
+        if (result == DisplayModeController.ApplyResult.APPLIED) {
+            appliedDisplayEpoch = surfaceEpoch;
+            appliedRefreshMode = requestedRefresh;
+            appliedFollowSystem = false;
+            appliedSourceMilliHz = sourceMilliHz;
+        }
+        return result;
+    }
+
+    private void clearDisplayRequest(long epoch) {
+        if (view == null) return;
+        displayFallbackRetryToken.incrementAndGet();
+        long generation = displayRequestGeneration.incrementAndGet();
+        appliedDisplayEpoch = -1L;
+        appliedRefreshMode = null;
+        appliedSourceMilliHz = 0;
+        scheduleNativeClearUntilConfirmed(view, epoch, generation, 0);
+    }
+
+    private void beginPauseDisplayClear(long epoch) {
+        if (view == null) return;
+        displayFallbackRetryToken.incrementAndGet();
+        long generation = displayRequestGeneration.incrementAndGet();
+        appliedDisplayEpoch = -1L;
+        appliedRefreshMode = null;
+        appliedSourceMilliHz = 0;
+        scheduleNativeClearUntilConfirmed(view, epoch, generation, 0);
+    }
+
+    private void scheduleNativeClearUntilConfirmed(GameSurfaceView target, long epoch,
+                                                   long generation, int attempt) {
+        displayLifecycleExecutor.execute(() -> {
+            if (generation != displayRequestGeneration.get()) return;
+            boolean cleared = target.clearFrameRate(epoch);
+            if (cleared) {
+                runOnUiThread(() -> {
+                    if (generation != displayRequestGeneration.get() || isDestroyed()) return;
+                    new AndroidDisplayPlatformFacade(getWindow(),
+                            getWindowManager().getDefaultDisplay())
+                            .setPreferredDisplayModeId(0);
+                });
+                return;
+            }
+            if (attempt >= 11 || generation != displayRequestGeneration.get()) {
+                Log.w(TAG, "display vote clear remains unconfirmed after bounded retries");
+                return;
+            }
+            try {
+                Thread.sleep(250L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            scheduleNativeClearUntilConfirmed(target, epoch, generation, attempt + 1);
+        });
+    }
+
+    private void handlePersistentDisplayMismatch(long generation) {
+        if (displayMonitor == null || pauseLayer != null || isFinishing()) return;
+        DisplayStatusMonitor.Snapshot snapshot = displayMonitor.snapshotAt(
+                SystemClock.elapsedRealtime());
+        DisplayObservation observation = snapshot.observation();
+        if (observation == null || observation.requestGeneration() != generation) return;
+        displayModeRejectedForSession = true;
+        appliedDisplayEpoch = -1L;
+        long retryToken = displayFallbackRetryToken.incrementAndGet();
+        requestDisplayFallback(retryToken, surfaceEpoch, 0);
+    }
+
+    private void requestDisplayFallback(long retryToken, long expectedSurfaceEpoch,
+                                        int attempt) {
+        if (retryToken != displayFallbackRetryToken.get() || pauseLayer != null
+                || isFinishing() || isDestroyed() || surfaceEpoch != expectedSurfaceEpoch) return;
+        DisplayModeController.ApplyResult result = requestDisplay();
+        Log.w(TAG, "persistent display-mode mismatch; ordered 60 Hz fallback=" + result
+                + " attempt=" + attempt);
+        if (result != DisplayModeController.ApplyResult.FAILED || attempt >= 11) return;
+        statusHandler.postDelayed(() -> requestDisplayFallback(retryToken,
+                expectedSurfaceEpoch, attempt + 1), 250L);
+    }
+
+    private void scheduleDisplayReapplyAfterPause() {
+        long generation = displayRequestGeneration.incrementAndGet();
+        displayLifecycleExecutor.execute(() -> runOnUiThread(() -> {
+            if (generation != displayRequestGeneration.get() || pauseLayer != null
+                    || isFinishing()) return;
+            Surface surface = view.getHolder().getSurface();
+            if (surface != null && surface.isValid()) requestDisplay();
+        }));
     }
 
     private LegacyVideoRuntimeAdapter runtimeVideo() {

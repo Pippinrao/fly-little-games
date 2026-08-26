@@ -16,7 +16,8 @@ import java.util.function.LongSupplier;
 public final class DisplayStatusMonitor implements AutoCloseable {
     public static final long MOTION_POLL_MS = 500L;
     public static final long MOTION_LEASE_MS = 1_500L;
-    private static final long PERSISTENT_MISMATCH_MS = 3_000L;
+    public static final long PERSISTENT_MISMATCH_MS = 3_000L;
+    private static final int REFRESH_TOLERANCE_MILLIHZ = 1_001;
 
     public interface Cancellable { void cancel(); }
     public interface Scheduler { Cancellable schedule(Runnable runnable, long delayMs); }
@@ -124,7 +125,7 @@ public final class DisplayStatusMonitor implements AutoCloseable {
             return;
         }
         boolean sameActive = observation != null
-                && active.equals(observation.systemReportedActiveMode());
+                && sameMode(active, observation.systemReportedActiveMode());
         if (!sameActive) stableSinceMs = now;
         long stableFor = Math.max(0L, now - stableSinceMs);
         observation = new DisplayObservation(generation, requestedPolicy, requestedMode,
@@ -144,7 +145,7 @@ public final class DisplayStatusMonitor implements AutoCloseable {
     private void updateMismatchLocked(DisplayModeCapability active, long now) {
         boolean mismatch = requestedPolicy != PhysicalRefreshPolicy.FOLLOW_SYSTEM
                 && requestedMode != null
-                && Math.abs(requestedMode.refreshMilliHz() - active.refreshMilliHz()) > 1_000;
+                && !sameMode(requestedMode, active);
         if (!mismatch) {
             mismatchSinceMs = null;
             mismatchPublished = false;
@@ -158,7 +159,7 @@ public final class DisplayStatusMonitor implements AutoCloseable {
     }
 
     private boolean isMotionCompatible(DisplayModeCapability active) {
-        return requestedMode != null && requestedMode.equals(active)
+        return requestedMode != null && sameMode(requestedMode, active)
                 && active.refreshMilliHz() >= 119_000 && active.refreshMilliHz() <= 121_000;
     }
 
@@ -174,11 +175,12 @@ public final class DisplayStatusMonitor implements AutoCloseable {
     }
 
     private void schedulePollLocked() {
-        if (!motionRequired || closed) return;
+        if (requestedPolicy == PhysicalRefreshPolicy.FOLLOW_SYSTEM || closed) return;
         long expectedGeneration = generation;
         pollTask = pollScheduler.schedule(() -> {
             synchronized (DisplayStatusMonitor.this) {
-                if (closed || expectedGeneration != generation || !motionRequired) return;
+                if (closed || expectedGeneration != generation
+                        || requestedPolicy == PhysicalRefreshPolicy.FOLLOW_SYSTEM) return;
                 sampleLocked();
                 schedulePollLocked();
             }
@@ -209,5 +211,14 @@ public final class DisplayStatusMonitor implements AutoCloseable {
             throw new IllegalStateException("invalid current refresh rate");
         return new DisplayModeCapability(mode.modeId(), mode.width(), mode.height(),
                 (int) milliHz);
+    }
+
+    private static boolean sameMode(DisplayModeCapability left, DisplayModeCapability right) {
+        return left != null && right != null
+                && left.modeId() == right.modeId()
+                && left.width() == right.width()
+                && left.height() == right.height()
+                && Math.abs(left.refreshMilliHz() - right.refreshMilliHz())
+                <= REFRESH_TOLERANCE_MILLIHZ;
     }
 }
