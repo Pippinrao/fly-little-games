@@ -81,6 +81,18 @@ public final class VideoSettingsMigrationTest {
         assertEquals(VideoQualityPreset.BALANCED, balanced.videoPreferences().preset());
     }
 
+    @Test public void partialLegacyDisplayUsesHistoricalAutoRefreshDefault() {
+        AtomicMemoryStore store = new AtomicMemoryStore()
+                .put(SettingsKeys.SCHEMA, 3)
+                .put(SettingsKeys.LEGACY_FILTER, "NEAREST");
+
+        VideoPreferences migrated = new SettingsRepository(store).load().videoPreferences();
+
+        assertEquals(VideoQualityPreset.CUSTOM, migrated.preset());
+        assertEquals(PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE,
+                migrated.custom().refreshPolicy());
+    }
+
     @Test public void ignoresInterruptedSchemaFourFieldsDuringLegacyMigration() {
         AtomicMemoryStore store = new AtomicMemoryStore()
                 .put(SettingsKeys.SCHEMA, 2)
@@ -150,6 +162,23 @@ public final class VideoSettingsMigrationTest {
         assertEquals(first, second);
         assertEquals(Integer.valueOf(1), store.values.get(SettingsKeys.COMMIT_GENERATION));
         assertEquals(2, store.commitAttempts);
+        assertEquals(1, store.commitCount);
+    }
+
+    @Test public void newerSuccessfulSaveSupersedesAnOlderFailedIntent() {
+        AtomicMemoryStore store = new AtomicMemoryStore();
+        SettingsRepository repository = new SettingsRepository(store);
+        AppSettings older = AppSettings.defaults().toBuilder()
+                .aspectMode(AspectMode.INTEGER_SCALE).build();
+        AppSettings newer = AppSettings.defaults().toBuilder()
+                .aspectMode(AspectMode.SQUARE_PIXELS).build();
+
+        store.failNext = true;
+        assertFalse(repository.save(older));
+        assertTrue(repository.save(newer));
+
+        assertEquals(newer, repository.load());
+        assertEquals("SQUARE_PIXELS", store.values.get(SettingsKeys.ASPECT));
         assertEquals(1, store.commitCount);
     }
 

@@ -97,7 +97,7 @@ public final class SettingsRepository {
         if ("NEAREST".equals(filter)) spatial = SpatialMode.NEAREST;
         else if ("CRT".equals(filter)) effect = PostEffect.CRT;
 
-        String refresh = string(raw, SettingsKeys.LEGACY_REFRESH, "HZ_60");
+        String refresh = string(raw, SettingsKeys.LEGACY_REFRESH, "AUTO");
         PhysicalRefreshPolicy policy;
         if ("AUTO".equals(refresh)) policy = PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE;
         else if ("HZ_90".equals(refresh)) policy = PhysicalRefreshPolicy.HZ_90;
@@ -142,7 +142,11 @@ public final class SettingsRepository {
     }
 
     private boolean commitOrRemember(AppSettings settings, SettingsBatch batch) {
-        if (store.commit(batch)) return true;
+        if (store.commit(batch)) {
+            pendingSettings = null;
+            pendingBatch = null;
+            return true;
+        }
         pendingSettings = settings;
         pendingBatch = batch;
         return false;
