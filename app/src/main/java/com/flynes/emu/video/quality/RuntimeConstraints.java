@@ -10,6 +10,7 @@ import java.util.Set;
 public final class RuntimeConstraints {
     private final SourceTiming sourceTiming;
     private final DisplayObservation displayObservation;
+    private final long displayRequestGeneration;
     private final boolean systemBatterySaver;
     private final int batteryPercent;
     private final float batteryTemperatureCelsius;
@@ -24,8 +25,22 @@ public final class RuntimeConstraints {
                               boolean optionalAdaptiveProtectionEnabled,
                               Set<RuntimeFailure> runtimeFailures,
                               RuntimeTemporalState currentTemporalState) {
+        this(sourceTiming, displayObservation,
+                displayObservation == null ? 0L : displayObservation.requestGeneration(),
+                systemBatterySaver, batteryPercent, batteryTemperatureCelsius, thermalBand,
+                optionalAdaptiveProtectionEnabled, runtimeFailures, currentTemporalState);
+    }
+
+    public RuntimeConstraints(SourceTiming sourceTiming, DisplayObservation displayObservation,
+                              long displayRequestGeneration,
+                              boolean systemBatterySaver, int batteryPercent,
+                              float batteryTemperatureCelsius, ThermalBand thermalBand,
+                              boolean optionalAdaptiveProtectionEnabled,
+                              Set<RuntimeFailure> runtimeFailures,
+                              RuntimeTemporalState currentTemporalState) {
         this.sourceTiming = Objects.requireNonNull(sourceTiming, "sourceTiming");
         this.displayObservation = displayObservation;
+        this.displayRequestGeneration = displayRequestGeneration;
         this.systemBatterySaver = systemBatterySaver;
         this.batteryPercent = batteryPercent;
         this.batteryTemperatureCelsius = batteryTemperatureCelsius;
@@ -38,6 +53,7 @@ public final class RuntimeConstraints {
     }
     public SourceTiming sourceTiming() { return sourceTiming; }
     public DisplayObservation displayObservation() { return displayObservation; }
+    public long displayRequestGeneration() { return displayRequestGeneration; }
     public boolean systemBatterySaver() { return systemBatterySaver; }
     public int batteryPercent() { return batteryPercent; }
     public float batteryTemperatureCelsius() { return batteryTemperatureCelsius; }

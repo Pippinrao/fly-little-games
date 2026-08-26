@@ -1,8 +1,11 @@
 package com.flynes.emu.video.quality;
 
 import java.util.Collections;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public final class AdaptiveQualityPolicy {
     private final List<AdaptiveTransition> downgradeTransitions;
@@ -18,9 +21,14 @@ public final class AdaptiveQualityPolicy {
                                  float batterySafeCelsius,
                                  float batteryRecoveryCelsius,
                                  long recoveryStableMs) {
-        this.downgradeTransitions = Collections.unmodifiableList(downgradeTransitions);
-        this.gpuP95BudgetMsByConfigurationId = Collections.unmodifiableMap(
-                gpuP95BudgetMsByConfigurationId);
+        this.downgradeTransitions = Collections.unmodifiableList(new ArrayList<>(
+                Objects.requireNonNull(downgradeTransitions, "downgradeTransitions")));
+        this.gpuP95BudgetMsByConfigurationId = Collections.unmodifiableMap(new LinkedHashMap<>(
+                Objects.requireNonNull(gpuP95BudgetMsByConfigurationId,
+                        "gpuP95BudgetMsByConfigurationId")));
+        if (recoveryStableMs < 0L) {
+            throw new IllegalArgumentException("recoveryStableMs must be non-negative");
+        }
         this.batteryDowngradeCelsius = batteryDowngradeCelsius;
         this.batterySafeCelsius = batterySafeCelsius;
         this.batteryRecoveryCelsius = batteryRecoveryCelsius;

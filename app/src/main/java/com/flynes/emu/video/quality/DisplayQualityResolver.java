@@ -46,9 +46,16 @@ public final class DisplayQualityResolver {
         TemporalMode temporal = axes.temporalMode();
         SpatialMode spatial = axes.spatialMode();
         PostEffect post = axes.postEffect();
+        boolean motionRequestedByUser = temporal == TemporalMode.MOTION_INTERPOLATION;
+        boolean motionSessionActive = constraints.currentTemporalState()
+                == RuntimeTemporalState.MOTION_COMPENSATING;
         List<FallbackReason> fallbacks = new ArrayList<>();
         SessionSafetyDirective safety = SessionSafetyDirective.NONE;
         String advancedConfigurationId = null;
+        RuntimeTemporalState runtimeTemporalState = RuntimeTemporalState.IMMEDIATE_NATIVE;
+        int videoDelayFrames = 0;
+        float audioDelayMs = 0.0f;
+        boolean transitionalOutput = false;
 
         if (constraints.thermalBand() == ThermalBand.CRITICAL) {
             safety = SessionSafetyDirective.PAUSE_FOR_CRITICAL_THERMAL;
@@ -91,12 +98,14 @@ public final class DisplayQualityResolver {
             FallbackReason capabilityFailure = capabilityFailure(
                     temporal, spatial, build, capabilities.gl());
             Qualification qualification = null;
-            if (capabilityFailure == null && resolvedMode != null
+            DisplayModeCapability qualificationMode = requestedMode == null
+                    ? resolvedMode : requestedMode;
+            if (capabilityFailure == null && qualificationMode != null
                     && deviceIdentity != null && qualityProfile != null && evidenceClock != null) {
                 VideoConfigurationKey candidateKey = new VideoConfigurationKey(
-                        constraints.sourceTiming(), resolvedMode.width(), resolvedMode.height(),
-                        resolvedMode.modeId(), resolvedMode.refreshMilliHz(), temporal, spatial,
-                        post, aspectMode);
+                        constraints.sourceTiming(), qualificationMode.width(),
+                        qualificationMode.height(), qualificationMode.modeId(),
+                        qualificationMode.refreshMilliHz(), temporal, spatial, post, aspectMode);
                 qualification = qualify(candidateKey, deviceIdentity, qualityProfile,
                         build, evidenceClock);
                 if (qualification.invalidReason == EvidenceInvalidReason.NONE) {
@@ -121,9 +130,40 @@ public final class DisplayQualityResolver {
             fallbacks.add(FallbackReason.RUNTIME_FAILURE);
         }
 
+        if (motionRequestedByUser || motionSessionActive) {
+            MotionLease lease = motionLease(constraints, requestedMode, nowElapsedRealtimeMs);
+            if (motionSessionActive) {
+                if (temporal == TemporalMode.MOTION_INTERPOLATION && lease.compatible) {
+                    runtimeTemporalState = RuntimeTemporalState.MOTION_COMPENSATING;
+                    videoDelayFrames = 1;
+                    audioDelayMs = 16.7f;
+                } else {
+                    temporal = TemporalMode.NATIVE;
+                    runtimeTemporalState = RuntimeTemporalState.BUFFERED_NATIVE_HOLD;
+                    videoDelayFrames = 1;
+                    audioDelayMs = 16.7f;
+                    advancedConfigurationId = null;
+                    transitionalOutput = true;
+                    addFallbackOnce(fallbacks, lease.failureReason);
+                }
+            } else if (temporal == TemporalMode.MOTION_INTERPOLATION) {
+                if (lease.compatible && lease.stableForMs >= 3_000L) {
+                    runtimeTemporalState = RuntimeTemporalState.PRIMING;
+                    transitionalOutput = true;
+                } else {
+                    temporal = TemporalMode.NATIVE;
+                    if (spatial == SpatialMode.MMPX || spatial == SpatialMode.SCALEFX) {
+                        spatial = SpatialMode.SHARP_BILINEAR;
+                    }
+                    advancedConfigurationId = null;
+                    addFallbackOnce(fallbacks, lease.failureReason);
+                }
+            }
+        }
+
         String id = null;
         VideoConfigurationKey key = null;
-        if (resolvedMode != null) {
+        if (resolvedMode != null && !transitionalOutput) {
             key = new VideoConfigurationKey(constraints.sourceTiming(), resolvedMode.width(),
                     resolvedMode.height(), resolvedMode.modeId(), resolvedMode.refreshMilliHz(),
                     temporal, spatial, post, aspectMode);
@@ -132,8 +172,73 @@ public final class DisplayQualityResolver {
                 id = "builtin:" + key.canonicalSha256();
         }
         return new EffectiveVideoConfig(requested, id, key, effectiveRefresh, requestedMode,
-                activeMode, temporal, RuntimeTemporalState.IMMEDIATE_NATIVE, spatial, post,
-                0, 0.0f, safety, fallbacks);
+                activeMode, temporal, runtimeTemporalState, spatial, post,
+                videoDelayFrames, audioDelayMs, safety, fallbacks);
+    }
+
+    private static MotionLease motionLease(RuntimeConstraints constraints,
+                                           DisplayModeCapability requestedMode,
+                                           long nowElapsedRealtimeMs) {
+        DisplayObservation observation = constraints.displayObservation();
+        if (observation == null || requestedMode == null
+                || observation.requestGeneration() != constraints.displayRequestGeneration()
+                || observation.requestedPolicy() != PhysicalRefreshPolicy.HZ_120
+                || !sameMode(observation.requestedMode(), requestedMode)) {
+            return MotionLease.failed(FallbackReason.DISPLAY_OBSERVATION_STALE);
+        }
+        long age;
+        try {
+            age = Math.subtractExact(nowElapsedRealtimeMs,
+                    observation.observedAtElapsedRealtimeMs());
+        } catch (ArithmeticException overflow) {
+            return MotionLease.failed(FallbackReason.DISPLAY_OBSERVATION_STALE);
+        }
+        if (age < 0L || age >= 1_500L) {
+            return MotionLease.failed(FallbackReason.DISPLAY_OBSERVATION_STALE);
+        }
+        DisplayModeCapability active = observation.systemReportedActiveMode();
+        if (constraints.sourceTiming() != SourceTiming.NTSC_60_0988 || active == null
+                || active.modeId() != requestedMode.modeId()
+                || active.width() != requestedMode.width()
+                || active.height() != requestedMode.height()
+                || active.refreshMilliHz() < 119_000
+                || active.refreshMilliHz() > 121_000) {
+            return MotionLease.failed(FallbackReason.DISPLAY_MODE_REJECTED);
+        }
+        return MotionLease.compatible(Math.max(0L, observation.stableForMs()));
+    }
+
+    private static boolean sameMode(DisplayModeCapability left, DisplayModeCapability right) {
+        return left != null && right != null && left.modeId() == right.modeId()
+                && left.width() == right.width() && left.height() == right.height()
+                && Math.abs(left.refreshMilliHz() - right.refreshMilliHz())
+                <= REFRESH_TOLERANCE_MILLIHZ;
+    }
+
+    private static void addFallbackOnce(List<FallbackReason> fallbacks,
+                                        FallbackReason reason) {
+        if (reason != null && !fallbacks.contains(reason)) fallbacks.add(reason);
+    }
+
+    private static final class MotionLease {
+        final boolean compatible;
+        final long stableForMs;
+        final FallbackReason failureReason;
+
+        private MotionLease(boolean compatible, long stableForMs,
+                            FallbackReason failureReason) {
+            this.compatible = compatible;
+            this.stableForMs = stableForMs;
+            this.failureReason = failureReason;
+        }
+
+        static MotionLease compatible(long stableForMs) {
+            return new MotionLease(true, stableForMs, null);
+        }
+
+        static MotionLease failed(FallbackReason reason) {
+            return new MotionLease(false, 0L, reason);
+        }
     }
 
     private static boolean isAdvanced(TemporalMode temporal, SpatialMode spatial) {
