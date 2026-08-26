@@ -37,9 +37,11 @@ public final class SettingsRepository {
             return AppSettings.defaults();
         }
         if (pendingBatch != null) {
-            if (!Objects.equals(schemaValue, pendingBaseSchema)
-                    || !Objects.equals(raw.get(SettingsKeys.COMMIT_GENERATION),
-                    pendingBaseGeneration)) {
+            boolean baseStillCurrent = Objects.equals(schemaValue, pendingBaseSchema)
+                    && Objects.equals(raw.get(SettingsKeys.COMMIT_GENERATION),
+                    pendingBaseGeneration);
+            boolean targetVisibleInMemory = matchesBatch(raw, pendingBatch);
+            if (!baseStillCurrent && !targetVisibleInMemory) {
                 clearPending();
             } else {
                 if (store.commit(pendingBatch)) {
@@ -170,6 +172,22 @@ public final class SettingsRepository {
         pendingBaseSchema = base.get(SettingsKeys.SCHEMA);
         pendingBaseGeneration = base.get(SettingsKeys.COMMIT_GENERATION);
         return false;
+    }
+
+    private static boolean matchesBatch(Map<String, ?> raw, SettingsBatch batch) {
+        for (String key : batch.removals()) {
+            if (raw.containsKey(key)) return false;
+        }
+        for (Map.Entry<String, String> entry : batch.strings().entrySet()) {
+            if (!Objects.equals(raw.get(entry.getKey()), entry.getValue())) return false;
+        }
+        for (Map.Entry<String, Integer> entry : batch.integers().entrySet()) {
+            if (!Objects.equals(raw.get(entry.getKey()), entry.getValue())) return false;
+        }
+        for (Map.Entry<String, Boolean> entry : batch.booleans().entrySet()) {
+            if (!Objects.equals(raw.get(entry.getKey()), entry.getValue())) return false;
+        }
+        return true;
     }
 
     private void clearPending() {

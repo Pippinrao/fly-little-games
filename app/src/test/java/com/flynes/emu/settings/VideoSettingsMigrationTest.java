@@ -167,6 +167,23 @@ public final class VideoSettingsMigrationTest {
         assertEquals(1, store.commitCount);
     }
 
+    @Test public void failedCommitThatChangedMemoryIsRetriedForDurability() {
+        AtomicMemoryStore store = new AtomicMemoryStore();
+        store.applyThenFailNext = true;
+        SettingsRepository repository = new SettingsRepository(store);
+
+        AppSettings first = repository.load();
+        assertEquals(VideoQualityPreset.BALANCED, first.videoPreferences().preset());
+        assertEquals(Integer.valueOf(4), store.values.get(SettingsKeys.SCHEMA));
+        assertEquals(Integer.valueOf(1), store.values.get(SettingsKeys.COMMIT_GENERATION));
+        assertEquals(1, store.commitAttempts);
+        assertEquals(0, store.commitCount);
+
+        assertEquals(first, repository.load());
+        assertEquals(2, store.commitAttempts);
+        assertEquals(1, store.commitCount);
+    }
+
     @Test public void newerSuccessfulSaveSupersedesAnOlderFailedIntent() {
         AtomicMemoryStore store = new AtomicMemoryStore();
         SettingsRepository repository = new SettingsRepository(store);
@@ -281,6 +298,7 @@ public final class VideoSettingsMigrationTest {
         int commitAttempts;
         int commitCount;
         boolean failNext;
+        boolean applyThenFailNext;
 
         AtomicMemoryStore put(String key, Object value) { values.put(key, value); return this; }
 
@@ -298,6 +316,7 @@ public final class VideoSettingsMigrationTest {
             next.putAll(batch.booleans());
             values.clear();
             values.putAll(next);
+            if (applyThenFailNext) { applyThenFailNext = false; return false; }
             commitCount++;
             return true;
         }
