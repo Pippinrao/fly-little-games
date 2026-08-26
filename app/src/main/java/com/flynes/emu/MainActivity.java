@@ -53,14 +53,26 @@ import com.flynes.emu.video.NativePresenterStats;
 import com.flynes.emu.video.NativeFrameSource;
 import com.flynes.emu.video.ViewportLayout;
 import com.flynes.emu.video.quality.LegacyVideoRuntimeAdapter;
+import com.flynes.emu.video.quality.BuildAlgorithmAvailability;
+import com.flynes.emu.video.quality.BundledAlgorithmAvailability;
+import com.flynes.emu.video.quality.DisplayCapabilities;
+import com.flynes.emu.video.quality.DisplayQualityResolver;
+import com.flynes.emu.video.quality.EffectiveVideoConfig;
+import com.flynes.emu.video.quality.GlCapabilities;
+import com.flynes.emu.video.quality.PresenterFailureMapper;
+import com.flynes.emu.video.quality.RuntimeConstraints;
+import com.flynes.emu.video.quality.RuntimeFailure;
 import com.flynes.emu.video.platform.AndroidDisplayPlatformFacade;
 import com.flynes.emu.video.quality.DisplayObservation;
 import com.flynes.emu.video.quality.FallbackReason;
 import com.flynes.emu.video.quality.RuntimeTemporalState;
 import com.flynes.emu.video.quality.SourceTiming;
 import com.flynes.emu.video.status.DisplayStatusMonitor;
+import com.flynes.emu.video.status.DisplayCapabilitiesReader;
+import com.flynes.emu.video.status.GlCapabilityProbe;
 import com.flynes.emu.video.status.VideoStatusAccumulator;
 import com.flynes.emu.video.status.VideoStatusRepository;
+import com.flynes.emu.video.power.ThermalBand;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -70,6 +82,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Stage-0 vertical slice: load the bundled homebrew ROM, render via
@@ -120,6 +134,17 @@ public class MainActivity extends AppCompatActivity {
     private final ScheduledExecutorService displaySafetyExecutor =
             Executors.newSingleThreadScheduledExecutor(runnable -> daemonThread(
                     runnable, "flynes-display-safety"));
+    private final ExecutorService qualityProbeExecutor = Executors.newSingleThreadExecutor(
+            runnable -> daemonThread(runnable, "flynes-quality-probe"));
+    private final GlCapabilityProbe glCapabilityProbe =
+            new GlCapabilityProbe(new GlCapabilityProbe.AndroidBackend());
+    private final DisplayQualityResolver displayQualityResolver = new DisplayQualityResolver();
+    private final BuildAlgorithmAvailability bundledAlgorithms =
+            BundledAlgorithmAvailability.current();
+    private final Set<RuntimeFailure> presenterRuntimeFailures =
+            ConcurrentHashMap.newKeySet();
+    private volatile GlCapabilities runtimeGlCapabilities = GlCapabilities.unknown();
+    private volatile SourceTiming runtimeSourceTiming = SourceTiming.NTSC_60_0988;
     private DisplayStatusMonitor displayMonitor;
     private DisplayManager displayManager;
     private boolean displayListenerRegistered;
@@ -168,9 +193,22 @@ public class MainActivity extends AppCompatActivity {
                         videoStatus.onDisplayState(observation.requestedPolicy(),
                                 observation.requestedMode(),
                                 observation.systemReportedActiveMode());
-                        videoStatus.publishTransition(surfaceEpoch,
-                                observation.requestGeneration(), requestedRuntimeTemporalState,
-                                0, 0f);
+                        EffectiveVideoConfig effective = resolveEffectiveVideoConfig(observation);
+                        requestedRuntimeTemporalState = effective.runtimeTemporalState();
+                        if (effective.resolvedConfigurationId() != null
+                                && effective.resolvedConfigurationKey() != null) {
+                            videoStatus.publishStableConfiguration(surfaceEpoch,
+                                    observation.requestGeneration(),
+                                    effective.resolvedConfigurationId(),
+                                    effective.resolvedConfigurationKey(),
+                                    effective.runtimeTemporalState(),
+                                    effective.videoDelayFrames(), effective.audioDelayMs());
+                        } else {
+                            videoStatus.publishTransition(surfaceEpoch,
+                                    observation.requestGeneration(),
+                                    effective.runtimeTemporalState(),
+                                    effective.videoDelayFrames(), effective.audioDelayMs());
+                        }
                     }
                     @Override public void onUnknown(long generation, long observedAtElapsedMs) {
                         DisplayObservation previous = lastDisplayObservation;
@@ -189,6 +227,16 @@ public class MainActivity extends AppCompatActivity {
                         videoStatus.onFallback(FallbackReason.SYSTEM_OR_DEVICE_POLICY);
                     }
                 });
+
+        qualityProbeExecutor.execute(() -> {
+            GlCapabilityProbe.Snapshot snapshot = glCapabilityProbe.probe();
+            runtimeGlCapabilities = snapshot.capabilities();
+            runOnUiThread(() -> {
+                if (!isFinishing() && !isDestroyed() && core.isCreated()) {
+                    applyRuntimeVideoSettings();
+                }
+            });
+        });
 
         framePublisher = new FramePublisher(new NativeFrameSource(core, 4 * 1024 * 1024));
         framePublisher.addObserver(frame -> videoStatus.onSourceFrameCopied(frame.sequence()));
@@ -418,6 +466,7 @@ public class MainActivity extends AppCompatActivity {
         frameDispatchThread.shutdownNow();
         displayPollExecutor.shutdownNow();
         displaySafetyExecutor.shutdownNow();
+        qualityProbeExecutor.shutdownNow();
         if (coverCapture != null) framePublisher.removeObserver(coverCapture);
         coverExecutor.shutdownNow();
         stopRendering();
@@ -664,6 +713,7 @@ public class MainActivity extends AppCompatActivity {
             return -1;
         }
         currentRomIdentity = info.identity();
+        runtimeSourceTiming = info.ntsc() ? SourceTiming.NTSC_60_0988 : SourceTiming.PAL_50;
         framePublisher.reset();
         view.resetSequence();
         // Scaling and reconstruction now belong to the GPU presenter; the core
@@ -739,7 +789,25 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private LegacyVideoRuntimeAdapter runtimeVideo() {
-        return LegacyVideoRuntimeAdapter.project(appSettings.videoPreferences());
+        return LegacyVideoRuntimeAdapter.project(
+                resolveEffectiveVideoConfig(lastDisplayObservation));
+    }
+
+    private EffectiveVideoConfig resolveEffectiveVideoConfig(
+            DisplayObservation observation) {
+        AndroidDisplayPlatformFacade platform = new AndroidDisplayPlatformFacade(
+                getWindowManager().getDefaultDisplay());
+        DisplayCapabilities capabilities = new DisplayCapabilitiesReader().read(
+                platform, runtimeGlCapabilities);
+        RuntimeConstraints constraints = new RuntimeConstraints(runtimeSourceTiming,
+                observation, false, 100, 0f, ThermalBand.NONE,
+                appSettings.videoPreferences().adaptiveProtection(),
+                presenterRuntimeFailures, requestedRuntimeTemporalState);
+        EffectiveVideoConfig effective = displayQualityResolver.resolve(
+                appSettings.videoPreferences(), appSettings.aspectMode(), capabilities,
+                bundledAlgorithms, constraints, SystemClock.elapsedRealtime());
+        for (FallbackReason fallback : effective.fallbacks()) videoStatus.onFallback(fallback);
+        return effective;
     }
 
     /** Stops the audio master without delaying the first drawer frame. */
@@ -827,6 +895,16 @@ public class MainActivity extends AppCompatActivity {
         long submitted = Math.max(0L,
                 current.submittedFrames() - lastPresenterStats.submittedFrames());
         videoStatus.onNativePresentationCounts(uploaded, submitted);
+        if (current.runtimeFailureCount() > lastPresenterStats.runtimeFailureCount()) {
+            videoStatus.onFallback(FallbackReason.RUNTIME_FAILURE);
+            RuntimeFailure failure = PresenterFailureMapper.fromNativeCode(
+                    current.runtimeFailureCode());
+            if (failure != null && presenterRuntimeFailures.add(failure)) {
+                // The presenter has already emitted emergency Nearest for the failed frame.
+                // Re-resolve once so every following frame uses a complete qualified config.
+                applyRuntimeVideoSettings();
+            }
+        }
         lastPresenterStats = current;
     }
 

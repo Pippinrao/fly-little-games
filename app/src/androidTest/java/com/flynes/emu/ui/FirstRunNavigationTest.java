@@ -75,10 +75,12 @@ public final class FirstRunNavigationTest {
 
     @Test public void searchAndCategorySurviveActivityRecreation() {
         try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
+            waitForFocusedWindow(scenario);
             onView(withId(R.id.category_builtin)).perform(click());
             onView(withId(R.id.open_search)).perform(click());
             onView(withId(R.id.search_input)).perform(replaceText("From"));
             scenario.recreate();
+            waitForFocusedWindow(scenario);
             onView(withId(R.id.search_input)).check(matches(withText("From")));
             onView(withId(R.id.category_builtin)).check(matches(isDisplayed()));
         }
@@ -185,6 +187,17 @@ public final class FirstRunNavigationTest {
             if (!ready[0]) SystemClock.sleep(100L);
         }
         assertTrue("view did not become enabled: " + id, ready[0]);
+    }
+
+    private static void waitForFocusedWindow(ActivityScenario<HomeActivity> scenario) {
+        final boolean[] focused = {false};
+        for (int attempt = 0; attempt < 80 && !focused[0]; attempt++) {
+            scenario.onActivity(activity -> focused[0] = activity.hasWindowFocus()
+                    && activity.findViewById(R.id.category_builtin).isShown());
+            if (!focused[0]) SystemClock.sleep(100L);
+        }
+        assertTrue("game center did not gain an interactive window", focused[0]);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     private static String scenarioText(ActivityScenario<HomeActivity> scenario, int id) {

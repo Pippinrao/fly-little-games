@@ -7,8 +7,6 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -31,6 +29,9 @@ import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.ControlLayoutRepository;
 
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /** Classic NES controls. Every pointer is independently owned and always cancellable. */
 public class GamepadView extends View {
@@ -48,9 +49,16 @@ public class GamepadView extends View {
     private static final int COLOR_PRESSED = 0xFFF4EFE6;
     private static final int COLOR_OUTLINE = 0xFFBEB8AE;
     private static final int COLOR_CORAL = 0xFFFF6B5E;
+    private static final ScheduledExecutorService TAP_RELEASES =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "flynes-tap-release");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private final float density;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Object inputStateLock = new Object();
+    private final int[] pulseVersions = new int[8];
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -62,10 +70,11 @@ public class GamepadView extends View {
     private GamepadInputState touchState;
     private InputRouter inputRouter;
     private Listener listener;
-    private int buttons;
+    private volatile int buttons;
     private int pulseBits;
+    private int touchBits;
     private int keyboardBits;
-    private long lastInputEventElapsedNs;
+    private volatile long lastInputEventElapsedNs;
     private int insetLeft, insetTop, insetRight, insetBottom;
 
     public GamepadView(Context context) {
@@ -82,7 +91,12 @@ public class GamepadView extends View {
     }
 
     public void setListener(Listener listener) { this.listener = listener; }
-    public void setInputRouter(InputRouter inputRouter) { this.inputRouter = inputRouter; publishButtons(); }
+    public void setInputRouter(InputRouter inputRouter) {
+        synchronized (inputStateLock) {
+            this.inputRouter = inputRouter;
+            publishButtonsLocked(System.nanoTime());
+        }
+    }
     public void setHapticPreferences(HapticLevel level, boolean distinguishAB) {
         haptics.configure(level, distinguishAB);
     }
@@ -101,13 +115,20 @@ public class GamepadView extends View {
     }
 
     public void reset() {
-        handler.removeCallbacksAndMessages(null);
         if (touchState != null) touchState.cancelAll();
-        pulseBits = 0;
-        keyboardBits = 0;
-        if (buttons != 0) { buttons = 0; publishButtons(); }
-        else if (inputRouter != null) inputRouter.cancel(InputRouter.Source.TOUCH);
-        if (inputRouter != null) inputRouter.cancel(InputRouter.Source.KEYBOARD);
+        synchronized (inputStateLock) {
+            for (int i = 0; i < pulseVersions.length; i++) pulseVersions[i]++;
+            pulseBits = 0;
+            touchBits = 0;
+            keyboardBits = 0;
+            if (buttons != 0) {
+                buttons = 0;
+                publishButtonsLocked(System.nanoTime());
+            } else if (inputRouter != null) {
+                inputRouter.cancel(InputRouter.Source.TOUCH);
+            }
+            if (inputRouter != null) inputRouter.cancel(InputRouter.Source.KEYBOARD);
+        }
         invalidate();
     }
 
@@ -296,8 +317,25 @@ public class GamepadView extends View {
     }
 
     private void pulse(int bits, long millis) {
-        pulseBits |= bits;
-        handler.postDelayed(() -> { pulseBits &= ~bits; recompute(); }, millis);
+        synchronized (inputStateLock) {
+            pulseBits |= bits;
+            for (int remaining = bits; remaining != 0; remaining &= remaining - 1) {
+                int bit = Integer.lowestOneBit(remaining);
+                int index = Integer.numberOfTrailingZeros(bit);
+                int version = ++pulseVersions[index];
+                TAP_RELEASES.schedule(() -> expirePulse(bit, index, version),
+                        millis, TimeUnit.MILLISECONDS);
+            }
+        }
+    }
+
+    private void expirePulse(int bit, int index, int version) {
+        synchronized (inputStateLock) {
+            if (pulseVersions[index] != version) return;
+            pulseBits &= ~bit;
+            recomputeLocked(System.nanoTime());
+        }
+        postInvalidate();
     }
 
     @Override public boolean onKeyDown(int keyCode, KeyEvent event) {
@@ -339,13 +377,26 @@ public class GamepadView extends View {
     @Override protected void onDetachedFromWindow() { reset(); super.onDetachedFromWindow(); }
 
     private void recompute() {
-        int next = pulseBits | (touchState == null ? 0 : touchState.mask());
-        if (next != buttons) { buttons = next; publishButtons(); }
+        int currentTouchBits = touchState == null ? 0 : touchState.mask();
+        synchronized (inputStateLock) {
+            touchBits = currentTouchBits;
+            recomputeLocked(lastInputEventElapsedNs > 0L
+                    ? lastInputEventElapsedNs : System.nanoTime());
+        }
         invalidate();
     }
-    private void publishButtons() {
+
+    private void recomputeLocked(long stateChangedElapsedNs) {
+        int next = pulseBits | touchBits;
+        if (next != buttons) {
+            buttons = next;
+            publishButtonsLocked(stateChangedElapsedNs);
+        }
+    }
+
+    private void publishButtonsLocked(long stateChangedElapsedNs) {
         if (inputRouter != null) inputRouter.setMask(InputRouter.Source.TOUCH, buttons,
-                lastInputEventElapsedNs > 0L ? lastInputEventElapsedNs : System.nanoTime());
+                stateChangedElapsedNs);
         if (listener != null) listener.onButtons(buttons);
     }
     private static int bitFor(GamepadHitMap.Control control) {

@@ -38,7 +38,7 @@ public final class DisplayQualityResolver {
         if ((requested.preset() == VideoQualityPreset.BALANCED
                 || requested.preset() == VideoQualityPreset.EXTREME)
                 && deviceIdentity != null && qualityProfile != null && evidenceClock != null
-                && build.mmpxIncluded() && capabilities.gl().knownForAdvancedRendering()) {
+                && build.mmpxIncluded() && capabilities.gl().supportsMmpx2x()) {
             axes = new CustomVideoSettings(PhysicalRefreshPolicy.HZ_60, TemporalMode.NATIVE,
                     SpatialMode.MMPX, PostEffect.NONE);
         }
@@ -255,7 +255,16 @@ public final class DisplayQualityResolver {
                 && !build.motionCompensationIncluded())) {
             return FallbackReason.BUILD_UNAVAILABLE;
         }
-        if (!gl.knownForAdvancedRendering()) return FallbackReason.GL_CAPABILITY_UNVERIFIED;
+        if (spatial == SpatialMode.MMPX && !gl.supportsMmpx2x()) {
+            return FallbackReason.GL_CAPABILITY_UNVERIFIED;
+        }
+        if (spatial == SpatialMode.SCALEFX && !gl.supportsScaleFx3x()) {
+            return FallbackReason.GL_CAPABILITY_UNVERIFIED;
+        }
+        if (temporal == TemporalMode.MOTION_INTERPOLATION
+                && !(gl.supportsEs31Compute() && gl.canCreateOwnedEs31Presenter())) {
+            return FallbackReason.GL_CAPABILITY_UNVERIFIED;
+        }
         return null;
     }
 

@@ -6,5 +6,9 @@ public enum FilterMode {
     /** Texel-aware bilinear filtering that keeps pixel centres crisp. */
     SHARP_BILINEAR,
     NEAREST,
-    CRT
+    CRT,
+    /** Qualified MMPX 2x reconstruction followed by sharp final composition. */
+    MMPX,
+    /** Qualified standard ScaleFX five-pass 3x reconstruction. */
+    SCALEFX
 }

@@ -1,5 +1,6 @@
 package com.flynes.emu.video;
 
+import android.content.res.AssetManager;
 import android.view.Surface;
 
 import com.flynes.emu.settings.FilterMode;
@@ -23,7 +24,9 @@ public final class NativeVideoPresenter implements AutoCloseable {
     }
 
     private static final class JniBridge implements Bridge {
-        @Override public long create() { return nativeCreate(); }
+        private final AssetManager assets;
+        JniBridge(AssetManager assets) { this.assets = assets; }
+        @Override public long create() { return nativeCreate(assets); }
         @Override public void destroy(long handle) { nativeDestroy(handle); }
         @Override public boolean surfaceCreated(long handle, Surface surface, long epoch) {
             return nativeSurfaceCreated(handle, surface, epoch);
@@ -47,9 +50,9 @@ public final class NativeVideoPresenter implements AutoCloseable {
         @Override public void resetSequence(long handle) { nativeResetSequence(handle); }
         @Override public NativePresenterStats stats(long handle) {
             long[] values = nativeGetStats(handle);
-            return values == null || values.length < 5 ? NativePresenterStats.EMPTY
+            return values == null || values.length < 9 ? NativePresenterStats.EMPTY
                     : new NativePresenterStats(values[0], values[1], values[2], values[3],
-                            values[4]);
+                            values[4], values[5], (int) values[6], (int) values[7], values[8]);
         }
     }
 
@@ -60,7 +63,11 @@ public final class NativeVideoPresenter implements AutoCloseable {
     private boolean surfaceReady;
 
     public NativeVideoPresenter(FramePublisher publisher) {
-        this(publisher, new JniBridge());
+        this(publisher, (AssetManager) null);
+    }
+
+    public NativeVideoPresenter(FramePublisher publisher, AssetManager assets) {
+        this(publisher, new JniBridge(assets));
     }
 
     NativeVideoPresenter(FramePublisher publisher, Bridge bridge) {
@@ -129,7 +136,7 @@ public final class NativeVideoPresenter implements AutoCloseable {
         handle = 0L;
     }
 
-    private static native long nativeCreate();
+    private static native long nativeCreate(AssetManager assets);
     private static native void nativeDestroy(long handle);
     private static native boolean nativeSurfaceCreated(long handle, Surface surface, long epoch);
     private static native void nativeSurfaceChanged(long handle, int width, int height, long epoch);

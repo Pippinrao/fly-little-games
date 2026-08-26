@@ -6,7 +6,9 @@
 namespace flynes::video {
 
 enum class PixelFormat : int { RGB565 = 0, RGB888 = 1, RGBA8888 = 2 };
-enum class FilterMode : int { EDGE_ENHANCED = 0, SHARP_BILINEAR = 1, NEAREST = 2, CRT = 3 };
+enum class FilterMode : int {
+    EDGE_ENHANCED = 0, SHARP_BILINEAR = 1, NEAREST = 2, CRT = 3, MMPX = 4, SCALEFX = 5
+};
 
 struct StagedFrame {
     std::uint64_t sequence = 0;

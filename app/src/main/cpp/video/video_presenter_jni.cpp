@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <android/native_window_jni.h>
+#include <android/asset_manager_jni.h>
 
 #include "egl_presenter.h"
 
@@ -14,8 +15,12 @@ EglPresenter* presenter(jlong handle) {
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_com_flynes_emu_video_NativeVideoPresenter_nativeCreate(JNIEnv*, jclass) {
-    try { return reinterpret_cast<jlong>(new EglPresenter()); }
+Java_com_flynes_emu_video_NativeVideoPresenter_nativeCreate(
+        JNIEnv* env, jclass, jobject asset_manager) {
+    try {
+        return reinterpret_cast<jlong>(new EglPresenter(
+                asset_manager ? AAssetManager_fromJava(env, asset_manager) : nullptr));
+    }
     catch (...) { return 0; }
 }
 
@@ -91,9 +96,13 @@ Java_com_flynes_emu_video_NativeVideoPresenter_nativeGetStats(
                             static_cast<jlong>(snapshot.submissions),
                             static_cast<jlong>(snapshot.skipped_sequences),
                             static_cast<jlong>(snapshot.last_sequence),
-                            static_cast<jlong>(snapshot.surface_epoch)};
-    jlongArray result = env->NewLongArray(5);
-    if (result) env->SetLongArrayRegion(result, 0, 5, values);
+                            static_cast<jlong>(snapshot.surface_epoch),
+                            static_cast<jlong>(snapshot.runtime_failure_count),
+                            static_cast<jlong>(snapshot.runtime_failure_code),
+                            static_cast<jlong>(snapshot.gpu_timing_status),
+                            static_cast<jlong>(snapshot.last_gpu_duration_ns)};
+    jlongArray result = env->NewLongArray(9);
+    if (result) env->SetLongArrayRegion(result, 0, 9, values);
     return result;
 }
 

@@ -20,7 +20,7 @@ public final class GameSurfaceView extends SurfaceView implements SurfaceHolder.
 
     public GameSurfaceView(Context context, FramePublisher publisher, Listener listener) {
         super(context);
-        this.presenter = new NativeVideoPresenter(publisher);
+        this.presenter = new NativeVideoPresenter(publisher, context.getAssets());
         this.listener = listener;
         getHolder().addCallback(this);
         setFocusable(true);

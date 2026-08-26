@@ -11,7 +11,14 @@ add_library(nescore SHARED
     nes_jni.cpp
     video/baseline_pipeline.cpp
     video/egl_presenter.cpp
+    video/framebuffer_target.cpp
+    video/gpu_timer_query.cpp
+    video/mmpx_pass.cpp
     video/presentation_coordinator.cpp
+    video/scalefx_pipeline.cpp
+    video/shader_program.cpp
+    video/spatial_offscreen_jni.cpp
+    video/spatial_pipeline.cpp
     video/video_presenter_jni.cpp)
 target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
 target_link_libraries(nescore nes_abi nestopia)

@@ -1,0 +1,18 @@
+ScaleFX 3x five-pass source notice
+=================================
+
+The five shader files in this directory are pinned from:
+
+- Repository: https://github.com/libretro/glsl-shaders
+- Commit: 4f4eb801b2dbcaed0a9669a9deec1a098f3623d8
+- Paths: scalefx/shaders/scalefx-pass0.glsl through scalefx-pass4.glsl
+- Preset: scalefx/scalefx.glslp (five passes; final source scale 3.0)
+
+ScaleFX was authored by Sp00kyFox. Each upstream shader contains the complete MIT License
+notice and copyright statement. The files are retained verbatim; FlyNES performs only runtime
+stage preprocessing required to compile the combined libretro vertex/fragment format as
+GLSL ES.
+
+Expected pixels are frozen from this exact five-pass source and use a documented one-LSB
+tolerance for float-intermediate driver rounding. A different upstream commit or parameter
+set requires a new reviewed baseline and implementation hash.

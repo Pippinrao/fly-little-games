@@ -214,11 +214,12 @@ public final class GlCapabilityProbe {
             int[] precision = new int[1];
             GLES20.glGetShaderPrecisionFormat(GLES20.GL_FRAGMENT_SHADER,
                     GLES20.GL_HIGH_FLOAT, range, 0, precision, 0);
-            boolean halfRenderable = extensions.contains("GL_EXT_color_buffer_half_float")
-                    || extensions.contains("GL_EXT_color_buffer_float");
-            boolean halfFilterable = extensions.contains("GL_OES_texture_half_float_linear")
-                    || extensions.contains("GL_EXT_color_buffer_float");
-            boolean floatRenderable = extensions.contains("GL_EXT_color_buffer_float");
+            GlColorTargetProbe.Result half = GlColorTargetProbe.probe(
+                    GlColorTargetProbe.GL_HALF_FLOAT_OES);
+            GlColorTargetProbe.Result full = GlColorTargetProbe.probe(GLES20.GL_FLOAT);
+            boolean halfRenderable = half.renderableAndSampled();
+            boolean halfFilterable = half.linearlyFilterable();
+            boolean floatRenderable = full.renderableAndSampled();
             boolean disjoint = extensions.contains("GL_EXT_disjoint_timer_query");
             if (vendor.isEmpty() || renderer.isEmpty() || maxTexture[0] <= 0)
                 throw new IllegalStateException("incomplete GL identity");

@@ -2,6 +2,7 @@
 
 #include <EGL/egl.h>
 #include <android/native_window.h>
+#include <android/asset_manager.h>
 
 #include <condition_variable>
 #include <cstddef>
@@ -12,6 +13,7 @@
 #include <thread>
 
 #include "baseline_pipeline.h"
+#include "gpu_timer_query.h"
 #include "presentation_coordinator.h"
 #include "video_metrics.h"
 
@@ -19,7 +21,7 @@ namespace flynes::video {
 
 class EglPresenter {
 public:
-    EglPresenter();
+    explicit EglPresenter(AAssetManager* assets);
     ~EglPresenter();
     EglPresenter(const EglPresenter&) = delete;
     EglPresenter& operator=(const EglPresenter&) = delete;
@@ -53,6 +55,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     std::condition_variable acknowledged_;
+    AAssetManager* assets_ = nullptr;
     std::thread thread_;
     std::uint64_t command_id_ = 0;
     std::uint64_t acknowledged_id_ = 0;
@@ -62,6 +65,7 @@ private:
     bool surface_ready_ = false;
     bool accepting_frames_ = false;
     int requested_filter_ = static_cast<int>(FilterMode::EDGE_ENHANCED);
+    int failed_filter_ = -1;
     std::unique_ptr<StagedFrame> pending_frame_;
     std::uint64_t last_enqueued_sequence_ = 0;
     bool has_enqueued_sequence_ = false;
@@ -73,6 +77,7 @@ private:
     EGLSurface surface_ = EGL_NO_SURFACE;
     ANativeWindow* active_window_ = nullptr;
     BaselinePipeline pipeline_;
+    GpuTimerQuery gpu_timer_;
 };
 
 }  // namespace flynes::video

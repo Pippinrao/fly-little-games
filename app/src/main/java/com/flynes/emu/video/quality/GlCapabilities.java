@@ -50,6 +50,15 @@ public final class GlCapabilities {
     public boolean knownForAdvancedRendering() {
         return activeContextMajorVersion >= 3 && maxTextureSize > 0 && fragmentHighp;
     }
+    public boolean supportsMmpx2x() {
+        return activeContextMajorVersion >= 2 && maxTextureSize >= 512 && fragmentHighp;
+    }
+    public boolean supportsScaleFx3x() {
+        return activeContextMajorVersion >= 2 && maxTextureSize >= 768 && fragmentHighp
+                && ((halfFloatColorFramebufferRenderable
+                && halfFloatColorFramebufferFilterable)
+                || floatColorFramebufferRenderable);
+    }
     public int activeContextMajorVersion() { return activeContextMajorVersion; }
     public int activeContextMinorVersion() { return activeContextMinorVersion; }
     public String vendor() { return vendor; }

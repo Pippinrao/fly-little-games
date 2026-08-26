@@ -1,6 +1,7 @@
 package com.flynes.emu;
 
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -9,6 +10,9 @@ import androidx.lifecycle.Lifecycle;
 import com.flynes.emu.settings.FilterMode;
 import com.flynes.emu.video.GameSurfaceView;
 import com.flynes.emu.video.NativePresenterStats;
+import com.flynes.emu.video.quality.SpatialMode;
+import com.flynes.emu.video.status.VideoRuntimeStatus;
+import com.flynes.emu.video.status.VideoStatusRepository;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -17,6 +21,27 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(AndroidJUnit4.class)
 public final class NativePresenterIntegrationTest {
+    @Test public void resolvedBaselineConfigurationIsPublishedAtomically() throws Exception {
+        VideoStatusRepository.process().clear();
+        try (ActivityScenario<MainActivity> ignored =
+                     ActivityScenario.launch(MainActivity.class)) {
+            long deadline = System.currentTimeMillis() + 5_000L;
+            VideoRuntimeStatus status = null;
+            while (System.currentTimeMillis() < deadline) {
+                status = VideoStatusRepository.process().current();
+                if (status != null && status.activeConfigurationId() != null) break;
+                Thread.sleep(50L);
+            }
+            assertTrue("resolver never published a stable runtime configuration",
+                    status != null && status.activeConfigurationId() != null);
+            assertTrue(status.activeConfigurationId().startsWith("builtin:"));
+            assertTrue("configuration id/key split publication",
+                    status.activeConfigurationKey() != null);
+            assertEquals(SpatialMode.SHARP_BILINEAR,
+                    status.activeConfigurationKey().spatialMode());
+        }
+    }
+
     @Test public void gameplayUsesOneEventDrivenNativeSurfaceOwner() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> assertTrue(
@@ -43,6 +68,15 @@ public final class NativePresenterIntegrationTest {
                         prior.submittedFrames(), 3_000L);
                 assertTrue(mode + " produced no new native swap",
                         next.submittedFrames() > prior.submittedFrames());
+                assertEquals(mode + " triggered an unexpected runtime fallback", 0L,
+                        next.runtimeFailureCount());
+                if (next.gpuTimingStatus() == NativePresenterStats.GPU_TIMING_VALID) {
+                    assertTrue("valid GPU query did not report positive GPU nanoseconds",
+                            next.lastGpuDurationNs() > 0L);
+                } else {
+                    assertEquals("unavailable/pending GPU timing must not expose CPU time",
+                            -1L, next.lastGpuDurationNs());
+                }
                 prior = next;
             }
         }

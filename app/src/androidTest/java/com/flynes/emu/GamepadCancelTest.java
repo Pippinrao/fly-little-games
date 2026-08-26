@@ -8,6 +8,7 @@ import android.view.MotionEvent;
 
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -68,5 +69,32 @@ public final class GamepadCancelTest {
         assertEquals(InputBits.A, view.buttons());
         SystemClock.sleep(40L);
         assertEquals(0, view.buttons());
+    }
+
+    @Test
+    public void minimumTapReleaseDoesNotWaitForTheMainLooper() {
+        Context context = ApplicationProvider.getApplicationContext();
+        GamepadView view = new GamepadView(context);
+        view.layout(0, 0, 2340, 1080);
+        com.flynes.emu.input.GamepadHitMap.Target a =
+                view.hitMapForTest().target(com.flynes.emu.input.GamepadHitMap.Control.A);
+
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            long now = SystemClock.uptimeMillis();
+            MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN,
+                    a.centerX(), a.centerY(), 0);
+            MotionEvent up = MotionEvent.obtain(now, now, MotionEvent.ACTION_UP,
+                    a.centerX(), a.centerY(), 0);
+            view.onTouchEvent(down);
+            view.onTouchEvent(up);
+            down.recycle();
+            up.recycle();
+            assertEquals(InputBits.A, view.buttons());
+
+            // Rendering or a window transition may briefly occupy the UI thread. The
+            // emulated button must still be released on time so a tap cannot become a hold.
+            SystemClock.sleep(80L);
+            assertEquals(0, view.buttons());
+        });
     }
 }

@@ -8,7 +8,8 @@
 
 namespace flynes::video {
 
-EglPresenter::EglPresenter() : thread_(&EglPresenter::thread_main, this) {}
+EglPresenter::EglPresenter(AAssetManager* assets)
+        : assets_(assets), thread_(&EglPresenter::thread_main, this) {}
 
 EglPresenter::~EglPresenter() {
     {
@@ -101,8 +102,11 @@ bool EglPresenter::enqueue(const void* pixels, std::size_t capacity,
 
 void EglPresenter::set_filter(int filter) {
     if (filter < static_cast<int>(FilterMode::EDGE_ENHANCED) ||
-        filter > static_cast<int>(FilterMode::CRT)) filter = static_cast<int>(FilterMode::EDGE_ENHANCED);
+        filter > static_cast<int>(FilterMode::SCALEFX)) {
+        filter = static_cast<int>(FilterMode::EDGE_ENHANCED);
+    }
     std::lock_guard lock(mutex_);
+    if (filter != requested_filter_) failed_filter_ = -1;
     requested_filter_ = filter;
 }
 
@@ -145,7 +149,8 @@ void EglPresenter::thread_main() {
                 height = pending.height;
             } else if (pending_frame_ && active_ && surface_ready_) {
                 frame = std::move(pending_frame_);
-                filter = requested_filter_;
+                filter = requested_filter_ == failed_filter_
+                        ? static_cast<int>(FilterMode::NEAREST) : requested_filter_;
             } else if (stopping_) {
                 command = Command::STOP;
                 command_id = command_id_;
@@ -188,7 +193,22 @@ void EglPresenter::thread_main() {
         }
 
         pipeline_.set_filter(static_cast<FilterMode>(filter));
-        if (frame && pipeline_.render(*frame)) {
+        gpu_timer_.begin();
+        bool rendered = frame && pipeline_.render(*frame);
+        gpu_timer_.end();
+        gpu_timer_.poll();
+        metrics_.on_gpu_timing(static_cast<int>(gpu_timer_.status()),
+                               gpu_timer_.last_duration_ns());
+        if (!rendered && frame) {
+            metrics_.on_runtime_failure(static_cast<int>(pipeline_.last_failure()));
+            {
+                std::lock_guard lock(mutex_);
+                failed_filter_ = requested_filter_;
+            }
+            pipeline_.set_filter(FilterMode::NEAREST);
+            rendered = pipeline_.render(*frame);
+        }
+        if (rendered) {
             metrics_.on_upload();
             if (eglSwapBuffers(display_, surface_) == EGL_TRUE) {
                 metrics_.on_submit(frame->sequence);
@@ -207,33 +227,49 @@ bool EglPresenter::create_egl(ANativeWindow* window) {
         destroy_egl();
         return false;
     }
-    const EGLint attributes[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                                 EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-                                 EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                 EGL_NONE};
-    EGLConfig config = nullptr;
-    EGLint count = 0;
-    if (eglChooseConfig(display_, attributes, &config, 1, &count) != EGL_TRUE || count != 1) {
+    constexpr EGLint kEs3Bit = 0x40;
+    const int versions[] = {3, 2};
+    for (int version : versions) {
+        const EGLint attributes[] = {
+                EGL_RENDERABLE_TYPE, version == 3 ? kEs3Bit : EGL_OPENGL_ES2_BIT,
+                EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+                EGL_NONE};
+        EGLConfig config = nullptr;
+        EGLint count = 0;
+        if (eglChooseConfig(display_, attributes, &config, 1, &count) != EGL_TRUE
+                || count != 1) continue;
+        EGLint visual_id = 0;
+        eglGetConfigAttrib(display_, config, EGL_NATIVE_VISUAL_ID, &visual_id);
+        ANativeWindow_setBuffersGeometry(active_window_, 0, 0, visual_id);
+        surface_ = eglCreateWindowSurface(display_, config, active_window_, nullptr);
+        const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, version, EGL_NONE};
+        context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, context_attributes);
+        if (surface_ != EGL_NO_SURFACE && context_ != EGL_NO_CONTEXT
+                && eglMakeCurrent(display_, surface_, surface_, context_) == EGL_TRUE) {
+            break;
+        }
+        if (context_ != EGL_NO_CONTEXT) eglDestroyContext(display_, context_);
+        if (surface_ != EGL_NO_SURFACE) eglDestroySurface(display_, surface_);
+        context_ = EGL_NO_CONTEXT;
+        surface_ = EGL_NO_SURFACE;
+    }
+    if (surface_ == EGL_NO_SURFACE || context_ == EGL_NO_CONTEXT
+            || !pipeline_.initialize(assets_)) {
         destroy_egl();
         return false;
     }
-    EGLint visual_id = 0;
-    eglGetConfigAttrib(display_, config, EGL_NATIVE_VISUAL_ID, &visual_id);
-    ANativeWindow_setBuffersGeometry(active_window_, 0, 0, visual_id);
-    surface_ = eglCreateWindowSurface(display_, config, active_window_, nullptr);
-    const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-    context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, context_attributes);
-    if (surface_ == EGL_NO_SURFACE || context_ == EGL_NO_CONTEXT ||
-        eglMakeCurrent(display_, surface_, surface_, context_) != EGL_TRUE ||
-        !pipeline_.initialize()) {
-        destroy_egl();
-        return false;
-    }
+    gpu_timer_.initialize();
+    metrics_.on_gpu_timing(static_cast<int>(gpu_timer_.status()),
+                           gpu_timer_.last_duration_ns());
     return true;
 }
 
 void EglPresenter::destroy_egl() {
-    if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) pipeline_.destroy();
+    if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
+        gpu_timer_.destroy();
+        pipeline_.destroy();
+    }
     if (display_ != EGL_NO_DISPLAY) {
         eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         if (context_ != EGL_NO_CONTEXT) eglDestroyContext(display_, context_);

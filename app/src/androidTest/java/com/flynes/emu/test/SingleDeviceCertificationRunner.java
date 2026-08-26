@@ -17,7 +17,10 @@ public final class SingleDeviceCertificationRunner extends AndroidJUnitRunner {
     @Override public void onCreate(Bundle arguments) {
         this.arguments = arguments == null ? new Bundle() : new Bundle(arguments);
         authorized = false;
-        super.onCreate(arguments);
+        if (!this.arguments.getBoolean("flynesCertification", false)) {
+            this.arguments.putString("notAnnotation", DeviceCertification.class.getName());
+        }
+        super.onCreate(this.arguments);
     }
 
     @Override public void onStart() {

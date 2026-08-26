@@ -12,17 +12,20 @@ public final class LegacyVideoRuntimeAdapter {
     private final boolean followsSystemRefresh;
     private final FilterMode rendererFilter;
     private final TemporalMode requestedTemporalMode;
+    private final TemporalMode runtimeTemporalMode;
     private final RuntimeTemporalState temporalState;
 
     private LegacyVideoRuntimeAdapter(VideoPreferences requested, RefreshMode displayRefresh,
                                       boolean followsSystemRefresh, FilterMode rendererFilter,
                                       TemporalMode requestedTemporalMode,
+                                      TemporalMode runtimeTemporalMode,
                                       RuntimeTemporalState temporalState) {
         this.requested = requested;
         this.displayRefresh = displayRefresh;
         this.followsSystemRefresh = followsSystemRefresh;
         this.rendererFilter = rendererFilter;
         this.requestedTemporalMode = requestedTemporalMode;
+        this.runtimeTemporalMode = runtimeTemporalMode;
         this.temporalState = temporalState;
     }
 
@@ -31,16 +34,18 @@ public final class LegacyVideoRuntimeAdapter {
         CustomVideoSettings custom = requested.custom();
         if (requested.preset() == VideoQualityPreset.POWER_SAVER) {
             return new LegacyVideoRuntimeAdapter(requested, RefreshMode.HZ_60, false,
-                    FilterMode.NEAREST, TemporalMode.NATIVE, RuntimeTemporalState.APPLIED);
+                    FilterMode.NEAREST, TemporalMode.NATIVE, TemporalMode.NATIVE,
+                    RuntimeTemporalState.APPLIED);
         }
         if (requested.preset() == VideoQualityPreset.BALANCED) {
             return new LegacyVideoRuntimeAdapter(requested, RefreshMode.HZ_60, false,
-                    FilterMode.SHARP_BILINEAR, TemporalMode.NATIVE, RuntimeTemporalState.APPLIED);
+                    FilterMode.SHARP_BILINEAR, TemporalMode.NATIVE, TemporalMode.NATIVE,
+                    RuntimeTemporalState.APPLIED);
         }
         if (requested.preset() == VideoQualityPreset.EXTREME) {
             return new LegacyVideoRuntimeAdapter(requested, RefreshMode.HZ_60, false,
                     FilterMode.SHARP_BILINEAR, TemporalMode.MOTION_INTERPOLATION,
-                    RuntimeTemporalState.FALLBACK);
+                    TemporalMode.NATIVE, RuntimeTemporalState.FALLBACK);
         }
         boolean follow = custom.refreshPolicy() == PhysicalRefreshPolicy.FOLLOW_SYSTEM;
         RefreshMode refresh = follow ? null : refresh(custom.refreshPolicy());
@@ -49,7 +54,30 @@ public final class LegacyVideoRuntimeAdapter {
         RuntimeTemporalState temporal = custom.temporalMode() == TemporalMode.NATIVE
                 ? RuntimeTemporalState.APPLIED : RuntimeTemporalState.FALLBACK;
         return new LegacyVideoRuntimeAdapter(requested, refresh, follow, filter,
-                custom.temporalMode(), temporal);
+                custom.temporalMode(), TemporalMode.NATIVE, temporal);
+    }
+
+    /** Projects only the resolver's complete, qualified snapshot into legacy view APIs. */
+    public static LegacyVideoRuntimeAdapter project(EffectiveVideoConfig effective) {
+        Objects.requireNonNull(effective, "effective");
+        VideoPreferences requested = effective.requested();
+        PhysicalRefreshPolicy policy = effective.effectiveRefresh();
+        boolean follow = policy == PhysicalRefreshPolicy.FOLLOW_SYSTEM;
+        FilterMode filter = effective.effectivePostEffect() == PostEffect.CRT
+                ? FilterMode.CRT : spatial(effective.effectiveSpatial());
+        return new LegacyVideoRuntimeAdapter(requested, follow ? null : refresh(policy), follow,
+                filter, requestedTemporal(requested), effective.effectiveTemporal(),
+                effective.runtimeTemporalState());
+    }
+
+    private static TemporalMode requestedTemporal(VideoPreferences requested) {
+        switch (requested.preset()) {
+            case EXTREME: return TemporalMode.MOTION_INTERPOLATION;
+            case CUSTOM: return requested.custom().temporalMode();
+            case POWER_SAVER:
+            case BALANCED:
+            default: return TemporalMode.NATIVE;
+        }
     }
 
     private static RefreshMode refresh(PhysicalRefreshPolicy policy) {
@@ -63,7 +91,13 @@ public final class LegacyVideoRuntimeAdapter {
     }
 
     private static FilterMode spatial(SpatialMode mode) {
-        return mode == SpatialMode.NEAREST ? FilterMode.NEAREST : FilterMode.SHARP_BILINEAR;
+        switch (mode) {
+            case NEAREST: return FilterMode.NEAREST;
+            case MMPX: return FilterMode.MMPX;
+            case SCALEFX: return FilterMode.SCALEFX;
+            case SHARP_BILINEAR:
+            default: return FilterMode.SHARP_BILINEAR;
+        }
     }
 
     public VideoPreferences requested() { return requested; }
@@ -71,6 +105,6 @@ public final class LegacyVideoRuntimeAdapter {
     public boolean followsSystemRefresh() { return followsSystemRefresh; }
     public FilterMode rendererFilter() { return rendererFilter; }
     public TemporalMode requestedTemporalMode() { return requestedTemporalMode; }
-    public TemporalMode runtimeTemporalMode() { return TemporalMode.NATIVE; }
+    public TemporalMode runtimeTemporalMode() { return runtimeTemporalMode; }
     public RuntimeTemporalState temporalState() { return temporalState; }
 }

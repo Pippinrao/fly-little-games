@@ -2,6 +2,8 @@
 
 #include <android/log.h>
 
+#include <string>
+
 namespace flynes::video {
 namespace {
 constexpr char kVertex[] = R"(
@@ -65,14 +67,17 @@ const char* fragment(FilterMode mode) {
 }
 }  // namespace
 
-bool BaselinePipeline::initialize() {
+bool BaselinePipeline::initialize(AAssetManager* assets) {
+    assets_ = assets;
     glGenTextures(1, &texture_);
     if (!texture_) return false;
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glClearColor(0.f, 0.f, 0.f, 1.f);
-    return ensure_program();
+    if (ensure_program()) return true;
+    last_failure_ = Failure::SHADER;
+    return false;
 }
 
 void BaselinePipeline::destroy() {
@@ -81,6 +86,12 @@ void BaselinePipeline::destroy() {
     program_ = texture_ = 0;
     texture_width_ = texture_height_ = 0;
     active_filter_ = -1;
+    reconstruction_.destroy();
+    composite_program_.destroy();
+    mmpx_.destroy();
+    scalefx_.destroy();
+    mmpx_initialized_ = false;
+    scalefx_initialized_ = false;
 }
 
 void BaselinePipeline::resize(int width, int height) {
@@ -90,13 +101,21 @@ void BaselinePipeline::resize(int width, int height) {
 }
 
 bool BaselinePipeline::render(const StagedFrame& frame) {
+    last_failure_ = Failure::NONE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, output_width_, output_height_);
     glClear(GL_COLOR_BUFFER_BIT);
-    if (!ensure_program() || !upload(frame)) return false;
+    if (!upload(frame)) { last_failure_ = Failure::GL; return false; }
+    if (requested_filter_ == FilterMode::MMPX || requested_filter_ == FilterMode::SCALEFX) {
+        return render_advanced(requested_filter_);
+    }
+    if (!ensure_program()) { last_failure_ = Failure::SHADER; return false; }
     glUseProgram(program_);
     uniform2f("uTextureSize", static_cast<float>(texture_width_),
               static_cast<float>(texture_height_));
     uniform2f("uOutputSize", static_cast<float>(output_width_),
               static_cast<float>(output_height_));
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_);
     GLenum filter_mode = requested_filter_ == FilterMode::SHARP_BILINEAR ||
                          requested_filter_ == FilterMode::CRT ? GL_LINEAR : GL_NEAREST;
@@ -111,12 +130,82 @@ bool BaselinePipeline::render(const StagedFrame& frame) {
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisableVertexAttribArray(position);
     glDisableVertexAttribArray(texcoord);
+    bool ok = glGetError() == GL_NO_ERROR;
+    if (!ok) last_failure_ = Failure::GL;
+    return ok;
+}
+
+bool BaselinePipeline::render_advanced(FilterMode mode) {
+    bool reconstructed = false;
+    if (mode == FilterMode::MMPX) {
+        if (!mmpx_initialized_) {
+            std::string error;
+            mmpx_initialized_ = mmpx_.initialize(assets_, &error);
+            if (!mmpx_initialized_) { last_failure_ = Failure::SHADER; return false; }
+        }
+        if (!reconstruction_.create_rgba8(texture_width_ * 2, texture_height_ * 2)) {
+            last_failure_ = Failure::FRAMEBUFFER;
+            return false;
+        }
+        reconstructed = mmpx_.render(texture_, texture_width_, texture_height_, reconstruction_);
+    } else {
+        if (!scalefx_initialized_) {
+            std::string error;
+            scalefx_initialized_ = scalefx_.initialize(assets_, &error);
+            if (!scalefx_initialized_) { last_failure_ = Failure::SHADER; return false; }
+        }
+        reconstructed = scalefx_.render(texture_, texture_width_, texture_height_,
+                                        &reconstruction_);
+    }
+    if (!reconstructed) {
+        last_failure_ = scalefx_.failure() == ScaleFxPipeline::Failure::FRAMEBUFFER_FAILURE
+                ? Failure::FRAMEBUFFER : Failure::GL;
+        return false;
+    }
+    if (!composite(reconstruction_.texture(), reconstruction_.width(),
+                   reconstruction_.height())) {
+        last_failure_ = Failure::SHADER;
+        return false;
+    }
+    return true;
+}
+
+bool BaselinePipeline::composite(GLuint texture, int width, int height) {
+    if (!composite_program_.id()) {
+        std::string error;
+        if (!composite_program_.build(kVertex, kSharp, &error)) return false;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, output_width_, output_height_);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(composite_program_.id());
+    GLint texture_size = composite_program_.uniform("uTextureSize");
+    if (texture_size >= 0) {
+        glUniform2f(texture_size, static_cast<float>(width), static_cast<float>(height));
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    GLint sampler = composite_program_.uniform("uTexture");
+    if (sampler >= 0) glUniform1i(sampler, 0);
+    GLint position = composite_program_.attribute("aPosition");
+    GLint texcoord = composite_program_.attribute("aTexCoord");
+    if (position < 0 || texcoord < 0) return false;
+    glVertexAttribPointer(position, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), kQuad);
+    glVertexAttribPointer(texcoord, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), kQuad + 2);
+    glEnableVertexAttribArray(position);
+    glEnableVertexAttribArray(texcoord);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisableVertexAttribArray(position);
+    glDisableVertexAttribArray(texcoord);
     return glGetError() == GL_NO_ERROR;
 }
 
 bool BaselinePipeline::upload(const StagedFrame& frame) {
     GLenum format = frame.format == PixelFormat::RGBA8888 ? GL_RGBA : GL_RGB;
     GLenum type = frame.format == PixelFormat::RGB565 ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE;
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     if (texture_width_ != frame.width || texture_height_ != frame.height ||

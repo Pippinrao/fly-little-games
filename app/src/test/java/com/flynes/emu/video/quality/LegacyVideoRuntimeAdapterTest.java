@@ -9,6 +9,8 @@ import com.flynes.emu.video.RefreshMode;
 
 import org.junit.Test;
 
+import java.util.Collections;
+
 public final class LegacyVideoRuntimeAdapterTest {
     @Test public void projectsPresetModesWithoutMutatingPreservedCustomSettings() {
         CustomVideoSettings preserved = new CustomVideoSettings(
@@ -55,6 +57,30 @@ public final class LegacyVideoRuntimeAdapterTest {
         assertEquals(RefreshMode.HZ_90, projectRefresh(PhysicalRefreshPolicy.HZ_90));
         assertEquals(RefreshMode.HZ_120, projectRefresh(PhysicalRefreshPolicy.HZ_120));
         assertFalse(project(PhysicalRefreshPolicy.HZ_60).followsSystemRefresh());
+    }
+
+    @Test public void effectiveProjectionUsesResolvedAxesInsteadOfRequestedAdvancedAxes() {
+        VideoPreferences requested = new VideoPreferences(VideoQualityPreset.CUSTOM,
+                new CustomVideoSettings(PhysicalRefreshPolicy.HZ_120,
+                        TemporalMode.MOTION_INTERPOLATION, SpatialMode.SCALEFX,
+                        PostEffect.CRT), true);
+        DisplayModeCapability mode = new DisplayModeCapability(7, 2340, 1080, 120_000);
+        VideoConfigurationKey key = new VideoConfigurationKey(SourceTiming.NTSC_60_0988,
+                2340, 1080, 7, 120_000, TemporalMode.NATIVE, SpatialMode.MMPX,
+                PostEffect.NONE, com.flynes.emu.settings.AspectMode.FOUR_BY_THREE);
+        EffectiveVideoConfig effective = new EffectiveVideoConfig(requested,
+                "certified:mmpx", key, PhysicalRefreshPolicy.HZ_120, mode, mode,
+                TemporalMode.NATIVE, RuntimeTemporalState.IMMEDIATE_NATIVE,
+                SpatialMode.MMPX, PostEffect.NONE, 0, 0f,
+                SessionSafetyDirective.NONE, Collections.emptyList());
+
+        LegacyVideoRuntimeAdapter projected = LegacyVideoRuntimeAdapter.project(effective);
+
+        assertEquals(FilterMode.MMPX, projected.rendererFilter());
+        assertEquals(RefreshMode.HZ_120, projected.displayRefresh());
+        assertEquals(TemporalMode.MOTION_INTERPOLATION, projected.requestedTemporalMode());
+        assertEquals(TemporalMode.NATIVE, projected.runtimeTemporalMode());
+        assertEquals(RuntimeTemporalState.IMMEDIATE_NATIVE, projected.temporalState());
     }
 
     private static RefreshMode projectRefresh(PhysicalRefreshPolicy policy) {
