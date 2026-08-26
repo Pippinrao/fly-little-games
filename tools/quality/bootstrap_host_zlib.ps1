@@ -1147,6 +1147,51 @@ function Get-CanonicalTreeHash {
     }
 }
 
+function Get-TransactionTreeHash {
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        throw "Transaction tree root does not exist: $Root"
+    }
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $records = [Collections.Generic.List[string]]::new()
+    $records.Add("D`0.`0")
+    $pending = [Collections.Generic.Queue[string]]::new()
+    $pending.Enqueue($rootPath)
+    while ($pending.Count -ne 0) {
+        $directory = $pending.Dequeue()
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Transaction tree contains a reparse point: $($item.FullName)"
+            }
+            $relative = [System.IO.Path]::GetRelativePath(
+                $rootPath, $item.FullName).Replace('\', '/')
+            if ($item.PSIsContainer) {
+                $records.Add("D`0$relative/`0")
+                $pending.Enqueue($item.FullName)
+            }
+            elseif (Test-Path -LiteralPath $item.FullName -PathType Leaf) {
+                $records.Add("F`0$relative`0$(Get-LowerSha256 -Path $item.FullName)`0")
+            }
+            else {
+                throw "Transaction tree contains an unsupported item type: $($item.FullName)"
+            }
+        }
+    }
+    $orderedRecords = $records.ToArray()
+    [Array]::Sort($orderedRecords, [StringComparer]::Ordinal)
+    $framedRecords = "flynes-bootstrap-transaction-tree-v1`0" +
+        [string]::Concat($orderedRecords)
+    $bytes = [Text.Encoding]::UTF8.GetBytes($framedRecords)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
 function Get-LegacyCanonicalTreeHash {
     param([Parameter(Mandatory = $true)][string] $Root)
 
@@ -1319,6 +1364,7 @@ function Get-BootstrapTransactionArtifacts {
             Final = $InstallFinal
             Rollback = $InstallRollback
             OldHashProperty = 'oldInstallSha256'
+            NewHashProperty = 'newInstallSha256'
         },
         [pscustomobject]@{
             Name = 'toolchain manifest'
@@ -1327,6 +1373,7 @@ function Get-BootstrapTransactionArtifacts {
             Final = $ToolchainFinal
             Rollback = $ToolchainRollback
             OldHashProperty = 'oldToolchainSha256'
+            NewHashProperty = 'newToolchainSha256'
         },
         [pscustomobject]@{
             Name = 'preflight manifest'
@@ -1335,6 +1382,7 @@ function Get-BootstrapTransactionArtifacts {
             Final = $PreflightFinal
             Rollback = $PreflightRollback
             OldHashProperty = 'oldPreflightSha256'
+            NewHashProperty = 'newPreflightSha256'
         }
     )
 }
@@ -1438,7 +1486,7 @@ function Get-BootstrapTransactionArtifactHash {
     if (-not (Test-BootstrapTransactionArtifact -Path $Path -Kind $Kind -Label $Label)) {
         throw "$Label is missing: $Path"
     }
-    if ($Kind -eq 'Directory') { return Get-CanonicalTreeHash -Root $Path }
+    if ($Kind -eq 'Directory') { return Get-TransactionTreeHash -Root $Path }
     return Get-LowerSha256 -Path $Path
 }
 
@@ -1565,21 +1613,29 @@ function Restore-BootstrapTransaction {
         throw 'The bootstrap transaction journal is unreadable; recovery is fail-closed.'
     }
     $requiredStateProperties = @(
-        'schemaVersion', 'oldStateExisted',
+        'schemaVersion', 'treeHashAlgorithm', 'oldStateExisted',
         'oldInstallSha256', 'oldToolchainSha256', 'oldPreflightSha256',
         'newInstallSha256', 'newToolchainSha256', 'newPreflightSha256')
+    $actualStateProperties = @($state.PSObject.Properties.Name)
+    if ($actualStateProperties.Count -ne $requiredStateProperties.Count) {
+        throw 'The bootstrap transaction journal schema is invalid.'
+    }
     foreach ($property in $requiredStateProperties) {
-        if ($state.PSObject.Properties.Name -notcontains $property) {
+        if ($actualStateProperties -notcontains $property) {
             throw "The bootstrap transaction journal is missing '$property'."
         }
     }
-    if ([int]$state.schemaVersion -ne 2 -or
+    $schemaVersionIsInteger = $state.schemaVersion -is [int] -or
+        $state.schemaVersion -is [long]
+    if (-not $schemaVersionIsInteger -or [long]$state.schemaVersion -ne 3 -or
+            [string]$state.treeHashAlgorithm -cne 'typed-tree-sha256-v1' -or
             $state.oldStateExisted -isnot [bool]) {
         throw 'The bootstrap transaction journal schema is invalid.'
     }
     foreach ($property in @(
             'newInstallSha256', 'newToolchainSha256', 'newPreflightSha256')) {
-        if ([string]$state.$property -notmatch '^[0-9a-f]{64}$') {
+        if ($state.$property -isnot [string] -or
+                [string]$state.$property -cnotmatch '^[0-9a-f]{64}$') {
             throw "The bootstrap transaction journal has an invalid '$property'."
         }
     }
@@ -1587,7 +1643,8 @@ function Restore-BootstrapTransaction {
     if ([bool]$state.oldStateExisted) {
         foreach ($artifact in $artifacts) {
             $expectedHash = [string]$state.($artifact.OldHashProperty)
-            if ($expectedHash -notmatch '^[0-9a-f]{64}$') {
+            if ($state.($artifact.OldHashProperty) -isnot [string] -or
+                    $expectedHash -cnotmatch '^[0-9a-f]{64}$') {
                 throw "The bootstrap transaction journal lacks a valid old $($artifact.Name) hash."
             }
             $rollbackHash = Get-BootstrapTransactionArtifactHash `
@@ -1597,6 +1654,44 @@ function Restore-BootstrapTransaction {
                 throw "Rollback $($artifact.Name) hash changed; recovery is fail-closed."
             }
         }
+    }
+    else {
+        foreach ($artifact in $artifacts) {
+            if ($null -ne $state.($artifact.OldHashProperty)) {
+                throw "A first-run transaction journal has an unexpected old $($artifact.Name) hash."
+            }
+            if (Test-BootstrapTransactionArtifact -Path $artifact.Rollback `
+                    -Kind $artifact.Kind -Label "Unexpected rollback $($artifact.Name)") {
+                throw 'A first-run transaction has unexpected rollback state; recovery is fail-closed.'
+            }
+        }
+    }
+
+    foreach ($artifact in $artifacts) {
+        $expectedNewHash = [string]$state.($artifact.NewHashProperty)
+        if (Test-BootstrapTransactionArtifact -Path $artifact.Pending `
+                -Kind $artifact.Kind -Label "Pending $($artifact.Name)") {
+            $pendingHash = Get-BootstrapTransactionArtifactHash `
+                -Path $artifact.Pending -Kind $artifact.Kind `
+                -Label "Pending $($artifact.Name)"
+            if ($pendingHash -ne $expectedNewHash) {
+                throw "Pending $($artifact.Name) hash changed; recovery is fail-closed."
+            }
+        }
+        if (Test-BootstrapTransactionArtifact -Path $artifact.Final `
+                -Kind $artifact.Kind -Label "Final $($artifact.Name)") {
+            $finalHash = Get-BootstrapTransactionArtifactHash `
+                -Path $artifact.Final -Kind $artifact.Kind `
+                -Label "Final $($artifact.Name)"
+            $matchesOld = [bool]$state.oldStateExisted -and
+                $finalHash -eq [string]$state.($artifact.OldHashProperty)
+            if ($finalHash -ne $expectedNewHash -and -not $matchesOld) {
+                throw "Final $($artifact.Name) hash is not a journaled state; recovery is fail-closed."
+            }
+        }
+    }
+
+    if ([bool]$state.oldStateExisted) {
         foreach ($artifact in $artifacts) {
             $expectedHash = [string]$state.($artifact.OldHashProperty)
             Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
@@ -1614,12 +1709,6 @@ function Restore-BootstrapTransaction {
         }
     }
     else {
-        foreach ($artifact in $artifacts) {
-            if (Test-BootstrapTransactionArtifact -Path $artifact.Rollback `
-                    -Kind $artifact.Kind -Label "Unexpected rollback $($artifact.Name)") {
-                throw 'A first-run transaction has unexpected rollback state; recovery is fail-closed.'
-            }
-        }
         foreach ($artifact in $artifacts) {
             Remove-BootstrapTransactionArtifact -OutputRoot $OutputRoot `
                 -Path $artifact.Final -Kind $artifact.Kind `
@@ -1716,7 +1805,8 @@ function Publish-BootstrapTransaction {
             }
         }
         [ordered]@{
-            schemaVersion = 2
+            schemaVersion = 3
+            treeHashAlgorithm = 'typed-tree-sha256-v1'
             oldStateExisted = $oldStateExisted
             oldInstallSha256 = $oldHashes['install']
             oldToolchainSha256 = $oldHashes['toolchain manifest']

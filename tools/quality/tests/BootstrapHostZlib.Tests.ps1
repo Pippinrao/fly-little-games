@@ -226,6 +226,7 @@ function Get-TransactionFunctionBundle {
         'Remove-ManagedDirectory',
         'Remove-ManagedFile',
         'Get-CanonicalTreeHash',
+        'Get-TransactionTreeHash',
         'Get-BootstrapTransactionArtifacts',
         'Assert-BootstrapTransactionPaths',
         'Test-BootstrapTransactionArtifact',
@@ -274,16 +275,58 @@ function New-TransactionFixture {
     New-Item -ItemType Directory -Path $paths.InstallPending | Out-Null
     'new-install' | Set-Content -LiteralPath `
         (Join-Path $paths.InstallPending 'identity.txt') -Encoding utf8
+    New-Item -ItemType Directory -Path `
+        (Join-Path $paths.InstallPending 'empty-slot') | Out-Null
     'new-toolchain' | Set-Content -LiteralPath $paths.ToolchainPending -Encoding utf8
     'new-preflight' | Set-Content -LiteralPath $paths.PreflightPending -Encoding utf8
     if ($ExistingInstall) {
         New-Item -ItemType Directory -Path $paths.InstallFinal | Out-Null
         'old-install' | Set-Content -LiteralPath `
             (Join-Path $paths.InstallFinal 'identity.txt') -Encoding utf8
+        New-Item -ItemType Directory -Path `
+            (Join-Path $paths.InstallFinal 'empty-slot') | Out-Null
         'old-toolchain' | Set-Content -LiteralPath $paths.ToolchainFinal -Encoding utf8
         'old-preflight' | Set-Content -LiteralPath $paths.PreflightFinal -Encoding utf8
     }
     return [pscustomobject]$paths
+}
+
+function Get-TransactionEvidenceSnapshot {
+    param([Parameter(Mandatory = $true)][pscustomobject] $Paths)
+
+    $records = [Collections.Generic.List[string]]::new()
+    foreach ($name in @(
+            'InstallPending', 'InstallFinal', 'InstallRollback',
+            'ToolchainPending', 'PreflightPending', 'ToolchainFinal', 'PreflightFinal',
+            'ToolchainRollback', 'PreflightRollback', 'TransactionMarker')) {
+        $path = [string]$Paths.$name
+        if (-not (Test-Path -LiteralPath $path)) {
+            $records.Add("$name|missing")
+            continue
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (-not $item.PSIsContainer) {
+            $records.Add("$name|file|$(Get-LowerSha256 -Path $path)")
+            continue
+        }
+        $treeRecords = [Collections.Generic.List[string]]::new()
+        $treeRecords.Add('directory|.')
+        foreach ($child in @(Get-ChildItem -LiteralPath $path -Recurse -Force)) {
+            $relative = [IO.Path]::GetRelativePath($path, $child.FullName).Replace('\', '/')
+            if ($child.PSIsContainer) {
+                $treeRecords.Add("directory|$relative")
+            }
+            else {
+                $treeRecords.Add("file|$relative|$(Get-LowerSha256 -Path $child.FullName)")
+            }
+        }
+        $orderedTreeRecords = $treeRecords.ToArray()
+        [Array]::Sort($orderedTreeRecords, [StringComparer]::Ordinal)
+        foreach ($treeRecord in $orderedTreeRecords) {
+            $records.Add("$name|$treeRecord")
+        }
+    }
+    return ($records -join "`n")
 }
 
 function Invoke-TransactionWorker {
@@ -1137,6 +1180,56 @@ CMAKE_GENERATOR_PLATFORM:INTERNAL=x64
             Should Be 'old-toolchain'
         (Get-Content -LiteralPath $paths.PreflightFinal -Raw).Trim() |
             Should Be 'old-preflight'
+    }
+
+    $emptyDirectoryMutationCases = foreach ($location in @('rollback', 'pending', 'final')) {
+        foreach ($mutation in @('add', 'delete', 'rename')) {
+            @{
+                location = $location
+                mutation = $mutation
+                targetProperty = switch ($location) {
+                    'rollback' { 'InstallRollback' }
+                    'pending' { 'InstallPending' }
+                    'final' { 'InstallFinal' }
+                }
+                crashPoint = if ($location -eq 'final') {
+                    'AfterInstallPublished'
+                }
+                else {
+                    'AfterOldInstallRemoved'
+                }
+            }
+        }
+    }
+    It 'fails closed before mutation when <location> has an empty-directory <mutation>' `
+            -TestCases $emptyDirectoryMutationCases {
+        param($location, $mutation, $targetProperty, $crashPoint)
+        $transactionRoot = Join-Path $caseRoot "empty-$location-$mutation"
+        $paths = New-TransactionFixture -Root $transactionRoot -ExistingInstall $true
+        $crash = Invoke-TransactionWorker -Paths $paths -Action Publish `
+            -CrashPoint $crashPoint
+        $crash.ExitCode | Should Not Be 0
+        $target = [string]$paths.$targetProperty
+        switch ($mutation) {
+            'add' {
+                New-Item -ItemType Directory -Path `
+                    (Join-Path $target 'unexpected-empty') | Out-Null
+            }
+            'delete' {
+                Remove-Item -LiteralPath (Join-Path $target 'empty-slot') -Force
+            }
+            'rename' {
+                [IO.Directory]::Move(
+                    (Join-Path $target 'empty-slot'),
+                    (Join-Path $target 'renamed-empty'))
+            }
+        }
+        $beforeRecovery = Get-TransactionEvidenceSnapshot -Paths $paths
+
+        $recovery = Invoke-TransactionWorker -Paths $paths -Action Restore
+
+        $recovery.ExitCode | Should Not Be 0
+        (Get-TransactionEvidenceSnapshot -Paths $paths) | Should Be $beforeRecovery
     }
 
     It 'preserves ambiguous rollback evidence when no journal or final triad exists' {
