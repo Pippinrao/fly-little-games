@@ -43,6 +43,7 @@ import com.flynes.emu.video.FramePublisher;
 import com.flynes.emu.video.GlFrameView;
 import com.flynes.emu.video.NativeFrameSource;
 import com.flynes.emu.video.ViewportLayout;
+import com.flynes.emu.video.quality.LegacyVideoRuntimeAdapter;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -99,9 +100,12 @@ public class MainActivity extends AppCompatActivity {
         view.setId(R.id.game_surface);
         view.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(SurfaceHolder holder) {
-                DisplayModeController.ApplyResult result = DisplayModeController.apply(
-                        MainActivity.this, holder.getSurface(),
-                        appSettings.refreshMode(), 60.0988f);
+                LegacyVideoRuntimeAdapter video = runtimeVideo();
+                DisplayModeController.ApplyResult result = video.followsSystemRefresh()
+                        ? DisplayModeController.followSystem(MainActivity.this,
+                                holder.getSurface(), 60.0988f)
+                        : DisplayModeController.apply(MainActivity.this, holder.getSurface(),
+                                video.displayRefresh(), 60.0988f);
                 Log.i(TAG, "display refresh request=" + result);
             }
 
@@ -554,7 +558,7 @@ public class MainActivity extends AppCompatActivity {
         // Scaling and reconstruction now belong to the GPU presenter; the core
         // always publishes its native 256x240 frame.
         core.setVideoFilter(NesCore.FILTER_NONE);
-        view.setFilterMode(appSettings.filterMode());
+        view.setFilterMode(runtimeVideo().rendererFilter());
         try {
             SessionResult startResult = session.start().get();
             if (!startResult.isSuccess()) return startResult.code();
@@ -599,15 +603,21 @@ public class MainActivity extends AppCompatActivity {
     private void applyRuntimeVideoSettings() {
         if (!core.isCreated()) return;
         core.setVideoFilter(NesCore.FILTER_NONE);
-        view.setFilterMode(appSettings.filterMode());
+        LegacyVideoRuntimeAdapter video = runtimeVideo();
+        view.setFilterMode(video.rendererFilter());
         updateViewport(0, gamepad == null ? 0 : gamepad.getRootWindowInsets() == null
                 ? 0 : gamepad.getRootWindowInsets().getSystemWindowInsetRight());
         Surface surface = view.getHolder().getSurface();
         if (surface != null && surface.isValid()) {
-            DisplayModeController.ApplyResult result = DisplayModeController.apply(
-                    this, surface, appSettings.refreshMode(), 60.0988f);
+            DisplayModeController.ApplyResult result = video.followsSystemRefresh()
+                    ? DisplayModeController.followSystem(this, surface, 60.0988f)
+                    : DisplayModeController.apply(this, surface, video.displayRefresh(), 60.0988f);
             Log.i(TAG, "display refresh update=" + result);
         }
+    }
+
+    private LegacyVideoRuntimeAdapter runtimeVideo() {
+        return LegacyVideoRuntimeAdapter.project(appSettings.videoPreferences());
     }
 
     /** Stops the audio master without delaying the first drawer frame. */

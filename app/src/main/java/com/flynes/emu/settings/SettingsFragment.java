@@ -17,6 +17,14 @@ import com.flynes.emu.ControlLayoutActivity;
 import com.flynes.emu.R;
 import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.input.HapticController;
+import com.flynes.emu.video.RefreshMode;
+import com.flynes.emu.video.quality.CustomVideoSettings;
+import com.flynes.emu.video.quality.LegacyVideoRuntimeAdapter;
+import com.flynes.emu.video.quality.PhysicalRefreshPolicy;
+import com.flynes.emu.video.quality.PostEffect;
+import com.flynes.emu.video.quality.SpatialMode;
+import com.flynes.emu.video.quality.VideoPreferences;
+import com.flynes.emu.video.quality.VideoQualityPreset;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -42,6 +50,7 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         String selectedRoot = getArguments() == null ? rootKey : getArguments().getString(ARG_ROOT, rootKey);
         setPreferencesFromResource(R.xml.preferences, selectedRoot);
         repository = new SettingsRepository(new SharedPreferencesSettingsStore(requireContext()));
+        configureRequestedVideo();
         configureDisplay();
 
         ListPreference language = findPreference(SettingsKeys.LOCALE_TAG);
@@ -59,7 +68,18 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         Preference reset = findPreference("controls.reset");
         if (reset != null) {
             reset.setOnPreferenceClickListener(preference -> {
-                repository.save(AppSettings.defaults());
+                AppSettings current = settings();
+                AppSettings defaults = AppSettings.defaults();
+                repository.save(current.toBuilder()
+                        .layoutPreset(defaults.layoutPreset())
+                        .directionControlMode(defaults.directionControlMode())
+                        .buttonScale(defaults.buttonScale())
+                        .verticalOffset(defaults.verticalOffset())
+                        .controlOpacity(defaults.controlOpacity())
+                        .joystickScale(defaults.joystickScale())
+                        .deadZone(defaults.deadZone())
+                        .hapticLevel(defaults.hapticLevel())
+                        .distinctABHaptics(defaults.distinctABHaptics()).build());
                 new ControlLayoutRepository(requireContext()).reset();
                 requireActivity().recreate();
                 return true;
@@ -102,8 +122,39 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         return repository.load();
     }
 
+    private void configureRequestedVideo() {
+        AppSettings current = settings();
+        ListPreference aspect = findPreference(SettingsKeys.ASPECT);
+        if (aspect != null) {
+            aspect.setValue(current.aspectMode().name());
+            aspect.setOnPreferenceChangeListener((preference, value) -> {
+                repository.save(settings().toBuilder()
+                        .aspectMode(AspectMode.valueOf(String.valueOf(value))).build());
+                return true;
+            });
+        }
+        ListPreference filter = findPreference(SettingsKeys.LEGACY_FILTER);
+        if (filter != null) {
+            filter.setValue(LegacyVideoRuntimeAdapter.project(current.videoPreferences())
+                    .rendererFilter().name());
+            filter.setOnPreferenceChangeListener((preference, value) -> {
+                String token = String.valueOf(value);
+                AppSettings loaded = settings();
+                CustomVideoSettings old = loaded.videoPreferences().custom();
+                SpatialMode spatial = "NEAREST".equals(token)
+                        ? SpatialMode.NEAREST : SpatialMode.SHARP_BILINEAR;
+                PostEffect effect = "CRT".equals(token) ? PostEffect.CRT : PostEffect.NONE;
+                VideoPreferences video = new VideoPreferences(VideoQualityPreset.CUSTOM,
+                        new CustomVideoSettings(old.refreshPolicy(), old.temporalMode(),
+                                spatial, effect), loaded.videoPreferences().adaptiveProtection());
+                repository.save(loaded.toBuilder().videoPreferences(video).build());
+                return true;
+            });
+        }
+    }
+
     private void configureDisplay() {
-        ListPreference refresh = findPreference(SettingsKeys.REFRESH);
+        ListPreference refresh = findPreference(SettingsKeys.LEGACY_REFRESH);
         Preference status = findPreference("display.status");
         if (refresh == null && status == null) return;
         Display display = requireActivity().getWindowManager().getDefaultDisplay();
@@ -119,9 +170,23 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
             for (int hz : supported) { labels.add(hz + " Hz"); values.add("HZ_" + hz); }
             refresh.setEntries(labels.toArray(new String[0]));
             refresh.setEntryValues(values.toArray(new String[0]));
+            LegacyVideoRuntimeAdapter projected = LegacyVideoRuntimeAdapter.project(
+                    settings().videoPreferences());
+            if (!projected.followsSystemRefresh())
+                refresh.setValue(projected.displayRefresh().name());
             refresh.setOnPreferenceChangeListener((preference, value) -> {
+                String token = String.valueOf(value);
+                AppSettings loaded = settings();
+                CustomVideoSettings old = loaded.videoPreferences().custom();
+                PhysicalRefreshPolicy policy = "AUTO".equals(token)
+                        ? PhysicalRefreshPolicy.LEGACY_AUTO_INTEGER_MULTIPLE
+                        : PhysicalRefreshPolicy.valueOf(token);
+                VideoPreferences video = new VideoPreferences(VideoQualityPreset.CUSTOM,
+                        new CustomVideoSettings(policy, old.temporalMode(), old.spatialMode(),
+                                old.postEffect()), loaded.videoPreferences().adaptiveProtection());
+                repository.save(loaded.toBuilder().videoPreferences(video).build());
                 Display.Mode now = requireActivity().getWindowManager().getDefaultDisplay().getMode();
-                DisplayStatus next = statusForMode(String.valueOf(value), supported, now.getRefreshRate());
+                DisplayStatus next = statusForMode(token, supported, now.getRefreshRate());
                 new DisplayStatusRepository(requireContext()).save(next);
                 renderStatus(status, next);
                 return true;
@@ -132,10 +197,19 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
             DisplayStatus recorded = new DisplayStatusRepository(requireContext()).load();
             DisplayStatus current = recorded.requestedHz() > 0f
                     ? new DisplayStatus(recorded.requestedHz(), actual, recorded.fallbackReason())
-                    : statusForMode(settings().refreshMode().name(), supported, actual);
+                    : statusForPreferences(settings().videoPreferences(), supported, actual);
             new DisplayStatusRepository(requireContext()).save(current);
             renderStatus(status, current);
         }
+    }
+
+    private DisplayStatus statusForPreferences(VideoPreferences preferences,
+                                               Set<Integer> supported, float actual) {
+        LegacyVideoRuntimeAdapter projected = LegacyVideoRuntimeAdapter.project(preferences);
+        if (projected.followsSystemRefresh())
+            return new DisplayStatus(actual, actual, "FOLLOW_SYSTEM");
+        RefreshMode refresh = projected.displayRefresh();
+        return statusForMode(refresh.name(), supported, actual);
     }
 
     private DisplayStatus statusForMode(String mode, Set<Integer> supported, float actual) {

@@ -2,7 +2,8 @@ package com.flynes.emu.settings;
 
 import static org.junit.Assert.assertEquals;
 import org.junit.Test;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class DisplayStatusRepositoryTest {
@@ -14,10 +15,8 @@ public final class DisplayStatusRepositoryTest {
         assertEquals(status, repository.load());
     }
     private static final class MemoryStore implements SettingsStore {
-        final Map<String,Object> v=new HashMap<>();
-        public String getString(String k,String f){Object x=v.get(k);return x instanceof String?(String)x:f;}
-        public int getInt(String k,int f){Object x=v.get(k);return x instanceof Integer?(Integer)x:f;}
-        public boolean getBoolean(String k,boolean f){return f;}
-        public void putString(String k,String x){v.put(k,x);} public void putInt(String k,int x){v.put(k,x);} public void putBoolean(String k,boolean x){}
+        final Map<String,Object> v=new LinkedHashMap<>();
+        public Map<String,?> snapshot(){return Collections.unmodifiableMap(new LinkedHashMap<>(v));}
+        public boolean commit(SettingsBatch batch){for(String k:batch.removals())v.remove(k);v.putAll(batch.strings());v.putAll(batch.integers());v.putAll(batch.booleans());return true;}
     }
 }

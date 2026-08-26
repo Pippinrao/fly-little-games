@@ -14,6 +14,20 @@ public final class DisplayModeController {
 
     private DisplayModeController() { }
 
+    public static ApplyResult followSystem(Activity activity, Surface surface, float sourceFps) {
+        WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
+        attributes.preferredDisplayModeId = 0;
+        activity.getWindow().setAttributes(attributes);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                && surface != null && surface.isValid()) {
+            surface.setFrameRate(sourceFps, frameRateCompatibility());
+        }
+        float actual = activity.getWindowManager().getDefaultDisplay().getRefreshRate();
+        new DisplayStatusRepository(activity).save(
+                new DisplayStatus(actual, actual, "FOLLOW_SYSTEM"));
+        return ApplyResult.FALLBACK_AUTO;
+    }
+
     public static ApplyResult apply(Activity activity, Surface surface,
                                     RefreshMode requested, float sourceFps) {
         Display display = activity.getWindowManager().getDefaultDisplay();

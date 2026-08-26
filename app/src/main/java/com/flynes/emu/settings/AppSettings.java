@@ -2,7 +2,7 @@ package com.flynes.emu.settings;
 
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.input.DirectionControlMode;
-import com.flynes.emu.video.RefreshMode;
+import com.flynes.emu.video.quality.VideoPreferences;
 
 import java.util.Objects;
 
@@ -20,8 +20,7 @@ public final class AppSettings {
     public static final float MAX_DEAD_ZONE = 0.45f;
 
     private final AspectMode aspectMode;
-    private final FilterMode filterMode;
-    private final RefreshMode refreshMode;
+    private final VideoPreferences videoPreferences;
     private final LayoutPreset layoutPreset;
     private final DirectionControlMode directionControlMode;
     private final float buttonScale;
@@ -39,8 +38,7 @@ public final class AppSettings {
 
     private AppSettings(Builder builder) {
         aspectMode = valueOr(builder.aspectMode, AspectMode.FOUR_BY_THREE);
-        filterMode = valueOr(builder.filterMode, FilterMode.EDGE_ENHANCED);
-        refreshMode = valueOr(builder.refreshMode, RefreshMode.AUTO);
+        videoPreferences = valueOr(builder.videoPreferences, VideoPreferences.defaults());
         layoutPreset = valueOr(builder.layoutPreset, LayoutPreset.STANDARD_BA);
         directionControlMode = valueOr(builder.directionControlMode, DirectionControlMode.JOYSTICK);
         buttonScale = clamp(builder.buttonScale, MIN_BUTTON_SCALE, MAX_BUTTON_SCALE);
@@ -67,8 +65,7 @@ public final class AppSettings {
     }
 
     public AspectMode aspectMode() { return aspectMode; }
-    public FilterMode filterMode() { return filterMode; }
-    public RefreshMode refreshMode() { return refreshMode; }
+    public VideoPreferences videoPreferences() { return videoPreferences; }
     public LayoutPreset layoutPreset() { return layoutPreset; }
     public DirectionControlMode directionControlMode() { return directionControlMode; }
     public float buttonScale() { return buttonScale; }
@@ -97,8 +94,7 @@ public final class AppSettings {
                 && audioEnabled == other.audioEnabled
                 && autosaveEnabled == other.autosaveEnabled
                 && aspectMode == other.aspectMode
-                && filterMode == other.filterMode
-                && refreshMode == other.refreshMode
+                && videoPreferences.equals(other.videoPreferences)
                 && layoutPreset == other.layoutPreset
                 && directionControlMode == other.directionControlMode
                 && hapticLevel == other.hapticLevel
@@ -108,7 +104,7 @@ public final class AppSettings {
     }
 
     @Override public int hashCode() {
-        return Objects.hash(aspectMode, filterMode, refreshMode, layoutPreset, directionControlMode, buttonScale,
+        return Objects.hash(aspectMode, videoPreferences, layoutPreset, directionControlMode, buttonScale,
                 verticalOffset, controlOpacity, joystickScale, deadZone, hapticLevel,
                 distinctABHaptics, audioEnabled, audioFocusPolicy, localeTag,
                 autosaveEnabled, lastPlayedRomId);
@@ -125,8 +121,7 @@ public final class AppSettings {
 
     public static final class Builder {
         private AspectMode aspectMode = AspectMode.FOUR_BY_THREE;
-        private FilterMode filterMode = FilterMode.EDGE_ENHANCED;
-        private RefreshMode refreshMode = RefreshMode.AUTO;
+        private VideoPreferences videoPreferences = VideoPreferences.defaults();
         private LayoutPreset layoutPreset = LayoutPreset.STANDARD_BA;
         private DirectionControlMode directionControlMode = DirectionControlMode.JOYSTICK;
         private float buttonScale = 1f;
@@ -146,8 +141,7 @@ public final class AppSettings {
 
         private Builder(AppSettings settings) {
             aspectMode = settings.aspectMode;
-            filterMode = settings.filterMode;
-            refreshMode = settings.refreshMode;
+            videoPreferences = settings.videoPreferences;
             layoutPreset = settings.layoutPreset;
             directionControlMode = settings.directionControlMode;
             buttonScale = settings.buttonScale;
@@ -165,8 +159,7 @@ public final class AppSettings {
         }
 
         public Builder aspectMode(AspectMode value) { aspectMode = value; return this; }
-        public Builder filterMode(FilterMode value) { filterMode = value; return this; }
-        public Builder refreshMode(RefreshMode value) { refreshMode = value; return this; }
+        public Builder videoPreferences(VideoPreferences value) { videoPreferences = value; return this; }
         public Builder layoutPreset(LayoutPreset value) { layoutPreset = value; return this; }
         public Builder directionControlMode(DirectionControlMode value) { directionControlMode = value; return this; }
         public Builder buttonScale(float value) { buttonScale = value; return this; }
