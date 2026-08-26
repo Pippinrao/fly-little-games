@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <chrono>
 
 #include "nes/nes.h"
 
@@ -185,28 +186,32 @@ Java_com_flynes_emu_NesCore_nativeRunFrames(JNIEnv* env, jclass, jlong handle,
     return static_cast<jint>(samples_written);
 }
 
-JNIEXPORT jlong JNICALL
-Java_com_flynes_emu_NesCore_nativeCopyVideoFrame(JNIEnv* env, jclass, jlong handle,
-                                                  jobject destination,
-                                                  jintArray metadata)
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NesCore_nativeCopyVideoFrameIfNew(JNIEnv* env, jclass, jlong handle,
+                                                       jlong lastSequence,
+                                                       jobject destination,
+                                                       jintArray metadata,
+                                                       jlongArray timing)
 {
     nes_t* ctx = reinterpret_cast<nes_t*>(handle);
-    if (!ctx || !destination || !metadata || env->GetArrayLength(metadata) < 5)
-        return static_cast<jlong>(NES_ERR_INVALID_PARAM);
+    if (!ctx || !destination || !metadata || !timing
+            || env->GetArrayLength(metadata) < 5 || env->GetArrayLength(timing) < 3)
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
 
     void* pixels = env->GetDirectBufferAddress(destination);
     const jlong capacity = env->GetDirectBufferCapacity(destination);
     if (!pixels || capacity <= 0)
-        return static_cast<jlong>(NES_ERR_INVALID_PARAM);
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
 
     nes_video_snapshot snapshot{};
     snapshot.struct_size = sizeof(snapshot);
     snapshot.version = NES_STRUCT_VERSION;
-    const int rc = nes_copy_video_frame(ctx, pixels, static_cast<size_t>(capacity), &snapshot);
-    if (rc < 0)
-        return static_cast<jlong>(rc);
+    const int rc = nes_copy_video_frame_if_new(ctx, static_cast<uint64_t>(lastSequence),
+                                               pixels, static_cast<size_t>(capacity), &snapshot);
+    if (rc != NES_OK)
+        return static_cast<jint>(rc);
     if (snapshot.bytes_written > static_cast<size_t>(std::numeric_limits<jint>::max()))
-        return static_cast<jlong>(NES_ERR_BUFFER_TOO_SMALL);
+        return static_cast<jint>(NES_ERR_BUFFER_TOO_SMALL);
 
     const jint values[] = {
         static_cast<jint>(snapshot.width),
@@ -216,15 +221,83 @@ Java_com_flynes_emu_NesCore_nativeCopyVideoFrame(JNIEnv* env, jclass, jlong hand
         static_cast<jint>(snapshot.bytes_written)
     };
     env->SetIntArrayRegion(metadata, 0, 5, values);
-    return static_cast<jlong>(snapshot.sequence);
+    const jlong timing_values[] = {
+        static_cast<jlong>(snapshot.sequence),
+        static_cast<jlong>(snapshot.native_monotonic_ns),
+        static_cast<jlong>(snapshot.source_region)
+    };
+    env->SetLongArrayRegion(timing, 0, 3, timing_values);
+    return static_cast<jint>(NES_OK);
 }
 
-JNIEXPORT void JNICALL
+JNIEXPORT jlong JNICALL
+Java_com_flynes_emu_NesCore_nativeMonotonicNow(JNIEnv*, jclass)
+{
+    return static_cast<jlong>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NesCore_nativeRunFrameStep(JNIEnv* env, jclass, jlong handle,
+                                                jobject audioBuf, jint capSamples,
+                                                jlongArray step)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (!ctx || !audioBuf || !step || env->GetArrayLength(step) < 4)
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+    int16_t* dst = reinterpret_cast<int16_t*>(env->GetDirectBufferAddress(audioBuf));
+    const jlong capacityBytes = env->GetDirectBufferCapacity(audioBuf);
+    if (!dst || capacityBytes <= 0 || capSamples <= 0)
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+    const jlong capacitySamples = capacityBytes / 2;
+    if (static_cast<jlong>(capSamples) > capacitySamples)
+        capSamples = static_cast<jint>(capacitySamples);
+
+    nes_frame_step_result result{};
+    result.struct_size = sizeof(result);
+    result.version = NES_STRUCT_VERSION;
+    const int rc = nes_run_frame_step(ctx, dst, static_cast<uint32_t>(capSamples), &result);
+    if (rc < 0) return static_cast<jint>(rc);
+    const jlong values[] = {
+        static_cast<jlong>(result.frames_run),
+        static_cast<jlong>(result.audio_samples),
+        static_cast<jlong>(result.video_sequence),
+        static_cast<jlong>(result.source_region)
+    };
+    env->SetLongArrayRegion(step, 0, 4, values);
+    return static_cast<jint>(NES_OK);
+}
+
+JNIEXPORT jlong JNICALL
 Java_com_flynes_emu_NesCore_nativeSetInput(JNIEnv*, jclass, jlong handle, jint buttons)
 {
     nes_t* ctx = reinterpret_cast<nes_t*>(handle);
-    if (ctx)
-        nes_set_input(ctx, 0, static_cast<uint32_t>(buttons));
+    return ctx ? static_cast<jlong>(nes_set_input_versioned(
+            ctx, 0, static_cast<uint32_t>(buttons))) : 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NesCore_nativeGetLastInputSample(JNIEnv* env, jclass, jlong handle,
+                                                      jlongArray values)
+{
+    nes_t* ctx = reinterpret_cast<nes_t*>(handle);
+    if (!ctx || !values || env->GetArrayLength(values) < 6)
+        return static_cast<jint>(NES_ERR_INVALID_PARAM);
+    nes_input_sample sample{};
+    sample.struct_size = sizeof(sample);
+    sample.version = NES_STRUCT_VERSION;
+    const int rc = nes_get_last_input_sample(ctx, &sample);
+    if (rc < 0) return static_cast<jint>(rc);
+    const jlong result[] = {
+        static_cast<jlong>(sample.generation),
+        static_cast<jlong>(sample.pad_bits[0]),
+        static_cast<jlong>(sample.pad_bits[1]),
+        static_cast<jlong>(sample.pad_bits[2]),
+        static_cast<jlong>(sample.pad_bits[3]),
+        static_cast<jlong>(sample.native_monotonic_ns)
+    };
+    env->SetLongArrayRegion(values, 0, 6, result);
+    return static_cast<jint>(NES_OK);
 }
 
 JNIEXPORT void JNICALL

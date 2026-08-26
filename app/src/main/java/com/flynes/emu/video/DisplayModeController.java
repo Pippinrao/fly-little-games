@@ -1,7 +1,6 @@
 package com.flynes.emu.video;
 
 import android.app.Activity;
-import android.os.Build;
 import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
@@ -25,10 +24,7 @@ public final class DisplayModeController {
         WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
         attributes.preferredDisplayModeId = 0;
         activity.getWindow().setAttributes(attributes);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
-                && surface != null && surface.isValid()) {
-            surface.setFrameRate(sourceFps, frameRateCompatibility());
-        }
+        // The game Surface has exactly one frame-rate writer: native PresentationCoordinator.
         if (monitor != null) monitor.request(surfaceEpoch,
                 PhysicalRefreshPolicy.FOLLOW_SYSTEM, null, motionRequired);
         return ApplyResult.FALLBACK_AUTO;
@@ -63,10 +59,7 @@ public final class DisplayModeController {
         attributes.preferredDisplayModeId = selectedId;
         activity.getWindow().setAttributes(attributes);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
-                && surface != null && surface.isValid()) {
-            surface.setFrameRate(sourceFps, frameRateCompatibility());
-        }
+        // Window mode selection stays in Java; the game Surface vote belongs to native code.
         if (monitor != null) {
             DisplayModeCapability requestedMode = selected == null ? null
                     : new DisplayModeCapability(selected.modeId(), selected.width(),

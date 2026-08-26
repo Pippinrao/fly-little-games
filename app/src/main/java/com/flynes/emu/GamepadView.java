@@ -65,6 +65,7 @@ public class GamepadView extends View {
     private int buttons;
     private int pulseBits;
     private int keyboardBits;
+    private long lastInputEventElapsedNs;
     private int insetLeft, insetTop, insetRight, insetBottom;
 
     public GamepadView(Context context) {
@@ -255,6 +256,7 @@ public class GamepadView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (hitMap == null || touchState == null) return false;
+        lastInputEventElapsedNs = event.getEventTime() * 1_000_000L;
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_CANCEL) { reset(); return true; }
         int index = event.getActionIndex();
@@ -315,7 +317,8 @@ public class GamepadView extends View {
         return true;
     }
     private void publishKeyboard() {
-        if (inputRouter != null) inputRouter.setMask(InputRouter.Source.KEYBOARD, keyboardBits);
+        if (inputRouter != null) inputRouter.setMask(InputRouter.Source.KEYBOARD, keyboardBits,
+                System.nanoTime());
     }
     private static int keyBit(int key) {
         switch (key) {
@@ -341,7 +344,8 @@ public class GamepadView extends View {
         invalidate();
     }
     private void publishButtons() {
-        if (inputRouter != null) inputRouter.setMask(InputRouter.Source.TOUCH, buttons);
+        if (inputRouter != null) inputRouter.setMask(InputRouter.Source.TOUCH, buttons,
+                lastInputEventElapsedNs > 0L ? lastInputEventElapsedNs : System.nanoTime());
         if (listener != null) listener.onButtons(buttons);
     }
     private static int bitFor(GamepadHitMap.Control control) {

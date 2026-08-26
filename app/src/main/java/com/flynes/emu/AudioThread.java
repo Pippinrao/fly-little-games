@@ -8,6 +8,9 @@ import android.os.Process;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.flynes.emu.video.FrameAvailableSignal;
+import com.flynes.emu.video.FrameStepResult;
+
 /**
  * Audio-master-clock loop: the emulator never runs ahead of the audio sink.
  *
@@ -25,6 +28,7 @@ public class AudioThread extends Thread {
 
     private final NesCore core;
     private final boolean audible;
+    private final FrameAvailableSignal frameAvailable;
     // AtomicBoolean (not a plain volatile flag): run() CLAIMS the loop with
     // compareAndSet(false, true) so a stopLoop() issued before the thread
     // actually starts can never be overwritten by a later `running = true`.
@@ -32,13 +36,18 @@ public class AudioThread extends Thread {
     private volatile AudioTrack track;
 
     public AudioThread(NesCore core) {
-        this(core, true);
+        this(core, true, new FrameAvailableSignal());
     }
 
     public AudioThread(NesCore core, boolean audible) {
+        this(core, audible, new FrameAvailableSignal());
+    }
+
+    public AudioThread(NesCore core, boolean audible, FrameAvailableSignal frameAvailable) {
         super("FlyNES-Audio");
         this.core = core;
         this.audible = audible;
+        this.frameAvailable = frameAvailable;
     }
 
     /**
@@ -103,16 +112,16 @@ public class AudioThread extends Thread {
         track.play();
 
         AudioPump pump = new AudioPump(new AudioPump.Core() {
-            @Override public int runOneFrame() { return core.runOneFrame(); }
+            @Override public FrameStepResult runFrameStep() { return core.runFrameStep(); }
             @Override public ByteBuffer audioBuffer() { return core.audioBuffer(); }
-        }, (data, bytes) -> track.write(data, bytes, AudioTrack.WRITE_BLOCKING));
+        }, (data, bytes) -> track.write(data, bytes, AudioTrack.WRITE_BLOCKING), frameAvailable);
 
         int idleIterations = 0;
         while (running.get()) {
-            int samples = pump.pumpOnce();
-            if (samples > 0) {
+            FrameStepResult step = pump.pumpOnce();
+            if (step.audioSamples() > 0) {
                 idleIterations = 0;
-            } else if (samples < 0) {
+            } else if (step.failed()) {
                 break;
             } else if (++idleIterations >= MAX_IDLE_ITERATIONS) {
                 // Persistent no-output (e.g. ROM not loaded / dead core): stop

@@ -5,32 +5,40 @@ import java.nio.ByteBuffer;
 /** Copies native snapshots into alternating direct buffers for synchronous consumers. */
 public final class NativeFrameSource implements FramePublisher.Source {
     public interface Bridge {
-        long copyVideoFrame(ByteBuffer destination, int[] metadata);
+        FrameCopyResult copyVideoFrameIfNew(ByteBuffer destination, int[] metadata,
+                                            long lastSequence);
     }
 
     private final Bridge bridge;
-    private final ByteBuffer[] buffers;
+    private final FrameBufferPool pool;
     private final int[] metadata = new int[5];
-    private int nextBuffer;
+    private long lastSequence = -1L;
 
     public NativeFrameSource(Bridge bridge, int bufferBytes) {
         if (bridge == null || bufferBytes <= 0) {
             throw new IllegalArgumentException("A bridge and positive buffer size are required");
         }
         this.bridge = bridge;
-        this.buffers = new ByteBuffer[]{
-                ByteBuffer.allocateDirect(bufferBytes),
-                ByteBuffer.allocateDirect(bufferBytes)
-        };
+        this.pool = new FrameBufferPool(2, bufferBytes);
     }
 
     @Override public PublishedFrame copyLatest() {
-        ByteBuffer destination = buffers[nextBuffer];
-        destination.clear();
-        long sequence = bridge.copyVideoFrame(destination, metadata);
-        if (sequence < 0) return null;
-        PublishedFrame frame = PublishedFrame.fromNative(sequence, metadata, destination);
-        nextBuffer = (nextBuffer + 1) % buffers.length;
+        FrameLease lease = pool.acquire();
+        if (lease == null) return null;
+        ByteBuffer destination = lease.buffer();
+        FrameCopyResult result = bridge.copyVideoFrameIfNew(destination, metadata, lastSequence);
+        if (result == null || result.kind() != FrameCopyResult.Kind.NEW) {
+            lease.close();
+            return null;
+        }
+        PublishedFrame frame;
+        try {
+            frame = PublishedFrame.fromNative(result.sequence(), metadata, destination, lease);
+        } catch (RuntimeException failure) {
+            lease.close();
+            throw failure;
+        }
+        lastSequence = result.sequence();
         return frame;
     }
 }

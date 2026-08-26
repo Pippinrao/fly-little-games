@@ -64,6 +64,10 @@ public final class VideoStatusAccumulator {
         if (motionWarped) motionWarpedSlots++;
     }
     public synchronized void onBufferSubmitted() { bufferSubmissions++; }
+    public synchronized void onNativePresentationCounts(long uploaded, long submitted) {
+        if (uploaded > 0L) textureUploads += uploaded;
+        if (submitted > 0L) bufferSubmissions += submitted;
+    }
     public synchronized void onCadenceAdjusted() { cadenceAdjustments++; }
     public synchronized void onSafetyFallbackRatio(float ratio) { safetyFallbackRatio = ratio; }
     public synchronized void onQueueDepths(int videoDepth, int audioDepthSamples) {

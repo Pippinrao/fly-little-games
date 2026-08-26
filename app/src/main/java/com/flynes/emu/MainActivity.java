@@ -11,7 +11,6 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.Surface;
-import android.view.SurfaceHolder;
 import android.view.ViewGroup;
 import android.view.View;
 import android.view.WindowManager;
@@ -44,7 +43,13 @@ import com.flynes.emu.session.SessionResult;
 import com.flynes.emu.session.SessionState;
 import com.flynes.emu.video.DisplayModeController;
 import com.flynes.emu.video.FramePublisher;
-import com.flynes.emu.video.GlFrameView;
+import com.flynes.emu.video.FrameAvailableSignal;
+import com.flynes.emu.video.FrameDispatchExecutor;
+import com.flynes.emu.video.ClockDomainCalibrator;
+import com.flynes.emu.video.InputLatencyTracker;
+import com.flynes.emu.video.NativeInputSample;
+import com.flynes.emu.video.GameSurfaceView;
+import com.flynes.emu.video.NativePresenterStats;
 import com.flynes.emu.video.NativeFrameSource;
 import com.flynes.emu.video.ViewportLayout;
 import com.flynes.emu.video.quality.LegacyVideoRuntimeAdapter;
@@ -80,8 +85,15 @@ public class MainActivity extends AppCompatActivity {
 
     private final NesCore core = new NesCore();
     private final EmulationSession session = new EmulationSession(core);
-    private GlFrameView view;
+    private GameSurfaceView view;
     private FramePublisher framePublisher;
+    private final FrameAvailableSignal frameAvailable = new FrameAvailableSignal();
+    private final ExecutorService frameDispatchThread = Executors.newSingleThreadExecutor(
+            runnable -> daemonThread(runnable, "flynes-frame-dispatch"));
+    private FrameDispatchExecutor frameDispatch;
+    private final ClockDomainCalibrator clockCalibrator = new ClockDomainCalibrator();
+    private final InputLatencyTracker inputLatencyTracker =
+            new InputLatencyTracker(clockCalibrator);
     private GamepadView gamepad;
     private ImageButton pauseButton;
     private HapticController pauseHaptics;
@@ -112,12 +124,14 @@ public class MainActivity extends AppCompatActivity {
     private DisplayManager displayManager;
     private boolean displayListenerRegistered;
     private volatile long surfaceEpoch;
+    private NativePresenterStats lastPresenterStats = NativePresenterStats.EMPTY;
     private volatile DisplayObservation lastDisplayObservation;
     private volatile RuntimeTemporalState requestedRuntimeTemporalState =
             RuntimeTemporalState.IMMEDIATE_NATIVE;
     private final Runnable publishVideoStatus = new Runnable() {
         @Override public void run() {
             if (!rendering) return;
+            collectNativePresenterStats();
             VideoStatusRepository.process().publish(videoStatus.snapshot(
                     SystemClock.elapsedRealtime()));
             statusHandler.postDelayed(this, 500L);
@@ -178,29 +192,33 @@ public class MainActivity extends AppCompatActivity {
 
         framePublisher = new FramePublisher(new NativeFrameSource(core, 4 * 1024 * 1024));
         framePublisher.addObserver(frame -> videoStatus.onSourceFrameCopied(frame.sequence()));
-        view = new GlFrameView(this, framePublisher, videoStatus);
-        view.setId(R.id.game_surface);
-        view.getHolder().addCallback(new SurfaceHolder.Callback() {
-            @Override public void surfaceCreated(SurfaceHolder holder) {
-                surfaceEpoch = Math.addExact(surfaceEpoch, 1L);
-                DisplayModeController.ApplyResult result = requestDisplay(holder.getSurface());
-                Log.i(TAG, "display refresh request=" + result);
+        view = new GameSurfaceView(this, framePublisher, new GameSurfaceView.Listener() {
+            @Override public void onSurfaceAvailable(Surface surface, long epoch) {
+                surfaceEpoch = epoch;
+                DisplayModeController.ApplyResult result = requestDisplay(surface);
+                Log.i(TAG, "display refresh request=" + result + " epoch=" + epoch);
             }
 
-            @Override public void surfaceChanged(SurfaceHolder holder, int format,
-                                                 int width, int height) { }
-
-            @Override public void surfaceDestroyed(SurfaceHolder holder) {
-                surfaceEpoch = Math.addExact(surfaceEpoch, 1L);
-                if (displayMonitor != null) displayMonitor.invalidate();
+            @Override public void onSurfaceLost(long epoch) {
+                if (surfaceEpoch == epoch && displayMonitor != null) displayMonitor.invalidate();
             }
         });
+        frameDispatch = new FrameDispatchExecutor(frameDispatchThread, view::onFrameAvailable);
+        frameAvailable.addListener(sequence -> {
+            videoStatus.onCoreFrameProduced(sequence);
+            frameDispatch.offer(sequence);
+            NativeInputSample sample = core.lastInputSample();
+            inputLatencyTracker.onCoreSample(sample).ifPresent(latencyNs ->
+                    Log.d(TAG, "touch-to-core-ns=" + latencyNs));
+        });
+        view.setId(R.id.game_surface);
         gamepad = new GamepadView(this);
         applyHapticSettings();
         gamepad.setId(R.id.gamepad);
-        inputRouter = new InputRouter(buttons -> {
+        inputRouter = InputRouter.timestamped((buttons, eventElapsedNs) -> {
             Log.d(TAG, "input=0x" + Integer.toHexString(buttons));
-            session.setInput(buttons);
+            session.setInput(buttons, generation ->
+                    inputLatencyTracker.onTouchGeneration(generation, eventElapsedNs));
         }, this::handleAppAction);
         gamepad.setInputRouter(inputRouter);
 
@@ -353,7 +371,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        audio = new AudioThread(core, appSettings.audioEnabled());
+        audio = new AudioThread(core, appSettings.audioEnabled(), frameAvailable);
         audio.start();
         startRendering();
     }
@@ -396,11 +414,14 @@ public class MainActivity extends AppCompatActivity {
         unregisterDisplayListener();
         statusHandler.removeCallbacks(publishVideoStatus);
         if (displayMonitor != null) displayMonitor.close();
+        if (frameDispatch != null) frameDispatch.close();
+        frameDispatchThread.shutdownNow();
         displayPollExecutor.shutdownNow();
         displaySafetyExecutor.shutdownNow();
         if (coverCapture != null) framePublisher.removeObserver(coverCapture);
         coverExecutor.shutdownNow();
         stopRendering();
+        if (view != null) view.release();
         gamepad.reset();
         // Never destroy the native core while the audio thread might still be
         // inside nes_run_frames (use-after-free). If the pause-time join cap
@@ -607,7 +628,7 @@ public class MainActivity extends AppCompatActivity {
         pauseButton.setVisibility(View.VISIBLE);
         if (session.state() == SessionState.PAUSED) session.resume();
         if (audio == null || !audio.isAlive()) {
-            audio = new AudioThread(core, appSettings.audioEnabled());
+            audio = new AudioThread(core, appSettings.audioEnabled(), frameAvailable);
             audio.start();
         }
         startRendering();
@@ -644,6 +665,7 @@ public class MainActivity extends AppCompatActivity {
         }
         currentRomIdentity = info.identity();
         framePublisher.reset();
+        view.resetSequence();
         // Scaling and reconstruction now belong to the GPU presenter; the core
         // always publishes its native 256x240 frame.
         core.setVideoFilter(NesCore.FILTER_NONE);
@@ -701,6 +723,7 @@ public class MainActivity extends AppCompatActivity {
             DisplayModeController.ApplyResult result = requestDisplay(surface);
             Log.i(TAG, "display refresh update=" + result);
         }
+        calibrateClockDomain();
     }
 
     private DisplayModeController.ApplyResult requestDisplay(Surface surface) {
@@ -737,7 +760,7 @@ public class MainActivity extends AppCompatActivity {
                 if (audio != stopping || !stopped) return;
                 audio = null;
                 if (!isFinishing() && session.state() == SessionState.RUNNING) {
-                    audio = new AudioThread(core, appSettings.audioEnabled());
+                    audio = new AudioThread(core, appSettings.audioEnabled(), frameAvailable);
                     audio.start();
                 }
             });
@@ -771,9 +794,19 @@ public class MainActivity extends AppCompatActivity {
                     ? SourceTiming.PAL_50 : SourceTiming.NTSC_60_0988;
             videoStatus.beginWindow(SystemClock.elapsedRealtime(), timing,
                     timing == SourceTiming.PAL_50 ? 50f : 60.0988f);
+            lastPresenterStats = view.presenterStats();
             statusHandler.removeCallbacks(publishVideoStatus);
             statusHandler.post(publishVideoStatus);
             view.onResume();
+        }
+    }
+
+    private void calibrateClockDomain() {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            long before = SystemClock.elapsedRealtimeNanos();
+            long nativeNow = core.nativeMonotonicTimeNs();
+            long after = SystemClock.elapsedRealtimeNanos();
+            clockCalibrator.addPairedSample(before, nativeNow, after);
         }
     }
 
@@ -785,6 +818,16 @@ public class MainActivity extends AppCompatActivity {
                     SystemClock.elapsedRealtime()));
             view.onPause();
         }
+    }
+
+    private void collectNativePresenterStats() {
+        NativePresenterStats current = view.presenterStats();
+        long uploaded = Math.max(0L,
+                current.uploadedFrames() - lastPresenterStats.uploadedFrames());
+        long submitted = Math.max(0L,
+                current.submittedFrames() - lastPresenterStats.submittedFrames());
+        videoStatus.onNativePresentationCounts(uploaded, submitted);
+        lastPresenterStats = current;
     }
 
     private void registerDisplayListener() {

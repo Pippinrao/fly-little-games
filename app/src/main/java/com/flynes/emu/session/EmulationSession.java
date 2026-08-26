@@ -7,6 +7,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
+import java.util.function.LongConsumer;
 
 public final class EmulationSession {
     private final CoreFacade core;
@@ -101,9 +102,15 @@ public final class EmulationSession {
     }
 
     public void setInput(int mask) {
+        setInput(mask, null);
+    }
+
+    public void setInput(int mask, LongConsumer generationListener) {
         executor.execute(() -> {
             if (state == SessionState.RUNNING) {
-                core.setInput(mask & 0xFF);
+                long generation = core.setInputVersioned(mask & 0xFF);
+                if (generationListener != null && generation > 0L)
+                    generationListener.accept(generation);
             }
         });
     }

@@ -21,7 +21,6 @@ import com.google.android.material.appbar.MaterialToolbar;
 /** Scrollable product settings grouped by video, controls, audio, and general behavior. */
 public final class SettingsActivity extends AppCompatActivity {
     private static final String STATE_SECTION = "settings.section";
-    private static final String PREF_SECTION = "settings.last_section";
     static final String PREFS = SettingsRepository.PREFERENCES_NAME;
     static final String KEY_HAPTIC_LEVEL = SettingsKeys.HAPTIC_LEVEL;
     static final String KEY_DISTINCT_AB = SettingsKeys.DISTINCT_AB;
@@ -47,8 +46,9 @@ public final class SettingsActivity extends AppCompatActivity {
         bindSection(R.id.settings_audio_master, SettingsSection.AUDIO);
         bindSection(R.id.settings_game_language, SettingsSection.GAME_LANGUAGE);
         bindSection(R.id.settings_about, SettingsSection.ABOUT);
-        String saved = state == null
-                ? getPreferences(MODE_PRIVATE).getString(PREF_SECTION, SettingsSection.DISPLAY.name())
+        // A fresh settings visit always opens the primary Display section. Only an in-place
+        // recreation (rotation/process state restore) retains the section the user was viewing.
+        String saved = state == null ? SettingsSection.DISPLAY.name()
                 : state.getString(STATE_SECTION, SettingsSection.DISPLAY.name());
         showSection(SettingsSection.valueOf(saved));
     }
@@ -66,7 +66,6 @@ public final class SettingsActivity extends AppCompatActivity {
 
     private void showSection(SettingsSection section) {
         selected = section;
-        getPreferences(MODE_PRIVATE).edit().putString(PREF_SECTION, section.name()).apply();
         String tag = "settings:" + section.rootKey();
         androidx.fragment.app.Fragment fragment =
                 getSupportFragmentManager().findFragmentByTag(tag);
@@ -79,7 +78,9 @@ public final class SettingsActivity extends AppCompatActivity {
         }
         if (fragment.isAdded()) transaction.show(fragment);
         else transaction.add(R.id.settings_content, fragment, tag);
-        transaction.commit();
+        // Master/detail selection is one UI transaction: callers must never observe the old
+        // section selected while the new detail fragment is still a zero-sized pending view.
+        transaction.commitNow();
         int[] ids = {R.id.settings_display, R.id.settings_controls_master, R.id.settings_audio_master,
                 R.id.settings_game_language, R.id.settings_about};
         SettingsSection[] sections = SettingsSection.values();

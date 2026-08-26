@@ -24,6 +24,7 @@ public final class FramePublisher {
     public synchronized Optional<PublishedFrame> poll() {
         PublishedFrame frame = source.copyLatest();
         if (frame == null || !frame.complete() || frame.sequence() <= lastSequence) {
+            if (frame != null) frame.close();
             return Optional.empty();
         }
         lastSequence = frame.sequence();

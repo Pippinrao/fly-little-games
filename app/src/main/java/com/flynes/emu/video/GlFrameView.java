@@ -21,12 +21,16 @@ public final class GlFrameView extends GLSurfaceView {
         setPreserveEGLContextOnPause(true);
         frameRenderer = new FrameRenderer(publisher, statusAccumulator);
         setRenderer(frameRenderer);
-        setRenderMode(RENDERMODE_CONTINUOUSLY);
+        setRenderMode(RENDERMODE_WHEN_DIRTY);
         setFocusable(true);
         setFocusableInTouchMode(true);
     }
 
     public void setFilterMode(FilterMode mode) {
         frameRenderer.setFilterMode(mode);
+    }
+
+    public void onFrameAvailable(long sequence) {
+        if (sequence >= 0L) requestRender();
     }
 }

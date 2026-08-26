@@ -146,7 +146,10 @@ public final class FrameRenderer implements GLSurfaceView.Renderer {
         ensureProgram();
         if (program == 0 || texture == 0) return;
 
-        publisher.poll().ifPresent(this::upload);
+        PublishedFrame frame = publisher.poll().orElse(null);
+        if (frame != null) {
+            try (frame) { upload(frame); }
+        }
         if (textureWidth <= 0 || textureHeight <= 0) return;
 
         GLES20.glUseProgram(program);

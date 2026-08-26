@@ -7,7 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Reuse the core's static library targets (nes_abi -> nestopia).
 add_subdirectory(${NES_CORE_DIR} ${CMAKE_BINARY_DIR}/core)
 
-add_library(nescore SHARED nes_jni.cpp)
+add_library(nescore SHARED
+    nes_jni.cpp
+    video/baseline_pipeline.cpp
+    video/egl_presenter.cpp
+    video/presentation_coordinator.cpp
+    video/video_presenter_jni.cpp)
 target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
 target_link_libraries(nescore nes_abi nestopia)
 
@@ -31,3 +36,10 @@ find_library(LOG_LIB log)
 if(LOG_LIB)
     target_link_libraries(nescore ${LOG_LIB})
 endif()
+
+find_library(EGL_LIB EGL)
+find_library(GLES2_LIB GLESv2)
+if(NOT EGL_LIB OR NOT GLES2_LIB)
+    message(FATAL_ERROR "Native presenter requires EGL and GLESv2")
+endif()
+target_link_libraries(nescore ${EGL_LIB} ${GLES2_LIB})

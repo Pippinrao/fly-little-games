@@ -3,7 +3,7 @@ package com.flynes.emu.video;
 import java.nio.ByteBuffer;
 
 /** Immutable copy of one completely rendered emulator frame. */
-public final class PublishedFrame {
+public final class PublishedFrame implements AutoCloseable {
     public enum Format { RGB565, RGB888, RGBA8888 }
 
     private final long sequence;
@@ -13,9 +13,16 @@ public final class PublishedFrame {
     private final Format format;
     private final ByteBuffer pixels;
     private final boolean complete;
+    private final FrameLease lease;
 
     public PublishedFrame(long sequence, int width, int height, int pitch,
                           Format format, ByteBuffer pixels, boolean complete) {
+        this(sequence, width, height, pitch, format, pixels, complete, null);
+    }
+
+    private PublishedFrame(long sequence, int width, int height, int pitch,
+                           Format format, ByteBuffer pixels, boolean complete,
+                           FrameLease lease) {
         this.sequence = sequence;
         this.width = width;
         this.height = height;
@@ -23,10 +30,16 @@ public final class PublishedFrame {
         this.format = format;
         this.pixels = pixels.asReadOnlyBuffer();
         this.complete = complete;
+        this.lease = lease;
     }
 
     public static PublishedFrame fromNative(long sequence, int[] metadata,
                                             ByteBuffer storage) {
+        return fromNative(sequence, metadata, storage, null);
+    }
+
+    static PublishedFrame fromNative(long sequence, int[] metadata,
+                                     ByteBuffer storage, FrameLease lease) {
         if (metadata == null || metadata.length < 5 || storage == null || !storage.isDirect()) {
             throw new IllegalArgumentException("Native frame metadata requires a direct buffer");
         }
@@ -44,7 +57,7 @@ public final class PublishedFrame {
         view.clear();
         view.limit(bytes);
         return new PublishedFrame(sequence, width, height, pitch,
-                Format.values()[formatId], view.asReadOnlyBuffer(), true);
+                Format.values()[formatId], view.asReadOnlyBuffer(), true, lease);
     }
 
     public long sequence() { return sequence; }
@@ -54,4 +67,5 @@ public final class PublishedFrame {
     public Format format() { return format; }
     public ByteBuffer pixels() { return pixels.asReadOnlyBuffer(); }
     public boolean complete() { return complete; }
+    @Override public void close() { if (lease != null) lease.close(); }
 }

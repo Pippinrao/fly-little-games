@@ -30,6 +30,7 @@
 #include "nes_audio_clock.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -53,6 +54,12 @@ namespace
 {
 	constexpr uint32_t kScreenWidth  = 256;
 	constexpr uint32_t kScreenHeight = 240;
+
+	uint64_t monotonic_now_ns()
+	{
+		return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count());
+	}
 
 	// Nestopia 基础类型 (NstBase.hpp, 定义在 namespace Nes 内)
 	using Nes::uint;
@@ -213,6 +220,11 @@ namespace
 
 		// 推式输入 → 拉式回调 (Pad::callback) 的桥 (t2b §0 #0)
 		std::atomic<uint32_t> input_buttons[NES_PORT_MAX];
+		std::atomic<uint64_t> input_generation;
+		mutable std::mutex input_sample_mutex;
+		uint64_t sampled_input_generation;
+		uint32_t sampled_input_bits[NES_PORT_MAX];
+		uint64_t sampled_input_monotonic_ns;
 
 		// 回调字段 (静态单例分发器读这些字段)
 		nes_log_fn log_cb;
@@ -246,6 +258,10 @@ namespace
 			  filter(NES_FILTER_NONE),
 			  audio_sample_remainder(0.0),
 			  audio_clock_mode(-1),
+			  input_generation(0),
+			  sampled_input_generation(0),
+			  sampled_input_bits{0, 0, 0, 0},
+			  sampled_input_monotonic_ns(0),
 			  log_cb(nullptr),
 			  log_userdata(nullptr),
 			  file_io_cb(nullptr),
@@ -424,7 +440,24 @@ namespace
 	{
 		nes_ctx* ctx = static_cast<nes_ctx*>(userdata);
 		if (ctx && index < NES_PORT_MAX)
-			pad.buttons = ctx->input_buttons[index].load(std::memory_order_relaxed);
+		{
+			uint64_t before = 0;
+			uint64_t after = 0;
+			uint32_t bits[NES_PORT_MAX]{};
+			do
+			{
+				before = ctx->input_generation.load(std::memory_order_acquire);
+				for (uint32_t port = 0; port < NES_PORT_MAX; ++port)
+					bits[port] = ctx->input_buttons[port].load(std::memory_order_relaxed);
+				after = ctx->input_generation.load(std::memory_order_acquire);
+			}
+			while (before != after);
+			pad.buttons = bits[index];
+			std::lock_guard<std::mutex> lock(ctx->input_sample_mutex);
+			ctx->sampled_input_generation = after;
+			std::memcpy(ctx->sampled_input_bits, bits, sizeof(bits));
+			ctx->sampled_input_monotonic_ns = monotonic_now_ns();
+		}
 		return true;
 	}
 
@@ -928,6 +961,38 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 	return NES_FAILED(last) ? static_cast<int>(last) : NES_OK;
 }
 
+NES_API int nes_run_frame_step(nes_t* nes, int16_t* audio_out,
+                               uint32_t audio_cap_samples,
+                               nes_frame_step_result* result)
+{
+	if (!result || result->struct_size < offsetof(nes_frame_step_result, audio_samples)
+			+ sizeof(result->audio_samples))
+		return NES_ERR_INVALID_PARAM;
+	uint32_t frames = 0;
+	uint32_t samples = 0;
+	const int rc = nes_run_frames(nes, 1, audio_out, audio_cap_samples, &frames, &samples);
+	if (rc < 0)
+		return rc;
+	const uint32_t caller_size = result->struct_size;
+	#define NES_WRITE_STEP(field, value) \
+		do { if (caller_size >= offsetof(nes_frame_step_result, field) + sizeof(result->field)) \
+			result->field = (value); } while (0)
+	NES_WRITE_STEP(version, NES_STRUCT_VERSION);
+	NES_WRITE_STEP(frames_run, frames);
+	NES_WRITE_STEP(audio_samples, samples);
+	if (frames > 0)
+	{
+		const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
+		std::lock_guard<std::mutex> lock(ctx->frame_mutex);
+		NES_WRITE_STEP(video_sequence, ctx->frame_sequence);
+		const int mode = static_cast<int>(ctx->machine.GetMode());
+		NES_WRITE_STEP(source_region,
+			mode == static_cast<int>(Nes::Api::Machine::PAL) ? NES_REGION_PAL : NES_REGION_NTSC);
+	}
+	#undef NES_WRITE_STEP
+	return NES_OK;
+}
+
 NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter filter)
 {
 	if (!nes)
@@ -1001,21 +1066,39 @@ NES_API const nes_video_frame* nes_get_video_frame(const nes_t* nes)
 NES_API int nes_copy_video_frame(const nes_t* nes, void* out, size_t cap,
                                  nes_video_snapshot* snapshot)
 {
-	if (!nes || !out || !snapshot || snapshot->struct_size < sizeof(nes_video_snapshot))
+	return nes_copy_video_frame_if_new(nes, UINT64_MAX, out, cap, snapshot);
+}
+
+NES_API int nes_copy_video_frame_if_new(const nes_t* nes, uint64_t last_sequence,
+                                        void* out, size_t cap,
+                                        nes_video_snapshot* snapshot)
+{
+	if (!nes || !out || !snapshot || snapshot->struct_size < NES_VIDEO_SNAPSHOT_V1_SIZE)
 		return NES_ERR_INVALID_PARAM;
 	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
 	std::lock_guard<std::mutex> lock(ctx->frame_mutex);
+	if (last_sequence != UINT64_MAX && last_sequence == ctx->frame_sequence)
+		return NES_WARN_NO_VIDEO_CHANGE;
 
-	snapshot->version = NES_STRUCT_VERSION;
-	snapshot->sequence = ctx->frame_sequence;
-	snapshot->width = ctx->video_frame.width;
-	snapshot->height = ctx->video_frame.height;
-	snapshot->format = ctx->video_frame.format;
-	snapshot->pitch = ctx->video_frame.pitch;
-	snapshot->bytes_written = ctx->framebuffer_size;
+	const uint32_t caller_size = snapshot->struct_size;
+	#define NES_WRITE_SNAPSHOT(field, value) \
+		do { if (caller_size >= offsetof(nes_video_snapshot, field) + sizeof(snapshot->field)) \
+			snapshot->field = (value); } while (0)
+	NES_WRITE_SNAPSHOT(version, NES_STRUCT_VERSION);
+	NES_WRITE_SNAPSHOT(sequence, ctx->frame_sequence);
+	NES_WRITE_SNAPSHOT(width, ctx->video_frame.width);
+	NES_WRITE_SNAPSHOT(height, ctx->video_frame.height);
+	NES_WRITE_SNAPSHOT(format, ctx->video_frame.format);
+	NES_WRITE_SNAPSHOT(pitch, ctx->video_frame.pitch);
+	NES_WRITE_SNAPSHOT(bytes_written, ctx->framebuffer_size);
 	if (cap < ctx->framebuffer_size)
 		return NES_ERR_BUFFER_TOO_SMALL;
 	std::memcpy(out, ctx->framebuffers[ctx->published_index], ctx->framebuffer_size);
+	const int mode = static_cast<int>(ctx->machine.GetMode());
+	NES_WRITE_SNAPSHOT(source_region,
+		mode == static_cast<int>(Nes::Api::Machine::PAL) ? NES_REGION_PAL : NES_REGION_NTSC);
+	NES_WRITE_SNAPSHOT(native_monotonic_ns, monotonic_now_ns());
+	#undef NES_WRITE_SNAPSHOT
 	return NES_OK;
 }
 
@@ -1049,11 +1132,20 @@ NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo)
 
 NES_API void nes_set_input(nes_t* nes, uint32_t port, uint32_t buttons)
 {
+	(void)nes_set_input_versioned(nes, port, buttons);
+}
+
+NES_API uint64_t nes_set_input_versioned(nes_t* nes, uint32_t port, uint32_t buttons)
+{
 	if (!nes || port >= NES_PORT_MAX)
-		return;
+		return 0;
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 	// 推→拉桥: on_pad_poll 每帧从这里取 (t2b §0 #0); 非回调路径, 无需重入检查
-	ctx->input_buttons[port].store(buttons, std::memory_order_relaxed);
+	const uint32_t previous = ctx->input_buttons[port].exchange(
+		buttons, std::memory_order_relaxed);
+	if (previous != buttons)
+		return ctx->input_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+	return ctx->input_generation.load(std::memory_order_acquire);
 }
 
 NES_API void nes_clear_input(nes_t* nes)
@@ -1061,8 +1153,31 @@ NES_API void nes_clear_input(nes_t* nes)
 	if (!nes)
 		return;
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	bool changed = false;
 	for (auto& b : ctx->input_buttons)
-		b.store(0, std::memory_order_relaxed);
+		changed = b.exchange(0, std::memory_order_relaxed) != 0 || changed;
+	if (changed)
+		ctx->input_generation.fetch_add(1, std::memory_order_release);
+}
+
+NES_API int nes_get_last_input_sample(const nes_t* nes, nes_input_sample* sample)
+{
+	if (!nes || !sample || sample->struct_size < offsetof(nes_input_sample, generation)
+			+ sizeof(sample->generation))
+		return NES_ERR_INVALID_PARAM;
+	const nes_ctx* ctx = reinterpret_cast<const nes_ctx*>(nes);
+	std::lock_guard<std::mutex> lock(ctx->input_sample_mutex);
+	const uint32_t caller_size = sample->struct_size;
+	#define NES_WRITE_INPUT(field, value) \
+		do { if (caller_size >= offsetof(nes_input_sample, field) + sizeof(sample->field)) \
+			sample->field = (value); } while (0)
+	NES_WRITE_INPUT(version, NES_STRUCT_VERSION);
+	NES_WRITE_INPUT(generation, ctx->sampled_input_generation);
+	if (caller_size >= offsetof(nes_input_sample, pad_bits) + sizeof(sample->pad_bits))
+		std::memcpy(sample->pad_bits, ctx->sampled_input_bits, sizeof(sample->pad_bits));
+	NES_WRITE_INPUT(native_monotonic_ns, ctx->sampled_input_monotonic_ns);
+	#undef NES_WRITE_INPUT
+	return NES_OK;
 }
 
 /*

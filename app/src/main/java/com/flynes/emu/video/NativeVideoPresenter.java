@@ -1,0 +1,144 @@
+package com.flynes.emu.video;
+
+import android.view.Surface;
+
+import com.flynes.emu.settings.FilterMode;
+
+import java.nio.ByteBuffer;
+
+/** Java lifecycle boundary for the single native EGL presenter. */
+public final class NativeVideoPresenter implements AutoCloseable {
+    interface Bridge {
+        long create();
+        void destroy(long handle);
+        boolean surfaceCreated(long handle, Surface surface, long epoch);
+        void surfaceChanged(long handle, int width, int height, long epoch);
+        void surfaceDestroyed(long handle, long epoch);
+        boolean enqueue(long handle, ByteBuffer pixels, long sequence, int width, int height,
+                        int pitch, int format, int bytes);
+        void setFilter(long handle, int filter);
+        void setActive(long handle, boolean active);
+        void resetSequence(long handle);
+        NativePresenterStats stats(long handle);
+    }
+
+    private static final class JniBridge implements Bridge {
+        @Override public long create() { return nativeCreate(); }
+        @Override public void destroy(long handle) { nativeDestroy(handle); }
+        @Override public boolean surfaceCreated(long handle, Surface surface, long epoch) {
+            return nativeSurfaceCreated(handle, surface, epoch);
+        }
+        @Override public void surfaceChanged(long handle, int width, int height, long epoch) {
+            nativeSurfaceChanged(handle, width, height, epoch);
+        }
+        @Override public void surfaceDestroyed(long handle, long epoch) {
+            nativeSurfaceDestroyed(handle, epoch);
+        }
+        @Override public boolean enqueue(long handle, ByteBuffer pixels, long sequence,
+                                         int width, int height, int pitch, int format, int bytes) {
+            return nativeEnqueue(handle, pixels, sequence, width, height, pitch, format, bytes);
+        }
+        @Override public void setFilter(long handle, int filter) {
+            nativeSetFilter(handle, filter);
+        }
+        @Override public void setActive(long handle, boolean active) {
+            nativeSetActive(handle, active);
+        }
+        @Override public void resetSequence(long handle) { nativeResetSequence(handle); }
+        @Override public NativePresenterStats stats(long handle) {
+            long[] values = nativeGetStats(handle);
+            return values == null || values.length < 5 ? NativePresenterStats.EMPTY
+                    : new NativePresenterStats(values[0], values[1], values[2], values[3],
+                            values[4]);
+        }
+    }
+
+    private final FramePublisher publisher;
+    private final Bridge bridge;
+    private long handle;
+    private long activeEpoch;
+    private boolean surfaceReady;
+
+    public NativeVideoPresenter(FramePublisher publisher) {
+        this(publisher, new JniBridge());
+    }
+
+    NativeVideoPresenter(FramePublisher publisher, Bridge bridge) {
+        if (publisher == null || bridge == null) {
+            throw new IllegalArgumentException("publisher and bridge are required");
+        }
+        this.publisher = publisher;
+        this.bridge = bridge;
+        handle = bridge.create();
+        if (handle == 0L) throw new IllegalStateException("native presenter creation failed");
+    }
+
+    public synchronized boolean surfaceCreated(Surface surface, long epoch) {
+        if (handle == 0L || epoch <= activeEpoch) return false;
+        surfaceReady = bridge.surfaceCreated(handle, surface, epoch);
+        if (surfaceReady) activeEpoch = epoch;
+        return surfaceReady;
+    }
+
+    public synchronized void surfaceChanged(int width, int height, long epoch) {
+        if (handle != 0L && surfaceReady && epoch == activeEpoch && width > 0 && height > 0) {
+            bridge.surfaceChanged(handle, width, height, epoch);
+        }
+    }
+
+    public synchronized void surfaceDestroyed(long epoch) {
+        if (handle == 0L || !surfaceReady || epoch != activeEpoch) return;
+        surfaceReady = false;
+        bridge.surfaceDestroyed(handle, epoch);
+    }
+
+    public synchronized void onFrameAvailable(long sequence) {
+        if (handle == 0L || !surfaceReady || sequence < 0L) return;
+        PublishedFrame frame = publisher.poll().orElse(null);
+        if (frame == null) return;
+        try (frame) {
+            ByteBuffer pixels = frame.pixels();
+            bridge.enqueue(handle, pixels, frame.sequence(), frame.width(), frame.height(),
+                    frame.pitch(), frame.format().ordinal(), pixels.remaining());
+        }
+    }
+
+    public synchronized void setFilterMode(FilterMode mode) {
+        if (handle != 0L) bridge.setFilter(handle,
+                (mode == null ? FilterMode.EDGE_ENHANCED : mode).ordinal());
+    }
+
+    public synchronized void setActive(boolean active) {
+        if (handle != 0L) bridge.setActive(handle, active);
+    }
+
+    public synchronized void resetSequence() {
+        if (handle != 0L) bridge.resetSequence(handle);
+    }
+
+    public synchronized NativePresenterStats stats() {
+        return handle == 0L ? NativePresenterStats.EMPTY : bridge.stats(handle);
+    }
+
+    public synchronized long activeEpoch() { return activeEpoch; }
+
+    @Override public synchronized void close() {
+        if (handle == 0L) return;
+        surfaceReady = false;
+        bridge.destroy(handle);
+        handle = 0L;
+    }
+
+    private static native long nativeCreate();
+    private static native void nativeDestroy(long handle);
+    private static native boolean nativeSurfaceCreated(long handle, Surface surface, long epoch);
+    private static native void nativeSurfaceChanged(long handle, int width, int height, long epoch);
+    private static native void nativeSurfaceDestroyed(long handle, long epoch);
+    private static native boolean nativeEnqueue(long handle, ByteBuffer pixels, long sequence,
+                                                int width, int height, int pitch, int format,
+                                                int bytes);
+    private static native void nativeSetFilter(long handle, int filter);
+    private static native void nativeSetActive(long handle, boolean active);
+    private static native void nativeResetSequence(long handle);
+    private static native long[] nativeGetStats(long handle);
+}

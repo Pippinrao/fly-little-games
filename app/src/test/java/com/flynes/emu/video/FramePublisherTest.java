@@ -67,18 +67,20 @@ public final class FramePublisherTest {
 
     @Test
     public void nativeFrameSourceReturnsNullOnBridgeErrorAndMapsSuccess() {
-        NativeFrameSource.Bridge bridge = (destination, metadata) -> {
+        NativeFrameSource.Bridge bridge = (destination, metadata, lastSequence) -> {
             metadata[0] = 4;
             metadata[1] = 2;
             metadata[2] = 8;
             metadata[3] = 0;
             metadata[4] = 16;
-            return 9;
+            return FrameCopyResult.newFrame(9L, 10L,
+                    com.flynes.emu.video.quality.SourceTiming.NTSC_60_0988);
         };
         NativeFrameSource source = new NativeFrameSource(bridge, 64);
         assertEquals(9, source.copyLatest().sequence());
 
-        NativeFrameSource failing = new NativeFrameSource((destination, metadata) -> -3, 64);
+        NativeFrameSource failing = new NativeFrameSource(
+                (destination, metadata, lastSequence) -> FrameCopyResult.error(-3), 64);
         assertEquals(null, failing.copyLatest());
     }
 

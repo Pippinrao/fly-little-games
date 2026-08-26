@@ -26,9 +26,9 @@ extern "C" {
 #endif
 
 #define NES_API_VERSION_MAJOR 0u
-#define NES_API_VERSION_MINOR 1u
+#define NES_API_VERSION_MINOR 2u
 #define NES_API_VERSION_PATCH 0u
-#define NES_STRUCT_VERSION 1u
+#define NES_STRUCT_VERSION 2u
 
 /* ---------------- 句柄 ---------------- */
 typedef struct nes nes_t;   /* 不透明句柄 */
@@ -42,6 +42,7 @@ typedef enum nes_err {
     NES_WARN_BAD_CROM            = 4,
     NES_WARN_BAD_FILE_HEADER     = 5,
     NES_WARN_SAVEDATA_LOST       = 6,
+    NES_WARN_NO_VIDEO_CHANGE     = 7,
     NES_WARN_DATA_REPLACED       = 8,
     NES_ERR_GENERIC              = -1,
     NES_ERR_OUT_OF_MEMORY        = -2,
@@ -76,6 +77,13 @@ typedef enum nes_pixfmt {
     NES_PIXFMT_RGB888    = 1,   /* count=24, r=0xFF0000 g=0x00FF00 b=0x0000FF */
     NES_PIXFMT_RGBA8888  = 2    /* count=32, r=0x00FF0000 g=0x0000FF00 b=0x000000FF */
 } nes_pixfmt;
+
+typedef enum nes_region {
+    NES_REGION_UNKNOWN = 0,
+    NES_REGION_NTSC    = 1,
+    NES_REGION_PAL     = 2,
+    NES_REGION_DENDY   = 3
+} nes_region;
 
 typedef enum nes_video_filter {
     NES_FILTER_NONE = 0,        /* Nes::Api::Video::RenderState::FILTER_NONE */
@@ -179,7 +187,28 @@ typedef struct nes_video_snapshot {
     nes_pixfmt format;
     int32_t pitch;
     size_t bytes_written;
+    nes_region source_region;       /* v2 tail */
+    uint64_t native_monotonic_ns;   /* v2 tail: copy completion clock domain */
 } nes_video_snapshot;
+
+#define NES_VIDEO_SNAPSHOT_V1_SIZE offsetof(nes_video_snapshot, source_region)
+
+typedef struct nes_input_sample {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t generation;
+    uint32_t pad_bits[NES_PORT_MAX];
+    uint64_t native_monotonic_ns;
+} nes_input_sample;
+
+typedef struct nes_frame_step_result {
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t frames_run;
+    uint32_t audio_samples;
+    uint64_t video_sequence;
+    nes_region source_region;
+} nes_frame_step_result;
 
 typedef struct nes_rom_info {
     uint32_t struct_size;
@@ -228,17 +257,25 @@ NES_API int nes_reset(nes_t* nes, int hard);         /* Machine::Reset(hard) */
 NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
                            int16_t* audio_out, uint32_t audio_cap_samples,
                            uint32_t* frames_run, uint32_t* samples_written);
+NES_API int nes_run_frame_step(nes_t* nes, int16_t* audio_out,
+                               uint32_t audio_cap_samples,
+                               nes_frame_step_result* result);
 
 /* ---------------- 视频 / 音频 格式 ---------------- */
 NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter filter);
 NES_API const nes_video_frame* nes_get_video_frame(const nes_t* nes);
 NES_API int nes_copy_video_frame(const nes_t* nes, void* out, size_t cap,
                                  nes_video_snapshot* snapshot);
+NES_API int nes_copy_video_frame_if_new(const nes_t* nes, uint64_t last_sequence,
+                                        void* out, size_t cap,
+                                        nes_video_snapshot* snapshot);
 NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo); /* stereo: 0/1 */
 
 /* ---------------- 输入 (推式; 壳内转拉式回调) ---------------- */
 NES_API void nes_set_input(nes_t* nes, uint32_t port, uint32_t buttons);  /* port 0..3 */
+NES_API uint64_t nes_set_input_versioned(nes_t* nes, uint32_t port, uint32_t buttons);
 NES_API void nes_clear_input(nes_t* nes);
+NES_API int nes_get_last_input_sample(const nes_t* nes, nes_input_sample* sample);
 
 /* ---------------- 即时存档 / 电池 ---------------- */
 NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed);

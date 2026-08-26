@@ -2,6 +2,7 @@ package com.flynes.emu;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
@@ -36,7 +37,9 @@ public final class SettingsPersistenceTest {
 
         try (ActivityScenario<SettingsActivity> scenario =
                      ActivityScenario.launch(SettingsActivity.class)) {
-            onView(withText(R.string.aspect_mode)).perform(click());
+            // Aspect now belongs to the explicit Custom quality axes, not a legacy preference row.
+            onView(withId(R.id.video_preset_custom_card)).perform(scrollTo(), click());
+            onView(withId(R.id.video_aspect_spinner)).perform(scrollTo(), click());
             onView(withText(R.string.aspect_square_pixels)).perform(click());
             onView(withId(R.id.settings_controls_master)).perform(click());
             onView(withText(R.string.direction_control)).perform(click());

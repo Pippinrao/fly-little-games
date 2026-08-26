@@ -7,6 +7,10 @@ import com.flynes.emu.session.CoreFacade;
 import com.flynes.emu.data.RomIdentity;
 import com.flynes.emu.data.RomInfo;
 import com.flynes.emu.video.NativeFrameSource;
+import com.flynes.emu.video.FrameCopyResult;
+import com.flynes.emu.video.FrameStepResult;
+import com.flynes.emu.video.quality.SourceTiming;
+import com.flynes.emu.video.NativeInputSample;
 
 /**
  * JNI wrapper around the FlyNES C ABI core (libnescore.so).
@@ -39,13 +43,19 @@ public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
 
     private static native long nativeCreate();
     private static native void nativeDestroy(long h);
+    private static native long nativeMonotonicNow();
     private static native int nativeLoadRom(long h, byte[] rom, byte[] patch);
     private static native String[] nativeRomInfoStrings(long h);
     private static native int[] nativeRomInfoNumbers(long h);
     private static native int nativeLoadDatabase(long h, byte[] xml);
     private static native int nativeRunFrames(long h, int maxFrames, ByteBuffer audio, int capSamples);
-    private static native long nativeCopyVideoFrame(long h, ByteBuffer destination, int[] metadata);
-    private static native void nativeSetInput(long h, int buttons);
+    private static native int nativeRunFrameStep(long h, ByteBuffer audio, int capSamples,
+                                                  long[] step);
+    private static native int nativeCopyVideoFrameIfNew(long h, long lastSequence,
+                                                         ByteBuffer destination, int[] metadata,
+                                                         long[] timing);
+    private static native long nativeSetInput(long h, int buttons);
+    private static native int nativeGetLastInputSample(long h, long[] values);
     private static native void nativeSetAudioFormat(long h, int rate, int stereo);
     private static native void nativeSetVideoFilter(long h, int filter);
     private static native int nativeSaveState(long h, byte[] out);
@@ -68,6 +78,8 @@ public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
     public boolean isCreated() {
         return handle != 0;
     }
+
+    public long nativeMonotonicTimeNs() { return nativeMonotonicNow(); }
 
     /**
      * @return 0/positive on success (positive = warnings), negative on failure.
@@ -122,13 +134,48 @@ public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
         return runFrames(1);
     }
 
-    @Override public long copyVideoFrame(ByteBuffer destination, int[] metadata) {
-        if (handle == 0) return -3; // NES_ERR_NOT_READY
-        return nativeCopyVideoFrame(handle, destination, metadata);
+    public FrameStepResult runFrameStep() {
+        if (handle == 0) return FrameStepResult.error(-3);
+        long[] step = new long[4];
+        int status = nativeRunFrameStep(handle, audioBuffer, audioBuffer.capacity() / 2, step);
+        if (status < 0) return FrameStepResult.error(status);
+        SourceTiming timing = step[3] == 2L ? SourceTiming.PAL_50
+                : step[3] == 1L ? SourceTiming.NTSC_60_0988 : SourceTiming.UNKNOWN;
+        return new FrameStepResult((int) step[0], (int) step[1], step[2], timing);
+    }
+
+    @Override public FrameCopyResult copyVideoFrameIfNew(ByteBuffer destination, int[] metadata,
+                                                          long lastSequence) {
+        if (handle == 0) return FrameCopyResult.error(-3); // NES_ERR_NOT_READY
+        long[] timing = new long[3];
+        int status = nativeCopyVideoFrameIfNew(handle, lastSequence, destination, metadata,
+                timing);
+        if (status == 7) return FrameCopyResult.noChange();
+        if (status < 0) return FrameCopyResult.error(status);
+        SourceTiming sourceTiming = timing[2] == 2L
+                ? SourceTiming.PAL_50 : timing[2] == 1L
+                ? SourceTiming.NTSC_60_0988 : SourceTiming.UNKNOWN;
+        return FrameCopyResult.newFrame(timing[0], timing[1], sourceTiming);
     }
 
     @Override public void setInput(int buttons) {
-        if (handle != 0) nativeSetInput(handle, buttons);
+        setInputAndGetGeneration(buttons);
+    }
+
+    @Override public long setInputVersioned(int buttons) {
+        return setInputAndGetGeneration(buttons);
+    }
+
+    public long setInputAndGetGeneration(int buttons) {
+        return handle == 0 ? 0L : nativeSetInput(handle, buttons);
+    }
+
+    public NativeInputSample lastInputSample() {
+        if (handle == 0) return null;
+        long[] values = new long[6];
+        if (nativeGetLastInputSample(handle, values) < 0) return null;
+        return new NativeInputSample(values[0], new int[]{(int) values[1], (int) values[2],
+                (int) values[3], (int) values[4]}, values[5]);
     }
 
     /** @param stereo 0 = mono (the only mode the core supports in phase 0). */
