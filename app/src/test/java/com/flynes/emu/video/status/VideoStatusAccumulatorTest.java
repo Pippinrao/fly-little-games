@@ -85,4 +85,16 @@ public final class VideoStatusAccumulatorTest {
         assertEquals(StatusFreshness.UNKNOWN,
                 StatusFreshness.at(2_000L, 1_999L, 1_500L));
     }
+
+    @Test public void avSyncEvidencePublishesValiditySkewAndUncertainty() {
+        VideoStatusAccumulator accumulator = new VideoStatusAccumulator();
+        accumulator.beginWindow(0L, SourceTiming.NTSC_60_0988, 60.0988f);
+        accumulator.onAvSync(true, -450_000L, 125_000L);
+
+        VideoRuntimeStatus status = accumulator.snapshot(100L);
+
+        assertEquals(true, status.avSyncValid());
+        assertEquals(-450_000L, status.avSkewNs());
+        assertEquals(125_000L, status.avSyncUncertaintyNs());
+    }
 }

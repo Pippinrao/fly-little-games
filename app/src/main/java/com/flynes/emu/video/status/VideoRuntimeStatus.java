@@ -38,6 +38,9 @@ public final class VideoRuntimeStatus {
     private final int audioQueueDepthSamples;
     private final TemporalTransition temporalTransition;
     private final long cadenceAdjustmentCount;
+    private final boolean avSyncValid;
+    private final long avSkewNs;
+    private final long avSyncUncertaintyNs;
     private final ThermalBand thermalBand;
     private final StatusFreshness freshness;
     private final long capturedAtElapsedRealtimeMs;
@@ -58,7 +61,9 @@ public final class VideoRuntimeStatus {
                               int videoDelayFrames, float audioDelayMs,
                               int videoQueueDepth, int audioQueueDepthSamples,
                               TemporalTransition temporalTransition,
-                              long cadenceAdjustmentCount, ThermalBand thermalBand,
+                              long cadenceAdjustmentCount, boolean avSyncValid,
+                              long avSkewNs, long avSyncUncertaintyNs,
+                              ThermalBand thermalBand,
                               StatusFreshness freshness, long capturedAtElapsedRealtimeMs,
                               List<FallbackReason> fallbacks) {
         if ((activeConfigurationId == null) != (activeConfigurationKey == null)) {
@@ -88,6 +93,9 @@ public final class VideoRuntimeStatus {
         this.audioQueueDepthSamples = audioQueueDepthSamples;
         this.temporalTransition = temporalTransition;
         this.cadenceAdjustmentCount = cadenceAdjustmentCount;
+        this.avSyncValid = avSyncValid;
+        this.avSkewNs = avSkewNs;
+        this.avSyncUncertaintyNs = avSyncUncertaintyNs;
         this.thermalBand = thermalBand;
         this.freshness = freshness;
         this.capturedAtElapsedRealtimeMs = capturedAtElapsedRealtimeMs;
@@ -118,6 +126,9 @@ public final class VideoRuntimeStatus {
     public int audioQueueDepthSamples() { return audioQueueDepthSamples; }
     public TemporalTransition temporalTransition() { return temporalTransition; }
     public long cadenceAdjustmentCount() { return cadenceAdjustmentCount; }
+    public boolean avSyncValid() { return avSyncValid; }
+    public long avSkewNs() { return avSkewNs; }
+    public long avSyncUncertaintyNs() { return avSyncUncertaintyNs; }
     public ThermalBand thermalBand() { return thermalBand; }
     public StatusFreshness freshness() { return freshness; }
     public long capturedAtElapsedRealtimeMs() { return capturedAtElapsedRealtimeMs; }

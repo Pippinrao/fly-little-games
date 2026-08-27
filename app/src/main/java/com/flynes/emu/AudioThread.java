@@ -3,13 +3,21 @@ package com.flynes.emu;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
+import android.media.AudioTimestamp;
 import android.os.Process;
 
 import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Optional;
+import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongUnaryOperator;
 
 import com.flynes.emu.video.FrameAvailableSignal;
 import com.flynes.emu.video.FrameStepResult;
+import com.flynes.emu.video.audio.TemporalAudioDelay;
+import com.flynes.emu.video.audio.AvSyncMonitor;
+import com.flynes.emu.video.audio.AudioMarkerTimeline;
 
 /**
  * Audio-master-clock loop: the emulator never runs ahead of the audio sink.
@@ -29,6 +37,9 @@ public class AudioThread extends Thread {
     private final NesCore core;
     private final boolean audible;
     private final FrameAvailableSignal frameAvailable;
+    private final TemporalAudioDelay temporalAudioDelay;
+    private final AvSyncMonitor avSyncMonitor;
+    private final LongUnaryOperator videoPresentationBySequence;
     // AtomicBoolean (not a plain volatile flag): run() CLAIMS the loop with
     // compareAndSet(false, true) so a stopLoop() issued before the thread
     // actually starts can never be overwritten by a later `running = true`.
@@ -44,10 +55,26 @@ public class AudioThread extends Thread {
     }
 
     public AudioThread(NesCore core, boolean audible, FrameAvailableSignal frameAvailable) {
+        this(core, audible, frameAvailable, null);
+    }
+
+    /** Motion-only constructor; Native callers keep passing no delay. */
+    public AudioThread(NesCore core, boolean audible, FrameAvailableSignal frameAvailable,
+                       TemporalAudioDelay temporalAudioDelay) {
+        this(core, audible, frameAvailable, temporalAudioDelay, null,
+                sequence -> -1L);
+    }
+
+    public AudioThread(NesCore core, boolean audible, FrameAvailableSignal frameAvailable,
+                       TemporalAudioDelay temporalAudioDelay, AvSyncMonitor avSyncMonitor,
+                       LongUnaryOperator videoPresentationBySequence) {
         super("FlyNES-Audio");
         this.core = core;
         this.audible = audible;
         this.frameAvailable = frameAvailable;
+        this.temporalAudioDelay = temporalAudioDelay;
+        this.avSyncMonitor = avSyncMonitor;
+        this.videoPresentationBySequence = videoPresentationBySequence;
     }
 
     /**
@@ -114,11 +141,54 @@ public class AudioThread extends Thread {
         AudioPump pump = new AudioPump(new AudioPump.Core() {
             @Override public FrameStepResult runFrameStep() { return core.runFrameStep(); }
             @Override public ByteBuffer audioBuffer() { return core.audioBuffer(); }
-        }, (data, bytes) -> track.write(data, bytes, AudioTrack.WRITE_BLOCKING), frameAvailable);
+        }, (data, bytes) -> track.write(data, bytes, AudioTrack.WRITE_BLOCKING), frameAvailable,
+                temporalAudioDelay, System::nanoTime);
 
         int idleIterations = 0;
+        AudioTimestamp playbackTimestamp = avSyncMonitor == null ? null : new AudioTimestamp();
+        long writtenAudioFrames = 0L;
+        AudioMarkerTimeline audioTimeline = new AudioMarkerTimeline(SAMPLE_RATE);
         while (running.get()) {
+            long blockStartFramePosition = writtenAudioFrames;
             FrameStepResult step = pump.pumpOnce();
+            if (!step.failed() && step.audioSamples() > 0) {
+                writtenAudioFrames += step.audioSamples();
+                List<TemporalAudioDelay.OutputSpan> spans = temporalAudioDelay == null
+                        ? Collections.singletonList(new TemporalAudioDelay.OutputSpan(
+                                step.sequence(), 0, step.audioSamples(), 0))
+                        : temporalAudioDelay.lastOutputSpans();
+                audioTimeline.recordBlock(blockStartFramePosition, spans);
+            }
+            long timestampQueryStartedNs = System.nanoTime();
+            boolean hasPlaybackTimestamp = avSyncMonitor != null
+                    && track.getTimestamp(playbackTimestamp);
+            long timestampQueryFinishedNs = System.nanoTime();
+            if (hasPlaybackTimestamp) {
+                Optional<AudioMarkerTimeline.Match> played = audioTimeline.match(
+                        playbackTimestamp.framePosition, playbackTimestamp.nanoTime);
+                long videoPresentationNs = played.isEmpty()
+                        || videoPresentationBySequence == null ? -1L
+                        : videoPresentationBySequence.applyAsLong(
+                                played.get().contentSequence());
+                if (played.isPresent() && videoPresentationNs >= 0L) {
+                    long queryUncertaintyNs = Math.max(1L,
+                            (timestampQueryFinishedNs - timestampQueryStartedNs + 1L) / 2L);
+                    long uncertaintyNs;
+                    try {
+                        uncertaintyNs = Math.addExact(queryUncertaintyNs,
+                                played.get().boundaryUncertaintyNs());
+                    } catch (ArithmeticException overflow) {
+                        uncertaintyNs = Long.MAX_VALUE;
+                    }
+                    avSyncMonitor.recordMatched(played.get().contentSequence(),
+                            played.get().presentationTimeNs(), played.get().contentSequence(),
+                            videoPresentationNs, uncertaintyNs);
+                } else if (played.isPresent()) {
+                    avSyncMonitor.invalidate();
+                }
+            } else if (avSyncMonitor != null) {
+                avSyncMonitor.invalidate();
+            }
             if (step.audioSamples() > 0) {
                 idleIterations = 0;
             } else if (step.failed()) {

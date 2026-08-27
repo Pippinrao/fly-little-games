@@ -1,6 +1,7 @@
 package com.flynes.emu.video;
 
 import android.content.res.AssetManager;
+import android.content.Context;
 import android.view.Surface;
 
 import com.flynes.emu.settings.FilterMode;
@@ -23,12 +24,26 @@ public final class NativeVideoPresenter implements AutoCloseable, FrameRateReque
         boolean requestFrameRate(long handle, long epoch, float sourceFps);
         boolean clearFrameRate(long handle, long epoch);
         NativePresenterStats stats(long handle);
+        default long actualRealPresentationNs(long handle, long sequence) { return -1L; }
+        default boolean configureMotion(long handle, long epoch, long displayGeneration,
+                                        float displayHz, float sourceFps, long leaseDeadlineNs,
+                                        boolean forcePacerDisabled) { return false; }
+        default boolean updateMotionLease(long handle, long epoch, long displayGeneration,
+                                          long leaseDeadlineNs) { return false; }
+        default long exitMotion(long handle, long epoch, boolean drainToImmediate) {
+            return -1L;
+        }
+        default long beginMotionShadow(long handle, long epoch, float sourceFps) { return -1L; }
     }
 
     private static final class JniBridge implements Bridge {
         private final AssetManager assets;
-        JniBridge(AssetManager assets) { this.assets = assets; }
-        @Override public long create() { return nativeCreate(assets); }
+        private final Context activityContext;
+        JniBridge(AssetManager assets, Context activityContext) {
+            this.assets = assets;
+            this.activityContext = activityContext;
+        }
+        @Override public long create() { return nativeCreate(assets, activityContext); }
         @Override public boolean destroy(long handle) { return nativeDestroy(handle); }
         @Override public boolean surfaceCreated(long handle, Surface surface, long epoch) {
             return nativeSurfaceCreated(handle, surface, epoch);
@@ -58,10 +73,36 @@ public final class NativeVideoPresenter implements AutoCloseable, FrameRateReque
         }
         @Override public NativePresenterStats stats(long handle) {
             long[] values = nativeGetStats(handle);
-            return values == null || values.length < 11 ? NativePresenterStats.EMPTY
+            return values == null || values.length < 36 ? NativePresenterStats.EMPTY
                     : new NativePresenterStats(values[0], values[1], values[2], values[3],
                             values[4], values[5], (int) values[6], (int) values[7], values[8],
-                            (int) values[9], (int) values[10]);
+                            (int) values[9], (int) values[10], values[11], values[12], values[13],
+                            values[14], values[15], values[16], values[17], values[18], values[19],
+                            values[20], values[21], values[22], values[23], values[24], values[25],
+                            (int) values[26], values[27], (int) values[28],
+                            values[29], values[30], values[31], (int) values[32], values[33],
+                            values[34], values[35]);
+        }
+        @Override public long actualRealPresentationNs(long handle, long sequence) {
+            return nativeGetActualRealPresentationNs(handle, sequence);
+        }
+        @Override public boolean configureMotion(long handle, long epoch, long displayGeneration,
+                                                 float displayHz, float sourceFps,
+                                                 long leaseDeadlineNs,
+                                                 boolean forcePacerDisabled) {
+            return nativeConfigureMotion(handle, epoch, displayGeneration, displayHz, sourceFps,
+                    leaseDeadlineNs, forcePacerDisabled);
+        }
+        @Override public long beginMotionShadow(long handle, long epoch, float sourceFps) {
+            return nativeBeginMotionShadow(handle, epoch, sourceFps);
+        }
+        @Override public boolean updateMotionLease(long handle, long epoch,
+                                                   long displayGeneration,
+                                                   long leaseDeadlineNs) {
+            return nativeUpdateMotionLease(handle, epoch, displayGeneration, leaseDeadlineNs);
+        }
+        @Override public long exitMotion(long handle, long epoch, boolean drainToImmediate) {
+            return nativeExitMotion(handle, epoch, drainToImmediate);
         }
     }
 
@@ -76,7 +117,12 @@ public final class NativeVideoPresenter implements AutoCloseable, FrameRateReque
     }
 
     public NativeVideoPresenter(FramePublisher publisher, AssetManager assets) {
-        this(publisher, new JniBridge(assets));
+        this(publisher, new JniBridge(assets, null));
+    }
+
+    public NativeVideoPresenter(FramePublisher publisher, Context activityContext) {
+        this(publisher, new JniBridge(activityContext == null ? null : activityContext.getAssets(),
+                activityContext));
     }
 
     NativeVideoPresenter(FramePublisher publisher, Bridge bridge) {
@@ -148,6 +194,38 @@ public final class NativeVideoPresenter implements AutoCloseable, FrameRateReque
         return handle == 0L ? NativePresenterStats.EMPTY : bridge.stats(handle);
     }
 
+    public synchronized long actualRealPresentationNs(long sequence) {
+        return handle == 0L || sequence < 0L ? -1L
+                : bridge.actualRealPresentationNs(handle, sequence);
+    }
+
+    /** Certification-only until a complete device profile unlocks Motion in the public resolver. */
+    public synchronized boolean configureMotionForTesting(long epoch, long displayGeneration,
+                                                          float displayHz, float sourceFps,
+                                                          long leaseDeadlineNs,
+                                                          boolean forcePacerDisabled) {
+        return handle != 0L && surfaceReady && epoch == activeEpoch
+                && bridge.configureMotion(handle, epoch, displayGeneration, displayHz, sourceFps,
+                        leaseDeadlineNs, forcePacerDisabled);
+    }
+
+    public synchronized long beginMotionShadowForTesting(long epoch, float sourceFps) {
+        return handle != 0L && surfaceReady && epoch == activeEpoch
+                && Float.isFinite(sourceFps) && sourceFps > 0f
+                ? bridge.beginMotionShadow(handle, epoch, sourceFps) : -1L;
+    }
+
+    public synchronized boolean updateMotionLeaseForTesting(long epoch, long displayGeneration,
+                                                            long leaseDeadlineNs) {
+        return handle != 0L && surfaceReady && epoch == activeEpoch
+                && bridge.updateMotionLease(handle, epoch, displayGeneration, leaseDeadlineNs);
+    }
+
+    public synchronized long exitMotion(long epoch, boolean drainToImmediate) {
+        return handle != 0L && surfaceReady && epoch == activeEpoch
+                ? bridge.exitMotion(handle, epoch, drainToImmediate) : -1L;
+    }
+
     public synchronized long activeEpoch() { return activeEpoch; }
 
     @Override public synchronized void close() {
@@ -159,7 +237,7 @@ public final class NativeVideoPresenter implements AutoCloseable, FrameRateReque
         handle = 0L;
     }
 
-    private static native long nativeCreate(AssetManager assets);
+    private static native long nativeCreate(AssetManager assets, Context activityContext);
     private static native boolean nativeDestroy(long handle);
     private static native boolean nativeSurfaceCreated(long handle, Surface surface, long epoch);
     private static native void nativeSurfaceChanged(long handle, int width, int height, long epoch);
@@ -174,4 +252,13 @@ public final class NativeVideoPresenter implements AutoCloseable, FrameRateReque
                                                          float sourceFps);
     private static native boolean nativeClearFrameRate(long handle, long epoch);
     private static native long[] nativeGetStats(long handle);
+    private static native long nativeGetActualRealPresentationNs(long handle, long sequence);
+    private static native boolean nativeConfigureMotion(
+            long handle, long epoch, long displayGeneration, float displayHz, float sourceFps,
+            long leaseDeadlineNs, boolean forcePacerDisabled);
+    private static native long nativeBeginMotionShadow(long handle, long epoch, float sourceFps);
+    private static native boolean nativeUpdateMotionLease(
+            long handle, long epoch, long displayGeneration, long leaseDeadlineNs);
+    private static native long nativeExitMotion(
+            long handle, long epoch, boolean drainToImmediate);
 }

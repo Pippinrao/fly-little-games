@@ -46,6 +46,12 @@ import com.flynes.emu.video.FramePublisher;
 import com.flynes.emu.video.FrameAvailableSignal;
 import com.flynes.emu.video.FrameDispatchExecutor;
 import com.flynes.emu.video.ClockDomainCalibrator;
+import com.flynes.emu.video.audio.AvSyncMonitor;
+import com.flynes.emu.video.audio.DisplayLeaseWatchdog;
+import com.flynes.emu.video.audio.MotionShadowEvidence;
+import com.flynes.emu.video.audio.SurfaceRecoveryIntentPolicy;
+import com.flynes.emu.video.audio.TemporalAudioDelay;
+import com.flynes.emu.video.audio.TemporalTransitionController;
 import com.flynes.emu.video.InputLatencyTracker;
 import com.flynes.emu.video.NativeInputSample;
 import com.flynes.emu.video.GameSurfaceView;
@@ -84,6 +90,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -107,7 +114,14 @@ public class MainActivity extends AppCompatActivity {
     private final ExecutorService frameDispatchThread = Executors.newSingleThreadExecutor(
             runnable -> daemonThread(runnable, "flynes-frame-dispatch"));
     private FrameDispatchExecutor frameDispatch;
+    private FrameDispatchExecutor motionFrameDispatch;
+    private volatile boolean motionCaptureActive;
     private final ClockDomainCalibrator clockCalibrator = new ClockDomainCalibrator();
+    private final AvSyncMonitor avSyncMonitor = new AvSyncMonitor(clockCalibrator);
+    private final TemporalAudioDelay temporalAudioDelay =
+            new TemporalAudioDelay(AUDIO_SAMPLE_RATE, 1, 60.0988);
+    private final TemporalTransitionController temporalTransitionController =
+            new TemporalTransitionController();
     private final InputLatencyTracker inputLatencyTracker =
             new InputLatencyTracker(clockCalibrator);
     private GamepadView gamepad;
@@ -157,6 +171,14 @@ public class MainActivity extends AppCompatActivity {
     private volatile DisplayObservation lastDisplayObservation;
     private volatile RuntimeTemporalState requestedRuntimeTemporalState =
             RuntimeTemporalState.IMMEDIATE_NATIVE;
+    private final AtomicBoolean motionTransitionInFlight = new AtomicBoolean();
+    private volatile boolean motionRuntimeActive;
+    private volatile boolean motionShadowActive;
+    private volatile long shadowRuntimeFailureBaseline;
+    private volatile boolean surfaceRecoveryPending;
+    private volatile boolean surfaceRecoveryWasRunning;
+    private volatile long motionDisplayGeneration;
+    private DisplayLeaseWatchdog displayLeaseWatchdog;
     private long appliedDisplayEpoch = -1L;
     private RefreshMode appliedRefreshMode;
     private boolean appliedFollowSystem;
@@ -196,6 +218,15 @@ public class MainActivity extends AppCompatActivity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        temporalAudioDelay.disableImmediately();
+        displayLeaseWatchdog = new DisplayLeaseWatchdog(
+                TimeUnit.MILLISECONDS.toNanos(DisplayStatusMonitor.MOTION_LEASE_MS),
+                (callback, delayNs) -> {
+                    ScheduledFuture<?> future = displaySafetyExecutor.schedule(
+                            callback, delayNs, TimeUnit.NANOSECONDS);
+                    return () -> future.cancel(false);
+                }, token -> scheduleMotionExit(
+                        TemporalTransitionController.ExitReason.LEASE_EXPIRED, false));
         displayMonitor = new DisplayStatusMonitor(new AndroidDisplayPlatformFacade(
                 getWindowManager().getDefaultDisplay()), SystemClock::elapsedRealtime,
                 scheduler(displayPollExecutor), scheduler(displaySafetyExecutor),
@@ -220,6 +251,7 @@ public class MainActivity extends AppCompatActivity {
                                 observation.systemReportedActiveMode());
                         EffectiveVideoConfig effective = resolveEffectiveVideoConfig(observation);
                         requestedRuntimeTemporalState = effective.runtimeTemporalState();
+                        handleMotionObservation(effective, observation);
                         if (effective.resolvedConfigurationId() != null
                                 && effective.resolvedConfigurationKey() != null) {
                             videoStatus.publishStableConfiguration(surfaceEpoch,
@@ -247,6 +279,8 @@ public class MainActivity extends AppCompatActivity {
                         videoStatus.publishTransition(epoch, generation,
                                 RuntimeTemporalState.FALLBACK, 0, 0f);
                         videoStatus.onFallback(FallbackReason.DISPLAY_OBSERVATION_STALE);
+                        scheduleMotionExit(
+                                TemporalTransitionController.ExitReason.LEASE_EXPIRED, false);
                     }
                     @Override public void onPersistentPolicyMismatch(long generation) {
                         videoStatus.onFallback(FallbackReason.SYSTEM_OR_DEVICE_POLICY);
@@ -274,14 +308,50 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override public void onSurfaceLost(long epoch) {
+                motionCaptureActive = false;
+                motionRuntimeActive = false;
+                motionShadowActive = false;
+                if (displayLeaseWatchdog != null) displayLeaseWatchdog.clear();
                 clearDisplayRequest(epoch);
                 if (surfaceEpoch == epoch && displayMonitor != null) displayMonitor.invalidate();
             }
+
+            @Override public void onSurfaceDestroying(long epoch) {
+                if ((!motionRuntimeActive && !motionShadowActive) || surfaceEpoch != epoch) return;
+                surfaceRecoveryPending = true;
+                surfaceRecoveryWasRunning = session.state() == SessionState.RUNNING;
+                motionCaptureActive = false;
+                displayLeaseWatchdog.clear();
+                requestedRuntimeTemporalState = RuntimeTemporalState.SURFACE_SUSPENDED_HOLD;
+                temporalTransitionController.enterHold(System.nanoTime());
+                if (inputRouter != null) inputRouter.cancelAll();
+                if (gamepad != null) gamepad.reset();
+                // This callback completes before the native ANativeWindow is
+                // destroyed. Prove the audio-master/core loop quiescent first;
+                // otherwise a late captured frame could target the dead epoch.
+                if (!stopAudioThread()) {
+                    Log.e(TAG, "surface recovery could not quiesce audio/core");
+                    surfaceRecoveryWasRunning = false;
+                }
+                if (session.state() == SessionState.RUNNING) {
+                    try { session.pause().get(2, TimeUnit.SECONDS); }
+                    catch (Exception failure) {
+                        Log.e(TAG, "surface recovery pause failed", failure);
+                        surfaceRecoveryWasRunning = false;
+                    }
+                }
+            }
         });
         frameDispatch = new FrameDispatchExecutor(frameDispatchThread, view::onFrameAvailable);
+        motionFrameDispatch = FrameDispatchExecutor.motionCaptureSynchronous(
+                view::onFrameAvailable, 3, failure -> scheduleMotionExit(
+                        failure == FrameDispatchExecutor.Failure.SOURCE_SEQUENCE_GAP
+                                ? TemporalTransitionController.ExitReason.SOURCE_SEQUENCE_GAP
+                                : TemporalTransitionController.ExitReason.STAGING_OVERFLOW,
+                        false));
         frameAvailable.addListener(sequence -> {
             videoStatus.onCoreFrameProduced(sequence);
-            frameDispatch.offer(sequence);
+            (motionCaptureActive ? motionFrameDispatch : frameDispatch).offer(sequence);
             NativeInputSample sample = core.lastInputSample();
             inputLatencyTracker.onCoreSample(sample).ifPresent(latencyNs ->
                     Log.d(TAG, "touch-to-core-ns=" + latencyNs));
@@ -423,6 +493,7 @@ public class MainActivity extends AppCompatActivity {
         appSettings = settings.load();
         applyHapticSettings();
         applyRuntimeVideoSettings();
+        if (surfaceRecoveryPending) return;
         // Guard against double-start: a timed-out pause join can leave the
         // previous thread still running inside the native core; starting a
         // second AudioThread on the same core would race nes_run_frames.
@@ -446,7 +517,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        audio = new AudioThread(core, appSettings.audioEnabled(), frameAvailable);
+        audio = createAudioThread();
         audio.start();
         startRendering();
     }
@@ -454,15 +525,31 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        clearDisplayRequest(surfaceEpoch);
         unregisterDisplayListener();
-        if (displayMonitor != null) displayMonitor.invalidate();
         if (session.state() == SessionState.RUNNING) session.pause();
         stopRendering();
         gamepad.reset();
 
         // Stop the audio-master clock first so the core is quiescent, then snapshot.
-        if (!stopAudioThread()) {
+        boolean audioStopped = stopAudioThread();
+        if (motionRuntimeActive || motionShadowActive) {
+            motionCaptureActive = false;
+            displayLeaseWatchdog.clear();
+            long exitId = view.exitMotion(true);
+            if (exitId >= 0L && awaitTransition(exitId,
+                    NativePresenterStats.TEMPORAL_IMMEDIATE_NATIVE, 2_000L)) {
+                motionRuntimeActive = false;
+                motionShadowActive = false;
+                requestedRuntimeTemporalState = RuntimeTemporalState.IMMEDIATE_NATIVE;
+                if (audioStopped && temporalAudioDelay.removeOneFrameDelay() == 0) {
+                    temporalAudioDelay.flush();
+                    temporalAudioDelay.disableImmediately();
+                }
+            }
+        }
+        clearDisplayRequest(surfaceEpoch);
+        if (displayMonitor != null) displayMonitor.invalidate();
+        if (!audioStopped) {
             // Safety valve: the thread is STILL inside the native core after the
             // cap. Never save/destroy while it runs — skip the autosave, keep the
             // `audio` reference so onResume()/onDestroy() can see the live thread,
@@ -491,6 +578,7 @@ public class MainActivity extends AppCompatActivity {
         statusHandler.removeCallbacks(publishVideoStatus);
         if (displayMonitor != null) displayMonitor.close();
         if (frameDispatch != null) frameDispatch.close();
+        if (motionFrameDispatch != null) motionFrameDispatch.close();
         frameDispatchThread.shutdownNow();
         displayPollExecutor.shutdownNow();
         displaySafetyExecutor.shutdownNow();
@@ -708,7 +796,7 @@ public class MainActivity extends AppCompatActivity {
         pauseButton.setVisibility(View.VISIBLE);
         if (session.state() == SessionState.PAUSED) session.resume();
         if (audio == null || !audio.isAlive()) {
-            audio = new AudioThread(core, appSettings.audioEnabled(), frameAvailable);
+            audio = createAudioThread();
             audio.start();
         }
         startRendering();
@@ -772,6 +860,12 @@ public class MainActivity extends AppCompatActivity {
      *         thread is still referenced and alive — treat the core as unsafe
      *         to touch and let it leak at process death.
      */
+    private AudioThread createAudioThread() {
+        return new AudioThread(core, appSettings.audioEnabled(), frameAvailable,
+                temporalAudioDelay, avSyncMonitor,
+                sequence -> view == null ? -1L : view.actualRealPresentationNs(sequence));
+    }
+
     private boolean stopAudioThread() {
         if (audio == null) return true;
         audio.stopLoop();
@@ -950,6 +1044,420 @@ public class MainActivity extends AppCompatActivity {
         }));
     }
 
+    private void handleMotionObservation(EffectiveVideoConfig effective,
+                                         DisplayObservation observation) {
+        if (effective == null || observation == null || view == null
+                || observation.requestGeneration() <= 0L) return;
+        final boolean wantsMotion = effective.effectiveTemporal()
+                == com.flynes.emu.video.quality.TemporalMode.MOTION_INTERPOLATION;
+        final boolean compatibleMotionDisplay = wantsMotion
+                && observation.stableForMs() >= 3_000L
+                && observation.systemReportedActiveMode() != null
+                && observation.systemReportedActiveMode().refreshMilliHz() >= 119_000
+                && observation.systemReportedActiveMode().refreshMilliHz() <= 121_000;
+        final boolean qualifiedPrime = compatibleMotionDisplay
+                && effective.runtimeTemporalState() == RuntimeTemporalState.PRIMING;
+        if (motionRuntimeActive) {
+            if (!wantsMotion || observation.requestGeneration() != motionDisplayGeneration) {
+                scheduleMotionExit(TemporalTransitionController.ExitReason.DISPLAY_MISMATCH,
+                        false);
+                return;
+            }
+            long nowNs = System.nanoTime();
+            DisplayLeaseWatchdog.Token token = displayLeaseWatchdog.arm(
+                    surfaceEpoch, observation.requestGeneration(), nowNs);
+            if (!view.updateMotionLease(observation.requestGeneration(), token.deadlineNs())) {
+                scheduleMotionExit(TemporalTransitionController.ExitReason.LEASE_EXPIRED, false);
+            }
+        } else if (motionShadowActive) {
+            boolean leaseFresh = compatibleMotionDisplay
+                    && observation.requestGeneration() == motionDisplayGeneration;
+            if (leaseFresh) {
+                displayLeaseWatchdog.arm(surfaceEpoch, observation.requestGeneration(),
+                        System.nanoTime());
+            }
+            NativePresenterStats stats = view.presenterStats();
+            MotionShadowEvidence evidence = MotionShadowEvidence.from(stats,
+                    shadowRuntimeFailureBaseline, leaseFresh, 5_000_000L);
+            if (!evidence.sequencesContinuous() || !leaseFresh) {
+                scheduleMotionExit(!leaseFresh
+                                ? TemporalTransitionController.ExitReason.LEASE_EXPIRED
+                                : TemporalTransitionController.ExitReason.SOURCE_SEQUENCE_GAP,
+                        false);
+                return;
+            }
+            if (evidence.adjacentPairCount() < 120
+                    && evidence.peakArtifactRatio() <= 0.25) return;
+            RuntimeTemporalState next = temporalTransitionController.observeShadow(
+                    System.nanoTime(), evidence.adjacentPairCount(), evidence.artifactRatio(),
+                    evidence.peakArtifactRatio(), evidence.sequencesContinuous(),
+                    evidence.gpuBudgetPass(), evidence.displayLeaseFresh());
+            if (next == RuntimeTemporalState.MOTION_COMPENSATING) {
+                scheduleMotionEnter(observation);
+            } else if (next == RuntimeTemporalState.BUFFERED_NATIVE_HOLD) {
+                scheduleMotionExit(evidence.peakArtifactRatio() > 0.25
+                                || evidence.artifactRatio() >= 0.10
+                                ? TemporalTransitionController.ExitReason.ARTIFACT_RATIO
+                                : TemporalTransitionController.ExitReason.MOTION_SHADER_FAILURE,
+                        false);
+            }
+        } else if (surfaceRecoveryPending && compatibleMotionDisplay) {
+            scheduleMotionEnter(observation);
+        } else if (qualifiedPrime) {
+            if (requestedRuntimeTemporalState
+                    != RuntimeTemporalState.BUFFERED_NATIVE_HOLD) {
+                scheduleMotionEnter(observation);
+            }
+        } else if (compatibleMotionDisplay
+                && temporalTransitionController.beginShadowIfCooldownComplete(System.nanoTime())
+                        == RuntimeTemporalState.PRIMING_SHADOW) {
+            scheduleMotionShadow(observation);
+        } else if (surfaceRecoveryPending && observation.stableForMs() >= 3_000L) {
+            scheduleSurfaceRecoveryFallback();
+        }
+    }
+
+    private void scheduleMotionShadow(DisplayObservation observation) {
+        if (!motionTransitionInFlight.compareAndSet(false, true)) return;
+        final long expectedEpoch = surfaceEpoch;
+        final long expectedGeneration = observation.requestGeneration();
+        displayLifecycleExecutor.execute(() -> {
+            boolean wasRunning = session.state() == SessionState.RUNNING;
+            boolean safePacingOwner = false;
+            try {
+                if (expectedEpoch <= 0L || expectedEpoch != surfaceEpoch
+                        || !motionObservationStillQualified(observation)) {
+                    throw new IllegalStateException("Shadow display lease changed before pause");
+                }
+                if (wasRunning) session.pause().get(2, TimeUnit.SECONDS);
+                if (!stopAudioThread()) return;
+                view.onPause();
+                view.resetSequence();
+                motionFrameDispatch.resetMotion();
+                long transitionId = view.beginMotionShadow(
+                        runtimeSourceTiming == SourceTiming.PAL_50 ? 50f : 60.0988f);
+                safePacingOwner = transitionId > 0L && awaitTransition(transitionId,
+                        NativePresenterStats.TEMPORAL_PRIMING_SHADOW, 2_000L);
+                if (!safePacingOwner) {
+                    throw new IllegalStateException("Shadow owner was not published");
+                }
+                NativePresenterStats stats = view.presenterStats();
+                shadowRuntimeFailureBaseline = stats.runtimeFailureCount();
+                motionDisplayGeneration = expectedGeneration;
+                motionShadowActive = true;
+                motionCaptureActive = true;
+                requestedRuntimeTemporalState = RuntimeTemporalState.PRIMING_SHADOW;
+                DisplayLeaseWatchdog.Token token = displayLeaseWatchdog.arm(
+                        expectedEpoch, expectedGeneration, System.nanoTime());
+                if (token.deadlineNs() <= System.nanoTime()) {
+                    throw new IllegalStateException("Shadow display lease expired");
+                }
+            } catch (Exception failure) {
+                Log.e(TAG, "paused Motion Shadow transaction failed", failure);
+                motionCaptureActive = false;
+                motionShadowActive = false;
+                temporalTransitionController.enterHold(System.nanoTime());
+                NativePresenterStats stats = view.presenterStats();
+                if (stats.temporalState() == NativePresenterStats.TEMPORAL_PRIMING_SHADOW) {
+                    long exitId = view.exitMotion(false);
+                    safePacingOwner = exitId > 0L && awaitTransition(exitId,
+                            NativePresenterStats.TEMPORAL_BUFFERED_HOLD, 2_000L);
+                } else {
+                    safePacingOwner = stats.pacingOwner()
+                            == NativePresenterStats.PACING_OWNER_NATIVE;
+                }
+                requestedRuntimeTemporalState = safePacingOwner
+                        ? RuntimeTemporalState.BUFFERED_NATIVE_HOLD
+                        : RuntimeTemporalState.FALLBACK;
+            } finally {
+                if (safePacingOwner) view.onResume();
+                if (safePacingOwner && wasRunning && session.state() == SessionState.PAUSED) {
+                    try { session.resume().get(2, TimeUnit.SECONDS); }
+                    catch (Exception failure) {
+                        Log.e(TAG, "resume after Motion Shadow transaction failed", failure);
+                    }
+                }
+                if (safePacingOwner && wasRunning
+                        && (audio == null || !audio.isAlive()) && core.isCreated()) {
+                    audio = createAudioThread();
+                    audio.start();
+                }
+                motionTransitionInFlight.set(false);
+            }
+        });
+    }
+
+    private void scheduleMotionEnter(DisplayObservation observation) {
+        if (!motionTransitionInFlight.compareAndSet(false, true)) return;
+        final long expectedEpoch = surfaceEpoch;
+        final long expectedGeneration = observation.requestGeneration();
+        final float displayHz = observation.systemReportedActiveMode().refreshMilliHz() / 1000f;
+        final boolean enteringFromShadow = motionShadowActive;
+        displayLifecycleExecutor.execute(() -> {
+            final boolean recoveringSurface = surfaceRecoveryPending;
+            boolean wasRunning = session.state() == SessionState.RUNNING;
+            boolean shouldResume = wasRunning
+                    || (surfaceRecoveryPending && surfaceRecoveryWasRunning);
+            boolean configured = false;
+            boolean safePacingOwner = false;
+            boolean recoveryCompleted = false;
+            try {
+                if (expectedEpoch <= 0L || expectedEpoch != surfaceEpoch
+                        || !motionObservationStillQualified(observation)) return;
+                if (wasRunning) session.pause().get(2, TimeUnit.SECONDS);
+                runOnUiThread(() -> {
+                    inputRouter.cancelAll();
+                    gamepad.reset();
+                });
+                if (!stopAudioThread()) return;
+                view.onPause();
+                temporalAudioDelay.flush();
+                temporalAudioDelay.enableOneFrameDelay();
+                motionFrameDispatch.resetMotion();
+                if (expectedEpoch != surfaceEpoch
+                        || !motionObservationStillQualified(observation)) {
+                    throw new IllegalStateException("Motion display lease changed during pause");
+                }
+                long nowNs = System.nanoTime();
+                DisplayLeaseWatchdog.Token token = displayLeaseWatchdog.arm(
+                        expectedEpoch, expectedGeneration, nowNs);
+                configured = view.configureMotionForTesting(expectedGeneration, displayHz,
+                        runtimeSourceTiming == SourceTiming.PAL_50 ? 50f : 60.0988f,
+                        token.deadlineNs(), false);
+                if (configured) {
+                    if (!motionObservationStillQualified(observation)) {
+                        throw new IllegalStateException(
+                                "Motion display generation changed during native enter");
+                    }
+                    safePacingOwner = awaitPacingOwner(
+                            NativePresenterStats.PACING_OWNER_MOTION, 1_000L);
+                    if (!safePacingOwner) {
+                        throw new IllegalStateException("Motion owner was not published");
+                    }
+                    motionDisplayGeneration = expectedGeneration;
+                    motionCaptureActive = true;
+                    motionRuntimeActive = true;
+                    motionShadowActive = false;
+                    requestedRuntimeTemporalState = RuntimeTemporalState.MOTION_COMPENSATING;
+                    surfaceRecoveryPending = false;
+                    surfaceRecoveryWasRunning = false;
+                    recoveryCompleted = true;
+                } else {
+                    safePacingOwner = awaitPacingOwner(
+                            NativePresenterStats.PACING_OWNER_NATIVE, 1_500L);
+                    displayLeaseWatchdog.clear();
+                    motionCaptureActive = false;
+                    motionRuntimeActive = false;
+                    motionShadowActive = false;
+                    if (enteringFromShadow && safePacingOwner) {
+                        temporalTransitionController.enterHold(System.nanoTime());
+                        requestedRuntimeTemporalState = RuntimeTemporalState.BUFFERED_NATIVE_HOLD;
+                    } else {
+                        temporalAudioDelay.flush();
+                        temporalAudioDelay.disableImmediately();
+                        requestedRuntimeTemporalState = safePacingOwner
+                                ? RuntimeTemporalState.IMMEDIATE_NATIVE
+                                : RuntimeTemporalState.FALLBACK;
+                    }
+                    if (!recoveringSurface || SurfaceRecoveryIntentPolicy.completes(
+                            true, safePacingOwner, expectedEpoch, surfaceEpoch)) {
+                        surfaceRecoveryPending = false;
+                        recoveryCompleted = recoveringSurface;
+                    }
+                }
+            } catch (Exception failure) {
+                Log.e(TAG, "paused Motion enter transaction failed", failure);
+                displayLeaseWatchdog.clear();
+                motionCaptureActive = false;
+                motionRuntimeActive = false;
+                motionShadowActive = false;
+                NativePresenterStats failedStats = view.presenterStats();
+                if (failedStats.pacingOwner() == NativePresenterStats.PACING_OWNER_MOTION
+                        && expectedEpoch == surfaceEpoch) {
+                    boolean drainFailure = recoveringSurface || !enteringFromShadow;
+                    long exitId = view.exitMotion(drainFailure);
+                    safePacingOwner = exitId >= 0L && awaitTransition(exitId,
+                            drainFailure ? NativePresenterStats.TEMPORAL_IMMEDIATE_NATIVE
+                                    : NativePresenterStats.TEMPORAL_BUFFERED_HOLD,
+                            2_000L);
+                } else {
+                    safePacingOwner = failedStats.pacingOwner()
+                            == NativePresenterStats.PACING_OWNER_NATIVE;
+                }
+                if (enteringFromShadow && safePacingOwner) {
+                    temporalTransitionController.enterHold(System.nanoTime());
+                    requestedRuntimeTemporalState = RuntimeTemporalState.BUFFERED_NATIVE_HOLD;
+                } else {
+                    temporalAudioDelay.flush();
+                    temporalAudioDelay.disableImmediately();
+                    requestedRuntimeTemporalState = safePacingOwner
+                            ? RuntimeTemporalState.IMMEDIATE_NATIVE
+                            : RuntimeTemporalState.FALLBACK;
+                }
+                if (!recoveringSurface || SurfaceRecoveryIntentPolicy.completes(
+                        true, safePacingOwner, expectedEpoch, surfaceEpoch)) {
+                    surfaceRecoveryPending = false;
+                    recoveryCompleted = recoveringSurface;
+                }
+            } finally {
+                if (safePacingOwner) view.onResume();
+                if (safePacingOwner && shouldResume
+                        && session.state() == SessionState.PAUSED) {
+                    try { session.resume().get(2, TimeUnit.SECONDS); }
+                    catch (Exception failure) {
+                        Log.e(TAG, "resume after Motion transaction failed", failure);
+                    }
+                }
+                if (safePacingOwner && shouldResume
+                        && (audio == null || !audio.isAlive()) && core.isCreated()) {
+                    audio = createAudioThread();
+                    audio.start();
+                }
+                if (recoveryCompleted) surfaceRecoveryWasRunning = false;
+                motionTransitionInFlight.set(false);
+            }
+        });
+    }
+
+    private void scheduleSurfaceRecoveryFallback() {
+        if (!surfaceRecoveryPending
+                || !motionTransitionInFlight.compareAndSet(false, true)) return;
+        displayLifecycleExecutor.execute(() -> {
+            boolean shouldResume = surfaceRecoveryWasRunning;
+            try {
+                temporalAudioDelay.flush();
+                temporalAudioDelay.disableImmediately();
+                motionCaptureActive = false;
+                motionRuntimeActive = false;
+                motionShadowActive = false;
+                requestedRuntimeTemporalState = RuntimeTemporalState.IMMEDIATE_NATIVE;
+                view.resetSequence();
+                motionFrameDispatch.resetMotion();
+                view.onResume();
+                if (shouldResume && session.state() == SessionState.PAUSED) {
+                    session.resume().get(2, TimeUnit.SECONDS);
+                }
+                if (shouldResume && (audio == null || !audio.isAlive()) && core.isCreated()) {
+                    audio = createAudioThread();
+                    audio.start();
+                }
+            } catch (Exception failure) {
+                Log.e(TAG, "new-surface fallback recovery failed", failure);
+                requestedRuntimeTemporalState = RuntimeTemporalState.FALLBACK;
+            } finally {
+                surfaceRecoveryPending = false;
+                surfaceRecoveryWasRunning = false;
+                motionTransitionInFlight.set(false);
+            }
+        });
+    }
+
+    private boolean motionObservationStillQualified(DisplayObservation expected) {
+        DisplayObservation current = lastDisplayObservation;
+        if (current == null || current.requestGeneration() != expected.requestGeneration()
+                || current.stableForMs() < 3_000L
+                || current.systemReportedActiveMode() == null
+                || expected.systemReportedActiveMode() == null) return false;
+        com.flynes.emu.video.quality.DisplayModeCapability a =
+                current.systemReportedActiveMode();
+        com.flynes.emu.video.quality.DisplayModeCapability b =
+                expected.systemReportedActiveMode();
+        return a.modeId() == b.modeId() && a.width() == b.width() && a.height() == b.height()
+                && a.refreshMilliHz() == b.refreshMilliHz()
+                && a.refreshMilliHz() >= 119_000 && a.refreshMilliHz() <= 121_000;
+    }
+
+    private boolean awaitPacingOwner(int expectedOwner, long timeoutMs) {
+        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+        do {
+            if (view.presenterStats().pacingOwner() == expectedOwner) return true;
+            try { Thread.sleep(10L); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        } while (SystemClock.elapsedRealtime() < deadline);
+        return view.presenterStats().pacingOwner() == expectedOwner;
+    }
+
+    private boolean awaitTransition(long transitionId, int expectedState, long timeoutMs) {
+        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+        do {
+            NativePresenterStats stats = view.presenterStats();
+            if (stats.lastTransitionId() > transitionId) return false;
+            if (stats.lastTransitionId() == transitionId
+                    && stats.temporalState() == expectedState
+                    && stats.pacingOwner() == NativePresenterStats.PACING_OWNER_NATIVE) {
+                return true;
+            }
+            try { Thread.sleep(10L); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        } while (SystemClock.elapsedRealtime() < deadline);
+        return false;
+    }
+
+    private void scheduleMotionExit(TemporalTransitionController.ExitReason reason,
+                                    boolean forceDrain) {
+        if ((!motionRuntimeActive && !motionShadowActive)
+                || !motionTransitionInFlight.compareAndSet(false, true)) return;
+        final boolean exitingShadow = motionShadowActive;
+        displayLifecycleExecutor.execute(() -> {
+            boolean wasRunning = session.state() == SessionState.RUNNING;
+            boolean safePacingOwner = false;
+            try {
+                TemporalTransitionController.Decision decision =
+                        TemporalTransitionController.onExit(
+                                exitingShadow ? RuntimeTemporalState.PRIMING_SHADOW
+                                        : RuntimeTemporalState.MOTION_COMPENSATING,
+                                reason, false);
+                boolean drain = forceDrain
+                        || decision.target() == RuntimeTemporalState.DRAINING;
+                if (wasRunning) session.pause().get(2, TimeUnit.SECONDS);
+                if (!stopAudioThread()) return;
+                view.onPause();
+                long exitId = view.exitMotion(drain);
+                safePacingOwner = exitId >= 0L && awaitTransition(exitId,
+                        drain ? NativePresenterStats.TEMPORAL_IMMEDIATE_NATIVE
+                                : NativePresenterStats.TEMPORAL_BUFFERED_HOLD,
+                        2_000L);
+                displayLeaseWatchdog.clear();
+                motionCaptureActive = false;
+                motionRuntimeActive = false;
+                motionShadowActive = false;
+                requestedRuntimeTemporalState = safePacingOwner ? decision.target()
+                        : RuntimeTemporalState.FALLBACK;
+                if (drain) {
+                    if (temporalAudioDelay.removeOneFrameDelay() == 0) {
+                        temporalAudioDelay.flush();
+                        temporalAudioDelay.disableImmediately();
+                    }
+                } else {
+                    temporalTransitionController.enterHold(System.nanoTime());
+                }
+            } catch (Exception failure) {
+                Log.e(TAG, "Motion exit transaction failed", failure);
+                requestedRuntimeTemporalState = RuntimeTemporalState.FALLBACK;
+            } finally {
+                if (safePacingOwner) view.onResume();
+                if (safePacingOwner && wasRunning && session.state() == SessionState.PAUSED) {
+                    try { session.resume().get(2, TimeUnit.SECONDS); }
+                    catch (Exception failure) {
+                        Log.e(TAG, "resume after Motion exit failed", failure);
+                    }
+                }
+                if (safePacingOwner && wasRunning
+                        && (audio == null || !audio.isAlive()) && core.isCreated()) {
+                    audio = createAudioThread();
+                    audio.start();
+                }
+                motionTransitionInFlight.set(false);
+            }
+        });
+    }
+
     private LegacyVideoRuntimeAdapter runtimeVideo() {
         return LegacyVideoRuntimeAdapter.project(
                 resolveEffectiveVideoConfig(lastDisplayObservation));
@@ -989,8 +1497,23 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 if (audio != stopping || !stopped) return;
                 audio = null;
+                if (motionRuntimeActive || motionShadowActive) {
+                    motionCaptureActive = false;
+                    displayLeaseWatchdog.clear();
+                    long exitId = view.exitMotion(true);
+                    if (exitId >= 0L && awaitTransition(exitId,
+                            NativePresenterStats.TEMPORAL_IMMEDIATE_NATIVE, 2_000L)) {
+                        motionRuntimeActive = false;
+                        motionShadowActive = false;
+                        requestedRuntimeTemporalState = RuntimeTemporalState.IMMEDIATE_NATIVE;
+                        if (temporalAudioDelay.removeOneFrameDelay() == 0) {
+                            temporalAudioDelay.flush();
+                            temporalAudioDelay.disableImmediately();
+                        }
+                    }
+                }
                 if (!isFinishing() && session.state() == SessionState.RUNNING) {
-                    audio = new AudioThread(core, appSettings.audioEnabled(), frameAvailable);
+                    audio = createAudioThread();
                     audio.start();
                 }
             });
@@ -1033,9 +1556,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void calibrateClockDomain() {
         for (int attempt = 0; attempt < 5; attempt++) {
-            long before = SystemClock.elapsedRealtimeNanos();
+            long before = System.nanoTime();
             long nativeNow = core.nativeMonotonicTimeNs();
-            long after = SystemClock.elapsedRealtimeNanos();
+            long after = System.nanoTime();
             clockCalibrator.addPairedSample(before, nativeNow, after);
         }
     }
@@ -1052,13 +1575,33 @@ public class MainActivity extends AppCompatActivity {
 
     private void collectNativePresenterStats() {
         NativePresenterStats current = view.presenterStats();
+        AvSyncMonitor.Sample avSample = avSyncMonitor.latestFresh(
+                System.nanoTime(), 1_000_000_000L);
+        videoStatus.onAvSync(avSample.valid(), avSample.skewNs(), avSample.uncertaintyNs());
         long uploaded = Math.max(0L,
                 current.uploadedFrames() - lastPresenterStats.uploadedFrames());
         long submitted = Math.max(0L,
                 current.submittedFrames() - lastPresenterStats.submittedFrames());
         videoStatus.onNativePresentationCounts(uploaded, submitted);
+        videoStatus.onNativeMotionCounts(
+                Math.max(0L, current.interpolatedSlots()
+                        - lastPresenterStats.interpolatedSlots()),
+                Math.max(0L, current.warpedSlots() - lastPresenterStats.warpedSlots()),
+                Math.max(0L, current.heldSlots() - lastPresenterStats.heldSlots()),
+                Math.max(0L, current.cadenceAdjustments()
+                        - lastPresenterStats.cadenceAdjustments()),
+                current.motionQueueDepth());
         if (current.runtimeFailureCount() > lastPresenterStats.runtimeFailureCount()) {
             videoStatus.onFallback(FallbackReason.RUNTIME_FAILURE);
+            if (motionRuntimeActive || motionShadowActive) {
+                TemporalTransitionController.ExitReason exitReason = switch (
+                        current.runtimeFailureCode()) {
+                    case 101 -> TemporalTransitionController.ExitReason.SOURCE_SEQUENCE_GAP;
+                    case 102 -> TemporalTransitionController.ExitReason.STAGING_OVERFLOW;
+                    default -> TemporalTransitionController.ExitReason.MOTION_SHADER_FAILURE;
+                };
+                scheduleMotionExit(exitReason, false);
+            }
             RuntimeFailure failure = PresenterFailureMapper.fromNativeCode(
                     current.runtimeFailureCode());
             if (failure != null && presenterRuntimeFailures.add(failure)) {

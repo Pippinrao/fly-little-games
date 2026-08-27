@@ -7,6 +7,7 @@ import java.nio.ByteBuffer;
 import com.flynes.emu.video.FrameAvailableSignal;
 import com.flynes.emu.video.FrameStepResult;
 import com.flynes.emu.video.quality.SourceTiming;
+import com.flynes.emu.video.audio.TemporalAudioDelay;
 
 import org.junit.Test;
 
@@ -35,6 +36,23 @@ public final class AudioPumpTest {
         FakeCore core = new FakeCore(4);
         assertEquals(-6, new AudioPump(core, (data, bytes) -> -6).pumpOnce().errorCode());
         assertEquals(1, core.calls);
+    }
+
+    @Test public void optionalTemporalPathDelaysPcmWithoutDelayingFrameSignal() {
+        FakeCore core = new FakeCore(4);
+        for (int i = 0; i < 8; ++i) core.buffer.put(i, (byte) 0x5a);
+        FakeSink sink = new FakeSink(64);
+        FrameAvailableSignal signal = new FrameAvailableSignal();
+        long[] signaled = {-1L};
+        signal.addListener(sequence -> signaled[0] = sequence);
+        TemporalAudioDelay delay = new TemporalAudioDelay(240, 1, 60.0);
+        AudioPump pump = new AudioPump(core, sink, signal, delay, () -> 123L);
+
+        assertEquals(4, pump.pumpOnce().audioSamples());
+        assertEquals(1L, signaled[0]);
+        assertEquals(8, sink.totalBytes);
+        assertEquals(4, delay.queuedSamples());
+        assertEquals(1L, delay.newestTimestampNs());
     }
 
     private static final class FakeCore implements AudioPump.Core {

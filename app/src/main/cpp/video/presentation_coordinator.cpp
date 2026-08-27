@@ -33,6 +33,7 @@ bool PresentationCoordinator::begin_create(std::uint64_t epoch) {
     if (epoch == 0 || epoch <= epoch_) return false;
     epoch_ = epoch;
     requested_source_fps_ = 0.0f;
+    temporal_state_ = TemporalState::IMMEDIATE_NATIVE;
     state_ = State::CREATING;
     return true;
 }
@@ -52,6 +53,7 @@ bool PresentationCoordinator::begin_destroy(std::uint64_t epoch) {
 void PresentationCoordinator::complete_destroy(std::uint64_t epoch) {
     if (epoch == epoch_ && state_ == State::DESTROYING) {
         requested_source_fps_ = 0.0f;
+        temporal_state_ = TemporalState::SURFACE_SUSPENDED_HOLD;
         state_ = State::EMPTY;
     }
 }
@@ -62,6 +64,51 @@ bool PresentationCoordinator::is_active(std::uint64_t epoch) const {
 
 bool PresentationCoordinator::owns_epoch(std::uint64_t epoch) const {
     return epoch == epoch_ && state_ != State::EMPTY;
+}
+
+bool PresentationCoordinator::begin_motion_priming(std::uint64_t epoch) {
+    if (!is_active(epoch) || requested_source_fps_ != 0.0f
+            || temporal_state_ == TemporalState::SURFACE_SUSPENDED_HOLD) return false;
+    temporal_state_ = TemporalState::PRIMING;
+    return true;
+}
+
+bool PresentationCoordinator::begin_motion_shadow(std::uint64_t epoch) {
+    if (!is_active(epoch)
+            || temporal_state_ != TemporalState::BUFFERED_NATIVE_HOLD) return false;
+    temporal_state_ = TemporalState::PRIMING_SHADOW;
+    return true;
+}
+
+bool PresentationCoordinator::activate_motion(std::uint64_t epoch) {
+    if (!is_active(epoch) || temporal_state_ != TemporalState::PRIMING) return false;
+    temporal_state_ = TemporalState::MOTION_COMPENSATING;
+    return true;
+}
+
+bool PresentationCoordinator::enter_buffered_hold(std::uint64_t epoch) {
+    if (!is_active(epoch)) return false;
+    temporal_state_ = TemporalState::BUFFERED_NATIVE_HOLD;
+    return true;
+}
+
+bool PresentationCoordinator::enter_draining(std::uint64_t epoch) {
+    if (!is_active(epoch)) return false;
+    temporal_state_ = TemporalState::DRAINING;
+    return true;
+}
+
+bool PresentationCoordinator::resume_immediate_native(std::uint64_t epoch) {
+    if (!is_active(epoch) || temporal_state_ != TemporalState::DRAINING) return false;
+    temporal_state_ = TemporalState::IMMEDIATE_NATIVE;
+    return true;
+}
+
+bool PresentationCoordinator::suspend_surface(std::uint64_t epoch) {
+    if (!owns_epoch(epoch)) return false;
+    temporal_state_ = TemporalState::SURFACE_SUSPENDED_HOLD;
+    requested_source_fps_ = 0.0f;
+    return true;
 }
 
 namespace {
@@ -206,6 +253,11 @@ PresentationCoordinator::request_frame_rate(std::uint64_t epoch,
     if (!is_active(epoch) || !window || !std::isfinite(source_fps) || source_fps <= 0.0f) {
         return FrameRateVoteResult::STALE_EPOCH;
     }
+    if (temporal_state_ == TemporalState::PRIMING
+            || temporal_state_ == TemporalState::MOTION_COMPENSATING
+            || temporal_state_ == TemporalState::SURFACE_SUSPENDED_HOLD) {
+        return FrameRateVoteResult::FAILED;
+    }
     SetFrameRate api = frame_rate_api();
     if (!api) return FrameRateVoteResult::UNSUPPORTED;
     if (pending_platform_call_
@@ -227,6 +279,13 @@ PresentationCoordinator::request_frame_rate(std::uint64_t epoch,
 PresentationCoordinator::FrameRateVoteResult
 PresentationCoordinator::clear_frame_rate(std::uint64_t epoch,
                                           ANativeWindow* window) {
+    if (temporal_state_ == TemporalState::PRIMING
+            || temporal_state_ == TemporalState::MOTION_COMPENSATING) {
+        return FrameRateVoteResult::FAILED;
+    }
+    if (!pending_platform_call_ && requested_source_fps_ == 0.0f) {
+        return FrameRateVoteResult::CLEARED;
+    }
     ANativeWindow* target_window = window;
     std::shared_ptr<FrameRatePlatformCall> prior = pending_platform_call_;
     if (prior) {

@@ -78,6 +78,32 @@ public final class NativeVideoPresenterTest {
         presenter.close();
     }
 
+    @Test public void actualPresentationLookupIsSequenceAddressed() {
+        FakeBridge bridge = new FakeBridge();
+        NativeVideoPresenter presenter = new NativeVideoPresenter(
+                new FramePublisher(new FakeSource()), bridge);
+        bridge.actualSequence = 41L;
+        bridge.actualPresentationNs = 9_123L;
+
+        assertEquals(-1L, presenter.actualRealPresentationNs(40L));
+        assertEquals(9_123L, presenter.actualRealPresentationNs(41L));
+        presenter.close();
+    }
+
+    @Test public void shadowPrimingIsBoundToActiveEpochAndReturnsTransitionId() {
+        FakeBridge bridge = new FakeBridge();
+        bridge.surfaceResult = true;
+        bridge.shadowTransitionId = 73L;
+        NativeVideoPresenter presenter = new NativeVideoPresenter(
+                new FramePublisher(new FakeSource()), bridge);
+        assertTrue(presenter.surfaceCreated(nullSurface(), 5L));
+
+        assertEquals(-1L, presenter.beginMotionShadowForTesting(4L, 60.0988f));
+        assertEquals(73L, presenter.beginMotionShadowForTesting(5L, 60.0988f));
+        assertEquals(1, bridge.shadowRequests);
+        presenter.close();
+    }
+
     private static Surface nullSurface() {
         // The fake bridge never dereferences the framework object. A real JNI bridge rejects null.
         return null;
@@ -99,6 +125,10 @@ public final class NativeVideoPresenterTest {
         int frameRateClears;
         int clearFailuresRemaining;
         long lastSequence;
+        long actualSequence = -1L;
+        long actualPresentationNs = -1L;
+        long shadowTransitionId = -1L;
+        int shadowRequests;
         @Override public long create() { return 9L; }
         @Override public boolean destroy(long handle) { return true; }
         @Override public boolean surfaceCreated(long handle, Surface surface, long epoch) {
@@ -131,5 +161,12 @@ public final class NativeVideoPresenterTest {
             return true;
         }
         @Override public NativePresenterStats stats(long handle) { return NativePresenterStats.EMPTY; }
+        @Override public long actualRealPresentationNs(long handle, long sequence) {
+            return sequence == actualSequence ? actualPresentationNs : -1L;
+        }
+        @Override public long beginMotionShadow(long handle, long epoch, float sourceFps) {
+            shadowRequests++;
+            return shadowTransitionId;
+        }
     }
 }

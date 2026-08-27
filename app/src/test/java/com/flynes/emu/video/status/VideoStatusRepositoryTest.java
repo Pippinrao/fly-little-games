@@ -43,7 +43,8 @@ public final class VideoStatusRepositoryTest {
         return new VideoRuntimeStatus(1L, 1L, null, null, SourceTiming.NTSC_60_0988,
                 60.0988f, 0f, 0f, 0f, 0L, PhysicalRefreshPolicy.FOLLOW_SYSTEM,
                 null, null, 0f, 0f, 0f, 0f, RuntimeTemporalState.IMMEDIATE_NATIVE,
-                0, 0f, 0, 0, null, 0L, ThermalBand.NONE, StatusFreshness.FRESH,
+                0, 0f, 0, 0, null, 0L, false, 0L, Long.MAX_VALUE,
+                ThermalBand.NONE, StatusFreshness.FRESH,
                 capturedAt, Collections.emptyList());
     }
 }

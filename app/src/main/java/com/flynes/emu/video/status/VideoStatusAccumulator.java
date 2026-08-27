@@ -39,6 +39,9 @@ public final class VideoStatusAccumulator {
     private int audioQueueDepthSamples;
     private TemporalTransition temporalTransition;
     private long cadenceAdjustments;
+    private boolean avSyncValid;
+    private long avSkewNs;
+    private long avSyncUncertaintyNs = Long.MAX_VALUE;
     private float safetyFallbackRatio;
     private ThermalBand thermalBand = ThermalBand.NONE;
     private final Set<FallbackReason> fallbacks = new LinkedHashSet<>();
@@ -50,6 +53,9 @@ public final class VideoStatusAccumulator {
         this.sourceTiming = sourceTiming;
         this.sourceNominalFps = sourceNominalFps;
         coreFrames = textureUploads = synthesisSlots = motionWarpedSlots = bufferSubmissions = 0L;
+        avSyncValid = false;
+        avSkewNs = 0L;
+        avSyncUncertaintyNs = Long.MAX_VALUE;
         copiedSourceSequences.clear();
         fallbacks.clear();
     }
@@ -68,7 +74,23 @@ public final class VideoStatusAccumulator {
         if (uploaded > 0L) textureUploads += uploaded;
         if (submitted > 0L) bufferSubmissions += submitted;
     }
+    public synchronized void onNativeMotionCounts(long synthesized, long warped,
+                                                  long held, long cadenceAdjusted,
+                                                  long queueDepth) {
+        if (synthesized > 0L) synthesisSlots += synthesized;
+        if (warped > 0L) motionWarpedSlots += warped;
+        if (cadenceAdjusted > 0L) cadenceAdjustments += cadenceAdjusted;
+        videoQueueDepth = (int) Math.max(0L, Math.min(Integer.MAX_VALUE, queueDepth));
+        long classified = Math.max(0L, warped) + Math.max(0L, held);
+        safetyFallbackRatio = classified == 0L ? 0f
+                : Math.max(0L, held) / (float) classified;
+    }
     public synchronized void onCadenceAdjusted() { cadenceAdjustments++; }
+    public synchronized void onAvSync(boolean valid, long skewNs, long uncertaintyNs) {
+        avSyncValid = valid;
+        avSkewNs = valid ? skewNs : 0L;
+        avSyncUncertaintyNs = valid ? uncertaintyNs : Long.MAX_VALUE;
+    }
     public synchronized void onSafetyFallbackRatio(float ratio) { safetyFallbackRatio = ratio; }
     public synchronized void onQueueDepths(int videoDepth, int audioDepthSamples) {
         videoQueueDepth = videoDepth;
@@ -130,7 +152,9 @@ public final class VideoStatusAccumulator {
                 synthesisSlots / divisor, motionWarpedSlots / divisor,
                 bufferSubmissions / divisor, safetyFallbackRatio, runtimeTemporalState,
                 videoDelayFrames, audioDelayMs, videoQueueDepth, audioQueueDepthSamples,
-                temporalTransition, cadenceAdjustments, thermalBand, StatusFreshness.FRESH,
+                temporalTransition, cadenceAdjustments,
+                avSyncValid, avSkewNs, avSyncUncertaintyNs,
+                thermalBand, StatusFreshness.FRESH,
                 nowElapsedRealtimeMs, new ArrayList<>(fallbacks));
     }
 }

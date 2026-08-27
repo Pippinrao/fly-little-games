@@ -56,6 +56,7 @@ public final class NativePresenterIntegrationTest {
                     stats.uploadedFrames() - stats.submittedFrames() <= 1L);
             assertTrue(stats.lastSequence() >= 0L);
             assertTrue(stats.surfaceEpoch() > 0L);
+            assertEquals(NativePresenterStats.PACING_OWNER_NATIVE, stats.pacingOwner());
         }
     }
 

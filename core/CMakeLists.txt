@@ -7,6 +7,12 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(NES_BUILD_TESTS "Build host-side tests" OFF)
 
+add_library(video_algorithms STATIC
+    video/temporal_interpolator.cpp
+    video/temporal_scheduler.cpp
+)
+target_include_directories(video_algorithms PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 set(NESTOPIA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/nestopiaue/source/core)
 
 # --- nestopia: upstream emulator core (299 .cpp, C++17) ---
@@ -86,4 +92,8 @@ if(NES_BUILD_TESTS AND NOT ANDROID)
     # ("core/tests/fixtures/from_below.nes") is relative to the repo root,
     # so anchor the test's working directory there.
     set_tests_properties(core_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    add_executable(temporal_interpolator_test tests/test_temporal_interpolator.cpp)
+    target_link_libraries(temporal_interpolator_test PRIVATE video_algorithms)
+    add_test(NAME temporal_interpolator COMMAND temporal_interpolator_test)
 endif()
