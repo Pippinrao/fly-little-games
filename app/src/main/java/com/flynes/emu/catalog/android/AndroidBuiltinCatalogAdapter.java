@@ -15,6 +15,7 @@ import com.flynes.emu.catalog.scan.ScanLimits;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -28,11 +29,17 @@ public final class AndroidBuiltinCatalogAdapter {
 
     private static final CanonicalGame FROM_BELOW = new CanonicalGame(
             "builtin:from-below",
-            Collections.singletonList(new TitleCandidate(
-                    "From Below", TitleCandidate.Language.EN,
-                    TitleCandidate.Origin.BUILTIN_MANIFEST,
-                    TitleCandidate.Confidence.VERIFIED,
-                    TitleCandidate.ReviewState.VERIFIED)),
+            Arrays.asList(
+                    new TitleCandidate(
+                            "From Below", TitleCandidate.Language.EN,
+                            TitleCandidate.Origin.BUILTIN_MANIFEST,
+                            TitleCandidate.Confidence.VERIFIED,
+                            TitleCandidate.ReviewState.VERIFIED),
+                    new TitleCandidate(
+                            "来自下方", TitleCandidate.Language.ZH_HANS,
+                            TitleCandidate.Origin.BUILTIN_MANIFEST,
+                            TitleCandidate.Confidence.VERIFIED,
+                            TitleCandidate.ReviewState.VERIFIED)),
             Collections.emptyList());
 
     private final Context context;

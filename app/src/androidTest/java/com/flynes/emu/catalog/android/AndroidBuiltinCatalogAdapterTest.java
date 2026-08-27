@@ -31,7 +31,8 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class AndroidBuiltinCatalogAdapterTest {
     @Test
-    public void licensedBuiltinUsesSharedScannerVerifiedEnglishAndStrictLoader() throws Exception {
+    public void licensedBuiltinUsesSharedScannerVerifiedBilingualTitlesAndStrictLoader()
+            throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
         AndroidBuiltinCatalogAdapter adapter = new AndroidBuiltinCatalogAdapter(context);
         ScanResult scanned = adapter.scan();
@@ -41,7 +42,7 @@ public final class AndroidBuiltinCatalogAdapterTest {
                 .compatibilityDecision().isPlayable());
         assertEquals("From Below", scanned.packages().get(0).variants().get(0)
                 .canonicalGame().englishTitle());
-        assertEquals("", scanned.packages().get(0).variants().get(0)
+        assertEquals("来自下方", scanned.packages().get(0).variants().get(0)
                 .canonicalGame().zhHansTitle());
         assertTrue(scanned.packages().get(0).variants().get(0).canonicalGame()
                 .titleCandidates().stream().allMatch(item ->

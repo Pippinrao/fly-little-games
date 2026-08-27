@@ -11,4 +11,13 @@ public final class HomeHeaderLayoutPolicy {
                 && "XA".equals(locale.getCountry());
         return fontScale >= 1.8f || pseudoExpanded;
     }
+
+    /** Keeps the selected game's actual title readable at accessibility font sizes. */
+    public static int detailTitleMaxLines(float fontScale) {
+        return fontScale >= 1.8f ? 2 : 1;
+    }
+
+    public static int launchButtonHeightDp(float fontScale) {
+        return fontScale >= 1.8f ? 88 : 56;
+    }
 }
