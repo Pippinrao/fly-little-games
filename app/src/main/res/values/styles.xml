@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="ShapeAppearance.FlyNES.Small" parent="ShapeAppearance.Material3.Corner.Medium">
+        <item name="cornerSize">@dimen/fly_radius_small</item>
+    </style>
+    <style name="ShapeAppearance.FlyNES.Medium" parent="ShapeAppearance.Material3.Corner.Large">
+        <item name="cornerSize">@dimen/fly_radius_medium</item>
+    </style>
+    <style name="ShapeAppearance.FlyNES.Pill" parent="ShapeAppearance.Material3.Corner.Full" />
+</resources>

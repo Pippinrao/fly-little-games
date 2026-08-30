@@ -1,0 +1,211 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flynes.invalid/schemas/rom-fixtures.schema.json",
+  "title": "FlyNES display-quality ROM fixtures",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "manifestKind",
+    "certificationStatus",
+    "instructions",
+    "fixtures"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "manifestKind": {
+      "enum": ["local", "redacted", "example"]
+    },
+    "certificationStatus": {
+      "enum": ["READY", "BLOCKED_UNRESOLVED_FIXTURES"]
+    },
+    "instructions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/fixture"
+      }
+    }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableSha256": {
+      "oneOf": [
+        { "$ref": "#/definitions/sha256" },
+        { "type": "null" }
+      ]
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonicalId",
+        "displayName",
+        "selectionStatus",
+        "variantSha256",
+        "alternativeVariantSha256",
+        "sourceTiming",
+        "fixedSaveStateSha256",
+        "sceneInstructions",
+        "blockers"
+      ],
+      "properties": {
+        "canonicalId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selectionStatus": {
+          "enum": ["resolved", "ambiguous", "missing"]
+        },
+        "variantSha256": {
+          "$ref": "#/definitions/nullableSha256"
+        },
+        "alternativeVariantSha256": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "sourceTiming": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "nominalFramesPerSecond", "evidence"],
+          "properties": {
+            "kind": {
+              "enum": ["NTSC", "PAL", "UNKNOWN"]
+            },
+            "nominalFramesPerSecond": {
+              "oneOf": [
+                { "type": "number", "exclusiveMinimum": 0 },
+                { "type": "null" }
+              ]
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "fixedSaveStateSha256": {
+          "$ref": "#/definitions/nullableSha256"
+        },
+        "sceneInstructions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "localSources": {
+          "description": "Required only in the ignored local manifest and forbidden in redacted/example manifests.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["packagePath", "entryLeaf", "expectedSha256"],
+            "properties": {
+              "packagePath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "entryLeaf": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expectedSha256": {
+                "$ref": "#/definitions/sha256"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "manifestKind": { "const": "local" }
+        }
+      },
+      "then": {
+        "properties": {
+          "fixtures": {
+            "items": {
+              "required": ["localSources"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "manifestKind": { "enum": ["redacted", "example"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "fixtures": {
+            "items": {
+              "not": {
+                "required": ["localSources"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "certificationStatus": { "const": "READY" }
+        }
+      },
+      "then": {
+        "properties": {
+          "fixtures": {
+            "items": {
+              "properties": {
+                "selectionStatus": { "const": "resolved" },
+                "variantSha256": { "$ref": "#/definitions/sha256" },
+                "fixedSaveStateSha256": { "$ref": "#/definitions/sha256" },
+                "blockers": { "maxItems": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

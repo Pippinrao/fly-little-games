@@ -1,9 +1,16 @@
 package com.flynes.emu;
 
-import android.view.Surface;
-
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+
+import com.flynes.emu.session.CoreFacade;
+import com.flynes.emu.data.RomIdentity;
+import com.flynes.emu.data.RomInfo;
+import com.flynes.emu.video.NativeFrameSource;
+import com.flynes.emu.video.FrameCopyResult;
+import com.flynes.emu.video.FrameStepResult;
+import com.flynes.emu.video.quality.SourceTiming;
+import com.flynes.emu.video.NativeInputSample;
 
 /**
  * JNI wrapper around the FlyNES C ABI core (libnescore.so).
@@ -11,7 +18,7 @@ import java.util.Arrays;
  * One instance owns one emulator context. All native methods are static;
  * the context is carried as a jlong handle.
  */
-public final class NesCore {
+public final class NesCore implements CoreFacade, NativeFrameSource.Bridge {
     static {
         System.loadLibrary("nescore");
     }
@@ -27,7 +34,7 @@ public final class NesCore {
 
     // Direct buffer used as the native audio sink for runFrames.
     // 128 KiB = 65536 int16 samples = ~82 frames of NTSC audio at 48 kHz;
-    // far more than a single runFrames(2) call needs (~1600 samples).
+    // far more than one native frame needs (~800 samples at 48 kHz).
     private static final int AUDIO_BUFFER_BYTES = 128 * 1024;
     private static final int SAVE_STATE_BUFFER_BYTES = 4 * 1024 * 1024;
 
@@ -36,24 +43,32 @@ public final class NesCore {
 
     private static native long nativeCreate();
     private static native void nativeDestroy(long h);
+    private static native long nativeMonotonicNow();
     private static native int nativeLoadRom(long h, byte[] rom, byte[] patch);
+    private static native String[] nativeRomInfoStrings(long h);
+    private static native int[] nativeRomInfoNumbers(long h);
     private static native int nativeLoadDatabase(long h, byte[] xml);
     private static native int nativeRunFrames(long h, int maxFrames, ByteBuffer audio, int capSamples);
-    private static native void nativeSetInput(long h, int buttons);
+    private static native int nativeRunFrameStep(long h, ByteBuffer audio, int capSamples,
+                                                  long[] step);
+    private static native int nativeCopyVideoFrameIfNew(long h, long lastSequence,
+                                                         ByteBuffer destination, int[] metadata,
+                                                         long[] timing);
+    private static native long nativeSetInput(long h, int buttons);
+    private static native int nativeGetLastInputSample(long h, long[] values);
     private static native void nativeSetAudioFormat(long h, int rate, int stereo);
     private static native void nativeSetVideoFilter(long h, int filter);
     private static native int nativeSaveState(long h, byte[] out);
     private static native int nativeLoadState(long h, byte[] in);
-    private static native void nativeBlit(long h, Surface surface, int scale);
 
     /** @return true if a native context is now live. */
-    public boolean create() {
+    @Override public boolean create() {
         if (handle != 0) return true;
         handle = nativeCreate();
         return handle != 0;
     }
 
-    public void destroy() {
+    @Override public void destroy() {
         if (handle != 0) {
             nativeDestroy(handle);
             handle = 0;
@@ -64,6 +79,8 @@ public final class NesCore {
         return handle != 0;
     }
 
+    public long nativeMonotonicTimeNs() { return nativeMonotonicNow(); }
+
     /**
      * @return 0/positive on success (positive = warnings), negative on failure.
      *         A non-null {@code patch} is rejected (not implemented in the core).
@@ -71,6 +88,23 @@ public final class NesCore {
     public int loadRom(byte[] rom, byte[] patch) {
         if (handle == 0) return -3; // NES_ERR_NOT_READY
         return nativeLoadRom(handle, rom, patch);
+    }
+
+    @Override public int loadRom(byte[] rom) {
+        return loadRom(rom, null);
+    }
+
+    public RomInfo romInfo() {
+        if (handle == 0) return null;
+        String[] text = nativeRomInfoStrings(handle);
+        int[] values = nativeRomInfoNumbers(handle);
+        if (text == null || text.length != 6 || values == null || values.length != 13) {
+            return null;
+        }
+        return new RomInfo(new RomIdentity(text[4]), text[0], text[1], text[2], text[3],
+                values[0], values[1], values[2], values[3], values[4], values[5],
+                values[6] != 0, values[7], values[8], values[9], values[10] != 0,
+                values[11] != 0, text[5], values[12]);
     }
 
     /**
@@ -96,8 +130,52 @@ public final class NesCore {
         return nativeRunFrames(handle, n, audioBuffer, audioBuffer.capacity() / 2);
     }
 
-    public void setInput(int buttons) {
-        if (handle != 0) nativeSetInput(handle, buttons);
+    @Override public int runOneFrame() {
+        return runFrames(1);
+    }
+
+    public FrameStepResult runFrameStep() {
+        if (handle == 0) return FrameStepResult.error(-3);
+        long[] step = new long[4];
+        int status = nativeRunFrameStep(handle, audioBuffer, audioBuffer.capacity() / 2, step);
+        if (status < 0) return FrameStepResult.error(status);
+        SourceTiming timing = step[3] == 2L ? SourceTiming.PAL_50
+                : step[3] == 1L ? SourceTiming.NTSC_60_0988 : SourceTiming.UNKNOWN;
+        return new FrameStepResult((int) step[0], (int) step[1], step[2], timing);
+    }
+
+    @Override public FrameCopyResult copyVideoFrameIfNew(ByteBuffer destination, int[] metadata,
+                                                          long lastSequence) {
+        if (handle == 0) return FrameCopyResult.error(-3); // NES_ERR_NOT_READY
+        long[] timing = new long[3];
+        int status = nativeCopyVideoFrameIfNew(handle, lastSequence, destination, metadata,
+                timing);
+        if (status == 7) return FrameCopyResult.noChange();
+        if (status < 0) return FrameCopyResult.error(status);
+        SourceTiming sourceTiming = timing[2] == 2L
+                ? SourceTiming.PAL_50 : timing[2] == 1L
+                ? SourceTiming.NTSC_60_0988 : SourceTiming.UNKNOWN;
+        return FrameCopyResult.newFrame(timing[0], timing[1], sourceTiming);
+    }
+
+    @Override public void setInput(int buttons) {
+        setInputAndGetGeneration(buttons);
+    }
+
+    @Override public long setInputVersioned(int buttons) {
+        return setInputAndGetGeneration(buttons);
+    }
+
+    public long setInputAndGetGeneration(int buttons) {
+        return handle == 0 ? 0L : nativeSetInput(handle, buttons);
+    }
+
+    public NativeInputSample lastInputSample() {
+        if (handle == 0) return null;
+        long[] values = new long[6];
+        if (nativeGetLastInputSample(handle, values) < 0) return null;
+        return new NativeInputSample(values[0], new int[]{(int) values[1], (int) values[2],
+                (int) values[3], (int) values[4]}, values[5]);
     }
 
     /** @param stereo 0 = mono (the only mode the core supports in phase 0). */
@@ -124,7 +202,7 @@ public final class NesCore {
     /**
      * @return the saved state bytes, or null on failure (e.g. not ready).
      */
-    public byte[] saveState() {
+    @Override public byte[] saveState() {
         if (handle == 0) return null;
         byte[] out = new byte[SAVE_STATE_BUFFER_BYTES];
         int written = nativeSaveState(handle, out);
@@ -133,14 +211,9 @@ public final class NesCore {
     }
 
     /** @return 0/positive on success, negative on failure. */
-    public int loadState(byte[] in) {
+    @Override public int loadState(byte[] in) {
         if (handle == 0) return -3; // NES_ERR_NOT_READY
         return nativeLoadState(handle, in);
-    }
-
-    /** Blits the latest framebuffer to {@code surface}, scaled by {@code scale}. */
-    public void blit(Surface surface, int scale) {
-        if (handle != 0) nativeBlit(handle, surface, scale);
     }
 
     /** The direct audio buffer filled by the most recent runFrames call. */

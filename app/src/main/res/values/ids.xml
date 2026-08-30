@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="gamepad" type="id" />
+    <item name="game_surface" type="id" />
+    <item name="pause_button" type="id" />
+    <item name="pause_layer" type="id" />
+    <item name="pause_scrim" type="id" />
+    <item name="pause_drawer" type="id" />
+    <item name="pause_continue" type="id" />
+    <item name="pause_game_title" type="id" />
+    <item name="pause_game_center" type="id" />
+    <item name="pause_settings" type="id" />
+    <item name="haptic_off" type="id" />
+    <item name="haptic_light" type="id" />
+    <item name="haptic_standard" type="id" />
+    <item name="haptic_strong" type="id" />
+    <item name="haptic_distinct" type="id" />
+    <item name="control_layout_root" type="id" />
+    <item name="control_layout_preview" type="id" />
+    <item name="control_layout_warning" type="id" />
+    <item name="control_layout_scale" type="id" />
+    <item name="control_layout_opacity" type="id" />
+    <item name="control_layout_test" type="id" />
+    <item name="control_layout_undo" type="id" />
+    <item name="control_layout_default" type="id" />
+    <item name="control_layout_save" type="id" />
+    <item name="control_layout_discard" type="id" />
+</resources>

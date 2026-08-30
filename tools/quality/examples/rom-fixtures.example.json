@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "manifestKind": "example",
+  "certificationStatus": "BLOCKED_UNRESOLVED_FIXTURES",
+  "instructions": [
+    "Copy this file to the ignored local manifest, add the required localSources only there, and replace the illustrative hash with the exact payload hash; localSources is forbidden in committed redacted/example manifests.",
+    "A fixture is not READY until its exact variant and fixed save state are both hashed."
+  ],
+  "fixtures": [
+    {
+      "canonicalId": "example-game",
+      "displayName": "Example game",
+      "selectionStatus": "resolved",
+      "variantSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "alternativeVariantSha256": [],
+      "sourceTiming": {
+        "kind": "NTSC",
+        "nominalFramesPerSecond": 60.0988,
+        "evidence": "Replace with a core-confirmed SourceTiming observation."
+      },
+      "fixedSaveStateSha256": null,
+      "sceneInstructions": [
+        "Load the exact fixed save state.",
+        "Run the documented input sequence from frame zero."
+      ],
+      "blockers": [
+        "Fixed save-state hash has not been supplied."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+package com.flynes.emu.video.status;
+
+import com.flynes.emu.video.power.TemporalTransition;
+import com.flynes.emu.video.power.ThermalBand;
+import com.flynes.emu.video.quality.DisplayModeCapability;
+import com.flynes.emu.video.quality.FallbackReason;
+import com.flynes.emu.video.quality.PhysicalRefreshPolicy;
+import com.flynes.emu.video.quality.RuntimeTemporalState;
+import com.flynes.emu.video.quality.SourceTiming;
+import com.flynes.emu.video.quality.VideoConfigurationKey;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.HashSet;
+import java.util.Set;
+
+/** Render-thread metrics collector. Configuration identity has no split setters. */
+public final class VideoStatusAccumulator {
+    private long windowStartedAtElapsedMs;
+    private SourceTiming sourceTiming = SourceTiming.UNKNOWN;
+    private float sourceNominalFps;
+    private long coreFrames;
+    private long textureUploads;
+    private long synthesisSlots;
+    private long motionWarpedSlots;
+    private long bufferSubmissions;
+    private final Set<Long> copiedSourceSequences = new HashSet<>();
+    private long surfaceEpoch;
+    private long displayRequestGeneration;
+    private String activeConfigurationId;
+    private VideoConfigurationKey activeConfigurationKey;
+    private PhysicalRefreshPolicy requestedPolicy = PhysicalRefreshPolicy.FOLLOW_SYSTEM;
+    private DisplayModeCapability requestedMode;
+    private DisplayModeCapability activeMode;
+    private RuntimeTemporalState runtimeTemporalState = RuntimeTemporalState.IMMEDIATE_NATIVE;
+    private int videoDelayFrames;
+    private float audioDelayMs;
+    private int videoQueueDepth;
+    private int audioQueueDepthSamples;
+    private TemporalTransition temporalTransition;
+    private long cadenceAdjustments;
+    private boolean avSyncValid;
+    private long avSkewNs;
+    private long avSyncUncertaintyNs = Long.MAX_VALUE;
+    private float safetyFallbackRatio;
+    private ThermalBand thermalBand = ThermalBand.NONE;
+    private final Set<FallbackReason> fallbacks = new LinkedHashSet<>();
+
+    public synchronized void beginWindow(long startedAtElapsedRealtimeMs,
+                                         SourceTiming sourceTiming,
+                                         float sourceNominalFps) {
+        this.windowStartedAtElapsedMs = startedAtElapsedRealtimeMs;
+        this.sourceTiming = sourceTiming;
+        this.sourceNominalFps = sourceNominalFps;
+        coreFrames = textureUploads = synthesisSlots = motionWarpedSlots = bufferSubmissions = 0L;
+        avSyncValid = false;
+        avSkewNs = 0L;
+        avSyncUncertaintyNs = Long.MAX_VALUE;
+        copiedSourceSequences.clear();
+        fallbacks.clear();
+    }
+
+    public synchronized void onCoreFrameProduced(long sequence) { coreFrames++; }
+    public synchronized void onSourceFrameCopied(long sequence) {
+        copiedSourceSequences.add(sequence);
+    }
+    public synchronized void onTextureUploaded() { textureUploads++; }
+    public synchronized void onSynthesisSlotSubmitted(boolean motionWarped) {
+        synthesisSlots++;
+        if (motionWarped) motionWarpedSlots++;
+    }
+    public synchronized void onBufferSubmitted() { bufferSubmissions++; }
+    public synchronized void onNativePresentationCounts(long uploaded, long submitted) {
+        if (uploaded > 0L) textureUploads += uploaded;
+        if (submitted > 0L) bufferSubmissions += submitted;
+    }
+    public synchronized void onNativeMotionCounts(long synthesized, long warped,
+                                                  long held, long cadenceAdjusted,
+                                                  long queueDepth) {
+        if (synthesized > 0L) synthesisSlots += synthesized;
+        if (warped > 0L) motionWarpedSlots += warped;
+        if (cadenceAdjusted > 0L) cadenceAdjustments += cadenceAdjusted;
+        videoQueueDepth = (int) Math.max(0L, Math.min(Integer.MAX_VALUE, queueDepth));
+        long classified = Math.max(0L, warped) + Math.max(0L, held);
+        safetyFallbackRatio = classified == 0L ? 0f
+                : Math.max(0L, held) / (float) classified;
+    }
+    public synchronized void onCadenceAdjusted() { cadenceAdjustments++; }
+    public synchronized void onAvSync(boolean valid, long skewNs, long uncertaintyNs) {
+        avSyncValid = valid;
+        avSkewNs = valid ? skewNs : 0L;
+        avSyncUncertaintyNs = valid ? uncertaintyNs : Long.MAX_VALUE;
+    }
+    public synchronized void onSafetyFallbackRatio(float ratio) { safetyFallbackRatio = ratio; }
+    public synchronized void onQueueDepths(int videoDepth, int audioDepthSamples) {
+        videoQueueDepth = videoDepth;
+        audioQueueDepthSamples = audioDepthSamples;
+    }
+
+    public synchronized void onDisplayState(PhysicalRefreshPolicy policy,
+                                            DisplayModeCapability requested,
+                                            DisplayModeCapability systemReportedActive) {
+        requestedPolicy = policy;
+        requestedMode = requested;
+        activeMode = systemReportedActive;
+    }
+
+    public synchronized void onThermalBand(ThermalBand band) { thermalBand = band; }
+    public synchronized void onFallback(FallbackReason fallback) {
+        if (fallback != null) fallbacks.add(fallback);
+    }
+
+    public synchronized void publishStableConfiguration(
+            long newSurfaceEpoch, long newDisplayRequestGeneration,
+            String configurationId, VideoConfigurationKey configurationKey,
+            RuntimeTemporalState temporalState, int delayFrames, float delayMs) {
+        if (configurationId == null || configurationKey == null) {
+            throw new IllegalArgumentException("stable configuration identity is required");
+        }
+        surfaceEpoch = newSurfaceEpoch;
+        displayRequestGeneration = newDisplayRequestGeneration;
+        activeConfigurationId = configurationId;
+        activeConfigurationKey = configurationKey;
+        runtimeTemporalState = temporalState;
+        videoDelayFrames = delayFrames;
+        audioDelayMs = delayMs;
+        temporalTransition = null;
+    }
+
+    public synchronized void publishTransition(long newSurfaceEpoch,
+                                               long newDisplayRequestGeneration,
+                                               RuntimeTemporalState temporalState,
+                                               int delayFrames, float delayMs) {
+        surfaceEpoch = newSurfaceEpoch;
+        displayRequestGeneration = newDisplayRequestGeneration;
+        activeConfigurationId = null;
+        activeConfigurationKey = null;
+        runtimeTemporalState = temporalState;
+        videoDelayFrames = delayFrames;
+        audioDelayMs = delayMs;
+        temporalTransition = null;
+    }
+
+    public synchronized VideoRuntimeStatus snapshot(long nowElapsedRealtimeMs) {
+        float seconds = Math.max(0L, nowElapsedRealtimeMs - windowStartedAtElapsedMs) / 1000.0f;
+        float divisor = seconds > 0.0f ? seconds : Float.POSITIVE_INFINITY;
+        long copied = copiedSourceSequences.size();
+        return new VideoRuntimeStatus(surfaceEpoch, displayRequestGeneration,
+                activeConfigurationId, activeConfigurationKey, sourceTiming, sourceNominalFps,
+                coreFrames / divisor, copied / divisor, textureUploads / divisor,
+                Math.max(0L, coreFrames - copied), requestedPolicy, requestedMode, activeMode,
+                synthesisSlots / divisor, motionWarpedSlots / divisor,
+                bufferSubmissions / divisor, safetyFallbackRatio, runtimeTemporalState,
+                videoDelayFrames, audioDelayMs, videoQueueDepth, audioQueueDepthSamples,
+                temporalTransition, cadenceAdjustments,
+                avSyncValid, avSkewNs, avSyncUncertaintyNs,
+                thermalBand, StatusFreshness.FRESH,
+                nowElapsedRealtimeMs, new ArrayList<>(fallbacks));
+    }
+}

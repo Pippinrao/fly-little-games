@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="fly_space_1">4dp</dimen>
+    <dimen name="fly_space_2">8dp</dimen>
+    <dimen name="fly_space_3">12dp</dimen>
+    <dimen name="fly_space_4">16dp</dimen>
+    <dimen name="fly_space_6">24dp</dimen>
+    <dimen name="fly_space_8">32dp</dimen>
+    <dimen name="fly_radius_small">12dp</dimen>
+    <dimen name="fly_radius_medium">16dp</dimen>
+    <dimen name="fly_radius_large">24dp</dimen>
+    <dimen name="fly_touch_min">48dp</dimen>
+    <dimen name="fly_icon_medium">24dp</dimen>
+</resources>

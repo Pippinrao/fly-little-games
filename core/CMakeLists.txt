@@ -7,6 +7,12 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(NES_BUILD_TESTS "Build host-side tests" OFF)
 
+add_library(video_algorithms STATIC
+    video/temporal_interpolator.cpp
+    video/temporal_scheduler.cpp
+)
+target_include_directories(video_algorithms PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 set(NESTOPIA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/nestopiaue/source/core)
 
 # --- nestopia: upstream emulator core (299 .cpp, C++17) ---
@@ -24,18 +30,48 @@ target_include_directories(nestopia PUBLIC
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(nestopia PRIVATE -Wno-narrowing)
 endif()
-# zlib is required by NstZlib.cpp (compressed save states / archives)
-find_library(ZLIB_LIB z)
-if(ZLIB_LIB)
-    target_link_libraries(nestopia PUBLIC ${ZLIB_LIB})
-    # Host builds may use a vendored zlib (core/build/host-deps): its headers
-    # are not on any default include path, so surface them when provided.
-    # (Android finds zlib.h via the NDK sysroot, so this is host-only.)
-    if(NOT ANDROID AND ZLIB_INCLUDE_DIR)
-        target_include_directories(nestopia PUBLIC ${ZLIB_INCLUDE_DIR})
+# zlib is required by NstZlib.cpp (compressed save states / archives).
+if(ANDROID)
+    find_library(ZLIB_LIB z)
+    if(NOT ZLIB_LIB)
+        message(FATAL_ERROR "Android NDK zlib was not found")
     endif()
+    target_link_libraries(nestopia PUBLIC ${ZLIB_LIB})
+elseif(WIN32)
+    if(NOT DEFINED ZLIB_ROOT OR ZLIB_ROOT STREQUAL "")
+        message(FATAL_ERROR "Windows host builds require ZLIB_ROOT as the verified installed prefix")
+    endif()
+    get_filename_component(ZLIB_PREFIX "${ZLIB_ROOT}" ABSOLUTE)
+    find_path(FLYNES_ZLIB_INCLUDE zlib.h PATHS "${ZLIB_PREFIX}/include" NO_DEFAULT_PATH)
+    find_library(FLYNES_ZLIB_STATIC NAMES zlibstatic
+        PATHS "${ZLIB_PREFIX}/lib" NO_DEFAULT_PATH)
+    if(NOT FLYNES_ZLIB_INCLUDE OR NOT FLYNES_ZLIB_STATIC)
+        message(FATAL_ERROR "Verified zlib headers/static Release library are missing under ZLIB_ROOT")
+    endif()
+    file(READ "${FLYNES_ZLIB_INCLUDE}/zlib.h" FLYNES_ZLIB_HEADER_TEXT)
+    if(NOT FLYNES_ZLIB_HEADER_TEXT MATCHES "#define ZLIB_VERSION \\\"1\\.3\\.1\\\"")
+        message(FATAL_ERROR "ZLIB_ROOT is not the pinned zlib 1.3.1 install")
+    endif()
+    file(SHA256 "${FLYNES_ZLIB_INCLUDE}/zlib.h" FLYNES_ZLIB_HEADER_SHA256)
+    file(SHA256 "${FLYNES_ZLIB_STATIC}" FLYNES_ZLIB_LIBRARY_SHA256)
+    if(NOT FLYNES_ZLIB_HEADER_SHA256 STREQUAL
+            "8a5579af72ea4f427ff00a4150f0ccb3fc5c1e4379f726e101133b1ab9fc600c")
+        message(FATAL_ERROR "Pinned zlib.h SHA-256 mismatch")
+    endif()
+    if(NOT FLYNES_ZLIB_LIBRARY_SHA256 STREQUAL
+            "9f2898c18ee6e982ec5266ddcbd4cd8d068e9d0b6c3122f6ecb49d8be3e8d9ff")
+        message(FATAL_ERROR "Pinned zlibstatic.lib SHA-256 mismatch")
+    endif()
+    add_library(flynes_zlib STATIC IMPORTED GLOBAL)
+    set_target_properties(flynes_zlib PROPERTIES
+        IMPORTED_LOCATION "${FLYNES_ZLIB_STATIC}"
+        INTERFACE_INCLUDE_DIRECTORIES "${FLYNES_ZLIB_INCLUDE}")
+    target_link_libraries(nestopia PUBLIC flynes_zlib)
 else()
-    message(WARNING "zlib not found; linking may fail on save-state compression")
+    # Linux/macOS remain compatibility gates. The canonical, hash-pinned host
+    # evidence is produced by the Windows bootstrap above.
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(nestopia PUBLIC ZLIB::ZLIB)
 endif()
 
 # --- nes_abi: platform-independent C ABI implementation (placeholders for now) ---
@@ -61,4 +97,8 @@ if(NES_BUILD_TESTS AND NOT ANDROID)
     # ("core/tests/fixtures/from_below.nes") is relative to the repo root,
     # so anchor the test's working directory there.
     set_tests_properties(core_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    add_executable(temporal_interpolator_test tests/test_temporal_interpolator.cpp)
+    target_link_libraries(temporal_interpolator_test PRIVATE video_algorithms)
+    add_test(NAME temporal_interpolator COMMAND temporal_interpolator_test)
 endif()

@@ -8,7 +8,8 @@ Checks (all must PASS for exit 0):
                                   vs scripts/abi_symbols.golden.txt.
                                   Missing golden symbol  -> FAIL
                                   New (unlisted) symbol  -> WARN (human reviews, updates golden)
-  3. host test                   : configure/build nes_core_test (Release, VS 2022 x64,
+  3. host test                   : bootstrap the pinned zlib/toolchain, configure/build
+                                  nes_core_test (Release, VS 2022 x64,
                                   NES_BUILD_TESTS=ON) and run it from the repo root;
                                   must print "PASS (0 failures)" and exit 0.
   4. android build               : gradlew assembleDebug must succeed.
@@ -16,8 +17,10 @@ Checks (all must PASS for exit 0):
 Exit: 0 when every check PASSes, 1 otherwise.
 
 Notes:
-  - Uses the SDK cmake ($ANDROID_HOME\cmake\3.22.1\bin\cmake.exe) when present,
-    falling back to cmake on PATH.
+  - Android builds use the SDK cmake ($ANDROID_HOME\cmake\3.22.1\bin\cmake.exe)
+    when present, falling back to cmake on PATH.
+  - The Windows host build imports the canonical toolchain manifest emitted by
+    tools/quality/bootstrap_host_zlib.ps1; it never uses PATH-dependent tools.
   - Android NDK path: $ANDROID_HOME\ndk\27.0.12077973 (falls back to the newest
     ndk\* directory).
   - Native-command exit codes are checked via $LASTEXITCODE after every call;
@@ -41,21 +44,46 @@ function Write-Check {
 
 # --- tool discovery ----------------------------------------------------------
 
+function Get-AndroidSdkRoot {
+    foreach ($candidate in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+            (Test-Path -LiteralPath $candidate -PathType Container)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    $propertiesPath = Join-Path $root 'local.properties'
+    if (Test-Path -LiteralPath $propertiesPath -PathType Leaf) {
+        $sdkLine = Get-Content -LiteralPath $propertiesPath |
+            Where-Object { $_ -match '^\s*sdk\.dir\s*=' } |
+            Select-Object -First 1
+        if ($sdkLine) {
+            $rawPath = ($sdkLine -split '=', 2)[1].Trim()
+            $decodedPath = [regex]::Replace($rawPath, '\\([\\:= ])', '$1')
+            if (Test-Path -LiteralPath $decodedPath -PathType Container) {
+                return (Resolve-Path -LiteralPath $decodedPath).Path
+            }
+        }
+    }
+
+    throw 'Android SDK not found: set ANDROID_HOME/ANDROID_SDK_ROOT or provide sdk.dir in local.properties'
+}
+
 function Get-CMake {
-    $sdk = Join-Path $env:ANDROID_HOME 'cmake\3.22.1\bin\cmake.exe'
+    $sdk = Join-Path $androidSdkRoot 'cmake\3.22.1\bin\cmake.exe'
     if (Test-Path $sdk) { return $sdk }
     $onPath = Get-Command cmake -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
-    throw 'cmake not found: SDK cmake ($ANDROID_HOME\cmake\3.22.1\bin\cmake.exe) missing and cmake not on PATH'
+    throw "cmake not found: SDK cmake ($sdk) missing and cmake not on PATH"
 }
 
 function Get-NdkRoot {
-    $known = Join-Path $env:ANDROID_HOME 'ndk\27.0.12077973'
+    $known = Join-Path $androidSdkRoot 'ndk\27.0.12077973'
     if (Test-Path $known) { return $known }
-    $ndk = Get-ChildItem (Join-Path $env:ANDROID_HOME 'ndk') -Directory -ErrorAction SilentlyContinue |
+    $ndk = Get-ChildItem (Join-Path $androidSdkRoot 'ndk') -Directory -ErrorAction SilentlyContinue |
         Sort-Object Name -Descending | Select-Object -First 1
     if ($ndk) { return $ndk.FullName }
-    throw 'NDK not found under $ANDROID_HOME\ndk'
+    throw "NDK not found under $androidSdkRoot\ndk"
 }
 
 function Get-LlvmNm {
@@ -64,6 +92,7 @@ function Get-LlvmNm {
     return $nm
 }
 
+$androidSdkRoot = Get-AndroidSdkRoot
 $cmake = Get-CMake
 
 # ============================================================================
@@ -110,7 +139,7 @@ $goldenFile = Join-Path $root 'scripts\abi_symbols.golden.txt'
 $androidOk = $true
 if (-not (Test-Path $androidCache)) {
     Write-Host '  configuring android build (no cache found)...'
-    $ninja = Join-Path $env:ANDROID_HOME 'cmake\3.22.1\bin\ninja.exe'
+    $ninja = Join-Path $androidSdkRoot 'cmake\3.22.1\bin\ninja.exe'
     $toolchain = Join-Path (Get-NdkRoot) 'build\cmake\android.toolchain.cmake'
     & $cmake -S (Join-Path $root 'core') -B $androidDir -G Ninja `
         "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
@@ -165,37 +194,79 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ''
 Write-Host '== Check 3/4: host test ==' -ForegroundColor Cyan
 
-$hostDir = Join-Path $root 'core\build\host'
+$hostDir = Join-Path $root '.artifacts\build\core-host'
 $hostCache = Join-Path $hostDir 'CMakeCache.txt'
+$hostDepsDir = Join-Path $root '.artifacts\host-deps'
+$hostToolchainManifest = Join-Path $hostDepsDir 'host-toolchain.psd1'
+$hostZlibRoot = Join-Path $hostDepsDir 'zlib-1.3.1-install'
+$hostBootstrap = Join-Path $root 'tools\quality\bootstrap_host_zlib.ps1'
+$pwshExe = Join-Path $PSHOME 'pwsh.exe'
 $hostOk = $true
-if (-not (Test-Path $hostCache)) {
-    Write-Host '  configuring host build (no cache found)...'
-    & $cmake -S (Join-Path $root 'core') -B $hostDir -DNES_BUILD_TESTS=ON `
-        -G 'Visual Studio 17 2022' -A x64 | Out-Host
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hostCache)) {
+$env:MSBUILDDISABLENODEREUSE = '1'
+
+Write-Host '  bootstrapping canonical host zlib/toolchain...'
+& $pwshExe -NoProfile -File $hostBootstrap -OutputDirectory $hostDepsDir | Out-Host
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostToolchainManifest -PathType Leaf)) {
+    $hostOk = $false
+    Write-Check 'host test' 'FAIL' 'canonical host dependency/toolchain bootstrap failed'
+}
+
+$hostTools = $null
+if ($hostOk) {
+    try {
+        $hostTools = Import-PowerShellDataFile -LiteralPath $hostToolchainManifest
+    } catch {
+        $hostOk = $false
+        Write-Check 'host test' 'FAIL' "cannot import canonical host toolchain manifest: $($_.Exception.Message)"
+    }
+}
+
+if ($hostOk) {
+    $hostCMake = [string] $hostTools.CMakeExe
+    $hostCTest = [string] $hostTools.CTestExe
+    $hostConfigureArgs = @(
+        '-S', (Join-Path $root 'core'),
+        '-B', $hostDir,
+        '-G', ([string] $hostTools.Generator),
+        '-A', ([string] $hostTools.Architecture),
+        '-DNES_BUILD_TESTS=ON',
+        "-DZLIB_ROOT=$hostZlibRoot"
+    ) + @($hostTools.CMakeConfigureArguments)
+
+    Write-Host '  configuring host build with the canonical toolchain...'
+    & $hostCMake @hostConfigureArgs | Out-Host
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostCache -PathType Leaf)) {
         $hostOk = $false
         Write-Check 'host test' 'FAIL' 'host configure failed'
     }
 }
 
 if ($hostOk) {
-    & $cmake --build $hostDir --target nes_core_test --config Release -j 4 | Out-Host
+    & $hostCMake --build $hostDir --target nes_core_test temporal_interpolator_test `
+        --config Release -j 4 | Out-Host
     if ($LASTEXITCODE -ne 0) {
-        Write-Check 'host test' 'FAIL' "nes_core_test build failed (exit $LASTEXITCODE)"
+        Write-Check 'host test' 'FAIL' "host test build failed (exit $LASTEXITCODE)"
     } else {
-        $exe = Get-ChildItem $hostDir -Recurse -Filter 'nes_core_test.exe' |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if (-not $exe) {
-            Write-Check 'host test' 'FAIL' 'nes_core_test.exe not found under core/build/host'
+        & $hostCTest --test-dir $hostDir -C Release --output-on-failure | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Check 'host test' 'FAIL' "CTest failed (exit $LASTEXITCODE)"
         } else {
-            # Run from the repo root: the test's fixture paths are repo-root-relative.
-            $testOut = & $exe.FullName 2>&1 | Out-String
-            $testExit = $LASTEXITCODE
-            if ($testExit -eq 0 -and $testOut -match 'PASS \(0 failures\)') {
-                Write-Check 'host test' 'PASS' "nes_core_test exit=$testExit, RESULT PASS (0 failures)"
+            $exe = Get-ChildItem $hostDir -Recurse -Filter 'nes_core_test.exe' |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if (-not $exe) {
+                Write-Check 'host test' 'FAIL' 'nes_core_test.exe not found under .artifacts/build/core-host'
             } else {
-                Write-Check 'host test' 'FAIL' "nes_core_test exit=$testExit, expected exit 0 and 'PASS (0 failures)'"
-                Write-Host ($testOut | Select-Object -Last 15 | Out-String)
+                # Run from the repo root: the test's fixture paths are repo-root-relative.
+                $testOut = & $exe.FullName 2>&1 | Out-String
+                $testExit = $LASTEXITCODE
+                if ($testExit -eq 0 -and $testOut -match 'PASS \(0 failures\)') {
+                    Write-Check 'host test' 'PASS' `
+                        "CTest plus nes_core_test exit=$testExit, RESULT PASS (0 failures)"
+                } else {
+                    Write-Check 'host test' 'FAIL' `
+                        "nes_core_test exit=$testExit, expected exit 0 and 'PASS (0 failures)'"
+                    Write-Host ($testOut | Select-Object -Last 15 | Out-String)
+                }
             }
         }
     }

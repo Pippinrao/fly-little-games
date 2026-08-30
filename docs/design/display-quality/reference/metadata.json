@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "52d8affadd64dae1edb8a952b84e11d91d301651",
+  "prototypeSource": {
+    "file": "docs/prototypes/flynes-display-quality-modes.html",
+    "reviewedRepositoryBytes": 81687,
+    "reviewedRepositorySha256": "c79d6b85f61c7075e10e82668965f65b98c0cb132da3ff09267ae1ab907b4491",
+    "captureTransportLineEndings": "CRLF",
+    "captureTransportBytes": 83653,
+    "captureTransportSha256": "422a2ab83b2b1a2298c8c826e6a47de89ea43e0bef17ecae40018ae804a119c9",
+    "captureUrl": "http://127.0.0.1:8765/docs/prototypes/flynes-display-quality-modes.html",
+    "deviceScaleFactor": 1,
+    "encoding": "Browser capture pixels decoded from the capture API's JFIF response and re-encoded as PNG without resize or crop; original responses are ignored local artifacts.",
+    "lineEndingEquivalence": "A same-tab 2340x1080 comparison loaded the CRLF transport bytes and reviewed LF repository bytes in sequence. DOM snapshots, screenshot transport bytes, and a repeated CRLF control were byte-identical. The tracked worktree file was then restored to the reviewed LF bytes."
+  },
+  "prototypeCaptures": [
+    {
+      "file": "prototype-2340x1080-current-balanced.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Default reload; Current capability; Balanced selected.",
+      "scrollTop": 0,
+      "sha256": "6314880ba26c7408fc847e479c0f065170535c341b0934e6d668991a79d1e2b5"
+    },
+    {
+      "file": "prototype-2340x1080-custom-expanded.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Default reload; Custom selected; expanded Custom axes made visible by activating the already-selected 60 Hz row.",
+      "scrollTop": 655.3333129882812,
+      "sha256": "85b702cd3a15c2e1f080802744921bf00a4604727c0a1b0a3f9892f012490028"
+    },
+    {
+      "file": "prototype-2340x1080-locked-extreme.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Default reload; Extreme remains aria-disabled; forced activation proves the lock toast: 当前构建尚未实现并认证极致模式.",
+      "scrollTop": 0,
+      "sha256": "42061f45d2738da3448e2188484417379c34c2abb90ab213f1b3da41ecc30c01"
+    },
+    {
+      "file": "prototype-2340x1080-risk-dialog.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Certified capability selected; Extreme selected before consent; risk dialog 申请实验性运动补偿？ open.",
+      "scrollTop": 0,
+      "sha256": "5be2997e7e56149c7fdd874285a29239a60c10da83903996fb258dc8d23c5de1"
+    },
+    {
+      "file": "prototype-2340x1080-system-fallback.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Certified capability; Extreme consent accepted and activation completed; system-60 runtime fallback; live status 推演：部分回退.",
+      "scrollTop": 0,
+      "sha256": "64556caccdc22e3635b8633851dc79ed18912b87798e83b693b3d1e341b6fcc4"
+    },
+    {
+      "file": "prototype-2340x1080-thermal-fallback.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Certified capability; Extreme consent accepted and activation completed; severe thermal fallback and one-frame drain completed; live status 推演：安全降档完成.",
+      "scrollTop": 0,
+      "sha256": "c9fc929094255662e77edf68d649e10728b296558ac8bce7ede5226cc1649512"
+    },
+    {
+      "file": "prototype-2340x1080-font-2_0.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 2.0,
+      "state": "Default reload; prototype 2.0 font-scale control selected; Balanced selected.",
+      "scrollTop": 0,
+      "sha256": "6d815c200331b5c8007f5802d54098bd185bfa3bedde399595b105a6dbfd9057"
+    },
+    {
+      "file": "prototype-1280x720-current-balanced.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 1.0,
+      "state": "Default reload; Current capability; Balanced selected.",
+      "scrollTop": 0,
+      "sha256": "275843bcae5e3e3157794c22b8681cee41971082700b6b5acc48b8a88b9b9cd9"
+    },
+    {
+      "file": "prototype-1280x720-custom-expanded.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 1.0,
+      "state": "Default reload; Custom selected; expanded Custom axes made visible by activating the already-selected 60 Hz row.",
+      "scrollTop": 909.3333129882812,
+      "sha256": "bfa6a7583fc8ee1309707102eeade2629c53d432c2639442e8678e136a3693c9"
+    },
+    {
+      "file": "prototype-1280x720-locked-extreme.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 1.0,
+      "state": "Default reload; Extreme remains aria-disabled; forced activation proves the lock toast: 当前构建尚未实现并认证极致模式.",
+      "scrollTop": 0,
+      "sha256": "b950b58c426746864328132b65e0252d6a545840d46de703894b429cebe4f9e2"
+    },
+    {
+      "file": "prototype-1280x720-risk-dialog.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 1.0,
+      "state": "Certified capability selected; Extreme selected before consent; risk dialog 申请实验性运动补偿？ open.",
+      "scrollTop": 0,
+      "sha256": "6870171125b6c8f0afb72656330b96ad3d6e24b588db11ae19ad5ea323390ba4"
+    },
+    {
+      "file": "prototype-1280x720-system-fallback.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 1.0,
+      "state": "Certified capability; Extreme consent accepted and activation completed; system-60 runtime fallback; live status 推演：部分回退.",
+      "scrollTop": 0,
+      "sha256": "d587a126cba6a44e893a76c16490e57709b36ce22fa3086e0dc06748bbf05f50"
+    },
+    {
+      "file": "prototype-1280x720-thermal-fallback.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 1.0,
+      "state": "Certified capability; Extreme consent accepted and activation completed; severe thermal fallback and one-frame drain completed; live status 推演：安全降档完成.",
+      "scrollTop": 0,
+      "sha256": "9e793fa3586dd683d6705a95d2469ac4470abbaa6f47dc0899b1ccfe06782a48"
+    },
+    {
+      "file": "prototype-1280x720-font-2_0.png",
+      "viewport": { "width": 1280, "height": 720 },
+      "fontScale": 2.0,
+      "state": "Default reload; prototype 2.0 font-scale control selected; Balanced selected.",
+      "scrollTop": 0,
+      "sha256": "3b0b4c749060c14b3b9c36c7d1801bb9011d95f7aadc10e9e7371cd8c7ac8392"
+    }
+  ],
+  "rendererSource": {
+    "commit": "52d8affadd64dae1edb8a952b84e11d91d301651",
+    "debugApkSha256": "933f2e2102a6836f1380774b134515e1dbf25c549647b50a7c5368076c204dd5",
+    "builtinRomSha256": "1a3ac4faf4b35640505344059ae5d91dae07cd47e1fb4d9d2a33c76391f1c555",
+    "avdName": "MIT_Phone_API35",
+    "serialAtCapture": "emulator-5554",
+    "model": "Android SDK built for x86_64",
+    "apiLevel": 35,
+    "buildFingerprint": "Android/sdk_phone64_x86_64/emu64x:15/AE3A.240806.019/12368160:userdebug/test-keys",
+    "physicalDisplay": { "width": 1080, "height": 2340, "densityDpi": 440, "refreshHz": 60.000004 },
+    "evidenceClass": "emulator-only"
+  },
+  "rendererCaptures": [
+    {
+      "file": "renderer-avd-mit-phone-api35-title.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Unmodified app, built-in From Below, title screen with PUSH START visible.",
+      "sha256": "3678dae6c335c20f2b3108f4a84c67f300391aa4c5d1cdd0718c7b662ccb6fba"
+    },
+    {
+      "file": "renderer-avd-mit-phone-api35-gameplay-paused.png",
+      "viewport": { "width": 2340, "height": 1080 },
+      "fontScale": 1.0,
+      "state": "Unmodified app, built-in From Below, early gameplay after a two-second run, app pause sheet visible.",
+      "sha256": "89fcd3122b9333581ae17e8b3d87a848adcfa5be62ea36bafdd3e1e63bcc3e9c"
+    }
+  ]
+}

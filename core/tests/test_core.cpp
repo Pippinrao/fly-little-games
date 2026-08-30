@@ -12,6 +12,7 @@
  * Self-contained: stdio only, no external deps. Exit code 0 = PASS.
  */
 #include "nes/nes.h"
+#include "../src/nes_audio_clock.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -86,6 +87,19 @@ namespace
 
 int main(int argc, char** argv)
 {
+	// Audio sample cadence must preserve the fractional samples that do not fit
+	// in a single emulated frame. The accumulated error stays below one sample.
+	{
+		double remainder = 0.0;
+		uint64_t total = 0;
+		constexpr uint32_t frame_count = 60u * 30u * 60u;
+		for (uint32_t i = 0; i < frame_count; ++i)
+			total += nes_samples_for_next_frame(48000, 60.0988, remainder);
+		const double expected = static_cast<double>(frame_count) * 48000.0 / 60.0988;
+		const double error = total > expected ? total - expected : expected - total;
+		check(error < 1.0, "30-minute audio cadence stays within one sample");
+	}
+
 	const char* rom_path = (argc > 1) ? argv[1] : "core/tests/fixtures/from_below.nes";
 	const char* db_path  = (argc > 2) ? argv[2] : "core/tests/fixtures/NstDatabase.xml";
 	std::printf("=== FlyNES headless smoke test (Task 6) ===\n");
@@ -232,6 +246,98 @@ int main(int argc, char** argv)
 			check(non_black > 0, buf);
 		}
 		vf_ok = true;
+	}
+
+	// ---- 6a. race-free published frame snapshot -------------------------
+	{
+		nes_video_snapshot before{};
+		before.struct_size = sizeof(before);
+		std::vector<uint8_t> pixels(256u * 240u * 2u);
+		int rc = nes_copy_video_frame(nes, pixels.data(), pixels.size(), &before);
+		check(rc == NES_OK, "copy the current published video frame");
+		check(before.sequence > 0, "published frame has a positive sequence");
+		check(before.width == 256 && before.height == 240,
+		      "published frame describes the native viewport");
+		check(before.bytes_written == pixels.size(),
+		      "published frame reports the copied byte count");
+
+		uint32_t fr = 0, sw = 0;
+		rc = nes_run_frames(nes, 1, audio.data(), kAudioCap, &fr, &sw);
+		check(rc == NES_OK && fr == 1, "run exactly one frame before the next snapshot");
+
+		nes_video_snapshot after{};
+		after.struct_size = sizeof(after);
+		rc = nes_copy_video_frame(nes, pixels.data(), pixels.size(), &after);
+		check(rc == NES_OK, "copy the next published video frame");
+		check(after.sequence == before.sequence + 1,
+		      "published sequence advances exactly once per emulated frame");
+		check(after.source_region == NES_REGION_NTSC || after.source_region == NES_REGION_PAL,
+		      "v2 snapshot reports an explicit source region");
+		check(after.native_monotonic_ns > 0,
+		      "v2 snapshot reports a native monotonic copy timestamp");
+
+		std::fill(pixels.begin(), pixels.end(), 0xA5);
+		nes_video_snapshot unchanged{};
+		unchanged.struct_size = sizeof(unchanged);
+		unchanged.sequence = 0x1122334455667788ULL;
+		rc = nes_copy_video_frame_if_new(nes, after.sequence, pixels.data(), pixels.size(),
+		                                 &unchanged);
+		check(rc == NES_WARN_NO_VIDEO_CHANGE,
+		      "copy-if-new distinguishes an unchanged published sequence");
+		check(unchanged.sequence == 0x1122334455667788ULL,
+		      "no-change leaves caller sequence metadata untouched");
+		check(pixels.front() == 0xA5 && pixels.back() == 0xA5,
+		      "no-change leaves destination bytes untouched");
+
+		nes_video_snapshot legacy{};
+		legacy.struct_size = NES_VIDEO_SNAPSHOT_V1_SIZE;
+		legacy.source_region = NES_REGION_DENDY;
+		legacy.native_monotonic_ns = 99;
+		rc = nes_copy_video_frame(nes, pixels.data(), pixels.size(), &legacy);
+		check(rc == NES_OK && legacy.sequence == after.sequence,
+		      "v1-size snapshot remains ABI compatible");
+		check(legacy.source_region == NES_REGION_DENDY && legacy.native_monotonic_ns == 99,
+		      "v1-size caller tail is never overwritten");
+
+		nes_video_snapshot undersized{};
+		undersized.struct_size = NES_VIDEO_SNAPSHOT_V1_SIZE - 1;
+		undersized.sequence = 77;
+		rc = nes_copy_video_frame(nes, pixels.data(), pixels.size(), &undersized);
+		check(rc == NES_ERR_INVALID_PARAM && undersized.sequence == 77,
+		      "undersized snapshot is rejected without tail writes");
+	}
+
+	// ---- 6aa. input is timestamped only at the core's pad-read boundary --
+	{
+		nes_input_sample before{};
+		before.struct_size = sizeof(before);
+		check(nes_get_last_input_sample(nes, &before) == NES_OK,
+		      "read initial sampled input");
+		nes_set_input(nes, 0, NES_BTN_A);
+		nes_input_sample before_run{};
+		before_run.struct_size = sizeof(before_run);
+		check(nes_get_last_input_sample(nes, &before_run) == NES_OK
+		      && before_run.generation == before.generation,
+		      "setter does not pretend the core sampled input");
+		uint32_t fr = 0, sw = 0;
+		check(nes_run_frames(nes, 1, audio.data(), kAudioCap, &fr, &sw) == NES_OK && fr == 1,
+		      "run one frame to cross the pad-read boundary");
+		nes_input_sample sampled{};
+		sampled.struct_size = sizeof(sampled);
+		check(nes_get_last_input_sample(nes, &sampled) == NES_OK
+		      && sampled.generation > before.generation
+		      && sampled.pad_bits[0] == NES_BTN_A
+		      && sampled.native_monotonic_ns > 0,
+		      "sampled input records generation, pad bits and native time");
+		nes_set_input(nes, 0, NES_BTN_A);
+		check(nes_run_frames(nes, 1, audio.data(), kAudioCap, &fr, &sw) == NES_OK,
+		      "run with unchanged pad state");
+		nes_input_sample same{};
+		same.struct_size = sizeof(same);
+		nes_get_last_input_sample(nes, &same);
+		check(same.generation == sampled.generation,
+		      "writing identical pad bits does not create a new generation");
+		nes_clear_input(nes);
 	}
 
 	// ---- 6b. video filter scaling ---------------------------------------
