@@ -12,8 +12,8 @@ import android.view.MotionEvent;
 import android.view.View;
 
 /**
- * Virtual gamepad overlay for FlyNES (mobile-game style): fixed joystick at
- * bottom-left, A/B action buttons at bottom-right, START/SELECT at top-right.
+ * Virtual gamepad overlay for FlyNES (mobile-game style): dynamic joystick in
+ * the left half, A/B action buttons at bottom-right, START/SELECT at top-right.
  *
  * Every control is drawn with Canvas (no XML drawables) and every pointer is
  * tracked independently (SparseArray keyed by pointerId), so the left thumb
@@ -64,6 +64,7 @@ public class GamepadView extends View {
     private static final class Pointer {
         int role = ROLE_NONE;
         float x, y;         // current position in view coords
+        float joyCX, joyCY; // dynamic joystick center while this pointer owns it
         float knobX, knobY; // joystick knob offset from base center
     }
 
@@ -145,13 +146,16 @@ public class GamepadView extends View {
         Pointer start = findRole(ROLE_START);
         Pointer sel = findRole(ROLE_SELECT);
 
-        // Joystick: fixed base + knob (knob follows the finger while held).
-        drawCircle(c, joyCX, joyCY, joyBaseR, false, null);
-        float knobX = joyCX, knobY = joyCY;
+        // Joystick: fixed resting anchor; its base follows the first left-side touch.
+        float baseX = joyCX, baseY = joyCY;
+        float knobX = baseX, knobY = baseY;
         if (joy != null) {
-            knobX = joyCX + joy.knobX;
-            knobY = joyCY + joy.knobY;
+            baseX = joy.joyCX;
+            baseY = joy.joyCY;
+            knobX = baseX + joy.knobX;
+            knobY = baseY + joy.knobY;
         }
+        drawCircle(c, baseX, baseY, joyBaseR, false, null);
         drawCircle(c, knobX, knobY, joyKnobR, true, null);
 
         // Action buttons.
@@ -233,6 +237,8 @@ public class GamepadView extends View {
                 p.x = x;
                 p.y = y;
                 if (role == ROLE_JOY) {
+                    p.joyCX = clampJoyCenterX(x);
+                    p.joyCY = clampJoyCenterY(y);
                     clampKnob(p);
                 }
                 pointers.put(id, p);
@@ -259,12 +265,15 @@ public class GamepadView extends View {
                 break;
             }
             case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_POINTER_UP:
-            case MotionEvent.ACTION_CANCEL: {
+            case MotionEvent.ACTION_POINTER_UP: {
                 pointers.remove(id);
                 recompute();
                 break;
             }
+            case MotionEvent.ACTION_CANCEL:
+                pointers.clear();
+                recompute();
+                break;
         }
         return true;
     }
@@ -279,8 +288,13 @@ public class GamepadView extends View {
             return ROLE_START;
         }
         if (dist2(x, y, selCX, selCY) <= selR * selR * 1.6f) return ROLE_SELECT;
-        if (dist2(x, y, joyCX, joyCY) <= joyBaseR * joyBaseR * 4f) return ROLE_JOY;
+        if (isJoystickStart(x, getWidth())) return ROLE_JOY;
         return ROLE_NONE;
+    }
+
+    /** The left half is the joystick activation zone; other controls win hit testing first. */
+    static boolean isJoystickStart(float x, float viewWidth) {
+        return x >= 0f && x < viewWidth * 0.5f;
     }
 
     private static float dist2(float x1, float y1, float x2, float y2) {
@@ -290,9 +304,12 @@ public class GamepadView extends View {
 
     /** Clamps the knob offset to the travel limit (saturation: full direction). */
     private void clampKnob(Pointer p) {
-        float dx = p.x - joyCX, dy = p.y - joyCY;
-        float dist = (float) Math.hypot(dx, dy);
         float max = joyBaseR - joyKnobR * 0.5f;
+        float[] center = centerAfterFollow(p.joyCX, p.joyCY, p.x, p.y, max);
+        p.joyCX = clampJoyCenterX(center[0]);
+        p.joyCY = clampJoyCenterY(center[1]);
+        float dx = p.x - p.joyCX, dy = p.y - p.joyCY;
+        float dist = (float) Math.hypot(dx, dy);
         if (dist <= max || dist == 0f) {
             p.knobX = dx;
             p.knobY = dy;
@@ -301,6 +318,31 @@ public class GamepadView extends View {
             p.knobX = dx * s;
             p.knobY = dy * s;
         }
+    }
+
+    private float clampJoyCenterX(float x) {
+        float min = joyBaseR;
+        float max = Math.max(min, getWidth() * 0.5f - joyKnobR);
+        return Math.max(min, Math.min(max, x));
+    }
+
+    private float clampJoyCenterY(float y) {
+        float min = joyBaseR;
+        float max = Math.max(min, getHeight() - joyBaseR);
+        return Math.max(min, Math.min(max, y));
+    }
+
+    /** Moves a dynamic joystick center only by the portion beyond its travel limit. */
+    static float[] centerAfterFollow(float centerX, float centerY, float fingerX, float fingerY,
+                                     float maxTravel) {
+        float dx = fingerX - centerX;
+        float dy = fingerY - centerY;
+        float distance = (float) Math.hypot(dx, dy);
+        if (distance <= maxTravel || distance == 0f) {
+            return new float[] {centerX, centerY};
+        }
+        float follow = (distance - maxTravel) / distance;
+        return new float[] {centerX + dx * follow, centerY + dy * follow};
     }
 
     /** START/SELECT fire a short pulse (down then auto-release). */
