@@ -50,6 +50,24 @@ public final class GamepadInputStateTest {
         assertNoOpposites(state.mask());
     }
 
+    @Test public void dpadDirectionWinsWhenActionTargetOverlaps() {
+        ControlLayoutV2 overlapping = ControlLayoutV2.recommended().move(
+                ControlLayoutV2.Element.A, .10f, .76f);
+        GamepadHitMap dpadMap = GamepadHitMap.fromLayout(
+                2340, 1080, 2.75f, 0, 132, 0, 0,
+                overlapping, DirectionControlMode.DPAD, .22f);
+        GamepadHitMap.Bounds dpad = dpadMap.dpadBounds();
+        float x = dpad.centerX() + 20f * 2.75f;
+        float y = dpad.centerY();
+        assertEquals(InputBits.RIGHT, dpadMap.directionBits(x, y, 0));
+        assertEquals(GamepadHitMap.Control.A, dpadMap.buttonHit(x, y));
+        GamepadInputState state = new GamepadInputState(dpadMap);
+
+        state.down(1, x, y, 1L);
+
+        assertEquals(InputBits.RIGHT, state.mask());
+    }
+
     @Test public void joystickPointerStaysOwnedAcrossLongReverseDrag() {
         GamepadHitMap joystickMap = GamepadHitMap.fromLayout(
                 2340, 1080, 2.75f, 0, 132, 0, 0,

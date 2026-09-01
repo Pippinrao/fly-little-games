@@ -85,18 +85,26 @@ public final class GamepadInputState {
 
     public boolean down(int pointerId, float x, float y, long eventTime) {
         remove(pointerId);
-        GamepadHitMap.Control button = map.buttonHit(x, y);
-        if (button != GamepadHitMap.Control.NONE) {
-            putButton(pointerId, x, y, eventTime, bitsFor(button));
-        } else if (map.canStartJoystick(x, y) && joystickPointerId == NO_POINTER) {
-            Pointer pointer = Pointer.joystick(eventTime, x, y, ++sequence);
-            pointer.centerX = map.clampJoystickCenterX(x);
-            pointer.centerY = map.clampJoystickCenterY(y);
-            pointers.put(pointerId, pointer);
-            joystickPointerId = pointerId;
-            updateJoystick(pointer);
-        } else if (!map.joystickMode()) {
+        if (!map.joystickMode()) {
             putDpadIfHit(pointerId, x, y, eventTime);
+            if (!pointers.containsKey(pointerId)) {
+                GamepadHitMap.Control button = map.buttonHit(x, y);
+                if (button != GamepadHitMap.Control.NONE) {
+                    putButton(pointerId, x, y, eventTime, bitsFor(button));
+                }
+            }
+        } else {
+            GamepadHitMap.Control button = map.buttonHit(x, y);
+            if (button != GamepadHitMap.Control.NONE) {
+                putButton(pointerId, x, y, eventTime, bitsFor(button));
+            } else if (map.canStartJoystick(x, y) && joystickPointerId == NO_POINTER) {
+                Pointer pointer = Pointer.joystick(eventTime, x, y, ++sequence);
+                pointer.centerX = map.clampJoystickCenterX(x);
+                pointer.centerY = map.clampJoystickCenterY(y);
+                pointers.put(pointerId, pointer);
+                joystickPointerId = pointerId;
+                updateJoystick(pointer);
+            }
         }
         recompute();
         return pointers.containsKey(pointerId);
