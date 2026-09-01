@@ -26,6 +26,7 @@ cmake_install.cmake
 # AgentTeams runtime state (ephemeral)
 .agent-teams/
 /local-data/
+/.worktrees/
 
 # OS
 .DS_Store
