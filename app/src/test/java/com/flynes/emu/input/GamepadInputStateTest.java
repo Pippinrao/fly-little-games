@@ -50,7 +50,25 @@ public final class GamepadInputStateTest {
         assertNoOpposites(state.mask());
     }
 
-    @Test public void joystickPointerCanLeaveAndReenterWithoutLifting() {
+    @Test public void dpadDirectionWinsWhenActionTargetOverlaps() {
+        ControlLayoutV2 overlapping = ControlLayoutV2.recommended().move(
+                ControlLayoutV2.Element.A, .10f, .76f);
+        GamepadHitMap dpadMap = GamepadHitMap.fromLayout(
+                2340, 1080, 2.75f, 0, 132, 0, 0,
+                overlapping, DirectionControlMode.DPAD, .22f);
+        GamepadHitMap.Bounds dpad = dpadMap.dpadBounds();
+        float x = dpad.centerX() + 20f * 2.75f;
+        float y = dpad.centerY();
+        assertEquals(InputBits.RIGHT, dpadMap.directionBits(x, y, 0));
+        assertEquals(GamepadHitMap.Control.A, dpadMap.buttonHit(x, y));
+        GamepadInputState state = new GamepadInputState(dpadMap);
+
+        state.down(1, x, y, 1L);
+
+        assertEquals(InputBits.RIGHT, state.mask());
+    }
+
+    @Test public void joystickPointerStaysOwnedAcrossLongReverseDrag() {
         GamepadHitMap joystickMap = GamepadHitMap.fromLayout(
                 2340, 1080, 2.75f, 0, 132, 0, 0,
                 ControlLayoutV2.recommended(), DirectionControlMode.JOYSTICK, .22f);
@@ -58,38 +76,46 @@ public final class GamepadInputStateTest {
         GamepadHitMap.Bounds base = joystickMap.dpadBounds();
         float radius = base.width() / 2f;
 
-        state.down(9, base.centerX() + radius * .7f, base.centerY(), 1);
-        assertEquals(InputBits.RIGHT, state.mask());
-
-        state.move(9, 2340f * .75f, base.centerY(), 2);
+        state.down(9, base.centerX(), base.centerY(), 1);
         assertEquals(0, state.mask());
+        assertEquals(1, state.activePointerCount());
+
+        state.move(9, base.centerX() + radius * 5f, base.centerY(), 2);
+        assertEquals(InputBits.RIGHT, state.mask());
         assertEquals(1, state.activePointerCount());
         assertTrue(state.hasConsistentOwnership());
 
-        state.move(9, base.centerX() - radius * .7f, base.centerY(), 3);
+        state.move(9, base.centerX() - radius * 5f, base.centerY(), 3);
         assertEquals(InputBits.LEFT, state.mask());
         assertEquals(1, state.activePointerCount());
+        assertTrue(state.hasConsistentOwnership());
     }
 
     @Test public void fixedSeedTenThousandPointerSequencesAlwaysTerminateCleanly() {
         Random random = new Random(0xF17E5L);
-        for (int sequence = 0; sequence < 10_000; sequence++) {
-            GamepadInputState state = new GamepadInputState(map);
-            for (int event = 0; event < 24; event++) {
-                int id = random.nextInt(6);
-                float x = random.nextFloat() * 2340f;
-                float y = random.nextFloat() * 1080f;
-                switch (random.nextInt(3)) {
-                    case 0 -> state.down(id, x, y, event);
-                    case 1 -> state.move(id, x, y, event);
-                    default -> state.up(id, event);
+        GamepadHitMap joystickMap = GamepadHitMap.fromLayout(
+                2340, 1080, 2.75f, 0, 132, 0, 0,
+                ControlLayoutV2.recommended(), DirectionControlMode.JOYSTICK, .22f);
+        for (GamepadHitMap candidate : new GamepadHitMap[]{map, joystickMap}) {
+            for (int sequence = 0; sequence < 10_000; sequence++) {
+                GamepadInputState state = new GamepadInputState(candidate);
+                for (int event = 0; event < 24; event++) {
+                    int id = random.nextInt(6);
+                    float x = random.nextFloat() * 2340f;
+                    float y = random.nextFloat() * 1080f;
+                    switch (random.nextInt(3)) {
+                        case 0 -> state.down(id, x, y, event);
+                        case 1 -> state.move(id, x, y, event);
+                        default -> state.up(id, event);
+                    }
+                    assertNoOpposites(state.mask());
+                    assertTrue(state.hasConsistentOwnership());
                 }
-                assertNoOpposites(state.mask());
+                state.cancelAll();
+                assertEquals(0, state.mask());
+                assertEquals(0, state.activePointerCount());
+                assertTrue(state.hasConsistentOwnership());
             }
-            state.cancelAll();
-            assertEquals(0, state.mask());
-            assertEquals(0, state.activePointerCount());
-            assertTrue(state.hasConsistentOwnership());
         }
     }
 

@@ -12,7 +12,7 @@
     <string name="settings">Settings</string>
     <string name="control_feedback">Control feedback</string>
     <string name="direction_control">Direction control</string>
-    <string name="direction_joystick">Fixed joystick (recommended)</string>
+    <string name="direction_joystick">Floating joystick (recommended)</string>
     <string name="direction_dpad">Classic D-pad</string>
     <string name="haptic_off">Off</string>
     <string name="haptic_light">Light</string>

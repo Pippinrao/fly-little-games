@@ -12,7 +12,7 @@
     <string name="settings">设置</string>
     <string name="control_feedback">操作反馈</string>
     <string name="direction_control">方向操控</string>
-    <string name="direction_joystick">固定拨杆（推荐）</string>
+    <string name="direction_joystick">跟手浮动拨杆（推荐）</string>
     <string name="direction_dpad">经典方向键</string>
     <string name="haptic_off">关闭</string>
     <string name="haptic_light">轻</string>
