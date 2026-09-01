@@ -103,6 +103,65 @@ public final class GamepadJoystickContinuityTest {
         assertEquals(0, view.buttons() & InputBits.A);
     }
 
+    @Test
+    public void pointerDownAppliesSurvivorCoordinatesBeforeAddingNewRole() {
+        GamepadView view = joystickView();
+        GamepadHitMap.Bounds base = view.hitMapForTest().dpadBounds();
+        GamepadHitMap.Target a = view.hitMapForTest().target(GamepadHitMap.Control.A);
+        long now = SystemClock.uptimeMillis();
+
+        send(view, now, now, MotionEvent.ACTION_DOWN, base.centerX(), base.centerY());
+        send(view, now, now + 10, MotionEvent.ACTION_MOVE, 1800f, base.centerY());
+        assertEquals(InputBits.RIGHT, view.buttons() & DIRECTIONS);
+
+        sendPointers(view, now, now + 20,
+                MotionEvent.ACTION_POINTER_DOWN
+                        | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                new int[] {0, 1}, new float[] {10f, a.centerX()},
+                new float[] {base.centerY(), a.centerY()});
+
+        assertEquals(InputBits.LEFT | InputBits.A, view.buttons());
+    }
+
+    @Test
+    public void actionUpUsesFinalCoordinateBeforeMinimumTapDecision() {
+        GamepadView view = joystickView();
+        GamepadHitMap.Target a = view.hitMapForTest().target(GamepadHitMap.Control.A);
+        long now = SystemClock.uptimeMillis();
+
+        send(view, now, now, MotionEvent.ACTION_DOWN, a.centerX(), a.centerY());
+        assertEquals(InputBits.A, view.buttons());
+
+        send(view, now, now, MotionEvent.ACTION_UP, WIDTH * .75f, 100f);
+
+        assertEquals(0, view.buttons());
+    }
+
+    @Test
+    public void pointerUpAppliesSurvivorCoordinatesBeforeRemovingRole() {
+        GamepadView view = joystickView();
+        GamepadHitMap.Bounds base = view.hitMapForTest().dpadBounds();
+        GamepadHitMap.Target a = view.hitMapForTest().target(GamepadHitMap.Control.A);
+        long now = SystemClock.uptimeMillis();
+
+        send(view, now, now, MotionEvent.ACTION_DOWN, base.centerX(), base.centerY());
+        send(view, now, now + 5, MotionEvent.ACTION_MOVE, 1800f, base.centerY());
+        sendPointers(view, now, now + 10,
+                MotionEvent.ACTION_POINTER_DOWN
+                        | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                new int[] {0, 1}, new float[] {1800f, a.centerX()},
+                new float[] {base.centerY(), a.centerY()});
+        assertEquals(InputBits.RIGHT | InputBits.A, view.buttons());
+
+        sendPointers(view, now, now + 40,
+                MotionEvent.ACTION_POINTER_UP
+                        | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                new int[] {0, 1}, new float[] {10f, a.centerX()},
+                new float[] {base.centerY(), a.centerY()});
+
+        assertEquals(InputBits.LEFT, view.buttons());
+    }
+
     @SdkSuppress(minSdkVersion = 29)
     @Test
     public void insetsUpdateKeepsActiveDirectionVisualAndPublishedSession() {

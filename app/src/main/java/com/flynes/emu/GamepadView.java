@@ -294,6 +294,9 @@ public class GamepadView extends View {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             GamepadHitMap.Control control = hitMap.hit(event.getX(index), event.getY(index));
             int before = touchState.mask();
+            if (action == MotionEvent.ACTION_POINTER_DOWN) {
+                updateCurrentPointerPositions(event, index);
+            }
             boolean accepted = touchState.down(
                     id, event.getX(index), event.getY(index), event.getEventTime());
             if (accepted) disallowParentInterception();
@@ -317,7 +320,10 @@ public class GamepadView extends View {
             }
             feedbackDirectionChange(before, touchState.mask());
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
+            int before = touchState.mask();
+            updateCurrentPointerPositions(event, -1);
             GamepadInputState.Release release = touchState.up(id, event.getEventTime());
+            feedbackDirectionChange(before, touchState.mask());
             long remaining = MinimumTap.remainingMillis(event.getEventTime() - release.heldMillis(),
                     event.getEventTime(), MIN_FRAME_MS);
             int pulseable = release.bits() & TAP_PULSE_BITS;
@@ -328,6 +334,14 @@ public class GamepadView extends View {
         recompute();
         updateSystemGestureExclusion();
         return true;
+    }
+
+    private void updateCurrentPointerPositions(MotionEvent event, int excludedIndex) {
+        for (int pointer = 0; pointer < event.getPointerCount(); pointer++) {
+            if (pointer == excludedIndex) continue;
+            touchState.move(event.getPointerId(pointer), event.getX(pointer), event.getY(pointer),
+                    event.getEventTime());
+        }
     }
 
     private void feedbackDirectionChange(int before, int after) {
