@@ -6,10 +6,12 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewParent;
 import android.view.WindowInsets;
 
 import androidx.core.view.ViewCompat;
@@ -28,6 +30,7 @@ import com.flynes.emu.input.ControlVisualGeometry;
 import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.ControlLayoutRepository;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -49,6 +52,11 @@ public class GamepadView extends View {
     private static final int COLOR_PRESSED = 0xFFF4EFE6;
     private static final int COLOR_OUTLINE = 0xFFBEB8AE;
     private static final int COLOR_CORAL = 0xFFFF6B5E;
+    private static final int DIRECTION_BITS = InputBits.UP | InputBits.DOWN
+            | InputBits.LEFT | InputBits.RIGHT;
+    private static final int TAP_PULSE_BITS = InputBits.A | InputBits.B
+            | InputBits.SELECT | InputBits.START;
+    private static final float GESTURE_EXCLUSION_PADDING_DP = 8f;
     private static final ScheduledExecutorService TAP_RELEASES =
             Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "flynes-tap-release");
@@ -76,6 +84,7 @@ public class GamepadView extends View {
     private int keyboardBits;
     private volatile long lastInputEventElapsedNs;
     private int insetLeft, insetTop, insetRight, insetBottom;
+    private boolean parentInterceptionDisallowed;
 
     public GamepadView(Context context) {
         super(context);
@@ -104,10 +113,13 @@ public class GamepadView extends View {
         controlSettings = settings == null ? AppSettings.defaults() : settings;
         controlLayout = new ControlLayoutRepository(getContext()).load();
         haptics.configure(controlSettings.hapticLevel(), controlSettings.distinctABHaptics());
-        rebuildHitMap();
+        rebuildHitMap(false);
     }
     public int buttons() { return buttons; }
     public GamepadHitMap hitMapForTest() { return hitMap; }
+    GamepadInputState.JoystickVisual joystickVisualForTest() {
+        return touchState == null ? null : touchState.joystickVisual();
+    }
     int virtualControlCountForTest() { return 8; }
     CharSequence virtualControlNameForTest(int id) { return accessibility.controlName(accessibility.order[id]); }
     boolean performVirtualControlClickForTest(int id) {
@@ -116,6 +128,7 @@ public class GamepadView extends View {
 
     public void reset() {
         if (touchState != null) touchState.cancelAll();
+        releaseParentInterception();
         synchronized (inputStateLock) {
             for (int i = 0; i < pulseVersions.length; i++) pulseVersions[i]++;
             pulseBits = 0;
@@ -129,12 +142,13 @@ public class GamepadView extends View {
             }
             if (inputRouter != null) inputRouter.cancel(InputRouter.Source.KEYBOARD);
         }
+        updateSystemGestureExclusion();
         invalidate();
     }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        rebuildHitMap();
+        rebuildHitMap(false);
     }
 
     @Override public WindowInsets onApplyWindowInsets(WindowInsets insets) {
@@ -142,18 +156,25 @@ public class GamepadView extends View {
         insetTop = insets.getSystemWindowInsetTop();
         insetRight = insets.getSystemWindowInsetRight();
         insetBottom = insets.getSystemWindowInsetBottom();
-        rebuildHitMap();
+        rebuildHitMap(true);
         return insets;
     }
 
-    private void rebuildHitMap() {
+    private void rebuildHitMap(boolean preserveTouch) {
+        if (!preserveTouch) reset();
         if (getWidth() <= 0 || getHeight() <= 0) return;
-        hitMap = GamepadHitMap.fromLayout(getWidth(), getHeight(), density,
+        GamepadHitMap replacement = GamepadHitMap.fromLayout(getWidth(), getHeight(), density,
                 insetLeft, insetRight, insetTop, insetBottom, controlLayout,
                 controlSettings.directionControlMode(), controlSettings.deadZone());
-        touchState = new GamepadInputState(hitMap);
+        if (preserveTouch && touchState != null) {
+            touchState.reconfigure(replacement);
+        } else {
+            touchState = new GamepadInputState(replacement);
+        }
+        hitMap = replacement;
         accessibility.invalidateRoot();
         recompute();
+        updateSystemGestureExclusion();
     }
 
     @Override protected void onDraw(Canvas canvas) {
@@ -193,31 +214,19 @@ public class GamepadView extends View {
     }
 
     private void drawJoystick(Canvas canvas) {
-        GamepadHitMap.Bounds bounds = hitMap.dpadBounds();
-        float radius = Math.min(bounds.width(), bounds.height()) / 2f;
+        GamepadInputState.JoystickVisual visual = touchState.joystickVisual();
+        float radius = hitMap.joystickRadius();
         configurePaint(false, false);
-        canvas.drawCircle(bounds.centerX(), bounds.centerY(), radius, fill);
-        canvas.drawCircle(bounds.centerX(), bounds.centerY(), radius, stroke);
-        float directionX = ((buttons & InputBits.RIGHT) != 0 ? 1f : 0f)
-                - ((buttons & InputBits.LEFT) != 0 ? 1f : 0f);
-        float directionY = ((buttons & InputBits.DOWN) != 0 ? 1f : 0f)
-                - ((buttons & InputBits.UP) != 0 ? 1f : 0f);
-        if (directionX != 0f && directionY != 0f) {
-            directionX *= .7071f;
-            directionY *= .7071f;
-        }
-        float travel = radius * .42f;
-        boolean active = directionX != 0f || directionY != 0f;
+        canvas.drawCircle(visual.centerX(), visual.centerY(), radius, fill);
+        canvas.drawCircle(visual.centerX(), visual.centerY(), radius, stroke);
+        boolean active = visual.active();
         fill.setColor(withAlpha(active ? COLOR_PRESSED : COLOR_IDLE,
                 active ? pressedAlpha() : idleAlpha()));
         stroke.setColor(withAlpha(active ? COLOR_CORAL : COLOR_OUTLINE,
                 active ? pressedAlpha() : idleAlpha()));
-        float knobRadius = 28f * density
-                * controlLayout.placement(ControlLayoutV2.Element.D_PAD).scale();
-        float knobX = bounds.centerX() + directionX * travel;
-        float knobY = bounds.centerY() + directionY * travel;
-        canvas.drawCircle(knobX, knobY, knobRadius, fill);
-        canvas.drawCircle(knobX, knobY, knobRadius, stroke);
+        float knobRadius = radius * .4375f;
+        canvas.drawCircle(visual.knobX(), visual.knobY(), knobRadius, fill);
+        canvas.drawCircle(visual.knobX(), visual.knobY(), knobRadius, stroke);
     }
 
     private void drawDirectionHighlight(Canvas canvas, GamepadHitMap.Control control, int bit) {
@@ -285,35 +294,100 @@ public class GamepadView extends View {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             GamepadHitMap.Control control = hitMap.hit(event.getX(index), event.getY(index));
             int before = touchState.mask();
-            touchState.down(id, event.getX(index), event.getY(index), event.getEventTime());
-            feedbackNewDirections(before, touchState.mask());
+            boolean accepted = touchState.down(
+                    id, event.getX(index), event.getY(index), event.getEventTime());
+            if (accepted) disallowParentInterception();
+            feedbackDirectionChange(before, touchState.mask());
             if (control == GamepadHitMap.Control.A || control == GamepadHitMap.Control.B
                     || control == GamepadHitMap.Control.SELECT || control == GamepadHitMap.Control.START) {
                 haptics.feedback(control);
             }
         } else if (action == MotionEvent.ACTION_MOVE) {
             int before = touchState.mask();
+            for (int history = 0; history < event.getHistorySize(); history++) {
+                long eventTime = event.getHistoricalEventTime(history);
+                for (int pointer = 0; pointer < event.getPointerCount(); pointer++) {
+                    touchState.move(event.getPointerId(pointer),
+                            event.getHistoricalX(pointer, history),
+                            event.getHistoricalY(pointer, history), eventTime);
+                }
+            }
             for (int i = 0; i < event.getPointerCount(); i++) {
                 touchState.move(event.getPointerId(i), event.getX(i), event.getY(i), event.getEventTime());
             }
-            feedbackNewDirections(before, touchState.mask());
+            feedbackDirectionChange(before, touchState.mask());
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             GamepadInputState.Release release = touchState.up(id, event.getEventTime());
             long remaining = MinimumTap.remainingMillis(event.getEventTime() - release.heldMillis(),
                     event.getEventTime(), MIN_FRAME_MS);
-            if (remaining > 0L && release.bits() != 0) pulse(release.bits(), remaining);
+            int pulseable = release.bits() & TAP_PULSE_BITS;
+            if (remaining > 0L && pulseable != 0) pulse(pulseable, remaining);
+            if (action == MotionEvent.ACTION_UP) releaseParentInterception();
             performClick();
         }
         recompute();
+        updateSystemGestureExclusion();
         return true;
     }
 
-    private void feedbackNewDirections(int before, int after) {
-        int entered = after & ~before;
-        if ((entered & InputBits.UP) != 0) haptics.feedback(GamepadHitMap.Control.UP);
-        if ((entered & InputBits.DOWN) != 0) haptics.feedback(GamepadHitMap.Control.DOWN);
-        if ((entered & InputBits.LEFT) != 0) haptics.feedback(GamepadHitMap.Control.LEFT);
-        if ((entered & InputBits.RIGHT) != 0) haptics.feedback(GamepadHitMap.Control.RIGHT);
+    private void feedbackDirectionChange(int before, int after) {
+        int beforeDirections = before & DIRECTION_BITS;
+        int afterDirections = after & DIRECTION_BITS;
+        if (afterDirections == 0 || afterDirections == beforeDirections) return;
+        int feedbackBits = afterDirections & ~beforeDirections;
+        if (feedbackBits == 0) feedbackBits = afterDirections;
+        if ((feedbackBits & InputBits.UP) != 0) {
+            haptics.feedback(GamepadHitMap.Control.UP);
+        } else if ((feedbackBits & InputBits.DOWN) != 0) {
+            haptics.feedback(GamepadHitMap.Control.DOWN);
+        } else if ((feedbackBits & InputBits.LEFT) != 0) {
+            haptics.feedback(GamepadHitMap.Control.LEFT);
+        } else if ((feedbackBits & InputBits.RIGHT) != 0) {
+            haptics.feedback(GamepadHitMap.Control.RIGHT);
+        }
+    }
+
+    private void disallowParentInterception() {
+        if (parentInterceptionDisallowed) return;
+        ViewParent parent = getParent();
+        if (parent == null) return;
+        parent.requestDisallowInterceptTouchEvent(true);
+        parentInterceptionDisallowed = true;
+    }
+
+    private void releaseParentInterception() {
+        if (!parentInterceptionDisallowed) return;
+        ViewParent parent = getParent();
+        if (parent != null) parent.requestDisallowInterceptTouchEvent(false);
+        parentInterceptionDisallowed = false;
+    }
+
+    private void updateSystemGestureExclusion() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return;
+        if (hitMap == null || touchState == null || !hitMap.joystickMode()
+                || getWidth() <= 0 || getHeight() <= 0) {
+            setSystemGestureExclusionRects(Collections.emptyList());
+            return;
+        }
+        GamepadInputState.JoystickVisual visual = touchState.joystickVisual();
+        float extent = hitMap.joystickRadius() + GESTURE_EXCLUSION_PADDING_DP * density;
+        int viewCenterLimit = getWidth() / 2 - 1;
+        int safeCenterLimit = (int) Math.floor(
+                (insetLeft + getWidth() - insetRight) / 2f) - 1;
+        int rightLimit = Math.max(1, Math.min(viewCenterLimit, safeCenterLimit));
+        int right = clamp((int) Math.ceil(visual.centerX() + extent), 1, rightLimit);
+        int top = clamp((int) Math.floor(visual.centerY() - extent), 0, getHeight());
+        int bottom = clamp((int) Math.ceil(visual.centerY() + extent), 0, getHeight());
+        if (bottom <= top) {
+            setSystemGestureExclusionRects(Collections.emptyList());
+            return;
+        }
+        setSystemGestureExclusionRects(
+                Collections.singletonList(new Rect(0, top, right, bottom)));
+    }
+
+    private static int clamp(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 
     private void pulse(int bits, long millis) {
