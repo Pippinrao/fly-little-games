@@ -107,7 +107,7 @@ public final class GamepadInputState {
                 pointer.effectiveY = pointer.centerY;
                 pointers.put(pointerId, pointer);
                 joystickPointerId = pointerId;
-                updateJoystick(pointer);
+                refreshJoystick(pointer);
             }
         }
         recompute();
@@ -124,7 +124,11 @@ public final class GamepadInputState {
         if (pointer.joystick) {
             pointer.effectiveX += deltaX;
             pointer.effectiveY += deltaY;
-            updateJoystick(pointer);
+            if (deltaX != 0f || deltaY != 0f) {
+                followJoystick(pointer);
+            } else {
+                refreshJoystick(pointer);
+            }
         } else if (pointer.dpad) {
             pointer.bits = map.directionBits(x, y, pointer.bits);
         } else {
@@ -171,7 +175,7 @@ public final class GamepadInputState {
             joystick.effectiveY += centerY - joystick.centerY;
             joystick.centerX = centerX;
             joystick.centerY = centerY;
-            updateJoystick(joystick);
+            refreshJoystick(joystick);
         } else {
             joystickPointerId = NO_POINTER;
         }
@@ -235,7 +239,7 @@ public final class GamepadInputState {
         pointers.put(pointerId, pointer);
     }
 
-    private void updateJoystick(Pointer pointer) {
+    private void followJoystick(Pointer pointer) {
         pointer.centerX = map.clampJoystickCenterX(pointer.centerX);
         pointer.centerY = map.clampJoystickCenterY(pointer.centerY);
         float dx = pointer.effectiveX - pointer.centerX;
@@ -246,10 +250,17 @@ public final class GamepadInputState {
             float follow = (distance - travel) / distance;
             pointer.centerX = map.clampJoystickCenterX(pointer.centerX + dx * follow);
             pointer.centerY = map.clampJoystickCenterY(pointer.centerY + dy * follow);
-            dx = pointer.effectiveX - pointer.centerX;
-            dy = pointer.effectiveY - pointer.centerY;
-            distance = (float) Math.hypot(dx, dy);
         }
+        refreshJoystick(pointer);
+    }
+
+    private void refreshJoystick(Pointer pointer) {
+        pointer.centerX = map.clampJoystickCenterX(pointer.centerX);
+        pointer.centerY = map.clampJoystickCenterY(pointer.centerY);
+        float dx = pointer.effectiveX - pointer.centerX;
+        float dy = pointer.effectiveY - pointer.centerY;
+        float distance = (float) Math.hypot(dx, dy);
+        float travel = map.joystickTravelRadius();
         float scale = distance > travel && distance > 0f ? travel / distance : 1f;
         pointer.knobX = pointer.centerX + dx * scale;
         pointer.knobY = pointer.centerY + dy * scale;

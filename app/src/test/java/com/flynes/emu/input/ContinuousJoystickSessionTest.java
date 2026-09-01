@@ -10,6 +10,9 @@ public final class ContinuousJoystickSessionTest {
     private final GamepadHitMap map = GamepadHitMap.fromLayout(
             2340, 1080, 2.75f, 0, 132, 0, 0,
             ControlLayoutV2.recommended(), DirectionControlMode.JOYSTICK, .22f);
+    private final GamepadHitMap leftInsetMap = GamepadHitMap.fromLayout(
+            2340, 1080, 2.75f, 80, 132, 0, 0,
+            ControlLayoutV2.recommended(), DirectionControlMode.JOYSTICK, .22f);
 
     @Test public void centerDownIsCapturedBeforeDirectionBegins() {
         GamepadInputState state = new GamepadInputState(map);
@@ -172,6 +175,34 @@ public final class ContinuousJoystickSessionTest {
         assertEquals(InputBits.LEFT, state.mask());
     }
 
+    @Test public void repeatedSameMapReconfigureDoesNotRefollowBase() {
+        GamepadInputState state = new GamepadInputState(leftInsetMap);
+        assertTrue(state.down(1, 81f, 176f, 1L));
+        state.move(1, 181f, 76f, 2L);
+        int diagonal = InputBits.RIGHT | InputBits.UP;
+        assertEquals(diagonal, state.mask());
+        GamepadInputState.JoystickVisual before = state.joystickVisual();
+
+        state.reconfigure(leftInsetMap);
+        state.reconfigure(leftInsetMap);
+
+        assertJoystickStateUnchanged(state, diagonal, before);
+    }
+
+    @Test public void repeatedStationaryMovesDoNotRefollowBase() {
+        GamepadInputState state = new GamepadInputState(leftInsetMap);
+        assertTrue(state.down(1, 81f, 176f, 1L));
+        state.move(1, 181f, 76f, 2L);
+        int diagonal = InputBits.RIGHT | InputBits.UP;
+        assertEquals(diagonal, state.mask());
+        GamepadInputState.JoystickVisual before = state.joystickVisual();
+
+        state.move(1, 181f, 76f, 3L);
+        state.move(1, 181f, 76f, 4L);
+
+        assertJoystickStateUnchanged(state, diagonal, before);
+    }
+
     @Test public void directionModeReconfigurationCancelsOwner() {
         GamepadInputState state = new GamepadInputState(map);
         GamepadHitMap.Bounds base = map.dpadBounds();
@@ -220,5 +251,18 @@ public final class ContinuousJoystickSessionTest {
         assertEquals(2, state.activePointerCount());
         assertTrue(state.joystickVisual().active());
         assertTrue(state.hasConsistentOwnership());
+    }
+
+    private static void assertJoystickStateUnchanged(GamepadInputState state, int expectedMask,
+                                                      GamepadInputState.JoystickVisual expected) {
+        GamepadInputState.JoystickVisual actual = state.joystickVisual();
+        assertEquals(expectedMask, state.mask());
+        assertTrue(actual.active());
+        assertEquals(expected.centerX(), actual.centerX(), 0f);
+        assertEquals(expected.centerY(), actual.centerY(), 0f);
+        assertEquals(expected.knobX() - expected.centerX(),
+                actual.knobX() - actual.centerX(), 0f);
+        assertEquals(expected.knobY() - expected.centerY(),
+                actual.knobY() - actual.centerY(), 0f);
     }
 }
