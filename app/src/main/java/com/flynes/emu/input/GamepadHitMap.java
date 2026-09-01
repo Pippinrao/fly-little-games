@@ -13,6 +13,10 @@ public final class GamepadHitMap {
     public enum Control { NONE, UP, DOWN, LEFT, RIGHT, B, A, SELECT, START, PAUSE }
     public enum Shape { CIRCLE, ROUNDED_SQUARE, PILL }
 
+    private static final Control[] BUTTON_CONTROLS = {
+            Control.A, Control.B, Control.SELECT, Control.START
+    };
+
     public static final class Bounds {
         public final float left, top, right, bottom;
         Bounds(float left, float top, float right, float bottom) {
@@ -197,9 +201,44 @@ public final class GamepadHitMap {
     public List<Target> controls() { return controls; }
     public Bounds dpadBounds() { return dpadBounds; }
 
-    public Control hit(float x, float y) {
-        for (Control control : new Control[]{Control.A, Control.B, Control.SELECT, Control.START}) {
+    public boolean joystickMode() { return directionMode == DirectionControlMode.JOYSTICK; }
+
+    public Control buttonHit(float x, float y) {
+        for (Control control : BUTTON_CONTROLS) {
             if (target(control).contains(x, y)) return control;
+        }
+        return Control.NONE;
+    }
+
+    public boolean canStartJoystick(float x, float y) {
+        return joystickMode() && safeBounds.contains(x, y) && x < safeBounds.centerX();
+    }
+
+    public float joystickRadius() {
+        return Math.min(dpadBounds.width(), dpadBounds.height()) / 2f;
+    }
+
+    public float joystickTravelRadius() { return joystickRadius() * .5625f; }
+
+    public float clampJoystickCenterX(float x) {
+        float minimum = safeBounds.left + joystickRadius();
+        float maximum = Math.max(minimum, safeBounds.centerX() - joystickRadius());
+        return clamp(x, minimum, maximum);
+    }
+
+    public float clampJoystickCenterY(float y) {
+        float minimum = safeBounds.top + joystickRadius();
+        float maximum = Math.max(minimum, safeBounds.bottom - joystickRadius());
+        return clamp(y, minimum, maximum);
+    }
+
+    public Control hit(float x, float y) {
+        Control button = buttonHit(x, y);
+        if (button != Control.NONE) return button;
+        if (joystickMode()) {
+            float dx = x - dpadBounds.centerX();
+            float dy = y - dpadBounds.centerY();
+            if (Math.hypot(dx, dy) > joystickRadius() * 1.18f) return Control.NONE;
         }
         int direction = directionBits(x, y, 0);
         if (direction == InputBits.UP) return Control.UP;
@@ -211,8 +250,9 @@ public final class GamepadHitMap {
 
     /** Returns one or two adjacent directions. The small release margin prevents edge chatter. */
     public int directionBits(float x, float y, int previousBits) {
-        if (directionMode == DirectionControlMode.JOYSTICK) {
-            return joystickDirectionBits(x, y, previousBits);
+        if (joystickMode()) {
+            return joystickDirectionBits(
+                    dpadBounds.centerX(), dpadBounds.centerY(), x, y, previousBits);
         }
         float release = previousBits == 0 ? 0f : 8f * density;
         Bounds active = dpadBounds.expanded(release);
@@ -228,13 +268,13 @@ public final class GamepadHitMap {
         return bits;
     }
 
-    private int joystickDirectionBits(float x, float y, int previousBits) {
-        float dx = x - dpadBounds.centerX();
-        float dy = y - dpadBounds.centerY();
-        float radius = Math.min(dpadBounds.width(), dpadBounds.height()) / 2f;
-        float normalized = (float) Math.sqrt(dx * dx + dy * dy) / radius;
+    public int joystickDirectionBits(float centerX, float centerY,
+                                     float x, float y, int previousBits) {
+        float dx = x - centerX;
+        float dy = y - centerY;
+        float normalized = (float) Math.hypot(dx, dy) / joystickRadius();
         float threshold = previousBits == 0 ? deadZone : Math.max(.08f, deadZone - .06f);
-        if (normalized < threshold || normalized > 1.18f) return 0;
+        if (normalized < threshold) return 0;
         float ax = Math.abs(dx);
         float ay = Math.abs(dy);
         int bits = 0;
