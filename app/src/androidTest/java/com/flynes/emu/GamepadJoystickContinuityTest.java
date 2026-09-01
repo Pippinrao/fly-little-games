@@ -212,7 +212,7 @@ public final class GamepadJoystickContinuityTest {
 
     @SdkSuppress(minSdkVersion = 29)
     @Test
-    public void farRightExclusionStopsBeforeSafeCenterToKeepBackGestureLocal() {
+    public void farRightExclusionStopsAtSafeCenterWithoutTrimmingActiveBase() {
         GamepadView view = joystickView();
         WindowInsets changed = new WindowInsets.Builder()
                 .setSystemWindowInsets(Insets.of(40, 20, 80, 30))
@@ -228,15 +228,15 @@ public final class GamepadJoystickContinuityTest {
         Rect active = onlyExclusion(view);
         GamepadInputState.JoystickVisual visual = joystickVisual(view);
         float safeCenter = (40f + WIDTH - 80f) / 2f;
-        int localRightLimit = Math.min(WIDTH / 2 - 1,
-                (int) Math.floor(safeCenter) - 1);
+        int localRightLimit = Math.min(WIDTH / 2, (int) Math.floor(safeCenter));
+        assertEquals(1150, localRightLimit);
         assertEquals(localRightLimit, active.right);
-        assertTrue(active.width() < view.getWidth() / 2);
-        // Back starts at x=0. At the far-right limit, keeping its protection local is
-        // more valuable than right-side padding and may trim at most 1px of the base.
-        float uncoveredBase = visual.centerX() + view.hitMapForTest().joystickRadius()
-                - active.right;
-        assertTrue(uncoveredBase >= 0f && uncoveredBase <= 1.01f);
+        assertTrue(active.right <= view.getWidth() / 2);
+        assertTrue(active.right <= safeCenter);
+        // Right-side padding may be clipped at the safe center, but the active base itself
+        // remains covered because Android's back gesture only needs protection from x=0.
+        float baseRight = visual.centerX() + view.hitMapForTest().joystickRadius();
+        assertTrue("exclusion trimmed the active joystick base", active.right >= baseRight);
 
         send(view, now, now + 20, MotionEvent.ACTION_UP, 1800f, base.centerY());
         assertEquals(idle, onlyExclusion(view));

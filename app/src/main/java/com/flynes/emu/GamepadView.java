@@ -371,9 +371,9 @@ public class GamepadView extends View {
         }
         GamepadInputState.JoystickVisual visual = touchState.joystickVisual();
         float extent = hitMap.joystickRadius() + GESTURE_EXCLUSION_PADDING_DP * density;
-        int viewCenterLimit = getWidth() / 2 - 1;
+        int viewCenterLimit = getWidth() / 2;
         int safeCenterLimit = (int) Math.floor(
-                (insetLeft + getWidth() - insetRight) / 2f) - 1;
+                (insetLeft + getWidth() - insetRight) / 2f);
         int rightLimit = Math.max(1, Math.min(viewCenterLimit, safeCenterLimit));
         int right = clamp((int) Math.ceil(visual.centerX() + extent), 1, rightLimit);
         int top = clamp((int) Math.floor(visual.centerY() - extent), 0, getHeight());
