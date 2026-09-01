@@ -36,6 +36,27 @@ public final class ContinuousJoystickSessionTest {
         assertEquals(InputBits.RIGHT, state.mask());
     }
 
+    @Test public void edgeClampedDownStartsNeutralAndUsesPhysicalMovement() {
+        GamepadInputState state = new GamepadInputState(map);
+        float radius = map.joystickRadius();
+
+        assertTrue(state.down(1, 1f, 1f, 1L));
+
+        GamepadInputState.JoystickVisual down = state.joystickVisual();
+        assertTrue(down.active());
+        assertEquals(1, state.activePointerCount());
+        assertEquals(0, state.mask());
+        assertEquals(radius, down.centerX(), .01f);
+        assertEquals(radius, down.centerY(), .01f);
+        assertEquals(down.centerX(), down.knobX(), .01f);
+        assertEquals(down.centerY(), down.knobY(), .01f);
+
+        state.move(1, 1f + radius * .25f, 1f, 2L);
+
+        assertEquals(InputBits.RIGHT, state.mask());
+        assertTrue(state.hasConsistentOwnership());
+    }
+
     @Test public void dragPastFiveRadiiStaysDirectionalAndReversesWithoutLift() {
         GamepadInputState state = new GamepadInputState(map);
         GamepadHitMap.Bounds base = map.dpadBounds();
@@ -120,21 +141,35 @@ public final class ContinuousJoystickSessionTest {
         assertEquals(1080f - radius, bottomRight.centerY(), .01f);
     }
 
-    @Test public void insetReconfigurationPreservesOwnerAndDirection() {
+    @Test public void insetReconfigurationPreservesVectorAndFutureMotion() {
         GamepadInputState state = new GamepadInputState(map);
-        GamepadHitMap.Bounds base = map.dpadBounds();
-        state.down(1, base.centerX(), base.centerY(), 1L);
-        state.move(1, base.centerX() + base.width() * 2f, base.centerY(), 2L);
+        float radius = map.joystickRadius();
+        float x = radius;
+        float y = 500f;
+        assertTrue(state.down(1, x, y, 1L));
+        state.move(1, x + radius * .25f, y, 2L);
+        assertEquals(InputBits.RIGHT, state.mask());
+        GamepadInputState.JoystickVisual before = state.joystickVisual();
         GamepadHitMap insetMap = GamepadHitMap.fromLayout(
-                2340, 1080, 2.75f, 60, 132, 20, 30,
+                2340, 1080, 2.75f, 80, 132, 20, 30,
                 ControlLayoutV2.recommended(), DirectionControlMode.JOYSTICK, .22f);
 
         state.reconfigure(insetMap);
 
+        GamepadInputState.JoystickVisual after = state.joystickVisual();
         assertEquals(InputBits.RIGHT, state.mask());
         assertEquals(1, state.activePointerCount());
-        assertTrue(state.joystickVisual().active());
+        assertTrue(after.active());
+        assertEquals(before.knobX() - before.centerX(),
+                after.knobX() - after.centerX(), .01f);
+        assertEquals(before.knobY() - before.centerY(),
+                after.knobY() - after.centerY(), .01f);
         assertTrue(state.hasConsistentOwnership());
+
+        state.move(1, x + radius * .5f, y, 3L);
+        assertEquals(InputBits.RIGHT, state.mask());
+        state.move(1, x - radius * .25f, y, 4L);
+        assertEquals(InputBits.LEFT, state.mask());
     }
 
     @Test public void directionModeReconfigurationCancelsOwner() {

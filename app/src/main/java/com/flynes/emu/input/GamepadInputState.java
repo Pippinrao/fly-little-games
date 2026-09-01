@@ -51,6 +51,8 @@ public final class GamepadInputState {
         long sequence;
         float x;
         float y;
+        float effectiveX;
+        float effectiveY;
         float centerX;
         float centerY;
         float knobX;
@@ -101,6 +103,8 @@ public final class GamepadInputState {
                 Pointer pointer = Pointer.joystick(eventTime, x, y, ++sequence);
                 pointer.centerX = map.clampJoystickCenterX(x);
                 pointer.centerY = map.clampJoystickCenterY(y);
+                pointer.effectiveX = pointer.centerX;
+                pointer.effectiveY = pointer.centerY;
                 pointers.put(pointerId, pointer);
                 joystickPointerId = pointerId;
                 updateJoystick(pointer);
@@ -113,9 +117,13 @@ public final class GamepadInputState {
     public void move(int pointerId, float x, float y, long eventTime) {
         Pointer pointer = pointers.get(pointerId);
         if (pointer == null) return;
+        float deltaX = x - pointer.x;
+        float deltaY = y - pointer.y;
         pointer.x = x;
         pointer.y = y;
         if (pointer.joystick) {
+            pointer.effectiveX += deltaX;
+            pointer.effectiveY += deltaY;
             updateJoystick(pointer);
         } else if (pointer.dpad) {
             pointer.bits = map.directionBits(x, y, pointer.bits);
@@ -157,6 +165,12 @@ public final class GamepadInputState {
         map = replacement;
         Pointer joystick = pointers.get(joystickPointerId);
         if (joystick != null && joystick.joystick) {
+            float centerX = map.clampJoystickCenterX(joystick.centerX);
+            float centerY = map.clampJoystickCenterY(joystick.centerY);
+            joystick.effectiveX += centerX - joystick.centerX;
+            joystick.effectiveY += centerY - joystick.centerY;
+            joystick.centerX = centerX;
+            joystick.centerY = centerY;
             updateJoystick(joystick);
         } else {
             joystickPointerId = NO_POINTER;
@@ -224,23 +238,24 @@ public final class GamepadInputState {
     private void updateJoystick(Pointer pointer) {
         pointer.centerX = map.clampJoystickCenterX(pointer.centerX);
         pointer.centerY = map.clampJoystickCenterY(pointer.centerY);
-        float dx = pointer.x - pointer.centerX;
-        float dy = pointer.y - pointer.centerY;
+        float dx = pointer.effectiveX - pointer.centerX;
+        float dy = pointer.effectiveY - pointer.centerY;
         float distance = (float) Math.hypot(dx, dy);
         float travel = map.joystickTravelRadius();
         if (distance > travel && distance > 0f) {
             float follow = (distance - travel) / distance;
             pointer.centerX = map.clampJoystickCenterX(pointer.centerX + dx * follow);
             pointer.centerY = map.clampJoystickCenterY(pointer.centerY + dy * follow);
-            dx = pointer.x - pointer.centerX;
-            dy = pointer.y - pointer.centerY;
+            dx = pointer.effectiveX - pointer.centerX;
+            dy = pointer.effectiveY - pointer.centerY;
             distance = (float) Math.hypot(dx, dy);
         }
         float scale = distance > travel && distance > 0f ? travel / distance : 1f;
         pointer.knobX = pointer.centerX + dx * scale;
         pointer.knobY = pointer.centerY + dy * scale;
         pointer.bits = map.joystickDirectionBits(
-                pointer.centerX, pointer.centerY, pointer.x, pointer.y, pointer.bits);
+                pointer.centerX, pointer.centerY,
+                pointer.effectiveX, pointer.effectiveY, pointer.bits);
     }
 
     private void recompute() {
