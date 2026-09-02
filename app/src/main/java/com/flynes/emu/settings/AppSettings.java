@@ -40,7 +40,8 @@ public final class AppSettings {
         aspectMode = valueOr(builder.aspectMode, AspectMode.FOUR_BY_THREE);
         videoPreferences = valueOr(builder.videoPreferences, VideoPreferences.defaults());
         layoutPreset = valueOr(builder.layoutPreset, LayoutPreset.STANDARD_BA);
-        directionControlMode = valueOr(builder.directionControlMode, DirectionControlMode.JOYSTICK);
+        directionControlMode = valueOr(builder.directionControlMode,
+                DirectionControlMode.FIXED_JOYSTICK);
         buttonScale = clamp(builder.buttonScale, MIN_BUTTON_SCALE, MAX_BUTTON_SCALE);
         verticalOffset = clamp(builder.verticalOffset, MIN_VERTICAL_OFFSET, MAX_VERTICAL_OFFSET);
         controlOpacity = clamp(builder.controlOpacity, MIN_CONTROL_OPACITY, MAX_CONTROL_OPACITY);
@@ -123,12 +124,12 @@ public final class AppSettings {
         private AspectMode aspectMode = AspectMode.FOUR_BY_THREE;
         private VideoPreferences videoPreferences = VideoPreferences.defaults();
         private LayoutPreset layoutPreset = LayoutPreset.STANDARD_BA;
-        private DirectionControlMode directionControlMode = DirectionControlMode.JOYSTICK;
+        private DirectionControlMode directionControlMode = DirectionControlMode.FIXED_JOYSTICK;
         private float buttonScale = 1f;
         private float verticalOffset = 0f;
         private float controlOpacity = 0.78f;
         private float joystickScale = 1f;
-        private float deadZone = 0.22f;
+        private float deadZone = 0.18f;
         private HapticLevel hapticLevel = HapticLevel.LIGHT;
         private boolean distinctABHaptics = true;
         private boolean audioEnabled = true;
