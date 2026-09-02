@@ -76,6 +76,8 @@ public final class GamepadInputState {
     private GamepadHitMap map;
     private final DirectionSession direction;
     private final Map<Integer, ButtonPointer> buttonPointers = new HashMap<>();
+    private final int[] buttonOwnerCounts = new int[Integer.SIZE];
+    private int buttonMask;
     private int mask;
 
     public GamepadInputState(GamepadHitMap map) {
@@ -85,6 +87,7 @@ public final class GamepadInputState {
     }
 
     public boolean down(int pointerId, float x, float y, long eventTime) {
+        if (!finite(x, y)) return false;
         remove(pointerId);
         if (!putButtonIfHit(pointerId, x, y, eventTime)) {
             direction.capture(pointerId, x, y, eventTime);
@@ -94,6 +97,7 @@ public final class GamepadInputState {
     }
 
     public void move(int pointerId, float x, float y, long eventTime) {
+        if (!finite(x, y)) return;
         if (direction.owns(pointerId)) {
             direction.move(pointerId, x, y);
             recompute();
@@ -107,9 +111,9 @@ public final class GamepadInputState {
         int currentBits = bitsFor(map.buttonHit(x, y));
         if ((pointer.bits & (InputBits.A | InputBits.B)) != 0
                 && (currentBits & (InputBits.A | InputBits.B)) != 0) {
-            pointer.bits |= currentBits;
+            updateButtonBits(pointer, pointer.bits | currentBits);
         } else if (currentBits == 0) {
-            buttonPointers.remove(pointerId);
+            removeButtonPointer(pointerId);
         }
         recompute();
     }
@@ -121,7 +125,7 @@ public final class GamepadInputState {
             recompute();
             return release;
         }
-        ButtonPointer pointer = buttonPointers.remove(pointerId);
+        ButtonPointer pointer = removeButtonPointer(pointerId);
         recompute();
         return pointer == null ? new Release(0, eventTime, eventTime)
                 : new Release(pointer.bits, pointer.downTime, eventTime);
@@ -135,6 +139,8 @@ public final class GamepadInputState {
 
     public void cancelAll() {
         buttonPointers.clear();
+        for (int i = 0; i < buttonOwnerCounts.length; i++) buttonOwnerCounts[i] = 0;
+        buttonMask = 0;
         direction.cancelAll();
         mask = 0;
     }
@@ -162,35 +168,74 @@ public final class GamepadInputState {
 
     public boolean hasConsistentOwnership() {
         if (hasOpposingDirections(mask) || !direction.isConsistent()) return false;
+        int expectedButtonMask = 0;
         for (Map.Entry<Integer, ButtonPointer> entry : buttonPointers.entrySet()) {
             ButtonPointer pointer = entry.getValue();
             if (direction.owns(entry.getKey()) || pointer.bits == 0
                     || (pointer.bits & ~BUTTON_BITS) != 0) return false;
+            expectedButtonMask |= pointer.bits;
         }
-        return (mask & DIRECTION_BITS) == direction.bits();
+        return expectedButtonMask == buttonMask
+                && (mask & DIRECTION_BITS) == direction.bits();
     }
 
     private boolean putButtonIfHit(int pointerId, float x, float y, long eventTime) {
         int bits = bitsFor(map.buttonHit(x, y));
         if (bits == 0) return false;
-        buttonPointers.put(pointerId, new ButtonPointer(eventTime, bits, x, y));
+        ButtonPointer pointer = new ButtonPointer(eventTime, bits, x, y);
+        buttonPointers.put(pointerId, pointer);
+        addButtonBits(bits);
         return true;
     }
 
     private void remove(int pointerId) {
         direction.cancel(pointerId);
-        buttonPointers.remove(pointerId);
+        removeButtonPointer(pointerId);
     }
 
     private void recompute() {
-        int result = direction.bits();
-        for (ButtonPointer pointer : buttonPointers.values()) result |= pointer.bits;
-        mask = result;
+        mask = direction.bits() | buttonMask;
+    }
+
+    private ButtonPointer removeButtonPointer(int pointerId) {
+        ButtonPointer pointer = buttonPointers.remove(pointerId);
+        if (pointer != null) removeButtonBits(pointer.bits);
+        return pointer;
+    }
+
+    private void updateButtonBits(ButtonPointer pointer, int replacement) {
+        int previous = pointer.bits;
+        if (previous == replacement) return;
+        removeButtonBits(previous & ~replacement);
+        addButtonBits(replacement & ~previous);
+        pointer.bits = replacement;
+    }
+
+    private void addButtonBits(int bits) {
+        for (int remaining = bits & BUTTON_BITS; remaining != 0;
+             remaining &= remaining - 1) {
+            int bit = Integer.lowestOneBit(remaining);
+            int index = Integer.numberOfTrailingZeros(bit);
+            if (++buttonOwnerCounts[index] == 1) buttonMask |= bit;
+        }
+    }
+
+    private void removeButtonBits(int bits) {
+        for (int remaining = bits & BUTTON_BITS; remaining != 0;
+             remaining &= remaining - 1) {
+            int bit = Integer.lowestOneBit(remaining);
+            int index = Integer.numberOfTrailingZeros(bit);
+            if (--buttonOwnerCounts[index] == 0) buttonMask &= ~bit;
+        }
     }
 
     private static boolean hasOpposingDirections(int bits) {
         return ((bits & InputBits.UP) != 0 && (bits & InputBits.DOWN) != 0)
                 || ((bits & InputBits.LEFT) != 0 && (bits & InputBits.RIGHT) != 0);
+    }
+
+    private static boolean finite(float x, float y) {
+        return Float.isFinite(x) && Float.isFinite(y);
     }
 
     private static int bitsFor(GamepadHitMap.Control control) {

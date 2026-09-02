@@ -58,7 +58,7 @@ final class DirectionSession {
     }
 
     boolean capture(int pointerId, float x, float y, long eventTime) {
-        if (owned() || !map.canStartDirection(x, y)) return false;
+        if (!finite(x, y) || owned() || !map.canStartDirection(x, y)) return false;
         ownerPointerId = pointerId;
         downTime = eventTime;
         rawX = x;
@@ -85,7 +85,7 @@ final class DirectionSession {
     }
 
     void move(int pointerId, float x, float y) {
-        if (!owns(pointerId)) return;
+        if (!finite(x, y) || !owns(pointerId)) return;
         float deltaX = x - rawX;
         float deltaY = y - rawY;
         rawX = x;
@@ -276,5 +276,9 @@ final class DirectionSession {
     private static boolean hasOpposingDirections(int bits) {
         return ((bits & InputBits.UP) != 0 && (bits & InputBits.DOWN) != 0)
                 || ((bits & InputBits.LEFT) != 0 && (bits & InputBits.RIGHT) != 0);
+    }
+
+    private static boolean finite(float x, float y) {
+        return Float.isFinite(x) && Float.isFinite(y);
     }
 }

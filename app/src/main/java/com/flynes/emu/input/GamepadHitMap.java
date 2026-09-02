@@ -149,7 +149,8 @@ public final class GamepadHitMap {
                                            ControlLayoutV2 layout,
                                            DirectionControlMode directionMode,
                                            float deadZone) {
-        if (directionMode == null || deadZone < .08f || deadZone > .45f) {
+        if (directionMode == null || !Float.isFinite(deadZone)
+                || deadZone < .08f || deadZone > .45f) {
             throw new IllegalArgumentException("invalid direction control settings");
         }
         float safeLeft=insetLeft, safeTop=insetTop, safeRight=width-insetRight, safeBottom=height-insetBottom;

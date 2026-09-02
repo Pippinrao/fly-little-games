@@ -2,6 +2,7 @@ package com.flynes.emu.input;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -57,5 +58,15 @@ public final class GamepadHitMapTest {
                 d.centerX() + 13f * DENSITY, d.centerY(), InputBits.RIGHT));
         assertEquals(0, map.directionBits(d.right + 13f * DENSITY,
                 d.centerY(), InputBits.RIGHT));
+    }
+
+    @Test public void fromLayoutRejectsEveryNonFiniteDeadZone() {
+        for (float deadZone : new float[]{Float.NaN, Float.POSITIVE_INFINITY,
+                Float.NEGATIVE_INFINITY}) {
+            assertThrows(IllegalArgumentException.class, () -> GamepadHitMap.fromLayout(
+                    2340, 1080, DENSITY, 0, 132, 0, 0,
+                    ControlLayoutV2.recommended(), DirectionControlMode.FIXED_JOYSTICK,
+                    deadZone));
+        }
     }
 }

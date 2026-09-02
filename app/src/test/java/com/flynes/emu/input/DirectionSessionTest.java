@@ -331,6 +331,67 @@ public final class DirectionSessionTest {
         assertEquals(0, state.activePointerCount());
     }
 
+    @Test public void nonFiniteDownIsRejectedBeforeExistingRolesAreMutated() {
+        GamepadHitMap map = map(DirectionControlMode.FIXED_JOYSTICK);
+        GamepadInputState state = new GamepadInputState(map);
+        GamepadHitMap.Bounds base = map.dpadBounds();
+        GamepadHitMap.Target a = map.target(GamepadHitMap.Control.A);
+        assertTrue(state.down(1, base.centerX(), base.centerY(), 1L));
+        state.move(1, base.centerX() + map.joystickRadius(), base.centerY(), 2L);
+        assertTrue(state.down(2, a.centerX(), a.centerY(), 3L));
+        GamepadInputState.JoystickVisual expectedVisual = state.joystickVisual();
+        int expectedMask = state.mask();
+        long expectedRevision = state.directionFeedbackRevision();
+        int eventTime = 4;
+
+        for (float[] sample : nonFiniteSamples(base.centerX(), base.centerY())) {
+            assertFalse(state.down(1, sample[0], sample[1], eventTime++));
+            assertFalse(state.down(2, sample[0], sample[1], eventTime++));
+            assertFalse(state.down(99, sample[0], sample[1], eventTime++));
+            assertEquals(expectedMask, state.mask());
+            assertEquals(2, state.activePointerCount());
+            assertEquals(expectedRevision, state.directionFeedbackRevision());
+            assertVisualEquals(expectedVisual, state.joystickVisual());
+            assertTrue(state.hasConsistentOwnership());
+        }
+    }
+
+    @Test public void nonFiniteDirectionMovesAreIgnoredBeforeAndAfterActivation() {
+        GamepadHitMap map = map(DirectionControlMode.FIXED_JOYSTICK);
+        GamepadInputState state = new GamepadInputState(map);
+        GamepadHitMap.Bounds base = map.dpadBounds();
+        float radius = map.joystickRadius();
+        assertTrue(state.down(1, base.centerX(), base.centerY(), 1L));
+        GamepadInputState.JoystickVisual neutral = state.joystickVisual();
+        int eventTime = 2;
+
+        for (float[] sample : nonFiniteSamples(base.centerX(), base.centerY())) {
+            state.move(1, sample[0], sample[1], eventTime++);
+            assertEquals(0, state.mask() & DIRECTIONS);
+            assertEquals(0L, state.directionFeedbackRevision());
+            assertVisualEquals(neutral, state.joystickVisual());
+            assertTrue(state.hasConsistentOwnership());
+        }
+
+        state.move(1, base.centerX() + radius, base.centerY(), eventTime++);
+        assertEquals(InputBits.RIGHT, state.mask() & DIRECTIONS);
+        assertEquals(1L, state.directionFeedbackRevision());
+        GamepadInputState.JoystickVisual active = state.joystickVisual();
+        for (float[] sample : nonFiniteSamples(base.centerX(), base.centerY())) {
+            state.move(1, sample[0], sample[1], eventTime++);
+            assertEquals(InputBits.RIGHT, state.mask() & DIRECTIONS);
+            assertEquals(1L, state.directionFeedbackRevision());
+            assertVisualEquals(active, state.joystickVisual());
+            assertTrue(state.hasConsistentOwnership());
+        }
+
+        state.move(1, base.centerX() - radius, base.centerY(), eventTime);
+        assertEquals(InputBits.LEFT, state.mask() & DIRECTIONS);
+        assertEquals(2L, state.directionFeedbackRevision());
+        assertTrue(Float.isFinite(state.joystickVisual().knobX()));
+        assertTrue(Float.isFinite(state.joystickVisual().knobY()));
+    }
+
     @Test public void randomizedVectorsNeverProduceOppositesOrPostActivationNeutral() {
         Random random = new Random(0xD1EC710L);
         for (DirectionControlMode mode : new DirectionControlMode[]{
@@ -365,6 +426,17 @@ public final class DirectionSessionTest {
         return GamepadHitMap.fromLayout(
                 WIDTH, HEIGHT, DENSITY, 0, INSET_RIGHT, 0, 0,
                 ControlLayoutV2.recommended(), mode, DEAD_ZONE);
+    }
+
+    private static float[][] nonFiniteSamples(float finiteX, float finiteY) {
+        return new float[][]{
+                {Float.NaN, finiteY},
+                {Float.POSITIVE_INFINITY, finiteY},
+                {Float.NEGATIVE_INFINITY, finiteY},
+                {finiteX, Float.NaN},
+                {finiteX, Float.POSITIVE_INFINITY},
+                {finiteX, Float.NEGATIVE_INFINITY}
+        };
     }
 
     private static void moveAtAngle(GamepadInputState state, int pointerId,
