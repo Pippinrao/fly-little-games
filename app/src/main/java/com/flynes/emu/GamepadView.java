@@ -134,6 +134,7 @@ public class GamepadView extends View {
         return touchState == null ? null : touchState.joystickVisual();
     }
     boolean joystickReturnActiveForTest() { return joystickReturn.active(); }
+    int dpadHighlightBitsForTest() { return dpadHighlightBits(); }
     int virtualControlCountForTest() { return 8; }
     CharSequence virtualControlNameForTest(int id) { return accessibility.controlName(accessibility.order[id]); }
     boolean performVirtualControlClickForTest(int id) {
@@ -244,13 +245,19 @@ public class GamepadView extends View {
         canvas.drawRoundRect(horizontal, 8f * density, 8f * density, fill);
         canvas.drawRoundRect(vertical, 8f * density, 8f * density, stroke);
         canvas.drawRoundRect(horizontal, 8f * density, 8f * density, stroke);
-        int directionBits = visual.directionBits();
+        int directionBits = dpadHighlightBits();
         drawDirectionHighlight(canvas, GamepadHitMap.Control.UP, InputBits.UP, directionBits);
         drawDirectionHighlight(canvas, GamepadHitMap.Control.DOWN, InputBits.DOWN, directionBits);
         drawDirectionHighlight(canvas, GamepadHitMap.Control.LEFT, InputBits.LEFT, directionBits);
         drawDirectionHighlight(canvas, GamepadHitMap.Control.RIGHT, InputBits.RIGHT, directionBits);
         fill.setColor(withAlpha(0xFF121316, idleAlpha()));
         canvas.drawCircle(d.centerX(), d.centerY(), 8f * density, fill);
+    }
+
+    private int dpadHighlightBits() {
+        int touchDirections = touchState == null
+                ? 0 : touchState.joystickVisual().directionBits();
+        return touchDirections | (buttons & DIRECTION_BITS) | (keyboardBits & DIRECTION_BITS);
     }
 
     private void drawJoystick(Canvas canvas) {
@@ -548,6 +555,7 @@ public class GamepadView extends View {
         if (event.getRepeatCount() == 0) {
             keyboardBits |= bit;
             publishKeyboard();
+            invalidate();
         }
         return true;
     }
@@ -556,6 +564,7 @@ public class GamepadView extends View {
         if (bit == 0) return super.onKeyUp(keyCode, event);
         keyboardBits &= ~bit;
         publishKeyboard();
+        invalidate();
         return true;
     }
     private void publishKeyboard() {

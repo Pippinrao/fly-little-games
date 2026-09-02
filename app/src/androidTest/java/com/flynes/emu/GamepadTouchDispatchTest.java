@@ -481,6 +481,21 @@ public final class GamepadTouchDispatchTest {
         });
     }
 
+    @Test public void dpadHighlightsAccessibilityAndKeyboardDirectionFeedback() {
+        onMain(() -> {
+            Fixture fixture = fixture(DirectionControlMode.DPAD, HapticLevel.OFF);
+
+            assertTrue(fixture.view.performVirtualControlClickForTest(0));
+            assertTrue((fixture.view.dpadHighlightBitsForTest() & InputBits.UP) != 0);
+            fixture.view.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT,
+                    new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
+            assertTrue((fixture.view.dpadHighlightBitsForTest() & InputBits.RIGHT) != 0);
+            fixture.view.onKeyUp(KeyEvent.KEYCODE_DPAD_RIGHT,
+                    new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT));
+            assertEquals(0, fixture.view.dpadHighlightBitsForTest() & InputBits.RIGHT);
+        });
+    }
+
     private static Fixture fixture() {
         return fixture(DirectionControlMode.FIXED_JOYSTICK, HapticLevel.LIGHT);
     }
