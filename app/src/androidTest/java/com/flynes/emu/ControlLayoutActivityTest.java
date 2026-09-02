@@ -5,15 +5,26 @@ import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNotEquals;
 
+import android.content.Context;
 import android.os.SystemClock;
 import android.view.MotionEvent;
+import android.view.View;
 import androidx.test.core.app.ActivityScenario;
+import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.flynes.emu.input.ControlLayoutV2;
+import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.input.GamepadHitMap;
+import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.ControlLayoutRepository;
+import com.flynes.emu.settings.SettingsRepository;
+import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -77,5 +88,62 @@ public final class ControlLayoutActivityTest {
                 org.junit.Assert.assertTrue(view.performVirtualControlClickForTest(1));
             });
         }
+    }
+
+    @Test public void editorHandlesAllDirectionModesNeutralCentersAndButtonPriority() {
+        Context context = ApplicationProvider.getApplicationContext();
+
+        ControlLayoutEditorView fixed = editor(context, DirectionControlMode.FIXED_JOYSTICK);
+        GamepadHitMap fixedMap = editorMap(fixed, DirectionControlMode.FIXED_JOYSTICK);
+        assertTrue(fixed.drawsJoystickForTest());
+        assertEquals(context.getString(R.string.control_joystick),
+                fixed.virtualControlNameForTest(0));
+        assertEquals(ControlLayoutV2.Element.D_PAD, fixed.elementAtForTest(
+                fixedMap.dpadBounds().centerX(), fixedMap.dpadBounds().centerY()));
+
+        ControlLayoutV2 overlap = ControlLayoutV2.recommended().move(
+                ControlLayoutV2.Element.A, .10f, .76f);
+        fixed.setLayout(overlap);
+        GamepadHitMap overlappingMap = editorMap(fixed,
+                DirectionControlMode.FIXED_JOYSTICK);
+        GamepadHitMap.Target overlappingA = overlappingMap.target(GamepadHitMap.Control.A);
+        assertEquals(ControlLayoutV2.Element.A, fixed.elementAtForTest(
+                overlappingA.centerX(), overlappingA.centerY()));
+
+        ControlLayoutEditorView follow = editor(context, DirectionControlMode.JOYSTICK);
+        assertTrue(follow.drawsJoystickForTest());
+        assertEquals(context.getString(R.string.control_joystick),
+                follow.virtualControlNameForTest(0));
+        assertNull(follow.elementAtForTest(follow.getWidth() * .40f,
+                follow.getHeight() * .50f));
+
+        ControlLayoutEditorView dpad = editor(context, DirectionControlMode.DPAD);
+        GamepadHitMap dpadMap = editorMap(dpad, DirectionControlMode.DPAD);
+        assertFalse(dpad.drawsJoystickForTest());
+        assertEquals(context.getString(R.string.control_dpad),
+                dpad.virtualControlNameForTest(0));
+        assertEquals(ControlLayoutV2.Element.D_PAD, dpad.elementAtForTest(
+                dpadMap.dpadBounds().centerX(), dpadMap.dpadBounds().centerY()));
+    }
+
+    private static ControlLayoutEditorView editor(Context context,
+                                                   DirectionControlMode mode) {
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
+                .edit().clear().commit();
+        new SettingsRepository(new SharedPreferencesSettingsStore(context)).save(
+                AppSettings.defaults().toBuilder().directionControlMode(mode).build());
+        ControlLayoutEditorView view = new ControlLayoutEditorView(context);
+        view.setLayout(ControlLayoutV2.recommended());
+        view.measure(View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY));
+        view.layout(0, 0, 2340, 1080);
+        return view;
+    }
+
+    private static GamepadHitMap editorMap(ControlLayoutEditorView view,
+                                            DirectionControlMode mode) {
+        return GamepadHitMap.fromLayout(view.getWidth(), view.getHeight(),
+                view.getResources().getDisplayMetrics().density, 0, 0, 0, 0,
+                view.layout(), mode, .18f);
     }
 }

@@ -43,6 +43,20 @@ public final class HapticController {
         view.performHapticFeedback(feedbackConstant(control));
     }
 
+    /** Uses the platform's action semantic so direction ticks respect device haptic policy. */
+    public boolean feedbackDirectionTick() {
+        if (level == HapticLevel.OFF) return false;
+        int feedbackConstant;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            feedbackConstant = level == HapticLevel.LIGHT
+                    ? HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+                    : HapticFeedbackConstants.SEGMENT_TICK;
+        } else {
+            feedbackConstant = HapticFeedbackConstants.CLOCK_TICK;
+        }
+        return view.performHapticFeedback(feedbackConstant);
+    }
+
     private int feedbackConstant(GamepadHitMap.Control control) {
         if (control == GamepadHitMap.Control.B && distinguishAB) {
             return HapticFeedbackConstants.LONG_PRESS;

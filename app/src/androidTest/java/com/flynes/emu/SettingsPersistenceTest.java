@@ -8,6 +8,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.hamcrest.Matchers.allOf;
 
 import android.content.Context;
@@ -29,6 +30,45 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class SettingsPersistenceTest {
+    @Test
+    public void directionModesAreOrderedAndCleanDefaultThenFollowPersist() {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
+                .edit().clear().commit();
+        assertArrayEquals(new String[]{
+                        context.getString(R.string.direction_fixed_joystick),
+                        context.getString(R.string.direction_joystick),
+                        context.getString(R.string.direction_dpad)},
+                strings(context.getResources().getTextArray(
+                        R.array.direction_control_entries)));
+        assertArrayEquals(new String[]{"FIXED_JOYSTICK", "JOYSTICK", "DPAD"},
+                strings(context.getResources().getTextArray(
+                        R.array.direction_control_values)));
+
+        try (ActivityScenario<SettingsActivity> scenario =
+                     ActivityScenario.launch(SettingsActivity.class)) {
+            onView(withId(R.id.settings_controls_master)).perform(click());
+            scenario.onActivity(activity -> {
+                com.flynes.emu.settings.SettingsFragment fragment =
+                        (com.flynes.emu.settings.SettingsFragment) activity
+                                .getSupportFragmentManager()
+                                .findFragmentById(R.id.settings_content);
+                androidx.preference.ListPreference preference =
+                        fragment.findPreference("controls.direction_mode");
+                assertEquals("FIXED_JOYSTICK", preference.getValue());
+                assertEquals(context.getString(R.string.direction_fixed_joystick),
+                        preference.getSummary());
+            });
+            onView(withText(R.string.direction_control)).perform(click());
+            onView(withText(R.string.direction_joystick)).perform(click());
+            scenario.recreate();
+        }
+
+        assertEquals(DirectionControlMode.JOYSTICK,
+                new SettingsRepository(new SharedPreferencesSettingsStore(context))
+                        .load().directionControlMode());
+    }
+
     @Test
     public void hapticAndAspectPersistAcrossRecreation() {
         Context context = ApplicationProvider.getApplicationContext();
@@ -56,5 +96,13 @@ public final class SettingsPersistenceTest {
         assertEquals(AspectMode.SQUARE_PIXELS, saved.aspectMode());
         assertEquals(HapticLevel.OFF, saved.hapticLevel());
         assertEquals(DirectionControlMode.DPAD, saved.directionControlMode());
+    }
+
+    private static String[] strings(CharSequence[] values) {
+        String[] result = new String[values.length];
+        for (int index = 0; index < values.length; index++) {
+            result[index] = values[index].toString();
+        }
+        return result;
     }
 }

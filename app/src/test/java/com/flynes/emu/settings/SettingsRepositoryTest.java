@@ -27,6 +27,29 @@ public final class SettingsRepositoryTest {
         assertEquals(SpatialMode.SHARP_BILINEAR,
                 settings.videoPreferences().custom().spatialMode());
         assertTrue(settings.videoPreferences().adaptiveProtection());
+        assertEquals(DirectionControlMode.FIXED_JOYSTICK, settings.directionControlMode());
+        assertEquals(.18f, settings.deadZone(), 0f);
+    }
+
+    @Test public void persistedLegacyDirectionNamesAndDeadZonesKeepTheirMeaning() {
+        VideoSettingsMigrationTest.AtomicMemoryStore joystickStore =
+                new VideoSettingsMigrationTest.AtomicMemoryStore()
+                        .put(SettingsKeys.DIRECTION_MODE, "JOYSTICK")
+                        .put(SettingsKeys.DEAD_ZONE, "0.31");
+        AppSettings joystick = new SettingsRepository(joystickStore).load();
+        assertEquals(DirectionControlMode.JOYSTICK, joystick.directionControlMode());
+        assertEquals(.31f, joystick.deadZone(), 0f);
+
+        VideoSettingsMigrationTest.AtomicMemoryStore dpadStore =
+                new VideoSettingsMigrationTest.AtomicMemoryStore()
+                        .put(SettingsKeys.DIRECTION_MODE, "DPAD")
+                        .put(SettingsKeys.DEAD_ZONE, "0.27");
+        AppSettings dpad = new SettingsRepository(dpadStore).load();
+        assertEquals(DirectionControlMode.DPAD, dpad.directionControlMode());
+        assertEquals(.27f, dpad.deadZone(), 0f);
+        assertEquals(DirectionControlMode.JOYSTICK,
+                DirectionControlMode.valueOf("JOYSTICK"));
+        assertEquals(DirectionControlMode.DPAD, DirectionControlMode.valueOf("DPAD"));
     }
 
     @Test public void roundTripPersistsEverySetting() {

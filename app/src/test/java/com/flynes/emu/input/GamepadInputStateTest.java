@@ -39,6 +39,51 @@ public final class GamepadInputStateTest {
         assertEquals(0, state.activePointerCount());
     }
 
+    @Test public void nonFiniteButtonMovesAreIgnoredAndFiniteRollStillWorks() {
+        GamepadInputState state = new GamepadInputState(map);
+        GamepadHitMap.Target a = map.target(GamepadHitMap.Control.A);
+        GamepadHitMap.Target b = map.target(GamepadHitMap.Control.B);
+        assertTrue(state.down(1, a.centerX(), a.centerY(), 1L));
+        float[][] samples = {
+                {Float.NaN, a.centerY()},
+                {Float.POSITIVE_INFINITY, a.centerY()},
+                {Float.NEGATIVE_INFINITY, a.centerY()},
+                {a.centerX(), Float.NaN},
+                {a.centerX(), Float.POSITIVE_INFINITY},
+                {a.centerX(), Float.NEGATIVE_INFINITY}
+        };
+
+        for (int i = 0; i < samples.length; i++) {
+            state.move(1, samples[i][0], samples[i][1], i + 2L);
+            assertEquals(InputBits.A, state.mask());
+            assertEquals(1, state.activePointerCount());
+        }
+
+        state.move(1, b.centerX(), b.centerY(), 20L);
+        assertEquals(InputBits.A | InputBits.B, state.mask());
+        assertEquals(1, state.activePointerCount());
+    }
+
+    @Test public void sharedButtonOwnersAndRollCombinationsDecrementExactly() {
+        GamepadInputState state = new GamepadInputState(map);
+        GamepadHitMap.Target a = map.target(GamepadHitMap.Control.A);
+        GamepadHitMap.Target b = map.target(GamepadHitMap.Control.B);
+        assertTrue(state.down(1, a.centerX(), a.centerY(), 1L));
+        assertTrue(state.down(2, a.centerX(), a.centerY(), 2L));
+        state.move(1, b.centerX(), b.centerY(), 3L);
+        assertEquals(InputBits.A | InputBits.B, state.mask());
+
+        state.up(2, 4L);
+        assertEquals(InputBits.A | InputBits.B, state.mask());
+        assertTrue(state.down(3, b.centerX(), b.centerY(), 5L));
+        state.up(1, 6L);
+        assertEquals(InputBits.B, state.mask());
+
+        state.cancel(3);
+        assertEquals(0, state.mask());
+        assertEquals(0, state.activePointerCount());
+    }
+
     @Test public void opposingDirectionsFromDifferentPointersNeverCoexist() {
         GamepadInputState state = new GamepadInputState(map);
         GamepadHitMap.Bounds d = map.dpadBounds();
@@ -50,7 +95,7 @@ public final class GamepadInputStateTest {
         assertNoOpposites(state.mask());
     }
 
-    @Test public void dpadDirectionWinsWhenActionTargetOverlaps() {
+    @Test public void explicitButtonWinsWhenDpadCaptureOverlaps() {
         ControlLayoutV2 overlapping = ControlLayoutV2.recommended().move(
                 ControlLayoutV2.Element.A, .10f, .76f);
         GamepadHitMap dpadMap = GamepadHitMap.fromLayout(
@@ -65,7 +110,8 @@ public final class GamepadInputStateTest {
 
         state.down(1, x, y, 1L);
 
-        assertEquals(InputBits.RIGHT, state.mask());
+        assertEquals(InputBits.A, state.mask());
+        assertFalse(state.joystickVisual().owned());
     }
 
     @Test public void joystickPointerStaysOwnedAcrossLongReverseDrag() {

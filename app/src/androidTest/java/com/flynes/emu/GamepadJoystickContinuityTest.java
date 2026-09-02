@@ -251,7 +251,7 @@ public final class GamepadJoystickContinuityTest {
 
     @SdkSuppress(minSdkVersion = 29)
     @Test
-    public void dpadModeHasNoSystemGestureExclusion() {
+    public void dpadModeHasBoundedLocalSystemGestureExclusion() {
         GamepadView view = joystickView();
         GamepadHitMap.Bounds base = view.hitMapForTest().dpadBounds();
         long now = SystemClock.uptimeMillis();
@@ -266,12 +266,17 @@ public final class GamepadJoystickContinuityTest {
 
         assertEquals(0, view.buttons());
         assertFalse(joystickVisual(view).active());
-        assertTrue(view.getSystemGestureExclusionRects().isEmpty());
+        Rect exclusion = onlyExclusion(view);
+        assertBoundedLocalExclusion(view, exclusion);
+        GamepadHitMap.Bounds dpadBounds = view.hitMapForTest().dpadBounds();
+        assertTrue(exclusion.contains(Math.round(dpadBounds.left),
+                Math.round(dpadBounds.top), Math.round(dpadBounds.right),
+                Math.round(dpadBounds.bottom)));
     }
 
     @SdkSuppress(minSdkVersion = 29)
     @Test
-    public void farRightExclusionStopsAtSafeCenterWithoutTrimmingActiveBase() {
+    public void farRightExclusionRemainsLocalWithoutTrimmingActiveBase() {
         GamepadView view = joystickView();
         WindowInsets changed = new WindowInsets.Builder()
                 .setSystemWindowInsets(Insets.of(40, 20, 80, 30))
@@ -286,16 +291,12 @@ public final class GamepadJoystickContinuityTest {
 
         Rect active = onlyExclusion(view);
         GamepadInputState.JoystickVisual visual = joystickVisual(view);
-        float safeCenter = (40f + WIDTH - 80f) / 2f;
-        int localRightLimit = Math.min(WIDTH / 2, (int) Math.floor(safeCenter));
-        assertEquals(1150, localRightLimit);
-        assertEquals(localRightLimit, active.right);
-        assertTrue(active.right <= view.getWidth() / 2);
-        assertTrue(active.right <= safeCenter);
-        // Right-side padding may be clipped at the safe center, but the active base itself
-        // remains covered because Android's back gesture only needs protection from x=0.
-        float baseRight = visual.centerX() + view.hitMapForTest().joystickRadius();
+        float padding = 16f * view.getResources().getDisplayMetrics().density;
+        float baseRight = visual.centerX() + view.hitMapForTest().joystickRadius()
+                + padding;
         assertTrue("exclusion trimmed the active joystick base", active.right >= baseRight);
+        assertTrue("exclusion unexpectedly covered the whole view",
+                active.width() < view.getWidth());
 
         send(view, now, now + 20, MotionEvent.ACTION_UP, 1800f, base.centerY());
         assertEquals(idle, onlyExclusion(view));
@@ -385,7 +386,9 @@ public final class GamepadJoystickContinuityTest {
     private static GamepadView joystickView() {
         Context context = ApplicationProvider.getApplicationContext();
         GamepadView view = new GamepadView(context);
-        view.setControlSettings(AppSettings.defaults());
+        view.setControlSettings(AppSettings.defaults().toBuilder()
+                .directionControlMode(DirectionControlMode.JOYSTICK)
+                .build());
         measureAndLayout(view, WIDTH, HEIGHT);
         return view;
     }
@@ -466,19 +469,18 @@ public final class GamepadJoystickContinuityTest {
         assertTrue(exclusion.top >= 0);
         assertTrue(exclusion.right <= view.getWidth());
         assertTrue(exclusion.bottom <= view.getHeight());
-        assertTrue(exclusion.width() < view.getWidth() / 2);
+        assertTrue(exclusion.width() < view.getWidth());
         assertTrue(exclusion.height() < view.getHeight());
+        assertTrue(exclusion.height() <= Math.round(200f
+                * view.getResources().getDisplayMetrics().density));
     }
 
     private static void assertContainsJoystickFootprint(
             GamepadView view, Rect exclusion, GamepadInputState.JoystickVisual visual) {
-        float extent = view.hitMapForTest().joystickRadius()
-                + 8f * view.getResources().getDisplayMetrics().density;
-        assertEquals((int) Math.ceil(visual.centerX() + extent), exclusion.right);
-        assertEquals(Math.max(0, (int) Math.floor(visual.centerY() - extent)),
-                exclusion.top);
-        assertEquals(Math.min(view.getHeight(),
-                (int) Math.ceil(visual.centerY() + extent)), exclusion.bottom);
+        float radius = view.hitMapForTest().joystickRadius();
+        assertTrue(exclusion.right >= (int) Math.ceil(visual.centerX() + radius));
+        assertTrue(exclusion.top <= (int) Math.floor(visual.centerY() - radius));
+        assertTrue(exclusion.bottom >= (int) Math.ceil(visual.centerY() + radius));
     }
 
     private static final class RecordingParent extends ViewGroup {

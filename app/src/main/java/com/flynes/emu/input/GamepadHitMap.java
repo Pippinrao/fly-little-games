@@ -149,13 +149,14 @@ public final class GamepadHitMap {
                                            ControlLayoutV2 layout,
                                            DirectionControlMode directionMode,
                                            float deadZone) {
-        if (directionMode == null || deadZone < .08f || deadZone > .45f) {
+        if (directionMode == null || !Float.isFinite(deadZone)
+                || deadZone < .08f || deadZone > .45f) {
             throw new IllegalArgumentException("invalid direction control settings");
         }
         float safeLeft=insetLeft, safeTop=insetTop, safeRight=width-insetRight, safeBottom=height-insetBottom;
         float safeWidth=safeRight-safeLeft, safeHeight=safeBottom-safeTop;
         ControlLayoutV2.Placement d=layout.placement(ControlLayoutV2.Element.D_PAD);
-        float dSize=(directionMode==DirectionControlMode.JOYSTICK?128f:144f)*density*d.scale();
+        float dSize=(directionMode==DirectionControlMode.DPAD?144f:128f)*density*d.scale();
         float dCx=clamp(safeLeft+d.centerX()*safeWidth,safeLeft+dSize/2f,safeRight-dSize/2f);
         float dCy=clamp(safeTop+d.centerY()*safeHeight,safeTop+dSize/2f,safeBottom-dSize/2f);
         Bounds dpad=new Bounds(dCx-dSize/2f,dCy-dSize/2f,dCx+dSize/2f,dCy+dSize/2f);
@@ -200,8 +201,20 @@ public final class GamepadHitMap {
     }
     public List<Target> controls() { return controls; }
     public Bounds dpadBounds() { return dpadBounds; }
+    public DirectionControlMode directionMode() { return directionMode; }
+    public float deadZone() { return deadZone; }
 
-    public boolean joystickMode() { return directionMode == DirectionControlMode.JOYSTICK; }
+    /** True for either visual joystick style. */
+    public boolean joystickMode() { return directionMode != DirectionControlMode.DPAD; }
+
+    /** True only for the legacy moving/following joystick. */
+    public boolean followingJoystickMode() {
+        return directionMode == DirectionControlMode.JOYSTICK;
+    }
+
+    public boolean fixedJoystickMode() {
+        return directionMode == DirectionControlMode.FIXED_JOYSTICK;
+    }
 
     public Control buttonHit(float x, float y) {
         for (Control control : BUTTON_CONTROLS) {
@@ -211,7 +224,19 @@ public final class GamepadHitMap {
     }
 
     public boolean canStartJoystick(float x, float y) {
-        return joystickMode() && safeBounds.contains(x, y) && x < safeBounds.centerX();
+        if (followingJoystickMode()) {
+            return safeBounds.contains(x, y) && x < safeBounds.centerX();
+        }
+        if (!fixedJoystickMode()) return false;
+        float dx = x - dpadBounds.centerX();
+        float dy = y - dpadBounds.centerY();
+        float captureRadius = joystickRadius() + 16f * density;
+        return dx * dx + dy * dy <= captureRadius * captureRadius;
+    }
+
+    public boolean canStartDirection(float x, float y) {
+        if (joystickMode()) return canStartJoystick(x, y);
+        return dpadBounds.expanded(16f * density).contains(x, y);
     }
 
     public float joystickRadius() {
@@ -238,7 +263,9 @@ public final class GamepadHitMap {
         if (joystickMode()) {
             float dx = x - dpadBounds.centerX();
             float dy = y - dpadBounds.centerY();
-            if (Math.hypot(dx, dy) > joystickRadius() * 1.18f) return Control.NONE;
+            float captureRadius = fixedJoystickMode()
+                    ? joystickRadius() + 16f * density : joystickRadius() * 1.18f;
+            if (Math.hypot(dx, dy) > captureRadius) return Control.NONE;
         }
         int direction = directionBits(x, y, 0);
         if (direction == InputBits.UP) return Control.UP;
