@@ -9,6 +9,7 @@ import android.graphics.Insets;
 import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.InputDevice;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -613,7 +614,11 @@ public final class GamepadTouchDispatchTest {
         }
 
         @Override public boolean performHapticFeedback(int feedbackConstant) {
-            directionHapticCount++;
+            if (feedbackConstant == HapticFeedbackConstants.CLOCK_TICK
+                    || feedbackConstant == HapticFeedbackConstants.SEGMENT_TICK
+                    || feedbackConstant == HapticFeedbackConstants.SEGMENT_FREQUENT_TICK) {
+                directionHapticCount++;
+            }
             return true;
         }
     }
