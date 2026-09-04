@@ -52,7 +52,7 @@ input or expected output changes, update both parity gates, regenerate, run
 
 ## Bounded ZIP-open parity fixtures
 
-`tests/fixtures/zip/open/v1/manifest.tsv` and its 60 `.zip` blobs are the single
+`tests/fixtures/zip/open/v1/manifest.tsv` and its 64 `.zip` blobs are the single
 language-neutral ZIP structural/open corpus. Each row supplies all seven scan
 limits, a SHA-256, and either the exact stable error code/message or every
 published entry metadata field in Java output order. Raw names and central
@@ -62,14 +62,24 @@ identity. The JVM `BoundedZipOpenFixtureParityTest` and the CTest targets
 same directory. `flynes_bounded_zip_archive_edges` instead uses inline bytes for
 direct API, limit-validation, null-view, and ownership checks.
 
+Version 1 includes descriptor CRC/signature collisions, competing EOCD
+candidates inside comments, and explicit rejection of prefix bytes.
+
 The manifest and both loaders enforce schema version 1, safe basename-only
 paths, unique case/blob names, exact SHA-256 values, regular non-symlink files,
-and exact directory enumeration. Generate or non-mutatingly verify it with:
+canonical unsigned decimal limits, nonempty success names, stable nonblank
+error messages, and exact directory enumeration. CTest runs both the generator's
+black-box safety suite and a direct `--check` of the committed corpus. Generate
+or non-mutatingly verify it with:
 
 ```sh
 python shared/tests/fixtures/zip/open/generate_v1.py
 python shared/tests/fixtures/zip/open/generate_v1.py --check
 ```
+
+Generation refuses unexpected entries and reparse/symlink output roots. Files
+are replaced atomically so an existing hardlink cannot cause an out-of-tree
+alias to be truncated.
 
 This slice stops after central/local headers, compressed byte ranges, descriptor
 metadata, declared inflated totals, and ratio validation. It deliberately does

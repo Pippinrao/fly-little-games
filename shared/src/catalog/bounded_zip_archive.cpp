@@ -176,7 +176,7 @@ struct CentralEntry final
     std::uint32_t uncompressed_size = 0;
 };
 
-std::uint64_t find_end_record(const std::vector<std::uint8_t>& archive)
+std::vector<std::uint64_t> find_end_records(const std::vector<std::uint8_t>& archive)
 {
     if (archive.size() < 22u)
     {
@@ -186,6 +186,7 @@ std::uint64_t find_end_record(const std::vector<std::uint8_t>& archive)
     const std::uint64_t last = size - 22u;
     const std::uint64_t scan_distance = 22u + 0xFFFFu;
     const std::uint64_t earliest = size > scan_distance ? size - scan_distance : 0u;
+    std::vector<std::uint64_t> candidates;
     std::uint64_t offset = last;
     while (true)
     {
@@ -194,7 +195,7 @@ std::uint64_t find_end_record(const std::vector<std::uint8_t>& archive)
             const std::uint16_t comment_length = unsigned_short(archive, offset + 20u);
             if (offset + 22u + comment_length == size)
             {
-                return offset;
+                candidates.push_back(offset);
             }
         }
         if (offset == earliest)
@@ -203,7 +204,11 @@ std::uint64_t find_end_record(const std::vector<std::uint8_t>& archive)
         }
         --offset;
     }
-    invalid("ZIP end record is missing or truncated");
+    if (candidates.empty())
+    {
+        invalid("ZIP end record is missing or truncated");
+    }
+    return candidates;
 }
 
 void validate_ratio(const CentralEntry& entry, const BoundedZipLimits& limits)
@@ -242,7 +247,8 @@ void require_zero_or_equal(std::uint32_t local,
 
 std::uint64_t validate_local_header(const std::vector<std::uint8_t>& archive,
                                     const CentralEntry& central,
-                                    std::uint64_t central_offset)
+                                    std::uint64_t central_offset,
+                                    std::uint64_t descriptor_boundary)
 {
     const std::uint64_t offset = static_cast<std::uint32_t>(central.local_header_offset);
     require_range(archive, offset, 30u, "ZIP local header is truncated");
@@ -303,37 +309,65 @@ std::uint64_t validate_local_header(const std::vector<std::uint8_t>& archive,
     std::uint64_t entry_end = payload_end;
     if ((local_flags & data_descriptor_flag) != 0u)
     {
-        require_range(archive, payload_end, 12u, "ZIP data descriptor is truncated");
+        if (payload_end > descriptor_boundary)
+        {
+            invalid("ZIP local entries overlap");
+        }
+        const std::uint64_t available = descriptor_boundary - payload_end;
+        if (available < 4u)
+        {
+            invalid(descriptor_boundary < central_offset
+                        ? "ZIP local entries overlap"
+                        : "ZIP data descriptor overlaps the central directory");
+        }
         const std::uint32_t first = unsigned_int(archive, payload_end);
-        const bool is_signed = first == descriptor_signature;
-        const std::uint64_t values_offset = payload_end + (is_signed ? 4u : 0u);
-        if (is_signed)
+        const auto descriptor_matches = [&](std::uint64_t values_offset) {
+            return unsigned_int(archive, values_offset) == central.crc32 &&
+                   unsigned_int(archive, values_offset + 4u) == central.compressed_size &&
+                   unsigned_int(archive, values_offset + 8u) == central.uncompressed_size;
+        };
+        const bool unsigned_matches = available >= 12u && descriptor_matches(payload_end);
+        const bool signed_matches = first == descriptor_signature && available >= 16u &&
+                                    descriptor_matches(payload_end + 4u);
+        if (unsigned_matches && signed_matches)
         {
-            require_range(archive, payload_end, 16u,
-                          "ZIP signed data descriptor is truncated");
+            invalid("ZIP data descriptor is ambiguous");
         }
-        const std::uint32_t descriptor_crc = unsigned_int(archive, values_offset);
-        const std::uint32_t descriptor_compressed = unsigned_int(archive, values_offset + 4u);
-        const std::uint32_t descriptor_uncompressed = unsigned_int(archive, values_offset + 8u);
-        if (descriptor_crc != central.crc32 ||
-            descriptor_compressed != central.compressed_size ||
-            descriptor_uncompressed != central.uncompressed_size)
+        if (signed_matches)
         {
-            invalid("ZIP data descriptor differs from central metadata");
+            entry_end = payload_end + 16u;
         }
-        entry_end = payload_end + (is_signed ? 16u : 12u);
-        if (entry_end > central_offset)
+        else if (unsigned_matches)
+        {
+            entry_end = payload_end + 12u;
+        }
+        else if (descriptor_boundary < central_offset &&
+                 (available < 12u ||
+                  (first == descriptor_signature && available < 16u)))
+        {
+            invalid("ZIP local entries overlap");
+        }
+        else if (first != descriptor_signature && available < 12u)
         {
             invalid("ZIP data descriptor overlaps the central directory");
+        }
+        else if (first == descriptor_signature && available >= 12u && available < 16u)
+        {
+            invalid("ZIP data descriptor overlaps the central directory");
+        }
+        else
+        {
+            invalid("ZIP data descriptor differs from central metadata");
         }
     }
     return entry_end;
 }
 
-std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& archive,
-                                           const BoundedZipLimits& limits)
+std::vector<BoundedZipEntry> parse_entries_at_end_record(
+    const std::vector<std::uint8_t>& archive,
+    const BoundedZipLimits& limits,
+    std::uint64_t end_record)
 {
-    const std::uint64_t end_record = find_end_record(archive);
     const std::uint16_t disk_number = unsigned_short(archive, end_record + 4u);
     const std::uint16_t central_directory_disk = unsigned_short(archive, end_record + 6u);
     const std::uint16_t entries_on_disk = unsigned_short(archive, end_record + 8u);
@@ -449,15 +483,24 @@ std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& arch
         });
     std::uint64_t declared_inflated = 0u;
     std::optional<std::uint64_t> previous_entry_end;
-    for (const CentralEntry& central : central_entries)
+    for (std::size_t index = 0u; index < central_entries.size(); ++index)
     {
+        const CentralEntry& central = central_entries[index];
         const std::uint64_t local_offset =
             static_cast<std::uint32_t>(central.local_header_offset);
         if (previous_entry_end.has_value() && *previous_entry_end > local_offset)
         {
             invalid("ZIP local entries overlap");
         }
-        previous_entry_end = validate_local_header(archive, central, central_offset);
+        const std::uint64_t descriptor_boundary =
+            index + 1u < central_entries.size()
+                ? std::min<std::uint64_t>(
+                      static_cast<std::uint32_t>(
+                          central_entries[index + 1u].local_header_offset),
+                      central_offset)
+                : central_offset;
+        previous_entry_end = validate_local_header(
+            archive, central, central_offset, descriptor_boundary);
         declared_inflated = checked_add(
             declared_inflated, central.uncompressed_size, "ZIP inflated total overflows");
         if (declared_inflated > limits.max_cumulative_inflated_bytes())
@@ -465,6 +508,11 @@ std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& arch
             fail(ZipOpenCode::INFLATED_LIMIT_EXCEEDED,
                  "ZIP inflated total exceeds the limit");
         }
+    }
+    if ((central_entries.empty() && central_offset != 0u) ||
+        (!central_entries.empty() && central_entries.front().local_header_offset != 0))
+    {
+        invalid("ZIP prefix bytes are unsupported");
     }
 
     std::vector<BoundedZipEntry> entries;
@@ -486,6 +534,41 @@ std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& arch
         entries.push_back(std::move(entry));
     }
     return entries;
+}
+
+std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& archive,
+                                           const BoundedZipLimits& limits)
+{
+    std::optional<std::vector<BoundedZipEntry>> parsed;
+    std::optional<ZipOpenCode> first_failure_code;
+    std::string first_failure_message;
+    for (const std::uint64_t end_record : find_end_records(archive))
+    {
+        std::vector<BoundedZipEntry> candidate;
+        try
+        {
+            candidate = parse_entries_at_end_record(archive, limits, end_record);
+        }
+        catch (const ValidationFailure& failure)
+        {
+            if (!first_failure_code.has_value())
+            {
+                first_failure_code = failure.code();
+                first_failure_message = failure.what();
+            }
+            continue;
+        }
+        if (parsed.has_value())
+        {
+            invalid("ZIP end record is ambiguous");
+        }
+        parsed = std::move(candidate);
+    }
+    if (parsed.has_value())
+    {
+        return std::move(*parsed);
+    }
+    fail(*first_failure_code, first_failure_message.c_str());
 }
 
 } // namespace

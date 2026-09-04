@@ -187,6 +187,22 @@ void expect_load_error(const fs::path& corpus,
     }
 }
 
+void expect_load_success(const fs::path& corpus, const std::string& label)
+{
+    try
+    {
+        static_cast<void>(flynes::test::load_zip_open_fixtures(corpus.string()));
+    }
+    catch (const std::exception& error)
+    {
+        std::fprintf(stderr,
+                     "FAIL: %s: loader rejected corpus: %s\n",
+                     label.c_str(),
+                     error.what());
+        ++failures;
+    }
+}
+
 void flip_first_byte(const fs::path& path)
 {
     std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
@@ -211,11 +227,23 @@ int main()
 
         const std::vector<flynes::test::ZipOpenFixture> baseline =
             flynes::test::load_zip_open_fixtures(FLYNES_ZIP_OPEN_FIXTURE_DIR);
-        check(baseline.size() == 60u, "baseline exact corpus loads");
+        check(baseline.size() == 64u, "baseline exact corpus loads");
 
         fs::path corpus = scratch.copy_corpus("unsafe_path");
         replace_field(corpus, 1u, 2u, "../escape.zip");
         expect_load_error(corpus, "unsafe path", {"manifest line 2", "blob", "safe basename"});
+
+        corpus = scratch.copy_corpus("invalid_case_id");
+        replace_field(corpus, 1u, 1u, "0case");
+        expect_load_error(corpus,
+                          "invalid case ID",
+                          {"manifest line 2", "case_id", "[a-z][a-z0-9_]*"});
+
+        corpus = scratch.copy_corpus("mismatched_blob_name");
+        replace_field(corpus, 1u, 2u, "other.zip");
+        expect_load_error(corpus,
+                          "mismatched blob name",
+                          {"manifest line 2", "blob", "<case_id>.zip"});
 
         corpus = scratch.copy_corpus("missing_blob");
         fs::remove(corpus / "valid_stored_metadata.zip");
@@ -251,11 +279,81 @@ int main()
                           "invalid limit",
                           {"manifest line 2", "max_package_bytes", "allowed range"});
 
+        const std::vector<std::string> noncanonical_limits = {"+1", "01", "-0"};
+        for (std::size_t index = 0u; index < noncanonical_limits.size(); ++index)
+        {
+            corpus = scratch.copy_corpus("noncanonical_limit_" + std::to_string(index));
+            replace_field(corpus, 1u, 4u, noncanonical_limits[index]);
+            expect_load_error(corpus,
+                              "noncanonical unsigned decimal " + noncanonical_limits[index],
+                              {"manifest line 2", "max_package_bytes",
+                               "canonical unsigned decimal"});
+        }
+
+        struct LimitField final
+        {
+            std::size_t column;
+            const char* name;
+        };
+        const std::vector<LimitField> long_limit_fields = {
+            {4u, "max_package_bytes"},
+            {5u, "max_payload_bytes"},
+            {7u, "max_cumulative_inflated_bytes"},
+            {10u, "ratio_guard_threshold_bytes"},
+        };
+        for (const LimitField& field : long_limit_fields)
+        {
+            corpus = scratch.copy_corpus(std::string("long_max_") + field.name);
+            replace_field(corpus, 1u, field.column, "9223372036854775807");
+            expect_load_success(corpus, std::string(field.name) + " accepts INT64_MAX");
+
+            corpus = scratch.copy_corpus(std::string("long_over_") + field.name);
+            replace_field(corpus, 1u, field.column, "9223372036854775808");
+            expect_load_error(corpus,
+                              std::string(field.name) + " rejects INT64_MAX + 1",
+                              {"manifest line 2", field.name, "allowed range"});
+        }
+
+        const std::vector<LimitField> int_limit_fields = {
+            {6u, "max_zip_entries"},
+            {9u, "max_compression_ratio"},
+        };
+        for (const LimitField& field : int_limit_fields)
+        {
+            corpus = scratch.copy_corpus(std::string("int_max_") + field.name);
+            replace_field(corpus, 1u, field.column, "2147483647");
+            expect_load_success(corpus, std::string(field.name) + " accepts INT32_MAX");
+
+            corpus = scratch.copy_corpus(std::string("int_over_") + field.name);
+            replace_field(corpus, 1u, field.column, "2147483648");
+            expect_load_error(corpus,
+                              std::string(field.name) + " rejects INT32_MAX + 1",
+                              {"manifest line 2", field.name, "allowed range"});
+        }
+
+        corpus = scratch.copy_corpus("blank_error_message");
+        replace_field(corpus, 5u, 13u, "   ");
+        expect_load_error(corpus,
+                          "blank error message",
+                          {"manifest line 6", "error_message", "nonblank stable message"});
+
+        corpus = scratch.copy_corpus("none_error_message");
+        replace_field(corpus, 5u, 13u, "NONE");
+        expect_load_error(corpus,
+                          "NONE error message",
+                          {"manifest line 6", "error_message", "nonblank stable message"});
+
         corpus = scratch.copy_corpus("invalid_entries");
         replace_field(corpus, 1u, 14u, "bad");
         expect_load_error(corpus,
                           "invalid entries",
                           {"manifest line 2", "entries", "9 pipe-separated"});
+
+        corpus = scratch.copy_corpus("empty_success_name");
+        replace_field(corpus, 1u, 14u, "-|-|0|0|0|0|0|0|false");
+        expect_load_error(corpus,
+                          "empty success entry name",
+                          {"manifest line 2", "entries", "entry name is empty"});
 
         corpus = scratch.copy_corpus("duplicate_case");
         std::vector<std::string> lines = read_manifest(corpus);
@@ -263,7 +361,7 @@ int main()
         write_manifest(corpus, lines);
         expect_load_error(corpus,
                           "duplicate case",
-                          {"manifest line 62", "case_id", "duplicate"});
+                          {"manifest line 66", "case_id", "duplicate"});
     }
     catch (const std::exception& error)
     {

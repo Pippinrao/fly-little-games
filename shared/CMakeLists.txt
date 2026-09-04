@@ -35,6 +35,11 @@ function(flynes_enable_strict_warnings target)
             -Wpedantic
             -Werror
         )
+        if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${target} PRIVATE
+                -Wno-error=unused-command-line-argument
+            )
+        endif()
     endif()
 endfunction()
 
@@ -163,5 +168,13 @@ if(FLYNES_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_zip_open_fixture_generator.py
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/open/generate_v1.py
             ${CMAKE_CURRENT_BINARY_DIR}/zip-open-fixture-generator-tests
+    )
+
+    add_test(
+        NAME flynes_zip_open_fixture_corpus_check
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/open/generate_v1.py
+            --check
     )
 endif()

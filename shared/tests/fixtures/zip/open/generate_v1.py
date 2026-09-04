@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import binascii
 import hashlib
+import os
 import re
+import stat
 import struct
 import sys
+import tempfile
 import zlib
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -447,6 +450,38 @@ def fixtures() -> list[Fixture]:
         "ZIP end record is missing or truncated",
     ))
 
+    fake_eocd_entry = EntrySpec(b"comment-eocd.nes", b"comment")
+    fake_eocd_base = build_zip([fake_eocd_entry])
+    fake_eocd_offset = fake_eocd_base.eocd_offset + 22
+    fake_eocd_comment = (
+        le32(END_SIGNATURE)
+        + le16(0) + le16(0) + le16(0) + le16(0)
+        + le32(0) + le32(fake_eocd_offset) + le16(0)
+    )
+    comment_with_fake_eocd = build_zip(
+        [fake_eocd_entry],
+        comment=fake_eocd_comment,
+    )
+    result.append(success("valid_comment_fake_eocd", comment_with_fake_eocd))
+
+    prefixed = bytearray(b"junk") + stored.data
+    prefix_length = 4
+    put32(
+        prefixed,
+        prefix_length + stored.layouts[0].central_offset + 42,
+        prefix_length + stored.layouts[0].local_offset,
+    )
+    put32(
+        prefixed,
+        prefix_length + stored.eocd_offset + 16,
+        prefix_length + stored.central_offset,
+    )
+    result.append(failure(
+        "prefix_junk",
+        prefixed,
+        "ZIP prefix bytes are unsupported",
+    ))
+
     split = build_zip([])
     put16(split.data, split.eocd_offset + 4, 1)
     result.append(failure("split_archive", split.data, "split ZIP archives are unsupported"))
@@ -637,6 +672,22 @@ def fixtures() -> list[Fixture]:
                 f"descriptor_{method_name}_{signature_name}", descriptor_zip
             ))
 
+    collision_payload = bytes.fromhex("ac0a7ad5")
+    if binascii.crc32(collision_payload) & 0xFFFFFFFF != DESCRIPTOR_SIGNATURE:
+        raise AssertionError("descriptor collision payload no longer has the required CRC32")
+    for signature, signature_name in ((False, "unsigned"), (True, "signed")):
+        collision_zip = build_zip([
+            EntrySpec(
+                b"descriptor-collision.nes",
+                collision_payload,
+                descriptor_signature=signature,
+            ),
+            EntrySpec(b"after-collision.nes", b"after"),
+        ])
+        result.append(success(
+            f"descriptor_crc_signature_{signature_name}", collision_zip
+        ))
+
     descriptor_equal_entry = EntrySpec(
         b"descriptor_equal",
         b"equal",
@@ -739,8 +790,8 @@ def fixtures() -> list[Fixture]:
     ])
     result.append(success("directory_suffixes", directories))
 
-    if len(result) != 60:
-        raise AssertionError(f"expected 60 fixtures, built {len(result)}")
+    if len(result) != 64:
+        raise AssertionError(f"expected 64 fixtures, built {len(result)}")
     case_ids = [fixture.case_id for fixture in result]
     if len(set(case_ids)) != len(case_ids):
         raise AssertionError("fixture case IDs must be unique")
@@ -806,10 +857,22 @@ class CorpusDiff:
         return not self.missing and not self.changed and not self.unexpected
 
 
+def is_filesystem_alias(path: Path) -> bool:
+    try:
+        status = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    file_attributes = getattr(status, "st_file_attributes", 0)
+    return stat.S_ISLNK(status.st_mode) or bool(file_attributes & reparse_attribute)
+
+
 def compare_corpus(expected_files: dict[str, bytes]) -> CorpusDiff:
-    if not OUTPUT_DIR.exists() and not OUTPUT_DIR.is_symlink():
+    if not OUTPUT_DIR.exists() and not is_filesystem_alias(OUTPUT_DIR):
         return CorpusDiff(tuple(sorted(expected_files)), (), ())
-    if OUTPUT_DIR.is_symlink() or not OUTPUT_DIR.is_dir():
+    if is_filesystem_alias(OUTPUT_DIR) or not OUTPUT_DIR.is_dir():
         return CorpusDiff((), (OUTPUT_DIR.name,), ())
     actual = {entry.name: entry for entry in OUTPUT_DIR.iterdir()}
     expected_names = set(expected_files)
@@ -817,7 +880,7 @@ def compare_corpus(expected_files: dict[str, bytes]) -> CorpusDiff:
     changed: list[str] = []
     for name in sorted(expected_names & actual_names):
         path = actual[name]
-        if path.is_symlink() or not path.is_file():
+        if is_filesystem_alias(path) or not path.is_file():
             changed.append(name)
             continue
         try:
@@ -841,8 +904,32 @@ def print_diff(diff: CorpusDiff) -> None:
         print(f"unexpected fixture corpus entry: {name}", file=sys.stderr)
 
 
+def replace_file(path: Path, contents: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(contents)
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def generate(expected_files: dict[str, bytes]) -> int:
-    if OUTPUT_DIR.is_symlink() or (OUTPUT_DIR.exists() and not OUTPUT_DIR.is_dir()):
+    if is_filesystem_alias(OUTPUT_DIR):
+        print(
+            f"refusing to generate: remove reparse/symlink output path {OUTPUT_DIR}",
+            file=sys.stderr,
+        )
+        return 1
+    if OUTPUT_DIR.exists() and not OUTPUT_DIR.is_dir():
         print(f"refusing to generate: remove non-directory output path {OUTPUT_DIR}", file=sys.stderr)
         return 1
     if OUTPUT_DIR.exists():
@@ -850,7 +937,7 @@ def generate(expected_files: dict[str, bytes]) -> int:
         blocked = sorted(
             name
             for name, path in actual.items()
-            if name not in expected_files or path.is_symlink() or not path.is_file()
+            if name not in expected_files or is_filesystem_alias(path) or not path.is_file()
         )
         if blocked:
             print(
@@ -861,7 +948,7 @@ def generate(expected_files: dict[str, bytes]) -> int:
             return 1
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for name, contents in expected_files.items():
-        (OUTPUT_DIR / name).write_bytes(contents)
+        replace_file(OUTPUT_DIR / name, contents)
     print(f"generated {len(expected_files)} fixture corpus files in {OUTPUT_DIR}")
     return 0
 

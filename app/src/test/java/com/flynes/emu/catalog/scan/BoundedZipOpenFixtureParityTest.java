@@ -59,7 +59,7 @@ public final class BoundedZipOpenFixtureParityTest {
         Path root = Paths.get(rootResource.toURI());
 
         List<Fixture> fixtures = loadManifest(root);
-        assertEquals("manifest fixture count", 60, fixtures.size());
+        assertEquals("manifest fixture count", 64, fixtures.size());
         assertExactCorpus(root, fixtures);
 
         Set<String> caseIds = new HashSet<>();
@@ -119,6 +119,53 @@ public final class BoundedZipOpenFixtureParityTest {
             }
         }
         assertRequiredCases(caseIds);
+    }
+
+    @Test
+    public void fixtureManifestNumbersRequireCanonicalUnsignedDecimal() {
+        for (String value : List.of("+1", "01", "-0")) {
+            AssertionError error = assertThrows(
+                    AssertionError.class,
+                    () -> Fixture.parse(replaceColumn(validErrorRow(), 4, value), 2));
+            assertTrue(error.getMessage(),
+                    error.getMessage().contains("max_package_bytes")
+                            && error.getMessage().contains("canonical unsigned decimal"));
+        }
+    }
+
+    @Test
+    public void fixtureManifestUsesCanonicalCaseAndBlobNames() {
+        AssertionError badCase = assertThrows(
+                AssertionError.class,
+                () -> Fixture.parse(replaceColumn(validErrorRow(), 1, "0case"), 2));
+        assertTrue(badCase.getMessage(), badCase.getMessage().contains("case_id"));
+
+        AssertionError badBlob = assertThrows(
+                AssertionError.class,
+                () -> Fixture.parse(replaceColumn(validErrorRow(), 2, "other.zip"), 2));
+        assertTrue(badBlob.getMessage(), badBlob.getMessage().contains("blob"));
+    }
+
+    @Test
+    public void fixtureManifestRejectsEmptySuccessNamesAndUnstableErrorMessages() {
+        String success = String.join("\t",
+                "1", "case_id", "case_id.zip", "0".repeat(64),
+                "1", "1", "1", "1", "1", "1", "0",
+                "SUCCESS", "NONE", "NONE", "-|-|0|0|0|0|0|0|false");
+        AssertionError emptyName = assertThrows(
+                AssertionError.class,
+                () -> Fixture.parse(success, 2));
+        assertTrue(emptyName.getMessage(),
+                emptyName.getMessage().contains("raw_name")
+                        && emptyName.getMessage().contains("nonempty"));
+
+        for (String message : List.of("   ", "NONE")) {
+            AssertionError unstableMessage = assertThrows(
+                    AssertionError.class,
+                    () -> Fixture.parse(replaceColumn(validErrorRow(), 13, message), 2));
+            assertTrue(unstableMessage.getMessage(),
+                    unstableMessage.getMessage().contains("error message"));
+        }
     }
 
     private static List<Fixture> loadManifest(Path root) throws IOException {
@@ -200,6 +247,8 @@ public final class BoundedZipOpenFixtureParityTest {
                 "eocd_short",
                 "eocd_missing",
                 "eocd_misaligned",
+                "valid_comment_fake_eocd",
+                "prefix_junk",
                 "split_archive",
                 "zip64_central_size",
                 "zip64_central_offset",
@@ -228,6 +277,8 @@ public final class BoundedZipOpenFixtureParityTest {
                 "descriptor_stored_signed",
                 "descriptor_deflate_unsigned",
                 "descriptor_deflate_signed",
+                "descriptor_crc_signature_unsigned",
+                "descriptor_crc_signature_signed",
                 "descriptor_local_equal_metadata",
                 "descriptor_local_crc_mismatch",
                 "descriptor_local_compressed_mismatch",
@@ -240,6 +291,19 @@ public final class BoundedZipOpenFixtureParityTest {
                 "directory_suffixes");
         assertEquals("manifest must contain the complete required ZIP-open corpus",
                 required, caseIds);
+    }
+
+    private static String validErrorRow() {
+        return String.join("\t",
+                "1", "case_id", "case_id.zip", "0".repeat(64),
+                "1", "1", "1", "1", "1", "1", "0",
+                "ERROR", "INVALID_ZIP", "stable message", "NONE");
+    }
+
+    private static String replaceColumn(String row, int column, String replacement) {
+        String[] fields = row.split("\t", -1);
+        fields[column] = replacement;
+        return String.join("\t", fields);
     }
 
     private static String sha256(byte[] payload) throws NoSuchAlgorithmException {
@@ -284,8 +348,11 @@ public final class BoundedZipOpenFixtureParityTest {
             assertEquals("manifest line " + lineNumber + " entry " + entryIndex
                     + " field count", 9, fields.length);
             String prefix = "entry_" + entryIndex + ".";
+            byte[] rawName = parseHex(fields[0], lineNumber, prefix + "raw_name");
+            assertTrue("manifest line " + lineNumber + " field '" + prefix
+                    + "raw_name': successful entry name must be nonempty", rawName.length > 0);
             return new ExpectedEntry(
-                    parseHex(fields[0], lineNumber, prefix + "raw_name"),
+                    rawName,
                     parseHex(fields[1], lineNumber, prefix + "central_extra"),
                     parseInt(fields[2], lineNumber, prefix + "local_header_offset", 0, Integer.MAX_VALUE),
                     parseInt(fields[3], lineNumber, prefix + "flags", 0, 0xFFFF),
@@ -382,6 +449,9 @@ public final class BoundedZipOpenFixtureParityTest {
 
     private static long parseLong(
             String value, int lineNumber, String field, long minimum, long maximum) {
+        assertTrue("manifest line " + lineNumber + " field '" + field
+                        + "': expected canonical unsigned decimal, got '" + value + "'",
+                value.matches("0|[1-9][0-9]*"));
         final long parsed;
         try {
             parsed = Long.parseLong(value);

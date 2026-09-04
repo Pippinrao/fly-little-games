@@ -77,7 +77,7 @@ int main()
     {
         const std::vector<flynes::test::ZipOpenFixture> fixtures =
             flynes::test::load_zip_open_fixtures(FLYNES_ZIP_OPEN_FIXTURE_DIR);
-        check(fixtures.size() == 60u, "fixture_corpus", "exactly 60 cases");
+        check(fixtures.size() == 64u, "fixture_corpus", "exactly 64 cases");
         std::unordered_set<std::string> case_ids;
         for (const flynes::test::ZipOpenFixture& fixture : fixtures)
         {
@@ -162,7 +162,7 @@ int main()
 
     if (failures == 0)
     {
-        std::puts("flynes_bounded_zip_archive_test: PASS (60 fixtures)");
+        std::puts("flynes_bounded_zip_archive_test: PASS (64 fixtures)");
     }
     return failures == 0 ? 0 : 1;
 }

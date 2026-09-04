@@ -184,6 +184,21 @@ bool is_digit(char value)
     return value >= '0' && value <= '9';
 }
 
+bool is_blank(const std::string& value)
+{
+    for (const unsigned char character : value)
+    {
+        const bool whitespace =
+            (character >= 0x09u && character <= 0x0Du) ||
+            (character >= 0x1Cu && character <= 0x20u);
+        if (!whitespace)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool is_identifier(const std::string& value)
 {
     if (value.empty() || !is_lower(value.front()))
@@ -451,24 +466,24 @@ ParsedRow parse_row(const std::string& line, std::size_t line_number)
     row.line_number = line_number;
     row.fixture.limits.max_package_bytes = parse_bounded<std::uint64_t>(
         fields[4], line_number, case_id, "max_package_bytes", 1u,
-        std::numeric_limits<std::uint64_t>::max());
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
     row.fixture.limits.max_payload_bytes = parse_bounded<std::uint64_t>(
         fields[5], line_number, case_id, "max_payload_bytes", 1u,
-        std::numeric_limits<std::uint64_t>::max());
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
     row.fixture.limits.max_zip_entries = parse_bounded<std::uint32_t>(
         fields[6], line_number, case_id, "max_zip_entries", 1u,
-        static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
+        static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()));
     row.fixture.limits.max_cumulative_inflated_bytes = parse_bounded<std::uint64_t>(
         fields[7], line_number, case_id, "max_cumulative_inflated_bytes", 1u,
-        std::numeric_limits<std::uint64_t>::max());
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
     row.fixture.limits.max_name_bytes = parse_bounded<std::uint32_t>(
         fields[8], line_number, case_id, "max_name_bytes", 1u, 0xFFFFu);
     row.fixture.limits.max_compression_ratio = parse_bounded<std::uint32_t>(
         fields[9], line_number, case_id, "max_compression_ratio", 1u,
-        static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
+        static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()));
     row.fixture.limits.ratio_guard_threshold_bytes = parse_bounded<std::uint64_t>(
         fields[10], line_number, case_id, "ratio_guard_threshold_bytes", 0u,
-        std::numeric_limits<std::uint64_t>::max());
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
 
     if (fields[11] == "SUCCESS")
     {
@@ -496,10 +511,10 @@ ParsedRow parse_row(const std::string& line, std::size_t line_number)
             fail_manifest(line_number, case_id, "error_code",
                           "unknown value '" + fields[12] + "'");
         }
-        if (fields[13].empty() || fields[13] == "NONE")
+        if (is_blank(fields[13]) || fields[13] == "NONE")
         {
             fail_manifest(line_number, case_id, "error_message",
-                          "ERROR requires a non-empty stable message");
+                          "ERROR requires a nonblank stable message");
         }
         if (fields[14] != "NONE")
         {
@@ -616,10 +631,10 @@ std::vector<ZipOpenFixture> load_zip_open_fixtures(const std::string& fixture_ro
         }
         rows.push_back(std::move(row));
     }
-    if (rows.size() != 60u)
+    if (rows.size() != 64u)
     {
         throw std::runtime_error(
-            "fixture corpus field 'case count': version one must contain exactly 60 cases");
+            "fixture corpus field 'case count': version one must contain exactly 64 cases");
     }
     validate_directory(root, rows);
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -88,6 +89,48 @@ class ZipOpenFixtureGeneratorTest(unittest.TestCase):
         result = self.run_generator()
         self.assert_problem(result, "remove", orphan.name)
         self.assertTrue(orphan.exists(), "generation must not silently delete an orphan")
+
+    def test_generation_replaces_a_hardlinked_target_without_mutating_its_alias(self) -> None:
+        corpus = self.generate()
+        target = corpus / "valid_stored_metadata.zip"
+        alias = self.root / "hardlink-alias.zip"
+        try:
+            os.link(target, alias)
+        except OSError as error:
+            self.skipTest(f"hard links are unavailable: {error}")
+
+        sentinel = b"outside hardlink must remain untouched"
+        alias.write_bytes(sentinel)
+        result = self.run_generator()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(sentinel, alias.read_bytes(),
+                         "generation must replace rather than truncate a hardlinked target")
+        check = self.run_generator("--check")
+        self.assertEqual(0, check.returncode, check.stdout + check.stderr)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows junction regression")
+    def test_generation_refuses_a_junction_output_root(self) -> None:
+        output = self.root / "v1"
+        outside = self.root / "junction-target"
+        outside.mkdir()
+        created = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(output), str(outside)],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if created.returncode != 0:
+            self.skipTest("junction creation is unavailable: " + created.stdout + created.stderr)
+        try:
+            result = self.run_generator()
+            self.assert_problem(result, "reparse", output.name)
+            self.assertEqual([], list(outside.iterdir()),
+                             "generation must not follow a junction output root")
+        finally:
+            if output.exists():
+                output.rmdir()
 
 
 if __name__ == "__main__":

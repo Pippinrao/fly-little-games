@@ -45,7 +45,31 @@ public final class BoundedZipArchive {
         if (archive.length > limits.maxPackageBytes()) {
             throw failure(Code.PACKAGE_LIMIT_EXCEEDED, "ZIP package is over the source limit");
         }
-        int endRecord = findEndRecord(archive);
+        Archive parsed = null;
+        ArchiveException firstFailure = null;
+        for (int endRecord : findEndRecords(archive)) {
+            final Archive candidate;
+            try {
+                candidate = fromBytesAtEndRecord(archive, limits, endRecord);
+            } catch (ArchiveException error) {
+                if (firstFailure == null) {
+                    firstFailure = error;
+                }
+                continue;
+            }
+            if (parsed != null) {
+                throw invalid("ZIP end record is ambiguous");
+            }
+            parsed = candidate;
+        }
+        if (parsed != null) {
+            return parsed;
+        }
+        throw firstFailure;
+    }
+
+    private static Archive fromBytesAtEndRecord(
+            byte[] archive, ScanLimits limits, int endRecord) throws ArchiveException {
         int diskNumber = unsignedShort(archive, endRecord + 4);
         int centralDirectoryDisk = unsignedShort(archive, endRecord + 6);
         int entriesOnDisk = unsignedShort(archive, endRecord + 8);
@@ -141,15 +165,25 @@ public final class BoundedZipArchive {
         long declaredInflated = 0;
         ArrayList<LocalEntry> localEntries = new ArrayList<>(centralEntries.size());
         long previousEntryEnd = -1;
-        for (CentralEntry central : centralEntries) {
+        for (int index = 0; index < centralEntries.size(); index++) {
+            CentralEntry central = centralEntries.get(index);
             if (previousEntryEnd > central.localHeaderOffset()) {
                 throw invalid("ZIP local entries overlap");
             }
-            LocalEntry local = validateLocalHeader(archive, central, centralOffset);
+            long descriptorBoundary = index + 1 < centralEntries.size()
+                    ? Math.min(centralEntries.get(index + 1).localHeaderOffset(), centralOffset)
+                    : centralOffset;
+            LocalEntry local = validateLocalHeader(
+                    archive, central, centralOffset, descriptorBoundary);
             previousEntryEnd = local.entryEnd();
             declaredInflated = checkedInflated(
                     declaredInflated, central.uncompressedSize(), limits);
             localEntries.add(local);
+        }
+        if ((centralEntries.isEmpty() && centralOffset != 0)
+                || (!centralEntries.isEmpty()
+                && centralEntries.get(0).localHeaderOffset() != 0)) {
+            throw invalid("ZIP prefix bytes are unsupported");
         }
 
         ArrayList<Entry> entries = new ArrayList<>(localEntries.size());
@@ -196,7 +230,10 @@ public final class BoundedZipArchive {
     }
 
     private static LocalEntry validateLocalHeader(
-            byte[] archive, CentralEntry central, long centralOffset) throws ArchiveException {
+            byte[] archive,
+            CentralEntry central,
+            long centralOffset,
+            long descriptorBoundary) throws ArchiveException {
         int offset = central.localHeaderOffset();
         requireRange(archive, offset, 30, "ZIP local header is truncated");
         if (unsignedInt(archive, offset) != LOCAL_SIGNATURE) {
@@ -241,28 +278,47 @@ public final class BoundedZipArchive {
         }
         long entryEnd = payloadEnd;
         if ((localFlags & FLAG_DATA_DESCRIPTOR) != 0) {
-            requireRange(archive, (int) payloadEnd, 12, "ZIP data descriptor is truncated");
+            if (payloadEnd > descriptorBoundary) {
+                throw invalid("ZIP local entries overlap");
+            }
+            long available = descriptorBoundary - payloadEnd;
+            if (available < 4) {
+                throw invalid(descriptorBoundary < centralOffset
+                        ? "ZIP local entries overlap"
+                        : "ZIP data descriptor overlaps the central directory");
+            }
             long first = unsignedInt(archive, (int) payloadEnd);
-            boolean signed = first == 0x08074B50L;
-            int valuesOffset = (int) payloadEnd + (signed ? 4 : 0);
-            if (signed) {
-                requireRange(archive, (int) payloadEnd, 16,
-                        "ZIP signed data descriptor is truncated");
+            boolean unsignedMatches = available >= 12
+                    && descriptorMatches(archive, (int) payloadEnd, central);
+            boolean signedMatches = first == 0x08074B50L
+                    && available >= 16
+                    && descriptorMatches(archive, (int) payloadEnd + 4, central);
+            if (unsignedMatches && signedMatches) {
+                throw invalid("ZIP data descriptor is ambiguous");
             }
-            long descriptorCrc = unsignedInt(archive, valuesOffset);
-            long descriptorCompressed = unsignedInt(archive, valuesOffset + 4);
-            long descriptorUncompressed = unsignedInt(archive, valuesOffset + 8);
-            if (descriptorCrc != central.crc32()
-                    || descriptorCompressed != central.compressedSize()
-                    || descriptorUncompressed != central.uncompressedSize()) {
-                throw invalid("ZIP data descriptor differs from central metadata");
-            }
-            entryEnd = payloadEnd + (signed ? 16L : 12L);
-            if (entryEnd > centralOffset) {
+            if (signedMatches) {
+                entryEnd = payloadEnd + 16;
+            } else if (unsignedMatches) {
+                entryEnd = payloadEnd + 12;
+            } else if (descriptorBoundary < centralOffset
+                    && (available < 12 || (first == 0x08074B50L && available < 16))) {
+                throw invalid("ZIP local entries overlap");
+            } else if (first != 0x08074B50L && available < 12) {
                 throw invalid("ZIP data descriptor overlaps the central directory");
+            } else if (first == 0x08074B50L && available >= 12 && available < 16) {
+                throw invalid("ZIP data descriptor overlaps the central directory");
+            } else {
+                throw invalid("ZIP data descriptor differs from central metadata");
             }
         }
         return new LocalEntry(central, (int) dataOffsetLong, payloadEnd, entryEnd);
+    }
+
+    private static boolean descriptorMatches(
+            byte[] archive, int valuesOffset, CentralEntry central) throws ArchiveException {
+        return unsignedInt(archive, valuesOffset) == central.crc32()
+                && unsignedInt(archive, valuesOffset + 4) == central.compressedSize()
+                && unsignedInt(archive, valuesOffset + 8) == central.uncompressedSize();
     }
 
     private static byte[] inflate(
@@ -349,20 +405,24 @@ public final class BoundedZipArchive {
         return total;
     }
 
-    private static int findEndRecord(byte[] archive) throws ArchiveException {
+    private static List<Integer> findEndRecords(byte[] archive) throws ArchiveException {
         if (archive.length < 22) {
             throw invalid("ZIP end record is missing");
         }
+        ArrayList<Integer> candidates = new ArrayList<>();
         int earliest = Math.max(0, archive.length - 22 - 0xFFFF);
         for (int offset = archive.length - 22; offset >= earliest; offset--) {
             if (unsignedInt(archive, offset) == END_SIGNATURE) {
                 int commentLength = unsignedShort(archive, offset + 20);
                 if ((long) offset + 22L + commentLength == archive.length) {
-                    return offset;
+                    candidates.add(offset);
                 }
             }
         }
-        throw invalid("ZIP end record is missing or truncated");
+        if (candidates.isEmpty()) {
+            throw invalid("ZIP end record is missing or truncated");
+        }
+        return candidates;
     }
 
     private static void requireZeroOrEqual(long local, long central, String field)
