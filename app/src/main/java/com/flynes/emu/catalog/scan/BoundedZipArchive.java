@@ -45,40 +45,50 @@ public final class BoundedZipArchive {
         if (archive.length > limits.maxPackageBytes()) {
             throw failure(Code.PACKAGE_LIMIT_EXCEEDED, "ZIP package is over the source limit");
         }
-        Archive parsed = null;
-        ArchiveException firstFailure = null;
-        for (int endRecord : findEndRecords(archive)) {
-            final Archive candidate;
+        List<Integer> endRecords = findEndRecords(archive);
+        Integer structuralEndRecord = null;
+        ArchiveException firstStructuralFailure = null;
+        // Candidate uniqueness must not change when a caller tightens open-time policy.
+        for (int endRecord : endRecords) {
             try {
-                candidate = fromBytesAtEndRecord(archive, limits, endRecord);
+                fromBytesAtEndRecord(archive, limits, endRecord, false);
             } catch (ArchiveException error) {
-                if (firstFailure == null) {
-                    firstFailure = error;
+                if (firstStructuralFailure == null) {
+                    firstStructuralFailure = error;
                 }
                 continue;
             }
-            if (parsed != null) {
+            if (structuralEndRecord != null) {
                 throw invalid("ZIP end record is ambiguous");
             }
-            parsed = candidate;
+            structuralEndRecord = endRecord;
         }
-        if (parsed != null) {
-            return parsed;
+        if (structuralEndRecord != null) {
+            return fromBytesAtEndRecord(archive, limits, structuralEndRecord, true);
         }
-        throw firstFailure;
+
+        // Preserve the legacy error precedence for an archive with no supported structural
+        // interpretation. In particular, an entry limit can precede the ZIP64 sentinel error.
+        fromBytesAtEndRecord(archive, limits, endRecords.get(0), true);
+        if (firstStructuralFailure != null) {
+            throw firstStructuralFailure;
+        }
+        throw invalid("ZIP end record is missing or truncated");
     }
 
     private static Archive fromBytesAtEndRecord(
-            byte[] archive, ScanLimits limits, int endRecord) throws ArchiveException {
+            byte[] archive, ScanLimits limits, int endRecord, boolean applyPolicy)
+            throws ArchiveException {
         int diskNumber = unsignedShort(archive, endRecord + 4);
         int centralDirectoryDisk = unsignedShort(archive, endRecord + 6);
         int entriesOnDisk = unsignedShort(archive, endRecord + 8);
         int totalEntries = unsignedShort(archive, endRecord + 10);
         long centralSize = unsignedInt(archive, endRecord + 12);
         long centralOffset = unsignedInt(archive, endRecord + 16);
-        if (totalEntries > limits.maxZipEntries()) {
+        if (applyPolicy && totalEntries > limits.maxZipEntries()) {
             throw failure(Code.ENTRY_LIMIT_EXCEEDED, "ZIP entry count exceeds the limit");
         }
+        // Multi-disk and ZIP64 layouts are parser support boundaries, not caller policy.
         if (diskNumber != 0 || centralDirectoryDisk != 0 || entriesOnDisk != totalEntries) {
             throw invalid("split ZIP archives are unsupported");
         }
@@ -107,7 +117,7 @@ public final class BoundedZipArchive {
             if (nameLength == 0) {
                 throw invalid("ZIP entry name is empty");
             }
-            if (nameLength > limits.maxNameBytes()) {
+            if (applyPolicy && nameLength > limits.maxNameBytes()) {
                 throw failure(Code.NAME_LIMIT_EXCEEDED, "ZIP entry name exceeds the limit");
             }
             if (unsignedShort(archive, cursor + 34) != 0) {
@@ -130,10 +140,10 @@ public final class BoundedZipArchive {
                     archive,
                     cursor + 46 + nameLength,
                     cursor + 46 + nameLength + extraLength);
-            if ((flags & FLAG_ENCRYPTED) != 0) {
+            if (applyPolicy && (flags & FLAG_ENCRYPTED) != 0) {
                 throw failure(Code.ENCRYPTED, "encrypted ZIP entries are unsupported");
             }
-            if (method != 0 && method != 8) {
+            if (applyPolicy && method != 0 && method != 8) {
                 throw failure(Code.UNSUPPORTED_COMPRESSION,
                         "ZIP compression method is unsupported");
             }
@@ -153,7 +163,9 @@ public final class BoundedZipArchive {
                     unsignedInt(archive, cursor + 16),
                     unsignedInt(archive, cursor + 20),
                     unsignedInt(archive, cursor + 24));
-            validateRatio(entry, limits);
+            if (applyPolicy) {
+                validateRatio(entry, limits);
+            }
             centralEntries.add(entry);
             cursor = (int) centralEntryEnd;
         }
@@ -176,8 +188,10 @@ public final class BoundedZipArchive {
             LocalEntry local = validateLocalHeader(
                     archive, central, centralOffset, descriptorBoundary);
             previousEntryEnd = local.entryEnd();
-            declaredInflated = checkedInflated(
-                    declaredInflated, central.uncompressedSize(), limits);
+            if (applyPolicy) {
+                declaredInflated = checkedInflated(
+                        declaredInflated, central.uncompressedSize(), limits);
+            }
             localEntries.add(local);
         }
         if ((centralEntries.isEmpty() && centralOffset != 0)

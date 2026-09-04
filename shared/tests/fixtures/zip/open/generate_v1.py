@@ -212,6 +212,23 @@ def clone(built: BuiltZip) -> BuiltZip:
     )
 
 
+def build_dual_view_zip(entries: list[EntrySpec] | tuple[EntrySpec, ...]) -> BuiltZip:
+    specs = tuple(entries)
+    if len(specs) < 2:
+        raise ValueError("dual-view ZIP requires at least two entries")
+    base = build_zip(specs)
+    fake_central_start = base.layouts[0].central_offset
+    fake_central_end = base.layouts[1].central_offset
+    fake_central = bytes(base.data[fake_central_start:fake_central_end])
+    fake_central_offset = base.eocd_offset + 22
+    fake_eocd = (
+        le32(END_SIGNATURE)
+        + le16(0) + le16(0) + le16(1) + le16(1)
+        + le32(len(fake_central)) + le32(fake_central_offset) + le16(0)
+    )
+    return build_zip(specs, comment=fake_central + fake_eocd)
+
+
 def encoded_entry(entry: EntrySpec, local_offset: int) -> str:
     crc32, compressed_size, uncompressed_size, _, flags = metadata(entry)
     raw_name = entry.raw_name.hex()
@@ -480,6 +497,73 @@ def fixtures() -> list[Fixture]:
         "prefix_junk",
         prefixed,
         "ZIP prefix bytes are unsupported",
+    ))
+
+    dual_limit_entries = (
+        EntrySpec(b"a", b"a"),
+        EntrySpec(
+            b"long",
+            b"bbbb",
+            method=8,
+            compressed_payload=b"x",
+            declared_compressed_size=1,
+            declared_uncompressed_size=4,
+        ),
+    )
+    dual_limits = build_dual_view_zip(dual_limit_entries)
+    ambiguous_message = "ZIP end record is ambiguous"
+    result.append(failure(
+        "ambiguous_dual_view_wide",
+        dual_limits.data,
+        ambiguous_message,
+        limits=replace(DEFAULT_LIMITS, max_zip_entries=2),
+    ))
+    result.append(failure(
+        "ambiguous_dual_view_entry_limit",
+        dual_limits.data,
+        ambiguous_message,
+        limits=replace(DEFAULT_LIMITS, max_zip_entries=1),
+    ))
+    result.append(failure(
+        "ambiguous_dual_view_name_limit",
+        dual_limits.data,
+        ambiguous_message,
+        limits=replace(DEFAULT_LIMITS, max_name_bytes=1),
+    ))
+    result.append(failure(
+        "ambiguous_dual_view_inflated_limit",
+        dual_limits.data,
+        ambiguous_message,
+        limits=replace(DEFAULT_LIMITS, max_cumulative_inflated_bytes=1),
+    ))
+    result.append(failure(
+        "ambiguous_dual_view_ratio_limit",
+        dual_limits.data,
+        ambiguous_message,
+        limits=replace(
+            DEFAULT_LIMITS,
+            max_compression_ratio=1,
+            ratio_guard_threshold_bytes=0,
+        ),
+    ))
+
+    dual_encrypted = build_dual_view_zip((
+        EntrySpec(b"a", b"a"),
+        EntrySpec(b"encrypted", b"b", flags=0x0001),
+    ))
+    result.append(failure(
+        "ambiguous_dual_view_encrypted",
+        dual_encrypted.data,
+        ambiguous_message,
+    ))
+    dual_unsupported = build_dual_view_zip((
+        EntrySpec(b"a", b"a"),
+        EntrySpec(b"unsupported", b"b", method=12),
+    ))
+    result.append(failure(
+        "ambiguous_dual_view_unsupported_method",
+        dual_unsupported.data,
+        ambiguous_message,
     ))
 
     split = build_zip([])
@@ -790,8 +874,8 @@ def fixtures() -> list[Fixture]:
     ])
     result.append(success("directory_suffixes", directories))
 
-    if len(result) != 64:
-        raise AssertionError(f"expected 64 fixtures, built {len(result)}")
+    if len(result) != 71:
+        raise AssertionError(f"expected 71 fixtures, built {len(result)}")
     case_ids = [fixture.case_id for fixture in result]
     if len(set(case_ids)) != len(case_ids):
         raise AssertionError("fixture case IDs must be unique")

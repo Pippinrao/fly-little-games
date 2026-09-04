@@ -59,7 +59,7 @@ public final class BoundedZipOpenFixtureParityTest {
         Path root = Paths.get(rootResource.toURI());
 
         List<Fixture> fixtures = loadManifest(root);
-        assertEquals("manifest fixture count", 64, fixtures.size());
+        assertEquals("manifest fixture count", 71, fixtures.size());
         assertExactCorpus(root, fixtures);
 
         Set<String> caseIds = new HashSet<>();
@@ -249,6 +249,13 @@ public final class BoundedZipOpenFixtureParityTest {
                 "eocd_misaligned",
                 "valid_comment_fake_eocd",
                 "prefix_junk",
+                "ambiguous_dual_view_wide",
+                "ambiguous_dual_view_entry_limit",
+                "ambiguous_dual_view_name_limit",
+                "ambiguous_dual_view_inflated_limit",
+                "ambiguous_dual_view_ratio_limit",
+                "ambiguous_dual_view_encrypted",
+                "ambiguous_dual_view_unsupported_method",
                 "split_archive",
                 "zip64_central_size",
                 "zip64_central_offset",

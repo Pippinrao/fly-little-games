@@ -366,7 +366,8 @@ std::uint64_t validate_local_header(const std::vector<std::uint8_t>& archive,
 std::vector<BoundedZipEntry> parse_entries_at_end_record(
     const std::vector<std::uint8_t>& archive,
     const BoundedZipLimits& limits,
-    std::uint64_t end_record)
+    std::uint64_t end_record,
+    bool apply_policy)
 {
     const std::uint16_t disk_number = unsigned_short(archive, end_record + 4u);
     const std::uint16_t central_directory_disk = unsigned_short(archive, end_record + 6u);
@@ -374,10 +375,11 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
     const std::uint16_t total_entries = unsigned_short(archive, end_record + 10u);
     const std::uint32_t central_size = unsigned_int(archive, end_record + 12u);
     const std::uint32_t central_offset = unsigned_int(archive, end_record + 16u);
-    if (total_entries > limits.max_zip_entries())
+    if (apply_policy && total_entries > limits.max_zip_entries())
     {
         fail(ZipOpenCode::ENTRY_LIMIT_EXCEEDED, "ZIP entry count exceeds the limit");
     }
+    // Multi-disk and ZIP64 layouts are parser support boundaries, not caller policy.
     if (disk_number != 0u || central_directory_disk != 0u ||
         entries_on_disk != total_entries)
     {
@@ -415,7 +417,7 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
         {
             invalid("ZIP entry name is empty");
         }
-        if (name_length > limits.max_name_bytes())
+        if (apply_policy && name_length > limits.max_name_bytes())
         {
             fail(ZipOpenCode::NAME_LIMIT_EXCEEDED, "ZIP entry name exceeds the limit");
         }
@@ -447,11 +449,11 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
         entry.central_extra.assign(
             archive.begin() + static_cast<std::ptrdiff_t>(extra_begin),
             archive.begin() + static_cast<std::ptrdiff_t>(extra_begin + extra_length));
-        if ((flags & encrypted_flag) != 0u)
+        if (apply_policy && (flags & encrypted_flag) != 0u)
         {
             fail(ZipOpenCode::ENCRYPTED, "encrypted ZIP entries are unsupported");
         }
-        if (method != 0u && method != 8u)
+        if (apply_policy && method != 0u && method != 8u)
         {
             fail(ZipOpenCode::UNSUPPORTED_COMPRESSION,
                  "ZIP compression method is unsupported");
@@ -466,7 +468,10 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
         entry.crc32 = unsigned_int(archive, cursor + 16u);
         entry.compressed_size = unsigned_int(archive, cursor + 20u);
         entry.uncompressed_size = unsigned_int(archive, cursor + 24u);
-        validate_ratio(entry, limits);
+        if (apply_policy)
+        {
+            validate_ratio(entry, limits);
+        }
         central_entries.push_back(std::move(entry));
         cursor = central_entry_end;
     }
@@ -501,12 +506,15 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
                 : central_offset;
         previous_entry_end = validate_local_header(
             archive, central, central_offset, descriptor_boundary);
-        declared_inflated = checked_add(
-            declared_inflated, central.uncompressed_size, "ZIP inflated total overflows");
-        if (declared_inflated > limits.max_cumulative_inflated_bytes())
+        if (apply_policy)
         {
-            fail(ZipOpenCode::INFLATED_LIMIT_EXCEEDED,
-                 "ZIP inflated total exceeds the limit");
+            declared_inflated = checked_add(
+                declared_inflated, central.uncompressed_size, "ZIP inflated total overflows");
+            if (declared_inflated > limits.max_cumulative_inflated_bytes())
+            {
+                fail(ZipOpenCode::INFLATED_LIMIT_EXCEEDED,
+                     "ZIP inflated total exceeds the limit");
+            }
         }
     }
     if ((central_entries.empty() && central_offset != 0u) ||
@@ -539,36 +547,48 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
 std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& archive,
                                            const BoundedZipLimits& limits)
 {
-    std::optional<std::vector<BoundedZipEntry>> parsed;
-    std::optional<ZipOpenCode> first_failure_code;
-    std::string first_failure_message;
-    for (const std::uint64_t end_record : find_end_records(archive))
+    const std::vector<std::uint64_t> end_records = find_end_records(archive);
+    std::optional<std::uint64_t> structural_end_record;
+    std::optional<ZipOpenCode> first_structural_failure_code;
+    std::string first_structural_failure_message;
+    // Candidate uniqueness must not change when a caller tightens open-time policy.
+    for (const std::uint64_t end_record : end_records)
     {
-        std::vector<BoundedZipEntry> candidate;
         try
         {
-            candidate = parse_entries_at_end_record(archive, limits, end_record);
+            static_cast<void>(parse_entries_at_end_record(
+                archive, limits, end_record, false));
         }
         catch (const ValidationFailure& failure)
         {
-            if (!first_failure_code.has_value())
+            if (!first_structural_failure_code.has_value())
             {
-                first_failure_code = failure.code();
-                first_failure_message = failure.what();
+                first_structural_failure_code = failure.code();
+                first_structural_failure_message = failure.what();
             }
             continue;
         }
-        if (parsed.has_value())
+        if (structural_end_record.has_value())
         {
             invalid("ZIP end record is ambiguous");
         }
-        parsed = std::move(candidate);
+        structural_end_record = end_record;
     }
-    if (parsed.has_value())
+    if (structural_end_record.has_value())
     {
-        return std::move(*parsed);
+        return parse_entries_at_end_record(
+            archive, limits, *structural_end_record, true);
     }
-    fail(*first_failure_code, first_failure_message.c_str());
+
+    // Preserve the legacy error precedence for an archive with no supported structural
+    // interpretation. In particular, an entry limit can precede the ZIP64 sentinel error.
+    static_cast<void>(parse_entries_at_end_record(
+        archive, limits, end_records.front(), true));
+    if (first_structural_failure_code.has_value())
+    {
+        fail(*first_structural_failure_code, first_structural_failure_message.c_str());
+    }
+    invalid("ZIP end record is missing or truncated");
 }
 
 } // namespace

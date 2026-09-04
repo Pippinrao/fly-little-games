@@ -631,10 +631,10 @@ std::vector<ZipOpenFixture> load_zip_open_fixtures(const std::string& fixture_ro
         }
         rows.push_back(std::move(row));
     }
-    if (rows.size() != 64u)
+    if (rows.size() != 71u)
     {
         throw std::runtime_error(
-            "fixture corpus field 'case count': version one must contain exactly 64 cases");
+            "fixture corpus field 'case count': version one must contain exactly 71 cases");
     }
     validate_directory(root, rows);
 

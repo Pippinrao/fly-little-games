@@ -52,7 +52,7 @@ input or expected output changes, update both parity gates, regenerate, run
 
 ## Bounded ZIP-open parity fixtures
 
-`tests/fixtures/zip/open/v1/manifest.tsv` and its 64 `.zip` blobs are the single
+`tests/fixtures/zip/open/v1/manifest.tsv` and its 71 `.zip` blobs are the single
 language-neutral ZIP structural/open corpus. Each row supplies all seven scan
 limits, a SHA-256, and either the exact stable error code/message or every
 published entry metadata field in Java output order. Raw names and central
@@ -63,7 +63,9 @@ same directory. `flynes_bounded_zip_archive_edges` instead uses inline bytes for
 direct API, limit-validation, null-view, and ownership checks.
 
 Version 1 includes descriptor CRC/signature collisions, competing EOCD
-candidates inside comments, and explicit rejection of prefix bytes.
+candidates inside comments, policy-independent ambiguity checks, and explicit
+rejection of prefix bytes. Tightening entry, name, inflated, ratio, encryption,
+or compression-method policy cannot turn an ambiguous archive into a valid one.
 
 The manifest and both loaders enforce schema version 1, safe basename-only
 paths, unique case/blob names, exact SHA-256 values, regular non-symlink files,

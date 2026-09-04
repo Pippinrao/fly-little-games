@@ -227,7 +227,7 @@ int main()
 
         const std::vector<flynes::test::ZipOpenFixture> baseline =
             flynes::test::load_zip_open_fixtures(FLYNES_ZIP_OPEN_FIXTURE_DIR);
-        check(baseline.size() == 64u, "baseline exact corpus loads");
+        check(baseline.size() == 71u, "baseline exact corpus loads");
 
         fs::path corpus = scratch.copy_corpus("unsafe_path");
         replace_field(corpus, 1u, 2u, "../escape.zip");
@@ -361,7 +361,7 @@ int main()
         write_manifest(corpus, lines);
         expect_load_error(corpus,
                           "duplicate case",
-                          {"manifest line 66", "case_id", "duplicate"});
+                          {"manifest line 73", "case_id", "duplicate"});
     }
     catch (const std::exception& error)
     {
