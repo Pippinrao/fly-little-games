@@ -22,10 +22,13 @@ The public header is `include/flynes/flynes_app.h`. Public structures start with
 matching V1 constants. The library accepts a larger structure when its known V1
 prefix is present, rejects shorter structures, and rejects unknown versions.
 
-Configuration roots are non-empty NUL-terminated UTF-8 strings. They and the
-capabilities pointer are borrowed only during `fly_app_create`; a successful app
-owns copies of both roots. App and snapshot handles are opaque. Destroy and
-release are NULL-safe.
+Configuration roots are explicit byte ranges: each pointer has a `uint32_t`
+byte length that excludes any optional terminator. Lengths must be 1 through
+`FLY_APP_ROOT_MAX_UTF8_BYTES` (4096), and the ranges need not be NUL-terminated.
+Malformed UTF-8 and embedded NUL bytes are rejected. The ranges and capabilities
+pointer are borrowed only during `fly_app_create`; a successful app owns exact
+copies of both ranges. App and snapshot handles are opaque. Destroy and release
+are NULL-safe.
 
 `fly_catalog_snapshot` returns a separately owned immutable view. It remains
 valid after its app is destroyed and must be released explicitly. Catalog entry

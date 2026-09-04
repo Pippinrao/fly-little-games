@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(flynes_shared LANGUAGES C CXX)
+project(flynes_shared LANGUAGES CXX)
 
 option(FLYNES_BUILD_TESTS "Build FlyNES shared-layer host tests" OFF)
 
@@ -36,6 +36,7 @@ endfunction()
 flynes_enable_strict_warnings(flynes_app)
 
 if(FLYNES_BUILD_TESTS)
+    enable_language(C)
     enable_testing()
 
     add_executable(flynes_app_contract_test

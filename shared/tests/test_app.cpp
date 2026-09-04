@@ -1,5 +1,6 @@
 #include <flynes/flynes_app.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -35,6 +36,8 @@ fly_app_config make_config(const fly_platform_capabilities* capabilities)
     config.data_root_utf8 = "test-data";
     config.cache_root_utf8 = "test-cache";
     config.platform_capabilities = capabilities;
+    config.data_root_utf8_length = 9;
+    config.cache_root_utf8_length = 10;
     return config;
 }
 
@@ -61,6 +64,7 @@ static_assert(FLY_PLATFORM_CAPABILITIES_VERSION_1 == 1,
               "capabilities version value changed");
 static_assert(FLY_APP_CONFIG_VERSION_1 == 1, "config version value changed");
 static_assert(FLY_CATALOG_ENTRY_VERSION_1 == 1, "entry version value changed");
+static_assert(FLY_APP_ROOT_MAX_UTF8_BYTES == 4096, "root byte limit changed");
 
 static_assert(offsetof(fly_platform_capabilities, struct_size) == 0, "capabilities prefix changed");
 static_assert(offsetof(fly_platform_capabilities, version) == sizeof(std::uint32_t),
@@ -82,7 +86,13 @@ static_assert(offsetof(fly_app_config, cache_root_utf8) ==
 static_assert(offsetof(fly_app_config, platform_capabilities) ==
                   2 * sizeof(std::uint32_t) + 2 * sizeof(const char*),
               "config capabilities offset changed");
-static_assert(sizeof(fly_app_config) == 2 * sizeof(std::uint32_t) + 3 * sizeof(const void*),
+static_assert(offsetof(fly_app_config, data_root_utf8_length) ==
+                  2 * sizeof(std::uint32_t) + 3 * sizeof(const void*),
+              "config data-root length offset changed");
+static_assert(offsetof(fly_app_config, cache_root_utf8_length) ==
+                  3 * sizeof(std::uint32_t) + 3 * sizeof(const void*),
+              "config cache-root length offset changed");
+static_assert(sizeof(fly_app_config) == 4 * sizeof(std::uint32_t) + 3 * sizeof(const void*),
               "config v1 layout changed");
 static_assert(FLY_APP_CONFIG_V1_SIZE == sizeof(fly_app_config),
               "config v1 prefix size changed");
@@ -159,18 +169,134 @@ int main()
     bad_config = config;
     bad_config.data_root_utf8 = nullptr;
     check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
-                        "create rejects a null data root");
-    bad_config.data_root_utf8 = "";
+                        "create rejects a null data root with a positive length");
+    bad_config = config;
+    bad_config.data_root_utf8_length = 0;
     check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
-                        "create rejects an empty data root");
+                        "create rejects a zero-length data root");
 
     bad_config = config;
     bad_config.cache_root_utf8 = nullptr;
     check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
-                        "create rejects a null cache root");
-    bad_config.cache_root_utf8 = "";
+                        "create rejects a null cache root with a positive length");
+    bad_config = config;
+    bad_config.cache_root_utf8_length = 0;
     check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
-                        "create rejects an empty cache root");
+                        "create rejects a zero-length cache root");
+
+    const char non_terminated_data_root[] = {'d', 'a', 't', 'a', '!', '\0'};
+    const char non_terminated_cache_root[] = {'c', 'a', 'c', 'h', 'e', '!', '\0'};
+    fly_app_config ranged_config = config;
+    ranged_config.data_root_utf8 = non_terminated_data_root;
+    ranged_config.data_root_utf8_length = 4;
+    ranged_config.cache_root_utf8 = non_terminated_cache_root;
+    ranged_config.cache_root_utf8_length = 5;
+    fly_app_t* ranged_app = nullptr;
+    check(fly_app_create(&ranged_config, &ranged_app) == FLY_RESULT_OK,
+          "create accepts valid byte ranges without a terminator at the range boundary");
+    check(ranged_app != nullptr, "byte-range create returns an app handle");
+    fly_app_destroy(ranged_app);
+
+    const char multibyte_root[] = {
+        static_cast<char>(0xC2), static_cast<char>(0xA2),
+        static_cast<char>(0xE2), static_cast<char>(0x82), static_cast<char>(0xAC),
+        static_cast<char>(0xF0), static_cast<char>(0x9F), static_cast<char>(0x9A),
+        static_cast<char>(0x80), '!', '\0'};
+    ranged_config = config;
+    ranged_config.data_root_utf8 = multibyte_root;
+    ranged_config.data_root_utf8_length = 9;
+    ranged_app = nullptr;
+    check(fly_app_create(&ranged_config, &ranged_app) == FLY_RESULT_OK,
+          "create accepts well-formed two-, three-, and four-byte UTF-8");
+    check(ranged_app != nullptr, "multibyte UTF-8 create returns an app handle");
+    fly_app_destroy(ranged_app);
+
+    std::array<char, FLY_APP_ROOT_MAX_UTF8_BYTES + 1u> maximum_root{};
+    maximum_root.fill('a');
+    maximum_root[FLY_APP_ROOT_MAX_UTF8_BYTES] = '\0';
+    ranged_config = config;
+    ranged_config.data_root_utf8 = maximum_root.data();
+    ranged_config.data_root_utf8_length = FLY_APP_ROOT_MAX_UTF8_BYTES;
+    ranged_app = nullptr;
+    check(fly_app_create(&ranged_config, &ranged_app) == FLY_RESULT_OK,
+          "create accepts a root exactly at the UTF-8 byte limit");
+    check(ranged_app != nullptr, "maximum-length create returns an app handle");
+    fly_app_destroy(ranged_app);
+
+    std::array<char, FLY_APP_ROOT_MAX_UTF8_BYTES + 2u> oversized_root{};
+    oversized_root.fill('a');
+    oversized_root[FLY_APP_ROOT_MAX_UTF8_BYTES + 1u] = '\0';
+    bad_config = config;
+    bad_config.data_root_utf8 = oversized_root.data();
+    bad_config.data_root_utf8_length = FLY_APP_ROOT_MAX_UTF8_BYTES + 1u;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects a root over the UTF-8 byte limit");
+
+    const char embedded_nul[] = {'a', '\0', 'b', '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = embedded_nul;
+    bad_config.data_root_utf8_length = 3;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects an embedded NUL");
+
+    const char stray_continuation[] = {static_cast<char>(0x80), '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = stray_continuation;
+    bad_config.data_root_utf8_length = 1;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects a stray UTF-8 continuation byte");
+
+    const char malformed_sequence[] = {
+        static_cast<char>(0xE2), '(', static_cast<char>(0xA1), '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = malformed_sequence;
+    bad_config.data_root_utf8_length = 3;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects a malformed UTF-8 continuation sequence");
+
+    const char truncated_sequence[] = {
+        static_cast<char>(0xE2), static_cast<char>(0x82), '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = truncated_sequence;
+    bad_config.data_root_utf8_length = 2;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects truncated UTF-8");
+
+    const char overlong_sequence[] = {
+        static_cast<char>(0xC0), static_cast<char>(0xAF), '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = overlong_sequence;
+    bad_config.data_root_utf8_length = 2;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects overlong UTF-8");
+
+    const char surrogate_sequence[] = {
+        static_cast<char>(0xED), static_cast<char>(0xA0), static_cast<char>(0x80), '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = surrogate_sequence;
+    bad_config.data_root_utf8_length = 3;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects UTF-8 encoding a surrogate code point");
+
+    const char out_of_range_sequence[] = {
+        static_cast<char>(0xF4), static_cast<char>(0x90),
+        static_cast<char>(0x80), static_cast<char>(0x80), '\0'};
+    bad_config = config;
+    bad_config.data_root_utf8 = out_of_range_sequence;
+    bad_config.data_root_utf8_length = 4;
+    check_failed_create(&bad_config, FLY_RESULT_INVALID_ARGUMENT,
+                        "create rejects UTF-8 above U+10FFFF");
+
+    fly_platform_capabilities unknown_capabilities = capabilities;
+    unknown_capabilities.flags = UINT64_MAX;
+    fly_app_config unknown_capabilities_config = make_config(&unknown_capabilities);
+    fly_app_t* unknown_capabilities_app = nullptr;
+    check(fly_app_create(&unknown_capabilities_config, &unknown_capabilities_app) ==
+              FLY_RESULT_OK,
+          "create accepts and ignores unknown platform-capability bits");
+    check(unknown_capabilities_app != nullptr,
+          "unknown capability bits still produce an app handle");
+    fly_app_destroy(unknown_capabilities_app);
 
     fly_platform_capabilities extended_capabilities = capabilities;
     extended_capabilities.struct_size = FLY_PLATFORM_CAPABILITIES_V1_SIZE + 16u;

@@ -29,6 +29,8 @@ int main(void)
     config.data_root_utf8 = "c-test-data";
     config.cache_root_utf8 = "c-test-cache";
     config.platform_capabilities = &capabilities;
+    config.data_root_utf8_length = (uint32_t)(sizeof("c-test-data") - 1u);
+    config.cache_root_utf8_length = (uint32_t)(sizeof("c-test-cache") - 1u);
 
     if (fly_app_create(&config, &app) != FLY_RESULT_OK || app == NULL)
     {

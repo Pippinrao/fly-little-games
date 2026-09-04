@@ -14,6 +14,91 @@ struct CatalogData final
     std::uint64_t entry_count = 0;
 };
 
+bool is_utf8_continuation(std::uint8_t byte)
+{
+    return byte >= 0x80u && byte <= 0xBFu;
+}
+
+bool is_valid_root_utf8(const char* bytes, std::uint32_t length)
+{
+    if (bytes == nullptr || length == 0 || length > FLY_APP_ROOT_MAX_UTF8_BYTES)
+    {
+        return false;
+    }
+
+    std::uint32_t index = 0;
+    while (index < length)
+    {
+        const auto first = static_cast<std::uint8_t>(bytes[index]);
+        if (first <= 0x7Fu)
+        {
+            if (first == 0)
+            {
+                return false;
+            }
+            ++index;
+            continue;
+        }
+
+        if (first >= 0xC2u && first <= 0xDFu)
+        {
+            if (length - index < 2u ||
+                !is_utf8_continuation(static_cast<std::uint8_t>(bytes[index + 1u])))
+            {
+                return false;
+            }
+            index += 2u;
+            continue;
+        }
+
+        if (first >= 0xE0u && first <= 0xEFu)
+        {
+            if (length - index < 3u)
+            {
+                return false;
+            }
+            const auto second = static_cast<std::uint8_t>(bytes[index + 1u]);
+            const auto third = static_cast<std::uint8_t>(bytes[index + 2u]);
+            const bool valid_second =
+                is_utf8_continuation(second) &&
+                (first != 0xE0u || second >= 0xA0u) &&
+                (first != 0xEDu || second <= 0x9Fu);
+            if (!valid_second || !is_utf8_continuation(third))
+            {
+                return false;
+            }
+            index += 3u;
+            continue;
+        }
+
+        if (first >= 0xF0u && first <= 0xF4u)
+        {
+            if (length - index < 4u)
+            {
+                return false;
+            }
+            const auto second = static_cast<std::uint8_t>(bytes[index + 1u]);
+            const auto third = static_cast<std::uint8_t>(bytes[index + 2u]);
+            const auto fourth = static_cast<std::uint8_t>(bytes[index + 3u]);
+            const bool valid_second =
+                is_utf8_continuation(second) &&
+                (first != 0xF0u || second >= 0x90u) &&
+                (first != 0xF4u || second <= 0x8Fu);
+            if (!valid_second || !is_utf8_continuation(third) ||
+                !is_utf8_continuation(fourth))
+            {
+                return false;
+            }
+            index += 4u;
+            continue;
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
 fly_result validate_capabilities(const fly_platform_capabilities* capabilities)
 {
     if (capabilities == nullptr)
@@ -45,8 +130,8 @@ fly_result validate_config(const fly_app_config* config)
     {
         return FLY_RESULT_UNSUPPORTED_VERSION;
     }
-    if (config->data_root_utf8 == nullptr || config->data_root_utf8[0] == '\0' ||
-        config->cache_root_utf8 == nullptr || config->cache_root_utf8[0] == '\0')
+    if (!is_valid_root_utf8(config->data_root_utf8, config->data_root_utf8_length) ||
+        !is_valid_root_utf8(config->cache_root_utf8, config->cache_root_utf8_length))
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
@@ -58,8 +143,8 @@ fly_result validate_config(const fly_app_config* config)
 struct fly_app_handle final
 {
     fly_app_handle(const fly_app_config& config, std::shared_ptr<const CatalogData> initial_catalog)
-        : data_root(config.data_root_utf8),
-          cache_root(config.cache_root_utf8),
+        : data_root(config.data_root_utf8, config.data_root_utf8_length),
+          cache_root(config.cache_root_utf8, config.cache_root_utf8_length),
           platform_flags(config.platform_capabilities->flags),
           catalog(std::move(initial_catalog))
     {

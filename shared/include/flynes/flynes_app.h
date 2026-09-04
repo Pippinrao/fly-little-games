@@ -36,6 +36,7 @@ enum fly_result_code
 #define FLY_PLATFORM_CAPABILITIES_VERSION_1 UINT32_C(1)
 #define FLY_APP_CONFIG_VERSION_1 UINT32_C(1)
 #define FLY_CATALOG_ENTRY_VERSION_1 UINT32_C(1)
+#define FLY_APP_ROOT_MAX_UTF8_BYTES UINT32_C(4096)
 
 /*
  * Platform-neutral feature bits. Version 1 defines no required bits; callers
@@ -53,10 +54,12 @@ typedef struct fly_platform_capabilities
     ((uint32_t)(offsetof(fly_platform_capabilities, flags) + sizeof(uint64_t)))
 
 /*
- * data_root_utf8 and cache_root_utf8 must each point to a non-empty,
- * NUL-terminated UTF-8 string. They are borrowed only for fly_app_create; a
- * successful call copies both strings, so the caller may immediately release
- * or modify its storage. platform_capabilities is borrowed for the call.
+ * data_root_utf8 and cache_root_utf8 each point to a byte range described by
+ * the corresponding uint32_t length field. Lengths exclude any optional NUL
+ * terminator, must be in [1, FLY_APP_ROOT_MAX_UTF8_BYTES], and the ranges need
+ * not be NUL-terminated. Each range must be strictly well-formed UTF-8 and may
+ * not contain U+0000. The ranges and platform_capabilities are borrowed only
+ * for fly_app_create; a successful call copies exactly the specified bytes.
  */
 typedef struct fly_app_config
 {
@@ -65,11 +68,12 @@ typedef struct fly_app_config
     const char* data_root_utf8;
     const char* cache_root_utf8;
     const fly_platform_capabilities* platform_capabilities;
+    uint32_t data_root_utf8_length;
+    uint32_t cache_root_utf8_length;
 } fly_app_config;
 
 #define FLY_APP_CONFIG_V1_SIZE \
-    ((uint32_t)(offsetof(fly_app_config, platform_capabilities) + \
-                sizeof(const fly_platform_capabilities*)))
+    ((uint32_t)(offsetof(fly_app_config, cache_root_utf8_length) + sizeof(uint32_t)))
 
 /*
  * Caller-provided catalog output. Before a successful indexed get, the caller
