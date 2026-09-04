@@ -218,13 +218,15 @@ TextResult finish_buffered_hash(ProcessBlock process_block,
         buffer[buffered++] = 0x80u;
         if (buffered > 56u)
         {
-            std::fill(buffer.begin() + static_cast<std::ptrdiff_t>(buffered), buffer.end(), 0u);
+            std::fill(buffer.begin() + static_cast<std::ptrdiff_t>(buffered),
+                      buffer.end(),
+                      std::uint8_t{0});
             process_block(buffer.data());
             buffered = 0u;
         }
         std::fill(buffer.begin() + static_cast<std::ptrdiff_t>(buffered),
                   buffer.begin() + 56,
-                  0u);
+                  std::uint8_t{0});
         store_big_endian_u64(buffer.data() + 56u, bit_length);
         process_block(buffer.data());
         buffered = 0u;
