@@ -13,9 +13,9 @@ ctest --test-dir out/shared -C Release --output-on-failure
 ```
 
 `FLYNES_BUILD_TESTS` defaults to `OFF`. When enabled, CTest registers the ABI,
-C-header, and ROM-fixture tests and requires a Python 3 interpreter for the
-fixture-generator check. Production-only builds do not discover or require
-Python (or a C compiler).
+C-header, ROM-fixture, and bounded-ZIP tests and requires a Python 3 interpreter
+for the fixture-generator checks. Production-only builds do not discover or
+require Python (or a C compiler).
 
 ## ROM parser parity fixtures
 
@@ -49,6 +49,33 @@ must be removed explicitly. For an intentional contract change, edit the
 deterministic generator, use a new version directory/schema when an existing
 input or expected output changes, update both parity gates, regenerate, run
 `--check`, and review every manifest/hash diff before committing.
+
+## Bounded ZIP-open parity fixtures
+
+`tests/fixtures/zip/open/v1/manifest.tsv` and its 60 `.zip` blobs are the single
+language-neutral ZIP structural/open corpus. Each row supplies all seven scan
+limits, a SHA-256, and either the exact stable error code/message or every
+published entry metadata field in Java output order. Raw names and central
+extras are lowercase hex; raw name plus local-header offset is the exact entry
+identity. The JVM `BoundedZipOpenFixtureParityTest` and the CTest targets
+`flynes_bounded_zip_archive`, `flynes_bounded_zip_archive_edges`, and
+`flynes_zip_open_fixture_loader` consume this same directory.
+
+The manifest and both loaders enforce schema version 1, safe basename-only
+paths, unique case/blob names, exact SHA-256 values, regular non-symlink files,
+and exact directory enumeration. Generate or non-mutatingly verify it with:
+
+```sh
+python shared/tests/fixtures/zip/open/generate_v1.py
+python shared/tests/fixtures/zip/open/generate_v1.py --check
+```
+
+This slice stops after central/local headers, compressed byte ranges, descriptor
+metadata, declared inflated totals, and ratio validation. It deliberately does
+not inflate stored/deflate payloads or verify their actual size or CRC, and it
+does not implement decoded display-name/path policy. Those remain Java
+`Entry.readPayload` and scanner concerns for a later port; no zlib dependency is
+present here.
 
 ## ABI and ownership rules
 
