@@ -5,6 +5,7 @@
 #include <nes/nes.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -26,6 +27,13 @@ constexpr std::string_view kExpectedCoreCartridgeSha1 =
 constexpr std::uint32_t kSmokeFrameCount = 60u;
 constexpr std::uint32_t kAudioCapacityPerFrame = 1024u;
 constexpr std::size_t kMaxSmokeStateBytes = 8u * 1024u * 1024u;
+constexpr std::int16_t kAudioSentinel = static_cast<std::int16_t>(0x5A5A);
+constexpr std::array<std::uint32_t, NES_PORT_MAX> kInputMasks = {
+    NES_BTN_A,
+    NES_BTN_B,
+    NES_BTN_SELECT,
+    NES_BTN_START,
+};
 
 using AppPtr = std::unique_ptr<fly_app_t, decltype(&fly_app_destroy)>;
 using SnapshotPtr =
@@ -129,10 +137,12 @@ PortabilitySmokeResult run_portability_smoke(const PortabilitySmokeInput& input)
             return fail("nes_set_audio_format", audio_format_result);
 
         std::vector<std::int16_t> audio(
-            static_cast<std::size_t>(kSmokeFrameCount) * kAudioCapacityPerFrame);
+            static_cast<std::size_t>(kSmokeFrameCount) * kAudioCapacityPerFrame,
+            kAudioSentinel);
         std::uint32_t frames_run = 0u;
         std::uint32_t samples_written = 0u;
-        nes_set_input(nes.get(), 0u, NES_BTN_START);
+        for (std::uint32_t port = 0u; port < kInputMasks.size(); ++port)
+            nes_set_input(nes.get(), port, kInputMasks[port]);
         const int run_result = nes_run_frames(
             nes.get(),
             kSmokeFrameCount,
@@ -140,10 +150,25 @@ PortabilitySmokeResult run_portability_smoke(const PortabilitySmokeInput& input)
             static_cast<std::uint32_t>(audio.size()),
             &frames_run,
             &samples_written);
-        if (run_result != NES_OK || frames_run != kSmokeFrameCount || samples_written == 0u)
+        if (run_result != NES_OK || frames_run != kSmokeFrameCount ||
+            samples_written == 0u || samples_written > audio.size())
         {
             nes_clear_input(nes.get());
             return fail("nes_run_frames", run_result);
+        }
+        const auto audio_end =
+            audio.begin() + static_cast<std::ptrdiff_t>(samples_written);
+        const std::uint32_t audio_samples_changed = static_cast<std::uint32_t>(
+            std::count_if(audio.begin(), audio_end, [](std::int16_t sample) {
+                return sample != kAudioSentinel;
+            }));
+        if (audio_samples_changed == 0u ||
+            !std::all_of(audio_end, audio.end(), [](std::int16_t sample) {
+                return sample == kAudioSentinel;
+            }))
+        {
+            nes_clear_input(nes.get());
+            return fail("nes_audio_write_bounds");
         }
 
         nes_input_sample input_sample{};
@@ -151,9 +176,9 @@ PortabilitySmokeResult run_portability_smoke(const PortabilitySmokeInput& input)
         const int input_sample_result = nes_get_last_input_sample(nes.get(), &input_sample);
         nes_clear_input(nes.get());
         if (input_sample_result != NES_OK || input_sample.version != NES_STRUCT_VERSION ||
-            input_sample.generation == 0u || input_sample.pad_bits[0] != NES_BTN_START ||
-            input_sample.pad_bits[1] != 0u || input_sample.pad_bits[2] != 0u ||
-            input_sample.pad_bits[3] != 0u || input_sample.native_monotonic_ns == 0u)
+            input_sample.generation != kInputMasks.size() ||
+            !std::equal(kInputMasks.begin(), kInputMasks.end(), input_sample.pad_bits) ||
+            input_sample.native_monotonic_ns == 0u)
             return fail("nes_input_sample", input_sample_result);
 
         std::vector<std::uint16_t> pixels(256u * 240u);
@@ -238,9 +263,11 @@ PortabilitySmokeResult run_portability_smoke(const PortabilitySmokeInput& input)
         result.exit_code = 0;
         result.frames_run = frames_run;
         result.audio_samples = samples_written;
+        result.audio_samples_changed = audio_samples_changed;
         result.state_bytes = state_written;
         result.input_generation = input_sample.generation;
         result.input_monotonic_ns = input_sample.native_monotonic_ns;
+        std::copy(kInputMasks.begin(), kInputMasks.end(), result.input_pad_bits.begin());
         result.video_sequence = video_snapshot.sequence;
         result.video_monotonic_ns = video_snapshot.native_monotonic_ns;
         result.non_black_pixels = non_black_pixels;
@@ -253,9 +280,14 @@ PortabilitySmokeResult run_portability_smoke(const PortabilitySmokeInput& input)
         report << "FLYNES_IOS_SMOKE_PASS"
                << " frames=" << result.frames_run
                << " audio_samples=" << result.audio_samples
+               << " audio_samples_changed=" << result.audio_samples_changed
                << " state_bytes=" << result.state_bytes
                << " input_generation=" << result.input_generation
                << " input_monotonic_ns=" << result.input_monotonic_ns
+               << " input_pad0=" << result.input_pad_bits[0]
+               << " input_pad1=" << result.input_pad_bits[1]
+               << " input_pad2=" << result.input_pad_bits[2]
+               << " input_pad3=" << result.input_pad_bits[3]
                << " video_sequence=" << result.video_sequence
                << " video_monotonic_ns=" << result.video_monotonic_ns
                << " non_black_pixels=" << result.non_black_pixels

@@ -9,12 +9,13 @@ jobs:
   ios-device-simulator:
     name: iOS arm64 device + simulator compile/link/smoke
     runs-on: macos-26
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       EVIDENCE_DIR: artifacts/ios-stage1
       BUNDLE_ID: com.flynes.portability-smoke
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           submodules: recursive
 
@@ -29,6 +30,8 @@ jobs:
           grep -Fx "Build version 17F113" "$EVIDENCE_DIR/xcode-version.txt"
           cmake --version | tee "$EVIDENCE_DIR/cmake-version.txt"
           python3 ios/tests/test_stage1_contract.py | tee "$EVIDENCE_DIR/host-contract.txt"
+          python3 ios/tests/test_simulator_result_validator.py | \
+            tee "$EVIDENCE_DIR/host-validator.txt"
 
       - name: Resolve and inspect SDK zlib
         shell: bash
@@ -120,7 +123,13 @@ jobs:
             xcrun vtool -show-build "$binary" | tee "$EVIDENCE_DIR/$label-vtool.txt"
             grep -Eq "platform[[:space:]]+$expected_platform$" \
               "$EVIDENCE_DIR/$label-vtool.txt"
+            grep -Eq '^[[:space:]]*minos[[:space:]]+17\.0$' \
+              "$EVIDENCE_DIR/$label-vtool.txt"
+            grep -Eq '^[[:space:]]*sdk[[:space:]]+26\.5$' \
+              "$EVIDENCE_DIR/$label-vtool.txt"
             xcrun otool -L "$binary" | tee "$EVIDENCE_DIR/$label-otool.txt"
+            test "$(grep -Ec '^[[:space:]]*/usr/lib/libz\.1\.dylib[[:space:]]+\(' \
+              "$EVIDENCE_DIR/$label-otool.txt")" = "1"
             if test "$label" = simulator; then
               codesign -dv --verbose=4 "$app" \
                 > "$EVIDENCE_DIR/$label-codesign.txt" 2>&1
@@ -177,7 +186,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcrun simctl list runtimes -j | tee "$EVIDENCE_DIR/simulator-runtimes.json"
+          run_simctl() {
+            local timeout_seconds="$1"
+            shift
+            python3 ios/scripts/run_with_timeout.py \
+              --timeout-seconds "$timeout_seconds" -- xcrun simctl "$@"
+          }
+          run_simctl 20 list runtimes -j | tee "$EVIDENCE_DIR/simulator-runtimes.json"
           python3 - "$EVIDENCE_DIR/simulator-runtimes.json" <<'PY'
           import json
           from pathlib import Path
@@ -196,17 +211,21 @@ jobs:
           PY
           app="$(find build/ios-simulator -type d -name FlyNESPortabilitySmoke.app -print -quit)"
           test -n "$app"
-          udid="$(xcrun simctl create \
+          udid=""
+          cleanup() {
+            if test -n "$udid"; then
+              run_simctl 10 shutdown "$udid" >/dev/null 2>&1 || true
+              run_simctl 10 delete "$udid" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+          udid="$(run_simctl 30 create \
             "FlyNES-Stage1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             com.apple.CoreSimulator.SimDeviceType.iPhone-17 \
             com.apple.CoreSimulator.SimRuntime.iOS-26-5)"
-          cleanup() {
-            xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
-            xcrun simctl delete "$udid" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          test -n "$udid"
+          run_simctl 30 boot "$udid"
+          run_simctl 90 bootstatus "$udid" -b
           # The runner performs simctl install and simctl launch --console,
           # then validates the app-container JSON rather than trusting launch alone.
           python3 ios/scripts/run_simulator_smoke.py \
@@ -218,22 +237,73 @@ jobs:
           grep -F 'FLYNES_IOS_SMOKE_PASS' "$EVIDENCE_DIR/simulator-launch.log"
           grep -F '"exit_code":0' "$EVIDENCE_DIR/simulator-result.json"
 
-      - name: Hash text evidence
+      - name: Validate and hash the text-only evidence inventory
+        id: evidence_gate
         if: always()
         shell: bash
+        env:
+          PRIOR_JOB_STATUS: ${{ job.status }}
         run: |
+          set -euo pipefail
           mkdir -p "$EVIDENCE_DIR"
+          python3 ios/scripts/validate_evidence_artifact.py \
+            --directory "$EVIDENCE_DIR" \
+            --write-inventory "$EVIDENCE_DIR/evidence-inventory.txt"
           (
             cd "$EVIDENCE_DIR"
             find . -type f ! -name SHA256SUMS.txt -print | LC_ALL=C sort | \
               while IFS= read -r evidence; do shasum -a 256 "$evidence"; done
           ) > "$EVIDENCE_DIR/SHA256SUMS.txt"
+          completeness=()
+          if test "$PRIOR_JOB_STATUS" = "success"; then
+            completeness=(--require-complete)
+          fi
+          python3 ios/scripts/validate_evidence_artifact.py \
+            --directory "$EVIDENCE_DIR" "${completeness[@]}"
 
       - name: Upload Stage-1 evidence (never the ROM-bearing app)
-        if: always()
-        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence_gate.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-stage1-evidence
-          path: artifacts/ios-stage1
+          path: |
+            artifacts/ios-stage1/SHA256SUMS.txt
+            artifacts/ios-stage1/cmake-sdk-zlib-selection.txt
+            artifacts/ios-stage1/cmake-version.txt
+            artifacts/ios-stage1/device-architectures.txt
+            artifacts/ios-stage1/device-codesign.txt
+            artifacts/ios-stage1/device-file.txt
+            artifacts/ios-stage1/device-final-c-symbols.txt
+            artifacts/ios-stage1/device-fly-symbols.txt
+            artifacts/ios-stage1/device-link-flynes-app.txt
+            artifacts/ios-stage1/device-link-nes-abi.txt
+            artifacts/ios-stage1/device-link-nestopia.txt
+            artifacts/ios-stage1/device-nes-symbols.txt
+            artifacts/ios-stage1/device-otool.txt
+            artifacts/ios-stage1/device-resource-hashes.txt
+            artifacts/ios-stage1/device-vtool.txt
+            artifacts/ios-stage1/evidence-inventory.txt
+            artifacts/ios-stage1/expected-nes-symbols.txt
+            artifacts/ios-stage1/host-contract.txt
+            artifacts/ios-stage1/host-validator.txt
+            artifacts/ios-stage1/iphoneos-zlib.txt
+            artifacts/ios-stage1/iphonesimulator-zlib.txt
+            artifacts/ios-stage1/sdk-paths.txt
+            artifacts/ios-stage1/simulator-architectures.txt
+            artifacts/ios-stage1/simulator-codesign.txt
+            artifacts/ios-stage1/simulator-file.txt
+            artifacts/ios-stage1/simulator-final-c-symbols.txt
+            artifacts/ios-stage1/simulator-fly-symbols.txt
+            artifacts/ios-stage1/simulator-launch.log
+            artifacts/ios-stage1/simulator-link-flynes-app.txt
+            artifacts/ios-stage1/simulator-link-nes-abi.txt
+            artifacts/ios-stage1/simulator-link-nestopia.txt
+            artifacts/ios-stage1/simulator-nes-symbols.txt
+            artifacts/ios-stage1/simulator-otool.txt
+            artifacts/ios-stage1/simulator-resource-hashes.txt
+            artifacts/ios-stage1/simulator-result.json
+            artifacts/ios-stage1/simulator-runtimes.json
+            artifacts/ios-stage1/simulator-vtool.txt
+            artifacts/ios-stage1/xcode-version.txt
           if-no-files-found: error
           retention-days: 14

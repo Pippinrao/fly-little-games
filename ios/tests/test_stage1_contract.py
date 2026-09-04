@@ -45,6 +45,8 @@ def main() -> int:
         "ios/src/portability_smoke.cpp",
         "ios/src/portability_smoke.hpp",
         "ios/scripts/run_simulator_smoke.py",
+        "ios/scripts/run_with_timeout.py",
+        "ios/scripts/validate_evidence_artifact.py",
         "ios/abi/flynes_app.symbols.txt",
         "ios/README.md",
         ".github/workflows/ios-stage1.yml",
@@ -107,6 +109,8 @@ def main() -> int:
             "iOS consumer must not include shared private C++ implementation headers")
 
     require("runs-on: macos-26" in workflow, "workflow must use the macOS 26 arm64 label")
+    require("timeout-minutes: 45" in workflow,
+            "workflow job must retain its 45-minute upper bound")
     require("submodules: recursive" in workflow, "checkout must initialize Nestopia recursively")
     require("/Applications/Xcode_26.6.app/Contents/Developer" in workflow,
             "workflow must select Xcode 26.6 by absolute path")
@@ -120,16 +124,37 @@ def main() -> int:
             "workflow must pin the iPhoneSimulator SDK version to 26.5")
     for token in ("iphoneos", "iphonesimulator", "arm64", "vtool", "nm", "otool"):
         require(token in workflow, f"workflow is missing evidence token: {token}")
-    for token in ("simctl create", "simctl boot", "simctl install", "simctl launch --console"):
-        require(token in workflow, f"simulator must actually execute smoke via: {token}")
-    require("simctl get_app_container" in read("ios/scripts/run_simulator_smoke.py"),
+    for token in (
+        "run_simctl 30 create",
+        "run_simctl 30 boot",
+        "run_simctl 90 bootstatus",
+        "run_simctl 10 shutdown",
+        "run_simctl 10 delete",
+    ):
+        require(token in workflow, f"simulator lifecycle is missing a bounded call: {token}")
+    runner = read("ios/scripts/run_simulator_smoke.py")
+    for token in ('"install"', '"get_app_container"', '"launch"', '"terminate"'):
+        require(token in runner, f"simulator runner is missing simctl operation: {token}")
+    require(runner.count("timeout=") >= 4,
+            "install/get-container/launch/terminate calls must all be time bounded")
+    require("simctl get_app_container" in runner,
             "simulator runner must inspect the launched app's data container")
-    require("exit_code" in read("ios/scripts/run_simulator_smoke.py"),
+    require("exit_code" in runner,
             "simulator runner must verify structured in-app completion state")
     require("FLYNES_IOS_SMOKE_PASS" in workflow,
             "simulator gate must verify the smoke success marker")
-    require("actions/upload-artifact@v4" in workflow,
-            "workflow must upload inspectable Stage-1 evidence")
+    require(
+        "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1"
+        in workflow,
+        "checkout v4 must be pinned to its full official commit SHA",
+    )
+    require(
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2"
+        in workflow,
+        "upload-artifact v4 must be pinned to its full official commit SHA",
+    )
+    require("python3 ios/tests/test_simulator_result_validator.py" in workflow,
+            "workflow must execute the structured validator host tests")
     require('get("isAvailable") is not True' in workflow,
             "workflow must fail unless the exact simulator runtime is available")
     require("CODE_SIGNING_ALLOWED=NO" in workflow,
@@ -140,8 +165,18 @@ def main() -> int:
             "device evidence must reject a signed bundle and require the unsigned diagnostic")
     require("Signature=adhoc" in workflow,
             "simulator evidence must verify an ad-hoc signature")
-    require("path: artifacts/ios-stage1" in workflow,
-            "artifact upload must be limited to text evidence")
+    require("validate_evidence_artifact.py" in workflow,
+            "artifact upload must pass a fail-closed inventory gate")
+    require("steps.evidence_gate.outcome == 'success'" in workflow,
+            "artifact upload must not run when the inventory gate fails")
+    require("path: |" in workflow and "artifacts/ios-stage1/*." not in workflow,
+            "artifact upload must use exact file paths, not a directory or extension glob")
+    require("path: artifacts/ios-stage1\n" not in workflow,
+            "artifact upload must never include the entire evidence directory")
+    require("run_with_timeout.py" in workflow,
+            "workflow simctl lifecycle commands must use the portable timeout wrapper")
+    for token in ("minos", "17\\.0", "sdk", "26\\.5", "/usr/lib/libz\\.1\\.dylib"):
+        require(token in workflow, f"final Mach-O contract is missing: {token}")
 
     forbidden = re.compile(
         r"flynes_runtime|flynes_session|fly_runtime_|fly_session_|NetworkExtension|"

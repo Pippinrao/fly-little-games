@@ -1,6 +1,7 @@
 #ifndef FLYNES_IOS_PORTABILITY_SMOKE_HPP
 #define FLYNES_IOS_PORTABILITY_SMOKE_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -21,9 +22,11 @@ struct PortabilitySmokeResult final
     int exit_code = 1;
     std::uint32_t frames_run = 0u;
     std::uint32_t audio_samples = 0u;
+    std::uint32_t audio_samples_changed = 0u;
     std::size_t state_bytes = 0u;
     std::uint64_t input_generation = 0u;
     std::uint64_t input_monotonic_ns = 0u;
+    std::array<std::uint32_t, 4u> input_pad_bits{};
     std::uint64_t video_sequence = 0u;
     std::uint64_t video_monotonic_ns = 0u;
     std::uint64_t non_black_pixels = 0u;

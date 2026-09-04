@@ -15,7 +15,8 @@ ctest --test-dir out/shared -C Release --output-on-failure
 Windows host builds also pass the verified zlib 1.3.1 install as
 `-DZLIB_ROOT=<prefix>`; its header and static-library hashes are checked during
 configuration. Android and HarmonyOS builds resolve `zlib.h` and `libz` only
-inside the selected SDK sysroot. Linux, macOS, and iOS use CMake's target-aware
+inside the selected SDK sysroot. iOS resolves zlib only from the absolute,
+selected Apple SDK; ordinary Linux and macOS builds use CMake's target-aware
 `find_package(ZLIB REQUIRED)` and `ZLIB::ZLIB`.
 
 `FLYNES_BUILD_TESTS` defaults to `OFF`. When enabled, CTest registers the ABI,

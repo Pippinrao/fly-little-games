@@ -1,6 +1,8 @@
 #include "fixture_sha256.hpp"
 #include "portability_smoke.hpp"
 
+#include <nes/nes.h>
+
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -59,6 +61,18 @@ int main(int argc, char** argv)
     std::cout << result.report << '\n';
 
     if (result.exit_code != 0 ||
+        result.frames_run != 60u ||
+        result.audio_samples == 0u || result.audio_samples > 60u * 1024u ||
+        result.audio_samples_changed == 0u ||
+        result.audio_samples_changed > result.audio_samples ||
+        result.state_bytes == 0u || result.state_bytes > 8u * 1024u * 1024u ||
+        result.input_generation != 4u ||
+        result.input_pad_bits[0] != NES_BTN_A ||
+        result.input_pad_bits[1] != NES_BTN_B ||
+        result.input_pad_bits[2] != NES_BTN_SELECT ||
+        result.input_pad_bits[3] != NES_BTN_START ||
+        result.video_sequence != result.frames_run ||
+        result.non_black_pixels == 0u || result.non_black_pixels > 256u * 240u ||
         result.report.find("FLYNES_IOS_SMOKE_PASS") == std::string::npos ||
         result.report.find(
             "full_file_sha256=1A3AC4FAF4B35640505344059AE5D91DAE07CD47E1FB4D9D2A33C76391F1C555") ==
