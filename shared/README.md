@@ -12,6 +12,12 @@ cmake --build out/shared --config Release
 ctest --test-dir out/shared -C Release --output-on-failure
 ```
 
+Windows host builds also pass the verified zlib 1.3.1 install as
+`-DZLIB_ROOT=<prefix>`; its header and static-library hashes are checked during
+configuration. Android and HarmonyOS builds resolve `zlib.h` and `libz` only
+inside the selected SDK sysroot. Linux, macOS, and iOS use CMake's target-aware
+`find_package(ZLIB REQUIRED)` and `ZLIB::ZLIB`.
+
 `FLYNES_BUILD_TESTS` defaults to `OFF`. When enabled, CTest registers the ABI,
 C-header, ROM-fixture, and bounded-ZIP tests and requires a Python 3 interpreter
 for the fixture-generator checks. Production-only builds do not discover or
@@ -83,12 +89,44 @@ Generation refuses unexpected entries and reparse/symlink output roots. Files
 are replaced atomically so an existing hardlink cannot cause an out-of-tree
 alias to be truncated.
 
-This slice stops after central/local headers, compressed byte ranges, descriptor
-metadata, declared inflated totals, and ratio validation. It deliberately does
-not inflate stored/deflate payloads or verify their actual size or CRC, and it
-does not implement decoded display-name/path policy. Those remain Java
-`Entry.readPayload` and scanner concerns for a later port; no zlib dependency is
-present here.
+ZIP opening stops after central/local headers, compressed byte ranges,
+descriptor metadata, declared inflated totals, and ratio validation. It never
+eagerly inflates an entry, so an unselected malformed sibling cannot affect a
+selected entry.
+
+## Bounded ZIP-payload parity fixtures
+
+`tests/fixtures/zip/payload/v1/manifest.tsv` and its 19 independent `.zip`
+blobs freeze the existing Java `Entry.readPayload()` behavior. Each row selects
+one entry by raw-name hex plus local-header offset, supplies all seven limits,
+and records either exact payload length/SHA-256 or a stable error code/message.
+The corpus covers stored and raw-DEFLATE success, empty and directory entries,
+signed/unsigned descriptors, an unselected corrupt sibling, limit/error
+precedence, malformed/truncated/trailing streams, declared-size mismatch, and
+CRC mismatch. RFC 1950 wrapped zlib streams are intentionally rejected because
+ZIP method 8 carries raw DEFLATE.
+
+The C++ archive owns one copy of the physical bytes and keeps data offsets in a
+private index. A payload read performs exact selection, allocates a new result,
+and does not cache it; moving the archive or mutating an earlier returned payload
+does not change a later read. The inflater uses bounded 8192-byte steps, checks
+actual cumulative output before declared entry size, and reports malformed data
+as value errors rather than allowing validation exceptions across the internal
+boundary.
+
+The JVM `BoundedZipPayloadFixtureParityTest` and CTest targets
+`flynes_bounded_zip_payload`, `flynes_bounded_zip_payload_edges`, and
+`flynes_zip_payload_fixture_loader` consume the same corpus. CTest also runs the
+generator safety suite and a direct committed-corpus check:
+
+```sh
+python shared/tests/fixtures/zip/payload/generate_v1.py
+python shared/tests/fixtures/zip/payload/generate_v1.py --check
+```
+
+Payload inflation remains an internal catalog rule. It adds no symbol or type to
+the public `flynes_app.h` C ABI and does not implement scanning, import,
+transport, runtime, or session behavior.
 
 ## ABI and ownership rules
 

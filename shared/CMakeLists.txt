@@ -21,6 +21,73 @@ set_target_properties(flynes_app PROPERTIES
     POSITION_INDEPENDENT_CODE YES
 )
 
+# Payload inflation uses only platform/toolchain zlib. Windows host evidence is pinned to the
+# same verified 1.3.1 static package as core; cross targets resolve inside their SDK sysroots.
+if(WIN32)
+    if(NOT DEFINED ZLIB_ROOT OR ZLIB_ROOT STREQUAL "")
+        message(FATAL_ERROR
+            "Windows shared host builds require ZLIB_ROOT as the verified installed prefix")
+    endif()
+    get_filename_component(FLYNES_SHARED_ZLIB_PREFIX "${ZLIB_ROOT}" ABSOLUTE)
+    find_path(FLYNES_SHARED_ZLIB_INCLUDE zlib.h
+        PATHS "${FLYNES_SHARED_ZLIB_PREFIX}/include" NO_DEFAULT_PATH)
+    find_library(FLYNES_SHARED_ZLIB_STATIC NAMES zlibstatic
+        PATHS "${FLYNES_SHARED_ZLIB_PREFIX}/lib" NO_DEFAULT_PATH)
+    if(NOT FLYNES_SHARED_ZLIB_INCLUDE OR NOT FLYNES_SHARED_ZLIB_STATIC)
+        message(FATAL_ERROR
+            "Verified zlib headers/static Release library are missing under ZLIB_ROOT")
+    endif()
+    file(READ "${FLYNES_SHARED_ZLIB_INCLUDE}/zlib.h" FLYNES_SHARED_ZLIB_HEADER_TEXT)
+    if(NOT FLYNES_SHARED_ZLIB_HEADER_TEXT MATCHES
+            "#define ZLIB_VERSION \\\"1\\.3\\.1\\\"")
+        message(FATAL_ERROR "ZLIB_ROOT is not the pinned zlib 1.3.1 install")
+    endif()
+    file(SHA256 "${FLYNES_SHARED_ZLIB_INCLUDE}/zlib.h"
+        FLYNES_SHARED_ZLIB_HEADER_SHA256)
+    file(SHA256 "${FLYNES_SHARED_ZLIB_STATIC}"
+        FLYNES_SHARED_ZLIB_LIBRARY_SHA256)
+    if(NOT FLYNES_SHARED_ZLIB_HEADER_SHA256 STREQUAL
+            "8a5579af72ea4f427ff00a4150f0ccb3fc5c1e4379f726e101133b1ab9fc600c")
+        message(FATAL_ERROR "Pinned zlib.h SHA-256 mismatch")
+    endif()
+    if(NOT FLYNES_SHARED_ZLIB_LIBRARY_SHA256 STREQUAL
+            "9f2898c18ee6e982ec5266ddcbd4cd8d068e9d0b6c3122f6ecb49d8be3e8d9ff")
+        message(FATAL_ERROR "Pinned zlibstatic.lib SHA-256 mismatch")
+    endif()
+    add_library(flynes_shared_zlib STATIC IMPORTED GLOBAL)
+    set_target_properties(flynes_shared_zlib PROPERTIES
+        IMPORTED_LOCATION "${FLYNES_SHARED_ZLIB_STATIC}"
+        INTERFACE_INCLUDE_DIRECTORIES "${FLYNES_SHARED_ZLIB_INCLUDE}")
+    target_link_libraries(flynes_app PRIVATE flynes_shared_zlib)
+elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+    find_path(FLYNES_SHARED_ZLIB_INCLUDE zlib.h)
+    find_library(FLYNES_SHARED_ZLIB_LIBRARY NAMES z)
+    if(NOT FLYNES_SHARED_ZLIB_INCLUDE OR NOT FLYNES_SHARED_ZLIB_LIBRARY)
+        message(FATAL_ERROR "The target SDK sysroot zlib was not found")
+    endif()
+    if(NOT CMAKE_SYSROOT)
+        message(FATAL_ERROR "The target SDK did not define CMAKE_SYSROOT")
+    endif()
+    file(REAL_PATH "${CMAKE_SYSROOT}" FLYNES_SHARED_SYSROOT_REAL)
+    file(REAL_PATH "${FLYNES_SHARED_ZLIB_INCLUDE}" FLYNES_SHARED_ZLIB_INCLUDE_REAL)
+    file(REAL_PATH "${FLYNES_SHARED_ZLIB_LIBRARY}" FLYNES_SHARED_ZLIB_LIBRARY_REAL)
+    file(RELATIVE_PATH FLYNES_SHARED_ZLIB_INCLUDE_RELATIVE
+        "${FLYNES_SHARED_SYSROOT_REAL}" "${FLYNES_SHARED_ZLIB_INCLUDE_REAL}")
+    file(RELATIVE_PATH FLYNES_SHARED_ZLIB_LIBRARY_RELATIVE
+        "${FLYNES_SHARED_SYSROOT_REAL}" "${FLYNES_SHARED_ZLIB_LIBRARY_REAL}")
+    if(FLYNES_SHARED_ZLIB_INCLUDE_RELATIVE MATCHES "^\\.\\.($|/)" OR
+       IS_ABSOLUTE "${FLYNES_SHARED_ZLIB_INCLUDE_RELATIVE}" OR
+       FLYNES_SHARED_ZLIB_LIBRARY_RELATIVE MATCHES "^\\.\\.($|/)" OR
+       IS_ABSOLUTE "${FLYNES_SHARED_ZLIB_LIBRARY_RELATIVE}")
+        message(FATAL_ERROR "The selected zlib escaped the target SDK sysroot")
+    endif()
+    target_include_directories(flynes_app PRIVATE "${FLYNES_SHARED_ZLIB_INCLUDE}")
+    target_link_libraries(flynes_app PRIVATE "${FLYNES_SHARED_ZLIB_LIBRARY}")
+else()
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(flynes_app PRIVATE ZLIB::ZLIB)
+endif()
+
 function(flynes_enable_strict_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE
@@ -136,6 +203,56 @@ if(FLYNES_BUILD_TESTS)
     flynes_enable_strict_warnings(flynes_bounded_zip_archive_edges_test)
     add_test(NAME flynes_bounded_zip_archive_edges COMMAND flynes_bounded_zip_archive_edges_test)
 
+    add_executable(flynes_bounded_zip_payload_test
+        tests/zip_payload_fixture.cpp
+        tests/test_bounded_zip_payload.cpp
+    )
+    target_link_libraries(flynes_bounded_zip_payload_test PRIVATE flynes_app)
+    target_include_directories(flynes_bounded_zip_payload_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_bounded_zip_payload_test PRIVATE
+        FLYNES_ZIP_PAYLOAD_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/payload/v1"
+    )
+    target_compile_features(flynes_bounded_zip_payload_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_bounded_zip_payload_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_bounded_zip_payload_test)
+    add_test(NAME flynes_bounded_zip_payload COMMAND flynes_bounded_zip_payload_test)
+
+    add_executable(flynes_bounded_zip_payload_edges_test
+        tests/zip_payload_fixture.cpp
+        tests/test_bounded_zip_payload_edges.cpp
+    )
+    target_link_libraries(flynes_bounded_zip_payload_edges_test PRIVATE flynes_app)
+    target_include_directories(flynes_bounded_zip_payload_edges_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_bounded_zip_payload_edges_test PRIVATE
+        FLYNES_ZIP_PAYLOAD_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/payload/v1"
+    )
+    target_compile_features(flynes_bounded_zip_payload_edges_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_bounded_zip_payload_edges_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_bounded_zip_payload_edges_test)
+    add_test(NAME flynes_bounded_zip_payload_edges COMMAND flynes_bounded_zip_payload_edges_test)
+
+    add_executable(flynes_zip_payload_fixture_loader_test
+        tests/zip_payload_fixture.cpp
+        tests/test_zip_payload_fixture_loader.cpp
+    )
+    target_include_directories(flynes_zip_payload_fixture_loader_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_zip_payload_fixture_loader_test PRIVATE
+        FLYNES_ZIP_PAYLOAD_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/payload/v1"
+        FLYNES_ZIP_PAYLOAD_FIXTURE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/zip-payload-fixture-loader-tests"
+    )
+    target_compile_features(flynes_zip_payload_fixture_loader_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_zip_payload_fixture_loader_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_zip_payload_fixture_loader_test)
+    add_test(NAME flynes_zip_payload_fixture_loader COMMAND flynes_zip_payload_fixture_loader_test)
+
     add_executable(flynes_zip_open_fixture_loader_test
         tests/zip_open_fixture.cpp
         tests/test_zip_open_fixture_loader.cpp
@@ -175,6 +292,23 @@ if(FLYNES_BUILD_TESTS)
         COMMAND
             ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/open/generate_v1.py
+            --check
+    )
+
+    add_test(
+        NAME flynes_zip_payload_fixture_generator
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_zip_payload_fixture_generator.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/payload/generate_v1.py
+            ${CMAKE_CURRENT_BINARY_DIR}/zip-payload-fixture-generator-tests
+    )
+
+    add_test(
+        NAME flynes_zip_payload_fixture_corpus_check
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip/payload/generate_v1.py
             --check
     )
 endif()

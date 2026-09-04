@@ -84,11 +84,48 @@ struct BoundedZipEntry final
     bool is_directory = false;
 };
 
+namespace detail {
+
+enum class ExactEntrySelectionStatus : std::uint8_t
+{
+    FOUND = 0,
+    MISSING = 1,
+    DUPLICATE = 2,
+};
+
+struct ExactEntrySelection final
+{
+    ExactEntrySelectionStatus status = ExactEntrySelectionStatus::MISSING;
+    std::size_t index = 0u;
+};
+
+/** Shared exact-locator policy. Kept internal so tests can cover the duplicate guard. */
+ExactEntrySelection select_exact_bounded_zip_entry(
+    const std::vector<BoundedZipEntry>& entries,
+    const std::vector<std::uint8_t>& raw_name,
+    std::int32_t local_header_offset) noexcept;
+
+enum class InflateStall : std::uint8_t
+{
+    INPUT_EXHAUSTED = 0,
+    DICTIONARY_REQUIRED = 1,
+    NO_PROGRESS = 2,
+};
+
+/** Classifies an empty nonterminal inflate step without exposing zlib types in this header. */
+InflateStall classify_inflate_stall(bool dictionary_required,
+                                    bool input_exhausted) noexcept;
+
+const char* inflate_stall_message(InflateStall stall) noexcept;
+
+} // namespace detail
+
 class BoundedZipOpenResult;
+class BoundedZipPayloadResult;
 
 /**
- * Owns exactly one physical archive byte copy plus bounded metadata.
- * This slice intentionally exposes no payload read/inflate operation.
+ * Owns exactly one physical archive byte copy plus bounded metadata and private data offsets.
+ * Selected payloads are allocated independently and never cached in this object.
  */
 class BoundedZipArchive final
 {
@@ -107,14 +144,20 @@ private:
     friend class BoundedZipOpenResult;
     friend BoundedZipOpenResult open_bounded_zip(
         const std::uint8_t*, std::size_t, const BoundedZipLimits&);
+    friend BoundedZipPayloadResult read_bounded_zip_payload(
+        const BoundedZipArchive&,
+        const std::vector<std::uint8_t>&,
+        std::int32_t);
 
     BoundedZipArchive(BoundedZipLimits limits,
                       std::vector<std::uint8_t> physical_bytes,
-                      std::vector<BoundedZipEntry> entries);
+                      std::vector<BoundedZipEntry> entries,
+                      std::vector<std::int32_t> data_offsets);
 
     BoundedZipLimits limits_;
     std::vector<std::uint8_t> physical_bytes_;
     std::vector<BoundedZipEntry> entries_;
+    std::vector<std::int32_t> data_offsets_;
 };
 
 struct BoundedZipOpenError final
@@ -147,6 +190,31 @@ private:
     std::optional<BoundedZipOpenError> error_;
 };
 
+/** One independently owned selected payload or one stable validation error value. */
+class BoundedZipPayloadResult final
+{
+public:
+    BoundedZipPayloadResult(const BoundedZipPayloadResult&) = delete;
+    BoundedZipPayloadResult& operator=(const BoundedZipPayloadResult&) = delete;
+    BoundedZipPayloadResult(BoundedZipPayloadResult&&) noexcept = default;
+    BoundedZipPayloadResult& operator=(BoundedZipPayloadResult&&) noexcept = default;
+
+    static BoundedZipPayloadResult success(std::vector<std::uint8_t> payload);
+    static BoundedZipPayloadResult failure(ZipOpenCode code, std::string message);
+
+    bool succeeded() const noexcept;
+    std::vector<std::uint8_t>* payload() noexcept;
+    const std::vector<std::uint8_t>* payload() const noexcept;
+    const BoundedZipOpenError* error() const noexcept;
+
+private:
+    BoundedZipPayloadResult(std::optional<std::vector<std::uint8_t>> payload,
+                            std::optional<BoundedZipOpenError> error);
+
+    std::optional<std::vector<std::uint8_t>> payload_;
+    std::optional<BoundedZipOpenError> error_;
+};
+
 /**
  * Copies an accepted byte view once, then validates ZIP structure and declared metadata.
  * Allocation failures may propagate; malformed archive data never crosses this boundary as an
@@ -155,6 +223,16 @@ private:
 BoundedZipOpenResult open_bounded_zip(const std::uint8_t* bytes,
                                       std::size_t size,
                                       const BoundedZipLimits& limits);
+
+/**
+ * Locates one entry by raw name plus local-header offset, inflates only that entry, and returns
+ * independently owned bytes. Malformed archive content is represented as an error value;
+ * allocation and internal zlib failures may propagate.
+ */
+BoundedZipPayloadResult read_bounded_zip_payload(
+    const BoundedZipArchive& archive,
+    const std::vector<std::uint8_t>& raw_name,
+    std::int32_t local_header_offset);
 
 } // namespace flynes::catalog
 

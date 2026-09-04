@@ -1,14 +1,19 @@
 #include "catalog/bounded_zip_archive.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <zlib.h>
 
 namespace flynes::catalog {
 namespace {
@@ -176,6 +181,18 @@ struct CentralEntry final
     std::uint32_t uncompressed_size = 0;
 };
 
+struct LocalHeaderValidation final
+{
+    std::int32_t data_offset = 0;
+    std::uint64_t entry_end = 0u;
+};
+
+struct ParsedEntries final
+{
+    std::vector<BoundedZipEntry> entries;
+    std::vector<std::int32_t> data_offsets;
+};
+
 std::vector<std::uint64_t> find_end_records(const std::vector<std::uint8_t>& archive)
 {
     if (archive.size() < 22u)
@@ -245,10 +262,11 @@ void require_zero_or_equal(std::uint32_t local,
     invalid("ZIP local and central size differ");
 }
 
-std::uint64_t validate_local_header(const std::vector<std::uint8_t>& archive,
-                                    const CentralEntry& central,
-                                    std::uint64_t central_offset,
-                                    std::uint64_t descriptor_boundary)
+LocalHeaderValidation validate_local_header(
+    const std::vector<std::uint8_t>& archive,
+    const CentralEntry& central,
+    std::uint64_t central_offset,
+    std::uint64_t descriptor_boundary)
 {
     const std::uint64_t offset = static_cast<std::uint32_t>(central.local_header_offset);
     require_range(archive, offset, 30u, "ZIP local header is truncated");
@@ -360,10 +378,13 @@ std::uint64_t validate_local_header(const std::vector<std::uint8_t>& archive,
             invalid("ZIP data descriptor differs from central metadata");
         }
     }
-    return entry_end;
+    return LocalHeaderValidation{
+        static_cast<std::int32_t>(data_offset),
+        entry_end,
+    };
 }
 
-std::vector<BoundedZipEntry> parse_entries_at_end_record(
+ParsedEntries parse_entries_at_end_record(
     const std::vector<std::uint8_t>& archive,
     const BoundedZipLimits& limits,
     std::uint64_t end_record,
@@ -488,6 +509,8 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
         });
     std::uint64_t declared_inflated = 0u;
     std::optional<std::uint64_t> previous_entry_end;
+    std::vector<std::int32_t> data_offsets;
+    data_offsets.reserve(central_entries.size());
     for (std::size_t index = 0u; index < central_entries.size(); ++index)
     {
         const CentralEntry& central = central_entries[index];
@@ -504,8 +527,10 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
                           central_entries[index + 1u].local_header_offset),
                       central_offset)
                 : central_offset;
-        previous_entry_end = validate_local_header(
+        const LocalHeaderValidation local = validate_local_header(
             archive, central, central_offset, descriptor_boundary);
+        previous_entry_end = local.entry_end;
+        data_offsets.push_back(local.data_offset);
         if (apply_policy)
         {
             declared_inflated = checked_add(
@@ -541,11 +566,11 @@ std::vector<BoundedZipEntry> parse_entries_at_end_record(
                               entry.raw_name.back() == static_cast<std::uint8_t>('\\'));
         entries.push_back(std::move(entry));
     }
-    return entries;
+    return ParsedEntries{std::move(entries), std::move(data_offsets)};
 }
 
-std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& archive,
-                                           const BoundedZipLimits& limits)
+ParsedEntries parse_entries(const std::vector<std::uint8_t>& archive,
+                            const BoundedZipLimits& limits)
 {
     const std::vector<std::uint64_t> end_records = find_end_records(archive);
     std::optional<std::uint64_t> structural_end_record;
@@ -591,7 +616,229 @@ std::vector<BoundedZipEntry> parse_entries(const std::vector<std::uint8_t>& arch
     invalid("ZIP end record is missing or truncated");
 }
 
+class RawInflater final
+{
+public:
+    RawInflater()
+    {
+        const int status = inflateInit2(&stream_, -MAX_WBITS);
+        if (status == Z_MEM_ERROR)
+        {
+            throw std::bad_alloc();
+        }
+        if (status != Z_OK)
+        {
+            throw std::runtime_error("ZIP inflater initialization failed internally");
+        }
+        initialized_ = true;
+    }
+
+    RawInflater(const RawInflater&) = delete;
+    RawInflater& operator=(const RawInflater&) = delete;
+
+    ~RawInflater()
+    {
+        if (initialized_)
+        {
+            static_cast<void>(inflateEnd(&stream_));
+        }
+    }
+
+    z_stream& stream() noexcept
+    {
+        return stream_;
+    }
+
+private:
+    z_stream stream_{};
+    bool initialized_ = false;
+};
+
+std::vector<std::uint8_t> inflate_selected_payload(
+    const std::vector<std::uint8_t>& physical_bytes,
+    const BoundedZipEntry& entry,
+    std::int32_t data_offset,
+    const BoundedZipLimits& limits)
+{
+    if (entry.uncompressed_size > limits.max_payload_bytes())
+    {
+        fail(ZipOpenCode::PAYLOAD_LIMIT_EXCEEDED,
+             "ZIP entry exceeds the payload limit");
+    }
+    if (entry.uncompressed_size >
+        static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+    {
+        fail(ZipOpenCode::INFLATED_LIMIT_EXCEEDED,
+             "ZIP entry cannot fit in memory");
+    }
+    if (entry.compressed_size >
+        static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+    {
+        invalid("ZIP compressed size is invalid");
+    }
+    if (data_offset < 0)
+    {
+        throw std::runtime_error("ZIP data offset is invalid internally");
+    }
+    const std::size_t start = static_cast<std::size_t>(data_offset);
+    const std::size_t compressed_size = static_cast<std::size_t>(entry.compressed_size);
+    if (start > physical_bytes.size() || compressed_size > physical_bytes.size() - start)
+    {
+        throw std::runtime_error("ZIP payload window is invalid internally");
+    }
+
+    if (entry.method == 0u)
+    {
+        if (entry.compressed_size != entry.uncompressed_size)
+        {
+            invalid("stored ZIP entry sizes differ");
+        }
+        return std::vector<std::uint8_t>(
+            physical_bytes.begin() + static_cast<std::ptrdiff_t>(start),
+            physical_bytes.begin() + static_cast<std::ptrdiff_t>(start + compressed_size));
+    }
+    if (entry.method != 8u)
+    {
+        throw std::runtime_error("ZIP compression method escaped open validation");
+    }
+
+    RawInflater inflater;
+    z_stream& stream = inflater.stream();
+    stream.next_in = const_cast<Bytef*>(
+        reinterpret_cast<const Bytef*>(physical_bytes.data() + start));
+    stream.avail_in = static_cast<uInt>(entry.compressed_size);
+
+    std::vector<std::uint8_t> output;
+    output.reserve(std::min<std::size_t>(entry.uncompressed_size, 64u * 1024u));
+    std::array<std::uint8_t, 8192> buffer{};
+    std::uint64_t entry_total = 0u;
+    while (true)
+    {
+        stream.next_out = reinterpret_cast<Bytef*>(buffer.data());
+        stream.avail_out = static_cast<uInt>(buffer.size());
+        const int status = inflate(&stream, Z_NO_FLUSH);
+        const std::size_t produced = buffer.size() - stream.avail_out;
+
+        // Java's DataFormatException wins even if native zlib reports output in this step.
+        if (status == Z_DATA_ERROR)
+        {
+            invalid("ZIP deflate stream is invalid");
+        }
+        if (status == Z_MEM_ERROR)
+        {
+            throw std::bad_alloc();
+        }
+        if (status == Z_STREAM_ERROR || status == Z_VERSION_ERROR)
+        {
+            throw std::runtime_error("ZIP inflater failed internally");
+        }
+        if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR &&
+            status != Z_NEED_DICT)
+        {
+            throw std::runtime_error("ZIP inflater returned an unknown internal status");
+        }
+
+        if (produced != 0u)
+        {
+            entry_total += static_cast<std::uint64_t>(produced);
+            if (entry_total > limits.max_cumulative_inflated_bytes())
+            {
+                fail(ZipOpenCode::INFLATED_LIMIT_EXCEEDED,
+                     "ZIP inflated total exceeds the limit");
+            }
+            if (entry_total > entry.uncompressed_size)
+            {
+                invalid("ZIP entry inflated past its declared size");
+            }
+            output.insert(output.end(), buffer.begin(), buffer.begin() +
+                          static_cast<std::ptrdiff_t>(produced));
+        }
+
+        if (status == Z_STREAM_END)
+        {
+            if (stream.avail_in != 0u)
+            {
+                invalid("ZIP compressed size includes trailing bytes");
+            }
+            break;
+        }
+        if (produced == 0u)
+        {
+            const detail::InflateStall stall = detail::classify_inflate_stall(
+                status == Z_NEED_DICT, stream.avail_in == 0u);
+            invalid(detail::inflate_stall_message(stall));
+        }
+    }
+    return output;
+}
+
+std::uint32_t payload_crc32(const std::vector<std::uint8_t>& payload)
+{
+    uLong crc = crc32(0L, Z_NULL, 0u);
+    if (!payload.empty())
+    {
+        crc = crc32(crc,
+                    reinterpret_cast<const Bytef*>(payload.data()),
+                    static_cast<uInt>(payload.size()));
+    }
+    return static_cast<std::uint32_t>(crc);
+}
+
 } // namespace
+
+namespace detail {
+
+ExactEntrySelection select_exact_bounded_zip_entry(
+    const std::vector<BoundedZipEntry>& entries,
+    const std::vector<std::uint8_t>& raw_name,
+    std::int32_t local_header_offset) noexcept
+{
+    ExactEntrySelection result;
+    for (std::size_t index = 0u; index < entries.size(); ++index)
+    {
+        const BoundedZipEntry& entry = entries[index];
+        if (entry.local_header_offset != local_header_offset || entry.raw_name != raw_name)
+        {
+            continue;
+        }
+        if (result.status == ExactEntrySelectionStatus::FOUND)
+        {
+            return ExactEntrySelection{ExactEntrySelectionStatus::DUPLICATE, 0u};
+        }
+        result.status = ExactEntrySelectionStatus::FOUND;
+        result.index = index;
+    }
+    return result;
+}
+
+InflateStall classify_inflate_stall(bool dictionary_required,
+                                    bool input_exhausted) noexcept
+{
+    if (dictionary_required)
+    {
+        return InflateStall::DICTIONARY_REQUIRED;
+    }
+    if (input_exhausted)
+    {
+        return InflateStall::INPUT_EXHAUSTED;
+    }
+    return InflateStall::NO_PROGRESS;
+}
+
+const char* inflate_stall_message(InflateStall stall) noexcept
+{
+    switch (stall)
+    {
+    case InflateStall::INPUT_EXHAUSTED:
+    case InflateStall::DICTIONARY_REQUIRED:
+        return "ZIP deflate stream ended before completion";
+    case InflateStall::NO_PROGRESS:
+        return "ZIP deflate stream made no progress";
+    }
+    return "ZIP deflate stream made no progress";
+}
+
+} // namespace detail
 
 const char* zip_open_code_name(ZipOpenCode code) noexcept
 {
@@ -711,10 +958,12 @@ std::uint64_t BoundedZipLimits::ratio_guard_threshold_bytes() const noexcept
 
 BoundedZipArchive::BoundedZipArchive(BoundedZipLimits limits,
                                      std::vector<std::uint8_t> physical_bytes,
-                                     std::vector<BoundedZipEntry> entries)
+                                     std::vector<BoundedZipEntry> entries,
+                                     std::vector<std::int32_t> data_offsets)
     : limits_(limits),
       physical_bytes_(std::move(physical_bytes)),
-      entries_(std::move(entries))
+      entries_(std::move(entries)),
+      data_offsets_(std::move(data_offsets))
 {
 }
 
@@ -771,6 +1020,47 @@ const BoundedZipOpenError* BoundedZipOpenResult::error() const noexcept
     return error_.has_value() ? &*error_ : nullptr;
 }
 
+BoundedZipPayloadResult::BoundedZipPayloadResult(
+    std::optional<std::vector<std::uint8_t>> payload,
+    std::optional<BoundedZipOpenError> error)
+    : payload_(std::move(payload)), error_(std::move(error))
+{
+}
+
+BoundedZipPayloadResult BoundedZipPayloadResult::success(
+    std::vector<std::uint8_t> payload)
+{
+    return BoundedZipPayloadResult(std::move(payload), std::nullopt);
+}
+
+BoundedZipPayloadResult BoundedZipPayloadResult::failure(
+    ZipOpenCode code,
+    std::string message)
+{
+    return BoundedZipPayloadResult(
+        std::nullopt, BoundedZipOpenError{code, std::move(message)});
+}
+
+bool BoundedZipPayloadResult::succeeded() const noexcept
+{
+    return payload_.has_value();
+}
+
+std::vector<std::uint8_t>* BoundedZipPayloadResult::payload() noexcept
+{
+    return payload_.has_value() ? &*payload_ : nullptr;
+}
+
+const std::vector<std::uint8_t>* BoundedZipPayloadResult::payload() const noexcept
+{
+    return payload_.has_value() ? &*payload_ : nullptr;
+}
+
+const BoundedZipOpenError* BoundedZipPayloadResult::error() const noexcept
+{
+    return error_.has_value() ? &*error_ : nullptr;
+}
+
 BoundedZipOpenResult open_bounded_zip(const std::uint8_t* bytes,
                                       std::size_t size,
                                       const BoundedZipLimits& limits)
@@ -795,13 +1085,64 @@ BoundedZipOpenResult open_bounded_zip(const std::uint8_t* bytes,
     }
     try
     {
-        std::vector<BoundedZipEntry> entries = parse_entries(physical_bytes, limits);
+        ParsedEntries parsed = parse_entries(physical_bytes, limits);
         return BoundedZipOpenResult::success(
-            BoundedZipArchive(limits, std::move(physical_bytes), std::move(entries)));
+            BoundedZipArchive(
+                limits,
+                std::move(physical_bytes),
+                std::move(parsed.entries),
+                std::move(parsed.data_offsets)));
     }
     catch (const ValidationFailure& failure)
     {
         return BoundedZipOpenResult::failure(failure.code(), failure.what());
+    }
+}
+
+BoundedZipPayloadResult read_bounded_zip_payload(
+    const BoundedZipArchive& archive,
+    const std::vector<std::uint8_t>& raw_name,
+    std::int32_t local_header_offset)
+{
+    const detail::ExactEntrySelection selected =
+        detail::select_exact_bounded_zip_entry(
+            archive.entries_, raw_name, local_header_offset);
+    if (selected.status == detail::ExactEntrySelectionStatus::MISSING)
+    {
+        return BoundedZipPayloadResult::failure(
+            ZipOpenCode::ENTRY_MISSING, "ZIP exact locator is missing");
+    }
+    if (selected.status == detail::ExactEntrySelectionStatus::DUPLICATE)
+    {
+        return BoundedZipPayloadResult::failure(
+            ZipOpenCode::INVALID_ZIP, "ZIP exact locator is duplicated");
+    }
+    if (selected.index >= archive.data_offsets_.size())
+    {
+        throw std::runtime_error("ZIP entry data index is invalid internally");
+    }
+
+    try
+    {
+        const BoundedZipEntry& entry = archive.entries_[selected.index];
+        std::vector<std::uint8_t> payload = inflate_selected_payload(
+            archive.physical_bytes_,
+            entry,
+            archive.data_offsets_[selected.index],
+            archive.limits_);
+        if (payload.size() != entry.uncompressed_size)
+        {
+            invalid("ZIP inflated size differs from central metadata");
+        }
+        if (payload_crc32(payload) != entry.crc32)
+        {
+            invalid("ZIP inflated CRC differs from central metadata");
+        }
+        return BoundedZipPayloadResult::success(std::move(payload));
+    }
+    catch (const ValidationFailure& failure)
+    {
+        return BoundedZipPayloadResult::failure(failure.code(), failure.what());
     }
 }
 
