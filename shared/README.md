@@ -15,6 +15,26 @@ ctest --test-dir out/shared -C Release --output-on-failure
 `FLYNES_BUILD_TESTS` defaults to `OFF`. When enabled, CTest registers a C++ ABI
 contract test and a real C11 consumer/link test.
 
+## ROM parser parity fixtures
+
+`tests/fixtures/rom/v1/manifest.tsv` and its `.bin` files are the single frozen
+ROM-recognition corpus. Every manifest row records the exact blob SHA-256, the
+recognition result, all analysis fields, and warnings in order. The JVM
+`RomPayloadParserFixtureParityTest` reads this directory through its test-resource
+source set, while the separate `flynes_rom_payload_parser` CTest reads the same
+files directly.
+
+Do not hand-edit generated blobs or hashes. Reproduce version 1 with:
+
+```sh
+python shared/tests/fixtures/rom/generate_v1.py
+```
+
+A clean regeneration must produce no diff. For an intentional contract change,
+edit the deterministic generator, use a new version directory/schema when an
+existing input or expected output changes, update both parity gates, regenerate,
+and review every manifest/hash diff before committing.
+
 ## ABI and ownership rules
 
 The public header is `include/flynes/flynes_app.h`. Public structures start with

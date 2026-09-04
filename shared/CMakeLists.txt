@@ -5,10 +5,14 @@ project(flynes_shared LANGUAGES CXX)
 option(FLYNES_BUILD_TESTS "Build FlyNES shared-layer host tests" OFF)
 
 add_library(flynes_app STATIC
+    src/catalog/rom_payload_parser.cpp
     src/flynes_app.cpp
 )
 target_include_directories(flynes_app PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_include_directories(flynes_app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_features(flynes_app PRIVATE cxx_std_17)
 set_target_properties(flynes_app PROPERTIES
@@ -60,4 +64,21 @@ if(FLYNES_BUILD_TESTS)
     )
     flynes_enable_strict_warnings(flynes_c_header_test)
     add_test(NAME flynes_c_header COMMAND flynes_c_header_test)
+
+    add_executable(flynes_rom_payload_parser_test
+        tests/rom_fixture.cpp
+        tests/test_rom_payload_parser.cpp
+    )
+    target_link_libraries(flynes_rom_payload_parser_test PRIVATE flynes_app)
+    target_include_directories(flynes_rom_payload_parser_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_rom_payload_parser_test PRIVATE
+        FLYNES_ROM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rom/v1"
+    )
+    target_compile_features(flynes_rom_payload_parser_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_rom_payload_parser_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_rom_payload_parser_test)
+    add_test(NAME flynes_rom_payload_parser COMMAND flynes_rom_payload_parser_test)
 endif()

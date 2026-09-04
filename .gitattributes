@@ -1,3 +1,4 @@
 # ScaleFX shaders are preserved byte-for-byte from their documented upstream source.
 app/src/main/assets/shaders/scalefx/*.glsl whitespace=-trailing-space
 docs/acceptance/display-quality/mmpx-oracle-manifest.json text eol=lf
+shared/tests/fixtures/rom/**/*.bin binary
