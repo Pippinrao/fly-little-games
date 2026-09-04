@@ -3,3 +3,4 @@ app/src/main/assets/shaders/scalefx/*.glsl whitespace=-trailing-space
 docs/acceptance/display-quality/mmpx-oracle-manifest.json text eol=lf
 shared/tests/fixtures/rom/**/*.bin binary
 shared/tests/fixtures/zip/**/*.zip binary
+shared/tests/fixtures/zip/open/v1/manifest.tsv text eol=lf

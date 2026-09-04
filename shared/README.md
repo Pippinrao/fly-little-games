@@ -58,8 +58,9 @@ limits, a SHA-256, and either the exact stable error code/message or every
 published entry metadata field in Java output order. Raw names and central
 extras are lowercase hex; raw name plus local-header offset is the exact entry
 identity. The JVM `BoundedZipOpenFixtureParityTest` and the CTest targets
-`flynes_bounded_zip_archive`, `flynes_bounded_zip_archive_edges`, and
-`flynes_zip_open_fixture_loader` consume this same directory.
+`flynes_bounded_zip_archive` and `flynes_zip_open_fixture_loader` consume this
+same directory. `flynes_bounded_zip_archive_edges` instead uses inline bytes for
+direct API, limit-validation, null-view, and ownership checks.
 
 The manifest and both loaders enforce schema version 1, safe basename-only
 paths, unique case/blob names, exact SHA-256 values, regular non-symlink files,
