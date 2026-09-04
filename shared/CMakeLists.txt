@@ -42,6 +42,7 @@ flynes_enable_strict_warnings(flynes_app)
 if(FLYNES_BUILD_TESTS)
     enable_language(C)
     enable_testing()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     add_executable(flynes_app_contract_test
         tests/test_app.cpp
@@ -81,4 +82,31 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_rom_payload_parser_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_rom_payload_parser_test)
     add_test(NAME flynes_rom_payload_parser COMMAND flynes_rom_payload_parser_test)
+
+    add_executable(flynes_rom_fixture_loader_test
+        tests/rom_fixture.cpp
+        tests/test_rom_fixture_loader.cpp
+    )
+    target_link_libraries(flynes_rom_fixture_loader_test PRIVATE flynes_app)
+    target_include_directories(flynes_rom_fixture_loader_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_rom_fixture_loader_test PRIVATE
+        FLYNES_ROM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rom/v1"
+        FLYNES_ROM_FIXTURE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/rom-fixture-loader-tests"
+    )
+    target_compile_features(flynes_rom_fixture_loader_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_rom_fixture_loader_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_rom_fixture_loader_test)
+    add_test(NAME flynes_rom_fixture_loader COMMAND flynes_rom_fixture_loader_test)
+
+    add_test(
+        NAME flynes_rom_fixture_generator
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rom_fixture_generator.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rom/generate_v1.py
+            ${CMAKE_CURRENT_BINARY_DIR}/rom-fixture-generator-tests
+    )
 endif()

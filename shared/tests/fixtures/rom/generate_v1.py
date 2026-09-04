@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -485,8 +487,7 @@ def fixtures() -> list[Fixture]:
     ]
 
 
-def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def expected_corpus() -> dict[str, bytes]:
     columns = (
         "schema_version",
         "case_id",
@@ -508,9 +509,10 @@ def main() -> None:
         "warnings",
     )
     rows = ["\t".join(columns)]
+    contents: dict[str, bytes] = {}
     for fixture in fixtures():
         blob_name = fixture.case_id + ".bin"
-        (OUTPUT_DIR / blob_name).write_bytes(fixture.payload)
+        contents[blob_name] = fixture.payload
         value = fixture.expected
         row = (
             SCHEMA_VERSION,
@@ -533,8 +535,109 @@ def main() -> None:
             ",".join(value.warnings) if value.warnings else "NONE",
         )
         rows.append("\t".join(row))
-    (OUTPUT_DIR / "manifest.tsv").write_bytes(("\n".join(rows) + "\n").encode("ascii"))
+    contents["manifest.tsv"] = ("\n".join(rows) + "\n").encode("ascii")
+    return contents
+
+
+@dataclass(frozen=True)
+class CorpusDiff:
+    missing: tuple[str, ...]
+    changed: tuple[str, ...]
+    unexpected: tuple[str, ...]
+
+    def is_empty(self) -> bool:
+        return not self.missing and not self.changed and not self.unexpected
+
+
+def compare_corpus(expected_files: dict[str, bytes]) -> CorpusDiff:
+    if not OUTPUT_DIR.exists() and not OUTPUT_DIR.is_symlink():
+        return CorpusDiff(tuple(sorted(expected_files)), (), ())
+    if OUTPUT_DIR.is_symlink() or not OUTPUT_DIR.is_dir():
+        return CorpusDiff((), (OUTPUT_DIR.name,), ())
+
+    actual = {entry.name: entry for entry in OUTPUT_DIR.iterdir()}
+    expected_names = set(expected_files)
+    actual_names = set(actual)
+    missing = tuple(sorted(expected_names - actual_names))
+    unexpected = tuple(sorted(actual_names - expected_names))
+    changed: list[str] = []
+    for name in sorted(expected_names & actual_names):
+        path = actual[name]
+        if path.is_symlink() or not path.is_file():
+            changed.append(name)
+            continue
+        try:
+            if path.read_bytes() != expected_files[name]:
+                changed.append(name)
+        except OSError:
+            changed.append(name)
+    return CorpusDiff(missing, tuple(changed), unexpected)
+
+
+def print_diff(diff: CorpusDiff) -> None:
+    for name in diff.missing:
+        print(f"missing fixture corpus entry: {name}", file=sys.stderr)
+    for name in diff.changed:
+        print(f"changed fixture corpus entry: {name}", file=sys.stderr)
+    for name in diff.unexpected:
+        print(f"unexpected fixture corpus entry: {name}", file=sys.stderr)
+
+
+def generate(expected_files: dict[str, bytes]) -> int:
+    if OUTPUT_DIR.is_symlink() or (OUTPUT_DIR.exists() and not OUTPUT_DIR.is_dir()):
+        print(
+            f"refusing to generate: remove non-directory output path {OUTPUT_DIR}",
+            file=sys.stderr,
+        )
+        return 1
+    if OUTPUT_DIR.exists():
+        actual = {entry.name: entry for entry in OUTPUT_DIR.iterdir()}
+        unexpected = sorted(set(actual) - set(expected_files))
+        unsafe_expected = sorted(
+            name
+            for name in set(actual) & set(expected_files)
+            if actual[name].is_symlink() or not actual[name].is_file()
+        )
+        blocked = unexpected + unsafe_expected
+        if blocked:
+            print(
+                "refusing to generate; remove these unexpected or non-file entries first: "
+                + ", ".join(blocked),
+                file=sys.stderr,
+            )
+            return 1
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for name, contents in expected_files.items():
+        (OUTPUT_DIR / name).write_bytes(contents)
+    print(f"generated {len(expected_files)} fixture corpus files in {OUTPUT_DIR}")
+    return 0
+
+
+def check(expected_files: dict[str, bytes]) -> int:
+    diff = compare_corpus(expected_files)
+    if not diff.is_empty():
+        print_diff(diff)
+        return 1
+    print(f"fixture corpus is current: {len(expected_files)} files in {OUTPUT_DIR}")
+    return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the exact corpus without modifying any file",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    arguments = parse_args()
+    expected_files = expected_corpus()
+    return check(expected_files) if arguments.check else generate(expected_files)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

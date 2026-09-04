@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -15,6 +16,8 @@
 
 namespace flynes::test {
 namespace {
+
+namespace fs = std::filesystem;
 
 constexpr const char* manifest_header =
     "schema_version\tcase_id\tblob\tsha256\trecognized\tformat\tstate\treason\t"
@@ -162,7 +165,78 @@ std::vector<std::string> split(const std::string& value, char delimiter)
     }
 }
 
-bool parse_bool(const std::string& value)
+[[noreturn]] void fail_manifest(std::size_t line_number,
+                                const std::string& case_id,
+                                const char* field,
+                                const std::string& detail)
+{
+    std::ostringstream message;
+    message << "manifest line " << line_number;
+    if (!case_id.empty())
+    {
+        message << ", case '" << case_id << "'";
+    }
+    message << ", field '" << field << "': " << detail;
+    throw std::runtime_error(message.str());
+}
+
+bool is_lower_ascii(char value)
+{
+    return value >= 'a' && value <= 'z';
+}
+
+bool is_decimal_digit(char value)
+{
+    return value >= '0' && value <= '9';
+}
+
+bool is_fixture_identifier(const std::string& value)
+{
+    if (value.empty() || !is_lower_ascii(value.front()))
+    {
+        return false;
+    }
+    for (const char character : value)
+    {
+        if (!is_lower_ascii(character) && !is_decimal_digit(character) && character != '_')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_safe_blob_basename(const std::string& value)
+{
+    constexpr const char* extension = ".bin";
+    constexpr std::size_t extension_size = 4u;
+    return value.size() > extension_size &&
+           value.compare(value.size() - extension_size, extension_size, extension) == 0 &&
+           is_fixture_identifier(value.substr(0u, value.size() - extension_size));
+}
+
+bool is_lower_hex_sha256(const std::string& value)
+{
+    if (value.size() != 64u)
+    {
+        return false;
+    }
+    for (const char character : value)
+    {
+        const bool valid = is_decimal_digit(character) ||
+                           (character >= 'a' && character <= 'f');
+        if (!valid)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool parse_bool(const std::string& value,
+                std::size_t line_number,
+                const std::string& case_id,
+                const char* field)
 {
     if (value == "true")
     {
@@ -172,52 +246,90 @@ bool parse_bool(const std::string& value)
     {
         return false;
     }
-    throw std::runtime_error("invalid fixture boolean: " + value);
+    fail_manifest(line_number, case_id, field, "expected 'true' or 'false', got '" + value + "'");
 }
 
-std::uint64_t parse_u64(const std::string& value)
+std::uint64_t parse_u64(const std::string& value,
+                        std::size_t line_number,
+                        const std::string& case_id,
+                        const char* field)
 {
-    std::size_t consumed = 0;
-    const unsigned long long parsed = std::stoull(value, &consumed);
-    if (consumed != value.size())
+    if (value.empty() || (value.size() > 1u && value.front() == '0'))
     {
-        throw std::runtime_error("invalid unsigned fixture integer: " + value);
+        fail_manifest(line_number,
+                      case_id,
+                      field,
+                      "expected canonical unsigned decimal, got '" + value + "'");
     }
-    return static_cast<std::uint64_t>(parsed);
+    std::uint64_t result = 0;
+    for (const char character : value)
+    {
+        if (!is_decimal_digit(character))
+        {
+            fail_manifest(line_number,
+                          case_id,
+                          field,
+                          "expected canonical unsigned decimal, got '" + value + "'");
+        }
+        const std::uint64_t digit = static_cast<std::uint64_t>(character - '0');
+        if (result > (std::numeric_limits<std::uint64_t>::max() - digit) / 10u)
+        {
+            fail_manifest(line_number,
+                          case_id,
+                          field,
+                          "unsigned decimal is out of uint64 range: '" + value + "'");
+        }
+        result = result * 10u + digit;
+    }
+    return result;
 }
 
-std::int32_t parse_i32(const std::string& value)
+std::int32_t parse_mapper(const std::string& value,
+                          std::size_t line_number,
+                          const std::string& case_id,
+                          const char* field)
 {
-    std::size_t consumed = 0;
-    const long parsed = std::stol(value, &consumed);
-    if (consumed != value.size() || parsed < std::numeric_limits<std::int32_t>::min() ||
-        parsed > std::numeric_limits<std::int32_t>::max())
+    if (value == "-1")
     {
-        throw std::runtime_error("invalid signed fixture integer: " + value);
+        return -1;
+    }
+    const std::uint64_t parsed = parse_u64(value, line_number, case_id, field);
+    if (parsed > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
+    {
+        fail_manifest(line_number,
+                      case_id,
+                      field,
+                      "mapper value is out of int32 range: '" + value + "'");
     }
     return static_cast<std::int32_t>(parsed);
 }
 
-catalog::RomFormat parse_format(const std::string& value)
+catalog::RomFormat parse_format(const std::string& value,
+                                std::size_t line_number,
+                                const std::string& case_id)
 {
     if (value == "INES") return catalog::RomFormat::INES;
     if (value == "NES2") return catalog::RomFormat::NES2;
     if (value == "FDS") return catalog::RomFormat::FDS;
     if (value == "UNIF") return catalog::RomFormat::UNIF;
     if (value == "UNKNOWN") return catalog::RomFormat::UNKNOWN;
-    throw std::runtime_error("invalid ROM format: " + value);
+    fail_manifest(line_number, case_id, "format", "unknown value '" + value + "'");
 }
 
-catalog::CompatibilityState parse_state(const std::string& value)
+catalog::CompatibilityState parse_state(const std::string& value,
+                                        std::size_t line_number,
+                                        const std::string& case_id)
 {
     if (value == "PLAYABLE") return catalog::CompatibilityState::PLAYABLE;
     if (value == "UNSUPPORTED") return catalog::CompatibilityState::UNSUPPORTED;
     if (value == "INVALID") return catalog::CompatibilityState::INVALID;
     if (value == "UNKNOWN") return catalog::CompatibilityState::UNKNOWN;
-    throw std::runtime_error("invalid compatibility state: " + value);
+    fail_manifest(line_number, case_id, "state", "unknown value '" + value + "'");
 }
 
-catalog::CompatibilityReason parse_reason(const std::string& value)
+catalog::CompatibilityReason parse_reason(const std::string& value,
+                                          std::size_t line_number,
+                                          const std::string& case_id)
 {
     using Reason = catalog::CompatibilityReason;
     if (value == "PLAYABLE_NES") return Reason::PLAYABLE_NES;
@@ -233,30 +345,52 @@ catalog::CompatibilityReason parse_reason(const std::string& value)
     if (value == "UNIF_INVALID_CHUNK") return Reason::UNIF_INVALID_CHUNK;
     if (value == "UNIF_MISSING_PRG") return Reason::UNIF_MISSING_PRG;
     if (value == "UNKNOWN_FORMAT") return Reason::UNKNOWN_FORMAT;
-    throw std::runtime_error("invalid compatibility reason: " + value);
+    fail_manifest(line_number, case_id, "reason", "unknown value '" + value + "'");
 }
 
-catalog::RomWarning parse_warning(const std::string& value)
+catalog::RomWarning parse_warning(const std::string& value,
+                                  std::size_t line_number,
+                                  const std::string& case_id)
 {
     using Warning = catalog::RomWarning;
     if (value == "TRAILING_DATA") return Warning::TRAILING_DATA;
     if (value == "DIRTY_HEADER") return Warning::DIRTY_HEADER;
     if (value == "UNICODE_PATH_REJECTED") return Warning::UNICODE_PATH_REJECTED;
-    throw std::runtime_error("invalid ROM warning: " + value);
+    fail_manifest(line_number, case_id, "warnings", "unknown value '" + value + "'");
 }
 
-std::vector<std::uint8_t> read_blob(const std::string& path)
+std::vector<std::uint8_t> read_blob(const fs::path& path,
+                                    std::size_t line_number,
+                                    const std::string& case_id)
 {
+    std::error_code error;
+    const fs::file_status status = fs::symlink_status(path, error);
+    if (error || !fs::exists(status))
+    {
+        fail_manifest(line_number,
+                      case_id,
+                      "blob",
+                      "missing referenced blob '" + path.filename().string() + "'");
+    }
+    if (fs::is_symlink(status) || !fs::is_regular_file(status))
+    {
+        fail_manifest(line_number,
+                      case_id,
+                      "blob",
+                      "referenced blob is not a regular non-symlink file: '" +
+                          path.filename().string() + "'");
+    }
+
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input)
     {
-        throw std::runtime_error("could not open fixture blob: " + path);
+        fail_manifest(line_number, case_id, "blob", "could not open referenced blob");
     }
     const std::streamoff length = input.tellg();
     if (length < 0 || static_cast<std::uintmax_t>(length) >
                           static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max()))
     {
-        throw std::runtime_error("fixture blob has an unsupported length: " + path);
+        fail_manifest(line_number, case_id, "blob", "blob has an unsupported length");
     }
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
     input.seekg(0, std::ios::beg);
@@ -265,19 +399,22 @@ std::vector<std::uint8_t> read_blob(const std::string& path)
         if (bytes.size() > static_cast<std::size_t>(
                                std::numeric_limits<std::streamsize>::max()))
         {
-            throw std::runtime_error("fixture blob exceeds stream read limits: " + path);
+            fail_manifest(line_number, case_id, "blob", "blob exceeds stream read limits");
         }
         input.read(reinterpret_cast<char*>(bytes.data()),
                    static_cast<std::streamsize>(bytes.size()));
         if (!input)
         {
-            throw std::runtime_error("could not read complete fixture blob: " + path);
+            fail_manifest(line_number, case_id, "blob", "could not read complete blob");
         }
     }
     return bytes;
 }
 
-void parse_warnings(const std::string& value, catalog::RomAnalysis& analysis)
+void parse_warnings(const std::string& value,
+                    catalog::RomAnalysis& analysis,
+                    std::size_t line_number,
+                    const std::string& case_id)
 {
     if (value == "NONE")
     {
@@ -286,70 +423,204 @@ void parse_warnings(const std::string& value, catalog::RomAnalysis& analysis)
     const std::vector<std::string> warning_names = split(value, ',');
     if (warning_names.size() > analysis.warnings.size())
     {
-        throw std::runtime_error("fixture has too many ROM warnings");
+        fail_manifest(line_number, case_id, "warnings", "too many warnings");
     }
     for (const std::string& name : warning_names)
     {
-        analysis.warnings[analysis.warning_count] = parse_warning(name);
+        analysis.warnings[analysis.warning_count] =
+            parse_warning(name, line_number, case_id);
         ++analysis.warning_count;
     }
 }
 
-RomFixture parse_fixture(const std::vector<std::string>& fields,
-                         const std::string& fixture_root)
+struct ParsedRow final
 {
+    RomFixture fixture;
+    std::string blob_name;
+    std::string expected_sha256;
+    std::size_t line_number = 0;
+};
+
+ParsedRow parse_fixture_fields(const std::vector<std::string>& fields,
+                               std::size_t line_number)
+{
+    const std::string case_id = fields.size() > 1u ? fields[1] : std::string{};
     if (fields.size() != 18u)
     {
-        throw std::runtime_error("fixture manifest row does not have 18 columns");
+        fail_manifest(line_number,
+                      case_id,
+                      "row",
+                      "expected 18 tab-separated columns, got " +
+                          std::to_string(fields.size()));
     }
     if (fields[0] != "1")
     {
-        throw std::runtime_error("unsupported ROM fixture schema: " + fields[0]);
+        fail_manifest(line_number,
+                      case_id,
+                      "schema_version",
+                      "expected '1', got '" + fields[0] + "'");
+    }
+    if (!is_fixture_identifier(case_id))
+    {
+        fail_manifest(line_number,
+                      case_id,
+                      "case_id",
+                      "must match [a-z][a-z0-9_]*, got '" + case_id + "'");
+    }
+    if (!is_safe_blob_basename(fields[2]))
+    {
+        fail_manifest(line_number,
+                      case_id,
+                      "blob",
+                      "must be a safe basename matching [a-z][a-z0-9_]*.bin, got '" +
+                          fields[2] + "'");
+    }
+    if (!is_lower_hex_sha256(fields[3]))
+    {
+        fail_manifest(line_number,
+                      case_id,
+                      "sha256",
+                      "must be exactly 64 lowercase hexadecimal characters");
     }
 
-    RomFixture fixture;
-    fixture.case_id = fields[1];
-    fixture.payload = read_blob(fixture_root + "/" + fields[2]);
-    if (sha256(fixture.payload) != fields[3])
-    {
-        throw std::runtime_error("SHA-256 mismatch for fixture " + fixture.case_id);
-    }
+    ParsedRow row;
+    row.fixture.case_id = case_id;
+    row.blob_name = fields[2];
+    row.expected_sha256 = fields[3];
+    row.line_number = line_number;
+    row.fixture.expected.recognized = parse_bool(fields[4], line_number, case_id, "recognized");
+    row.fixture.expected.format = parse_format(fields[5], line_number, case_id);
+    row.fixture.expected.state = parse_state(fields[6], line_number, case_id);
+    row.fixture.expected.reason = parse_reason(fields[7], line_number, case_id);
+    row.fixture.expected.analysis.expected_bytes =
+        parse_u64(fields[8], line_number, case_id, "expected_bytes");
+    row.fixture.expected.analysis.actual_bytes =
+        parse_u64(fields[9], line_number, case_id, "actual_bytes");
+    row.fixture.expected.analysis.prg_bytes =
+        parse_u64(fields[10], line_number, case_id, "prg_bytes");
+    row.fixture.expected.analysis.chr_bytes =
+        parse_u64(fields[11], line_number, case_id, "chr_bytes");
+    row.fixture.expected.analysis.mapper =
+        parse_mapper(fields[12], line_number, case_id, "mapper");
+    row.fixture.expected.analysis.submapper =
+        parse_mapper(fields[13], line_number, case_id, "submapper");
+    row.fixture.expected.analysis.trainer = parse_bool(fields[14], line_number, case_id, "trainer");
+    row.fixture.expected.analysis.battery = parse_bool(fields[15], line_number, case_id, "battery");
+    row.fixture.expected.analysis.disk_sides =
+        parse_u64(fields[16], line_number, case_id, "disk_sides");
+    parse_warnings(fields[17], row.fixture.expected.analysis, line_number, case_id);
+    return row;
+}
 
-    fixture.expected.recognized = parse_bool(fields[4]);
-    fixture.expected.format = parse_format(fields[5]);
-    fixture.expected.state = parse_state(fields[6]);
-    fixture.expected.reason = parse_reason(fields[7]);
-    fixture.expected.analysis.expected_bytes = parse_u64(fields[8]);
-    fixture.expected.analysis.actual_bytes = parse_u64(fields[9]);
-    fixture.expected.analysis.prg_bytes = parse_u64(fields[10]);
-    fixture.expected.analysis.chr_bytes = parse_u64(fields[11]);
-    fixture.expected.analysis.mapper = parse_i32(fields[12]);
-    fixture.expected.analysis.submapper = parse_i32(fields[13]);
-    fixture.expected.analysis.trainer = parse_bool(fields[14]);
-    fixture.expected.analysis.battery = parse_bool(fields[15]);
-    fixture.expected.analysis.disk_sides = parse_i32(fields[16]);
-    parse_warnings(fields[17], fixture.expected.analysis);
-    if (fixture.payload.size() != fixture.expected.analysis.actual_bytes)
+const ParsedRow* find_row_for_blob(const std::vector<ParsedRow>& rows,
+                                   const std::string& blob_name)
+{
+    for (const ParsedRow& row : rows)
     {
-        throw std::runtime_error("actual byte count mismatch for fixture " + fixture.case_id);
+        if (row.blob_name == blob_name)
+        {
+            return &row;
+        }
     }
-    return fixture;
+    return nullptr;
+}
+
+void validate_corpus_entries(const fs::path& fixture_root,
+                             const std::vector<ParsedRow>& rows)
+{
+    std::unordered_set<std::string> expected_entries;
+    for (const ParsedRow& row : rows)
+    {
+        expected_entries.insert(row.blob_name);
+    }
+    expected_entries.insert("manifest.tsv");
+
+    std::error_code error;
+    fs::directory_iterator iterator(fixture_root, error);
+    const fs::directory_iterator end;
+    if (error)
+    {
+        throw std::runtime_error("fixture corpus root could not be enumerated: " +
+                                 fixture_root.string());
+    }
+    while (iterator != end)
+    {
+        const fs::directory_entry entry = *iterator;
+        const std::string name = entry.path().filename().string();
+        const ParsedRow* const row = find_row_for_blob(rows, name);
+        const fs::file_status status = entry.symlink_status(error);
+        if (error)
+        {
+            if (row != nullptr)
+            {
+                fail_manifest(row->line_number,
+                              row->fixture.case_id,
+                              "blob",
+                              "could not inspect referenced blob '" + name + "'");
+            }
+            throw std::runtime_error("fixture corpus entry '" + name +
+                                     "': could not inspect entry");
+        }
+        if (fs::is_symlink(status) || !fs::is_regular_file(status))
+        {
+            if (row != nullptr)
+            {
+                fail_manifest(row->line_number,
+                              row->fixture.case_id,
+                              "blob",
+                              "referenced blob is not a regular non-symlink file: '" +
+                                  name + "'");
+            }
+            throw std::runtime_error("fixture corpus entry '" + name +
+                                     "': expected a regular file, not a directory or symlink");
+        }
+        if (expected_entries.erase(name) == 0u)
+        {
+            throw std::runtime_error("fixture corpus entry '" + name +
+                                     "': unexpected file not referenced by manifest");
+        }
+        iterator.increment(error);
+        if (error)
+        {
+            throw std::runtime_error("fixture corpus root could not be fully enumerated: " +
+                                     fixture_root.string());
+        }
+    }
 }
 
 } // namespace
 
 std::vector<RomFixture> load_rom_fixtures(const std::string& fixture_root)
 {
-    std::ifstream manifest(fixture_root + "/manifest.tsv", std::ios::binary);
+    const fs::path root_path(fixture_root);
+    std::error_code error;
+    const fs::file_status root_status = fs::symlink_status(root_path, error);
+    if (error || !fs::is_directory(root_status))
+    {
+        throw std::runtime_error("fixture corpus root is not a directory: " + fixture_root);
+    }
+    const fs::path manifest_path = root_path / "manifest.tsv";
+    const fs::file_status manifest_status = fs::symlink_status(manifest_path, error);
+    if (error || !fs::exists(manifest_status))
+    {
+        throw std::runtime_error("fixture corpus field 'manifest.tsv': missing manifest file");
+    }
+    if (fs::is_symlink(manifest_status) || !fs::is_regular_file(manifest_status))
+    {
+        throw std::runtime_error(
+            "fixture corpus field 'manifest.tsv': expected a regular non-symlink file");
+    }
+
+    std::ifstream manifest(manifest_path, std::ios::binary);
     if (!manifest)
     {
-        throw std::runtime_error("could not open ROM fixture manifest");
+        throw std::runtime_error("fixture corpus field 'manifest.tsv': could not open manifest");
     }
 
     std::string line;
     if (!std::getline(manifest, line))
     {
-        throw std::runtime_error("ROM fixture manifest is empty");
+        fail_manifest(1u, {}, "header", "manifest is empty");
     }
     if (!line.empty() && line.back() == '\r')
     {
@@ -357,37 +628,75 @@ std::vector<RomFixture> load_rom_fixtures(const std::string& fixture_root)
     }
     if (line != manifest_header)
     {
-        throw std::runtime_error("unexpected ROM fixture manifest header");
+        fail_manifest(1u, {}, "header", "unexpected manifest header");
     }
 
-    std::vector<RomFixture> fixtures;
+    std::vector<ParsedRow> rows;
     std::unordered_set<std::string> case_ids;
     std::unordered_set<std::string> blob_names;
+    std::size_t line_number = 1u;
     while (std::getline(manifest, line))
     {
+        ++line_number;
         if (!line.empty() && line.back() == '\r')
         {
             line.pop_back();
         }
         if (line.empty())
         {
-            throw std::runtime_error("empty row in ROM fixture manifest");
+            fail_manifest(line_number, {}, "row", "empty manifest row");
         }
         const std::vector<std::string> fields = split(line, '\t');
-        if (fields.size() < 3u || !case_ids.insert(fields[1]).second ||
-            !blob_names.insert(fields[2]).second)
+        ParsedRow row = parse_fixture_fields(fields, line_number);
+        if (!case_ids.insert(row.fixture.case_id).second)
         {
-            throw std::runtime_error("duplicate or malformed ROM fixture row");
+            fail_manifest(line_number,
+                          row.fixture.case_id,
+                          "case_id",
+                          "duplicate case ID '" + row.fixture.case_id + "'");
         }
-        fixtures.push_back(parse_fixture(fields, fixture_root));
+        if (!blob_names.insert(row.blob_name).second)
+        {
+            fail_manifest(line_number,
+                          row.fixture.case_id,
+                          "blob",
+                          "duplicate blob name '" + row.blob_name + "'");
+        }
+        rows.push_back(std::move(row));
     }
     if (!manifest.eof())
     {
-        throw std::runtime_error("error while reading ROM fixture manifest");
+        throw std::runtime_error("fixture corpus field 'manifest.tsv': read error");
     }
-    if (fixtures.size() != 25u)
+    if (rows.size() != 25u)
     {
-        throw std::runtime_error("version-one ROM fixture manifest must have 25 cases");
+        throw std::runtime_error(
+            "fixture corpus field 'case count': version one must contain exactly 25 cases");
+    }
+
+    validate_corpus_entries(root_path, rows);
+
+    std::vector<RomFixture> fixtures;
+    fixtures.reserve(rows.size());
+    for (ParsedRow& row : rows)
+    {
+        row.fixture.payload =
+            read_blob(root_path / row.blob_name, row.line_number, row.fixture.case_id);
+        if (sha256(row.fixture.payload) != row.expected_sha256)
+        {
+            fail_manifest(row.line_number,
+                          row.fixture.case_id,
+                          "sha256",
+                          "blob digest does not match manifest value");
+        }
+        if (row.fixture.payload.size() != row.fixture.expected.analysis.actual_bytes)
+        {
+            fail_manifest(row.line_number,
+                          row.fixture.case_id,
+                          "actual_bytes",
+                          "blob length does not match manifest value");
+        }
+        fixtures.push_back(std::move(row.fixture));
     }
     return fixtures;
 }

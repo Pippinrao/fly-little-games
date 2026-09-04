@@ -12,8 +12,10 @@ cmake --build out/shared --config Release
 ctest --test-dir out/shared -C Release --output-on-failure
 ```
 
-`FLYNES_BUILD_TESTS` defaults to `OFF`. When enabled, CTest registers a C++ ABI
-contract test and a real C11 consumer/link test.
+`FLYNES_BUILD_TESTS` defaults to `OFF`. When enabled, CTest registers the ABI,
+C-header, and ROM-fixture tests and requires a Python 3 interpreter for the
+fixture-generator check. Production-only builds do not discover or require
+Python (or a C compiler).
 
 ## ROM parser parity fixtures
 
@@ -24,16 +26,29 @@ recognition result, all analysis fields, and warnings in order. The JVM
 source set, while the separate `flynes_rom_payload_parser` CTest reads the same
 files directly.
 
-Do not hand-edit generated blobs or hashes. Reproduce version 1 with:
+Case IDs must match `[a-z][a-z0-9_]*`; blob fields must be safe basenames matching
+`[a-z][a-z0-9_]*\.bin`; SHA-256 values are exactly 64 lowercase hexadecimal
+characters. The version directory may contain only `manifest.tsv` and the blobs
+referenced exactly once by that manifest.
+
+Do not hand-edit generated blobs or hashes. Verify the tracked corpus without
+modifying it with:
+
+```sh
+python shared/tests/fixtures/rom/generate_v1.py --check
+```
+
+Regenerate version 1 intentionally with:
 
 ```sh
 python shared/tests/fixtures/rom/generate_v1.py
 ```
 
-A clean regeneration must produce no diff. For an intentional contract change,
-edit the deterministic generator, use a new version directory/schema when an
-existing input or expected output changes, update both parity gates, regenerate,
-and review every manifest/hash diff before committing.
+Generation refuses unexpected files or directories and names each entry that
+must be removed explicitly. For an intentional contract change, edit the
+deterministic generator, use a new version directory/schema when an existing
+input or expected output changes, update both parity gates, regenerate, run
+`--check`, and review every manifest/hash diff before committing.
 
 ## ABI and ownership rules
 
