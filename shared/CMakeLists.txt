@@ -71,11 +71,30 @@ elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "OHOS")
         message(FATAL_ERROR "The target SDK did not define CMAKE_SYSROOT")
     endif()
     # HarmonyOS BiSheng overlays its HMS sysroot on the base OpenHarmony
-    # sysroot. Headers and libraries may legitimately resolve from either SDK
-    # root, while Android and base OpenHarmony builds continue to have one.
+    # sysroot and registers its usr directory as an official CMake find root.
+    # Android and base OpenHarmony builds continue to trust only CMAKE_SYSROOT.
     set(FLYNES_SHARED_ALLOWED_SYSROOTS "${CMAKE_SYSROOT}")
-    if(DEFINED HMOS_SDK_NATIVE AND IS_DIRECTORY "${HMOS_SDK_NATIVE}/sysroot")
-        list(APPEND FLYNES_SHARED_ALLOWED_SYSROOTS "${HMOS_SDK_NATIVE}/sysroot")
+    if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND
+       DEFINED HMOS_SDK_NATIVE AND
+       IS_DIRECTORY "${HMOS_SDK_NATIVE}/sysroot/usr")
+        file(REAL_PATH "${HMOS_SDK_NATIVE}/sysroot/usr"
+            FLYNES_SHARED_HMOS_FIND_ROOT_REAL)
+        set(FLYNES_SHARED_HMOS_OVERLAY_REGISTERED FALSE)
+        foreach(FLYNES_SHARED_FIND_ROOT IN LISTS CMAKE_FIND_ROOT_PATH)
+            if(IS_DIRECTORY "${FLYNES_SHARED_FIND_ROOT}")
+                file(REAL_PATH "${FLYNES_SHARED_FIND_ROOT}"
+                    FLYNES_SHARED_FIND_ROOT_REAL)
+                if(FLYNES_SHARED_FIND_ROOT_REAL STREQUAL
+                   FLYNES_SHARED_HMOS_FIND_ROOT_REAL)
+                    set(FLYNES_SHARED_HMOS_OVERLAY_REGISTERED TRUE)
+                    break()
+                endif()
+            endif()
+        endforeach()
+        if(FLYNES_SHARED_HMOS_OVERLAY_REGISTERED)
+            list(APPEND FLYNES_SHARED_ALLOWED_SYSROOTS
+                "${HMOS_SDK_NATIVE}/sysroot")
+        endif()
     endif()
     foreach(FLYNES_SHARED_ZLIB_PATH IN ITEMS
             "${FLYNES_SHARED_ZLIB_INCLUDE}"
@@ -133,6 +152,34 @@ if(FLYNES_BUILD_TESTS)
     enable_language(C)
     enable_testing()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    set(FLYNES_ANDROID_NDK_ROOT "" CACHE PATH
+        "Android NDK root for the cross-sysroot policy regression test")
+    set(FLYNES_ANDROID_POLICY_NINJA "" CACHE FILEPATH
+        "Ninja executable for the Android cross-sysroot policy regression test")
+    if(FLYNES_ANDROID_NDK_ROOT)
+        set(FLYNES_ANDROID_POLICY_TOOLCHAIN
+            "${FLYNES_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
+        if(NOT EXISTS "${FLYNES_ANDROID_POLICY_TOOLCHAIN}")
+            message(FATAL_ERROR
+                "FLYNES_ANDROID_NDK_ROOT does not contain android.toolchain.cmake")
+        endif()
+        if(NOT EXISTS "${FLYNES_ANDROID_POLICY_NINJA}")
+            message(FATAL_ERROR
+                "FLYNES_ANDROID_POLICY_NINJA must name an existing Ninja executable")
+        endif()
+        add_test(
+            NAME flynes_android_hmos_overlay_policy
+            COMMAND
+                "${CMAKE_COMMAND}"
+                "-DFLYNES_TEST_SHARED_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DFLYNES_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/android-hmos-overlay-policy"
+                "-DFLYNES_TEST_ANDROID_TOOLCHAIN_FILE=${FLYNES_ANDROID_POLICY_TOOLCHAIN}"
+                "-DFLYNES_TEST_MAKE_PROGRAM=${FLYNES_ANDROID_POLICY_NINJA}"
+                -P
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_android_hmos_overlay_policy.cmake"
+        )
+    endif()
 
     add_executable(flynes_app_contract_test
         tests/test_app.cpp
