@@ -36,6 +36,18 @@ public final class UnsupportedPayloadClassifierFixtureParityTest {
             "expected_reason");
     private static final Set<String> REASONS = Set.of(
             "NESTED_ARCHIVE", "EXECUTABLE", "GAME_BOY", "SIDECAR", "UNKNOWN_FORMAT");
+    private static final String JUNCTION_LINK_ENV = "FLYNES_TEST_JUNCTION_LINK";
+    private static final String JUNCTION_TARGET_ENV = "FLYNES_TEST_JUNCTION_TARGET";
+    private static final String CREATE_JUNCTION_SCRIPT = String.join("",
+            "$ErrorActionPreference='Stop';",
+            "$link=[Environment]::GetEnvironmentVariable('", JUNCTION_LINK_ENV,
+            "','Process');",
+            "$target=[Environment]::GetEnvironmentVariable('", JUNCTION_TARGET_ENV,
+            "','Process');",
+            "if ([string]::IsNullOrEmpty($link) -or ",
+            "[string]::IsNullOrEmpty($target)) { throw 'missing junction path' };",
+            "New-Item -ItemType Junction -Path $link -Target $target ",
+            "-ErrorAction Stop | Out-Null");
     private static final Set<String> CASES = Set.of(
             "empty",
             "zip_local_exact", "zip_local_trailing",
@@ -202,24 +214,32 @@ public final class UnsupportedPayloadClassifierFixtureParityTest {
         Assume.assumeTrue("Windows-only reparse regression",
                 System.getProperty("os.name").startsWith("Windows"));
         Path source = fixtureRoot();
-        Path scratch = Files.createTempDirectory("flynes-unsupported-payload-junction-");
+        Path scratch = Files.createTempDirectory("flynes junction & regression ");
         Path junction = scratch.resolve("junction");
         try {
             Path target = copyCorpus(source, scratch.resolve("target"));
-            Process created = new ProcessBuilder(
-                    "cmd.exe", "/d", "/c", "mklink", "/J",
-                    junction.toString(), target.toString())
-                    .redirectErrorStream(true)
-                    .start();
-            String output = new String(created.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8);
-            int exitCode = created.waitFor();
-            Assume.assumeTrue("junction creation unavailable: " + output, exitCode == 0);
+            createWindowsJunction(junction, target);
+            assertTrue("junction helper did not create a reparse point",
+                    isFilesystemAlias(junction));
             expectLoadFailure(junction, "ordinary non-symlink directory");
         } finally {
             Files.deleteIfExists(junction);
             deleteTree(scratch);
         }
+    }
+
+    private static void createWindowsJunction(Path junction, Path target) throws Exception {
+        ProcessBuilder builder = new ProcessBuilder(
+                "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-Command", CREATE_JUNCTION_SCRIPT)
+                .redirectErrorStream(true);
+        builder.environment().put(JUNCTION_LINK_ENV, junction.toString());
+        builder.environment().put(JUNCTION_TARGET_ENV, target.toString());
+        Process created = builder.start();
+        String output = new String(created.getInputStream().readAllBytes(),
+                StandardCharsets.ISO_8859_1);
+        int exitCode = created.waitFor();
+        assertEquals("junction creation failed: " + output, 0, exitCode);
     }
 
     private static Path fixtureRoot() throws Exception {

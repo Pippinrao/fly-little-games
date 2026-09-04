@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -14,12 +15,24 @@ from pathlib import Path
 
 SOURCE_GENERATOR = Path(sys.argv.pop(1)).resolve()
 TEST_ROOT = Path(sys.argv.pop(1)).resolve()
+JUNCTION_LINK_ENV = "FLYNES_TEST_JUNCTION_LINK"
+JUNCTION_TARGET_ENV = "FLYNES_TEST_JUNCTION_TARGET"
+CREATE_JUNCTION_SCRIPT = (
+    "$ErrorActionPreference='Stop';"
+    f"$link=[Environment]::GetEnvironmentVariable('{JUNCTION_LINK_ENV}','Process');"
+    f"$target=[Environment]::GetEnvironmentVariable('{JUNCTION_TARGET_ENV}','Process');"
+    "if ([string]::IsNullOrEmpty($link) -or "
+    "[string]::IsNullOrEmpty($target)) { throw 'missing junction path' };"
+    "New-Item -ItemType Junction -Path $link -Target $target "
+    "-ErrorAction Stop | Out-Null"
+)
 
 
 class UnsupportedPayloadFixtureGeneratorTest(unittest.TestCase):
     def setUp(self) -> None:
-        TEST_ROOT.mkdir(parents=True, exist_ok=True)
-        self.temporary = tempfile.TemporaryDirectory(dir=TEST_ROOT)
+        special_parent = TEST_ROOT / "path with spaces & cmd metachar"
+        special_parent.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=special_parent)
         self.root = Path(self.temporary.name)
         self.generator = self.root / "generate_v1.py"
         shutil.copyfile(SOURCE_GENERATOR, self.generator)
@@ -121,15 +134,32 @@ class UnsupportedPayloadFixtureGeneratorTest(unittest.TestCase):
         output = self.root / "v1"
         outside = self.root / "junction-target"
         outside.mkdir()
+        environment = os.environ.copy()
+        environment[JUNCTION_LINK_ENV] = str(output)
+        environment[JUNCTION_TARGET_ENV] = str(outside)
         created = subprocess.run(
-            ["cmd.exe", "/d", "/c", "mklink", "/J", str(output), str(outside)],
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                CREATE_JUNCTION_SCRIPT,
+            ],
             cwd=self.root,
             check=False,
             capture_output=True,
             text=True,
+            env=environment,
         )
-        if created.returncode != 0:
-            self.skipTest("junction creation is unavailable")
+        self.assertEqual(0, created.returncode, created.stdout + created.stderr)
+        self.assertTrue(output.exists(), "junction helper did not create the output path")
+        attributes = output.lstat().st_file_attributes
+        self.assertNotEqual(
+            0,
+            attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+            "junction helper did not create a reparse point",
+        )
         try:
             result = self.run_generator()
             self.assert_problem(result, "reparse", output.name)
