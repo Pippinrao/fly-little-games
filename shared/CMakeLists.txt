@@ -61,6 +61,43 @@ if(WIN32)
         IMPORTED_LOCATION "${FLYNES_SHARED_ZLIB_STATIC}"
         INTERFACE_INCLUDE_DIRECTORIES "${FLYNES_SHARED_ZLIB_INCLUDE}")
     target_link_libraries(flynes_app PRIVATE flynes_shared_zlib)
+elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(NOT IS_ABSOLUTE "${CMAKE_OSX_SYSROOT}" OR
+       NOT IS_DIRECTORY "${CMAKE_OSX_SYSROOT}")
+        message(FATAL_ERROR
+            "FLYNES_IOS shared builds require an absolute CMAKE_OSX_SYSROOT")
+    endif()
+    find_path(FLYNES_SHARED_IOS_ZLIB_INCLUDE zlib.h
+        PATHS "${CMAKE_OSX_SYSROOT}/usr/include"
+        NO_DEFAULT_PATH)
+    find_library(FLYNES_SHARED_IOS_ZLIB_LIBRARY NAMES z
+        PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
+        NO_DEFAULT_PATH)
+    if(NOT FLYNES_SHARED_IOS_ZLIB_INCLUDE OR NOT FLYNES_SHARED_IOS_ZLIB_LIBRARY)
+        message(FATAL_ERROR
+            "FLYNES_IOS shared could not find zlib inside the selected SDK")
+    endif()
+
+    file(REAL_PATH "${CMAKE_OSX_SYSROOT}" FLYNES_SHARED_IOS_SDK_REAL)
+    foreach(FLYNES_SHARED_IOS_ZLIB_PATH IN ITEMS
+            "${FLYNES_SHARED_IOS_ZLIB_INCLUDE}"
+            "${FLYNES_SHARED_IOS_ZLIB_LIBRARY}")
+        file(REAL_PATH "${FLYNES_SHARED_IOS_ZLIB_PATH}"
+            FLYNES_SHARED_IOS_ZLIB_PATH_REAL)
+        file(RELATIVE_PATH FLYNES_SHARED_IOS_ZLIB_RELATIVE
+            "${FLYNES_SHARED_IOS_SDK_REAL}"
+            "${FLYNES_SHARED_IOS_ZLIB_PATH_REAL}")
+        if(IS_ABSOLUTE "${FLYNES_SHARED_IOS_ZLIB_RELATIVE}" OR
+           FLYNES_SHARED_IOS_ZLIB_RELATIVE MATCHES "^\\.\\.($|/)")
+            message(FATAL_ERROR "FLYNES_IOS shared zlib escaped the selected SDK")
+        endif()
+    endforeach()
+    target_include_directories(flynes_app PRIVATE "${FLYNES_SHARED_IOS_ZLIB_INCLUDE}")
+    target_link_libraries(flynes_app PRIVATE "${FLYNES_SHARED_IOS_ZLIB_LIBRARY}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/flynes-ios-shared-zlib.txt"
+        "sdk=${FLYNES_SHARED_IOS_SDK_REAL}\n"
+        "include=${FLYNES_SHARED_IOS_ZLIB_INCLUDE}\n"
+        "library=${FLYNES_SHARED_IOS_ZLIB_LIBRARY}\n")
 elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "OHOS")
     find_path(FLYNES_SHARED_ZLIB_INCLUDE zlib.h)
     find_library(FLYNES_SHARED_ZLIB_LIBRARY NAMES z)

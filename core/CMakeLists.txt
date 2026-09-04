@@ -67,6 +67,44 @@ elseif(WIN32)
         IMPORTED_LOCATION "${FLYNES_ZLIB_STATIC}"
         INTERFACE_INCLUDE_DIRECTORIES "${FLYNES_ZLIB_INCLUDE}")
     target_link_libraries(nestopia PUBLIC flynes_zlib)
+elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # Stage-1 must never let a Homebrew or host macOS zlib leak into an iOS
+    # archive. The top-level iOS project passes xcrun's absolute SDK path.
+    if(NOT IS_ABSOLUTE "${CMAKE_OSX_SYSROOT}" OR
+       NOT IS_DIRECTORY "${CMAKE_OSX_SYSROOT}")
+        message(FATAL_ERROR
+            "FLYNES_IOS core builds require an absolute CMAKE_OSX_SYSROOT")
+    endif()
+    find_path(FLYNES_IOS_CORE_ZLIB_INCLUDE zlib.h
+        PATHS "${CMAKE_OSX_SYSROOT}/usr/include"
+        NO_DEFAULT_PATH)
+    find_library(FLYNES_IOS_CORE_ZLIB_LIBRARY NAMES z
+        PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
+        NO_DEFAULT_PATH)
+    if(NOT FLYNES_IOS_CORE_ZLIB_INCLUDE OR NOT FLYNES_IOS_CORE_ZLIB_LIBRARY)
+        message(FATAL_ERROR "FLYNES_IOS core could not find zlib inside the selected SDK")
+    endif()
+
+    file(REAL_PATH "${CMAKE_OSX_SYSROOT}" FLYNES_IOS_CORE_SDK_REAL)
+    foreach(FLYNES_IOS_CORE_ZLIB_PATH IN ITEMS
+            "${FLYNES_IOS_CORE_ZLIB_INCLUDE}"
+            "${FLYNES_IOS_CORE_ZLIB_LIBRARY}")
+        file(REAL_PATH "${FLYNES_IOS_CORE_ZLIB_PATH}"
+            FLYNES_IOS_CORE_ZLIB_PATH_REAL)
+        file(RELATIVE_PATH FLYNES_IOS_CORE_ZLIB_RELATIVE
+            "${FLYNES_IOS_CORE_SDK_REAL}"
+            "${FLYNES_IOS_CORE_ZLIB_PATH_REAL}")
+        if(IS_ABSOLUTE "${FLYNES_IOS_CORE_ZLIB_RELATIVE}" OR
+           FLYNES_IOS_CORE_ZLIB_RELATIVE MATCHES "^\\.\\.($|/)")
+            message(FATAL_ERROR "FLYNES_IOS core zlib escaped the selected SDK")
+        endif()
+    endforeach()
+    target_include_directories(nestopia PRIVATE "${FLYNES_IOS_CORE_ZLIB_INCLUDE}")
+    target_link_libraries(nestopia PUBLIC "${FLYNES_IOS_CORE_ZLIB_LIBRARY}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/flynes-ios-core-zlib.txt"
+        "sdk=${FLYNES_IOS_CORE_SDK_REAL}\n"
+        "include=${FLYNES_IOS_CORE_ZLIB_INCLUDE}\n"
+        "library=${FLYNES_IOS_CORE_ZLIB_LIBRARY}\n")
 else()
     # Linux/macOS remain compatibility gates. The canonical, hash-pinned host
     # evidence is produced by the Windows bootstrap above.

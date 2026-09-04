@@ -1,0 +1,7 @@
+fly_app_create
+fly_app_destroy
+fly_catalog_snapshot
+fly_catalog_snapshot_count
+fly_catalog_snapshot_generation
+fly_catalog_snapshot_get
+fly_catalog_snapshot_release

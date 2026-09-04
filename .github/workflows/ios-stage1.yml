@@ -1,0 +1,239 @@
+name: ios-stage1
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ios-device-simulator:
+    name: iOS arm64 device + simulator compile/link/smoke
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      EVIDENCE_DIR: artifacts/ios-stage1
+      BUNDLE_ID: com.flynes.portability-smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify fixed Apple toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          test "$(uname -m)" = "arm64"
+          xcodebuild -version | tee "$EVIDENCE_DIR/xcode-version.txt"
+          grep -Fx "Xcode 26.6" "$EVIDENCE_DIR/xcode-version.txt"
+          grep -Fx "Build version 17F113" "$EVIDENCE_DIR/xcode-version.txt"
+          cmake --version | tee "$EVIDENCE_DIR/cmake-version.txt"
+          python3 ios/tests/test_stage1_contract.py | tee "$EVIDENCE_DIR/host-contract.txt"
+
+      - name: Resolve and inspect SDK zlib
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "26.5"
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = "26.5"
+          device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          simulator_sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          test -f "$device_sdk/usr/include/zlib.h"
+          test -f "$device_sdk/usr/lib/libz.tbd"
+          test -f "$simulator_sdk/usr/include/zlib.h"
+          test -f "$simulator_sdk/usr/lib/libz.tbd"
+          printf 'iphoneos_version=26.5\niphoneos=%s\niphonesimulator_version=26.5\niphonesimulator=%s\n' \
+            "$device_sdk" "$simulator_sdk" | tee "$EVIDENCE_DIR/sdk-paths.txt"
+          grep 'ZLIB_VERSION' "$device_sdk/usr/include/zlib.h" \
+            > "$EVIDENCE_DIR/iphoneos-zlib.txt"
+          grep 'ZLIB_VERSION' "$simulator_sdk/usr/include/zlib.h" \
+            > "$EVIDENCE_DIR/iphonesimulator-zlib.txt"
+          printf 'DEVICE_SDK=%s\n' "$device_sdk" >> "$GITHUB_ENV"
+          printf 'SIMULATOR_SDK=%s\n' "$simulator_sdk" >> "$GITHUB_ENV"
+
+      - name: Configure separate arm64 SDK builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S ios -B build/ios-device -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$DEVICE_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+          cmake -S ios -B build/ios-simulator -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$SIMULATOR_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+          find build/ios-device build/ios-simulator \
+            -name 'flynes-ios-*-zlib.txt' -type f -print -exec cat {} \; \
+            > "$EVIDENCE_DIR/cmake-sdk-zlib-selection.txt"
+
+      - name: Build and statically link both consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/ios-device --config Release \
+            --target FlyNESPortabilitySmoke -- CODE_SIGNING_ALLOWED=NO
+          cmake --build build/ios-simulator --config Release \
+            --target FlyNESPortabilitySmoke -- \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+
+      - name: Inspect Mach-O, link maps, resources, and C ABI symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -c \
+            'from pathlib import Path; print(Path("scripts/abi_symbols.golden.txt").read_text(encoding="utf-8-sig"), end="")' \
+            > "$EVIDENCE_DIR/expected-nes-symbols.txt"
+
+          inspect_build() {
+            local label="$1"
+            local build_dir="$2"
+            local expected_platform="$3"
+            local app
+            local binary
+            local fly_archive
+            local license_resource
+            local nes_archive
+            local nestopia_archive
+            local rom_resource
+
+            app="$(find "$build_dir" -type d -name FlyNESPortabilitySmoke.app -print -quit)"
+            test -n "$app"
+            binary="$app/FlyNESPortabilitySmoke"
+            test -f "$binary"
+            test "$(find "$app" -name from_below.nes -type f | wc -l | tr -d ' ')" = "1"
+            test "$(find "$app" -name LICENSE-from-below.txt -type f | wc -l | tr -d ' ')" = "1"
+            rom_resource="$(find "$app" -name from_below.nes -type f -print -quit)"
+            license_resource="$(find "$app" -name LICENSE-from-below.txt -type f -print -quit)"
+            test "$(shasum -a 256 "$rom_resource" | awk '{print toupper($1)}')" = \
+              "1A3AC4FAF4B35640505344059AE5D91DAE07CD47E1FB4D9D2A33C76391F1C555"
+            shasum -a 256 "$rom_resource" "$license_resource" \
+              > "$EVIDENCE_DIR/$label-resource-hashes.txt"
+
+            file "$binary" | tee "$EVIDENCE_DIR/$label-file.txt"
+            xcrun lipo -archs "$binary" | tee "$EVIDENCE_DIR/$label-architectures.txt"
+            test "$(cat "$EVIDENCE_DIR/$label-architectures.txt")" = "arm64"
+            xcrun vtool -show-build "$binary" | tee "$EVIDENCE_DIR/$label-vtool.txt"
+            grep -Eq "platform[[:space:]]+$expected_platform$" \
+              "$EVIDENCE_DIR/$label-vtool.txt"
+            xcrun otool -L "$binary" | tee "$EVIDENCE_DIR/$label-otool.txt"
+            if test "$label" = simulator; then
+              codesign -dv --verbose=4 "$app" \
+                > "$EVIDENCE_DIR/$label-codesign.txt" 2>&1
+              grep -F 'Signature=adhoc' "$EVIDENCE_DIR/$label-codesign.txt"
+            else
+              if codesign -dv --verbose=4 "$app" \
+                > "$EVIDENCE_DIR/$label-codesign.txt" 2>&1; then
+                echo 'device bundle was unexpectedly signed' >&2
+                return 1
+              fi
+              grep -F 'code object is not signed at all' \
+                "$EVIDENCE_DIR/$label-codesign.txt"
+            fi
+
+            fly_archive="$(find "$build_dir" -name libflynes_app.a -type f -print -quit)"
+            nes_archive="$(find "$build_dir" -name libnes_abi.a -type f -print -quit)"
+            nestopia_archive="$(find "$build_dir" -name libnestopia.a -type f -print -quit)"
+            test -n "$fly_archive" && test -n "$nes_archive" && test -n "$nestopia_archive"
+            test "$(xcrun lipo -archs "$fly_archive")" = "arm64"
+            test "$(xcrun lipo -archs "$nes_archive")" = "arm64"
+            test "$(xcrun lipo -archs "$nestopia_archive")" = "arm64"
+
+            xcrun nm -gjU "$fly_archive" | sed 's/^_//' | \
+              grep '^fly_' | LC_ALL=C sort -u > "$EVIDENCE_DIR/$label-fly-symbols.txt"
+            diff -u ios/abi/flynes_app.symbols.txt \
+              "$EVIDENCE_DIR/$label-fly-symbols.txt"
+            xcrun nm -gjU "$nes_archive" | sed 's/^_//' | \
+              grep '^nes_' | LC_ALL=C sort -u > "$EVIDENCE_DIR/$label-nes-symbols.txt"
+            diff -u "$EVIDENCE_DIR/expected-nes-symbols.txt" \
+              "$EVIDENCE_DIR/$label-nes-symbols.txt"
+
+            xcrun nm -gjU "$binary" | sed 's/^_//' | \
+              grep -E '^(fly_|nes_)' | LC_ALL=C sort -u \
+              > "$EVIDENCE_DIR/$label-final-c-symbols.txt"
+            for required in fly_app_create fly_app_destroy fly_catalog_snapshot \
+              nes_create nes_destroy nes_load_rom nes_run_frames nes_set_input \
+              nes_save_state nes_load_state; do
+              grep -Fx "$required" "$EVIDENCE_DIR/$label-final-c-symbols.txt"
+            done
+
+            test -f "$build_dir/FlyNESPortabilitySmoke-LinkMap.txt"
+            grep -F 'libflynes_app.a' "$build_dir/FlyNESPortabilitySmoke-LinkMap.txt" \
+              > "$EVIDENCE_DIR/$label-link-flynes-app.txt"
+            grep -F 'libnes_abi.a' "$build_dir/FlyNESPortabilitySmoke-LinkMap.txt" \
+              > "$EVIDENCE_DIR/$label-link-nes-abi.txt"
+            grep -F 'libnestopia.a' "$build_dir/FlyNESPortabilitySmoke-LinkMap.txt" \
+              > "$EVIDENCE_DIR/$label-link-nestopia.txt"
+          }
+
+          inspect_build device build/ios-device IOS
+          inspect_build simulator build/ios-simulator IOSSIMULATOR
+
+      - name: Boot and execute the arm64 simulator consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl list runtimes -j | tee "$EVIDENCE_DIR/simulator-runtimes.json"
+          python3 - "$EVIDENCE_DIR/simulator-runtimes.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          inventory = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+          matches = [
+              runtime
+              for runtime in inventory.get("runtimes", [])
+              if runtime.get("identifier") == expected
+          ]
+          if len(matches) != 1 or matches[0].get("isAvailable") is not True:
+              raise SystemExit(f"required available runtime missing: {expected}")
+          print(f"verified simulator runtime: {expected}")
+          PY
+          app="$(find build/ios-simulator -type d -name FlyNESPortabilitySmoke.app -print -quit)"
+          test -n "$app"
+          udid="$(xcrun simctl create \
+            "FlyNES-Stage1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            com.apple.CoreSimulator.SimDeviceType.iPhone-17 \
+            com.apple.CoreSimulator.SimRuntime.iOS-26-5)"
+          cleanup() {
+            xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+            xcrun simctl delete "$udid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          # The runner performs simctl install and simctl launch --console,
+          # then validates the app-container JSON rather than trusting launch alone.
+          python3 ios/scripts/run_simulator_smoke.py \
+            --udid "$udid" \
+            --app "$app" \
+            --bundle-id "$BUNDLE_ID" \
+            --evidence-dir "$EVIDENCE_DIR" \
+            --timeout-seconds 60
+          grep -F 'FLYNES_IOS_SMOKE_PASS' "$EVIDENCE_DIR/simulator-launch.log"
+          grep -F '"exit_code":0' "$EVIDENCE_DIR/simulator-result.json"
+
+      - name: Hash text evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          (
+            cd "$EVIDENCE_DIR"
+            find . -type f ! -name SHA256SUMS.txt -print | LC_ALL=C sort | \
+              while IFS= read -r evidence; do shasum -a 256 "$evidence"; done
+          ) > "$EVIDENCE_DIR/SHA256SUMS.txt"
+
+      - name: Upload Stage-1 evidence (never the ROM-bearing app)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-stage1-evidence
+          path: artifacts/ios-stage1
+          if-no-files-found: error
+          retention-days: 14
