@@ -22,8 +22,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.CodingErrorAction;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -33,7 +31,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.zip.CRC32;
 
 /** Deterministic, provider-neutral scanner for raw and full multi-entry ZIP packages. */
 public final class RomPackageScanner {
@@ -144,7 +141,7 @@ public final class RomPackageScanner {
             return;
         }
 
-        String physicalSha256 = digest("SHA-256", physicalBytes);
+        String physicalSha256 = RomContentHasher.sha256(physicalBytes);
         if (isZipMagic(physicalBytes)) {
             scanZip(source, envelope, physicalBytes, physicalSha256, collector);
         } else {
@@ -196,7 +193,7 @@ public final class RomPackageScanner {
             return;
         }
 
-        RomHashes hashes = hashes(payload, physicalSha256);
+        RomHashes hashes = RomContentHasher.hashes(payload, physicalSha256);
         RomVariant variant;
         try {
             variant = variant(
@@ -341,7 +338,7 @@ public final class RomPackageScanner {
                         unsupportedReason(payload)));
                 continue;
             }
-            RomHashes hashes = hashes(payload, physicalSha256);
+            RomHashes hashes = RomContentHasher.hashes(payload, physicalSha256);
             try {
                 variants.add(variant(
                         envelope,
@@ -653,28 +650,6 @@ public final class RomPackageScanner {
             }
         }
         return true;
-    }
-
-    private static RomHashes hashes(byte[] payload, String physicalSha256) {
-        CRC32 crc32 = new CRC32();
-        crc32.update(payload);
-        return new RomHashes(
-                digest("SHA-1", payload),
-                digest("SHA-256", payload),
-                physicalSha256,
-                String.format(Locale.ROOT, "%08X", crc32.getValue()));
-    }
-
-    private static String digest(String algorithm, byte[] bytes) {
-        try {
-            StringBuilder hex = new StringBuilder();
-            for (byte value : MessageDigest.getInstance(algorithm).digest(bytes)) {
-                hex.append(String.format(Locale.ROOT, "%02X", value & 0xFF));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(algorithm + " is required", impossible);
-        }
     }
 
     private static String titleFromPath(String value) {
