@@ -7,3 +7,5 @@ shared/tests/fixtures/zip/open/v1/manifest.tsv text eol=lf
 shared/tests/fixtures/zip/payload/v1/manifest.tsv text eol=lf
 shared/tests/fixtures/catalog/identity/**/*.bin binary
 shared/tests/fixtures/catalog/identity/v1/*.tsv text eol=lf
+shared/tests/fixtures/catalog/unsupported_payload/**/*.bin binary
+shared/tests/fixtures/catalog/unsupported_payload/v1/*.tsv text eol=lf

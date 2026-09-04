@@ -8,6 +8,7 @@ add_library(flynes_app STATIC
     src/catalog/bounded_zip_archive.cpp
     src/catalog/content_identity.cpp
     src/catalog/rom_payload_parser.cpp
+    src/catalog/unsupported_payload_classifier.cpp
     src/flynes_app.cpp
 )
 target_include_directories(flynes_app PUBLIC
@@ -192,6 +193,43 @@ if(FLYNES_BUILD_TESTS)
     flynes_enable_strict_warnings(flynes_identity_fixture_loader_test)
     add_test(NAME flynes_identity_fixture_loader COMMAND flynes_identity_fixture_loader_test)
 
+    add_executable(flynes_unsupported_payload_classifier_test
+        tests/unsupported_payload_fixture.cpp
+        tests/test_unsupported_payload_classifier.cpp
+    )
+    target_link_libraries(flynes_unsupported_payload_classifier_test PRIVATE flynes_app)
+    target_include_directories(flynes_unsupported_payload_classifier_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_unsupported_payload_classifier_test PRIVATE
+        FLYNES_UNSUPPORTED_PAYLOAD_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/unsupported_payload/v1"
+    )
+    target_compile_features(flynes_unsupported_payload_classifier_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_unsupported_payload_classifier_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_unsupported_payload_classifier_test)
+    add_test(NAME flynes_unsupported_payload_classifier
+        COMMAND flynes_unsupported_payload_classifier_test)
+
+    add_executable(flynes_unsupported_payload_fixture_loader_test
+        tests/unsupported_payload_fixture.cpp
+        tests/test_unsupported_payload_fixture_loader.cpp
+    )
+    target_link_libraries(flynes_unsupported_payload_fixture_loader_test PRIVATE flynes_app)
+    target_include_directories(flynes_unsupported_payload_fixture_loader_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(flynes_unsupported_payload_fixture_loader_test PRIVATE
+        FLYNES_UNSUPPORTED_PAYLOAD_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/unsupported_payload/v1"
+        FLYNES_UNSUPPORTED_PAYLOAD_FIXTURE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/unsupported-payload-fixture-loader-tests"
+    )
+    target_compile_features(flynes_unsupported_payload_fixture_loader_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_unsupported_payload_fixture_loader_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_unsupported_payload_fixture_loader_test)
+    add_test(NAME flynes_unsupported_payload_fixture_loader
+        COMMAND flynes_unsupported_payload_fixture_loader_test)
+
     add_executable(flynes_rom_fixture_loader_test
         tests/rom_fixture.cpp
         tests/test_rom_fixture_loader.cpp
@@ -363,5 +401,22 @@ if(FLYNES_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_identity_fixture_generator.py
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/identity/generate_v1.py
             ${CMAKE_CURRENT_BINARY_DIR}/identity-fixture-generator-tests
+    )
+
+    add_test(
+        NAME flynes_unsupported_payload_fixture_corpus_check
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/unsupported_payload/generate_v1.py
+            --check
+    )
+
+    add_test(
+        NAME flynes_unsupported_payload_fixture_generator
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unsupported_payload_fixture_generator.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/unsupported_payload/generate_v1.py
+            ${CMAKE_CURRENT_BINARY_DIR}/unsupported-payload-fixture-generator-tests
     )
 endif()
