@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "FlyNES app/catalog validation module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Runs the FlyNES app/catalog lifecycle smoke"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "FlyNES Validation"
+    },
+    {
+      "name": "validation_title",
+      "value": "FlyNES Catalog Smoke"
+    }
+  ]
+}

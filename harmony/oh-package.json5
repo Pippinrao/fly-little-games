@@ -1,0 +1,10 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "flynes-harmony-validation",
+  "version": "1.0.0",
+  "description": "FlyNES HarmonyOS app/catalog validation shell",
+  "dependencies": {
+  },
+  "devDependencies": {
+  }
+}

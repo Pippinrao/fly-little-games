@@ -70,19 +70,34 @@ elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "OHOS")
     if(NOT CMAKE_SYSROOT)
         message(FATAL_ERROR "The target SDK did not define CMAKE_SYSROOT")
     endif()
-    file(REAL_PATH "${CMAKE_SYSROOT}" FLYNES_SHARED_SYSROOT_REAL)
-    file(REAL_PATH "${FLYNES_SHARED_ZLIB_INCLUDE}" FLYNES_SHARED_ZLIB_INCLUDE_REAL)
-    file(REAL_PATH "${FLYNES_SHARED_ZLIB_LIBRARY}" FLYNES_SHARED_ZLIB_LIBRARY_REAL)
-    file(RELATIVE_PATH FLYNES_SHARED_ZLIB_INCLUDE_RELATIVE
-        "${FLYNES_SHARED_SYSROOT_REAL}" "${FLYNES_SHARED_ZLIB_INCLUDE_REAL}")
-    file(RELATIVE_PATH FLYNES_SHARED_ZLIB_LIBRARY_RELATIVE
-        "${FLYNES_SHARED_SYSROOT_REAL}" "${FLYNES_SHARED_ZLIB_LIBRARY_REAL}")
-    if(FLYNES_SHARED_ZLIB_INCLUDE_RELATIVE MATCHES "^\\.\\.($|/)" OR
-       IS_ABSOLUTE "${FLYNES_SHARED_ZLIB_INCLUDE_RELATIVE}" OR
-       FLYNES_SHARED_ZLIB_LIBRARY_RELATIVE MATCHES "^\\.\\.($|/)" OR
-       IS_ABSOLUTE "${FLYNES_SHARED_ZLIB_LIBRARY_RELATIVE}")
-        message(FATAL_ERROR "The selected zlib escaped the target SDK sysroot")
+    # HarmonyOS BiSheng overlays its HMS sysroot on the base OpenHarmony
+    # sysroot. Headers and libraries may legitimately resolve from either SDK
+    # root, while Android and base OpenHarmony builds continue to have one.
+    set(FLYNES_SHARED_ALLOWED_SYSROOTS "${CMAKE_SYSROOT}")
+    if(DEFINED HMOS_SDK_NATIVE AND IS_DIRECTORY "${HMOS_SDK_NATIVE}/sysroot")
+        list(APPEND FLYNES_SHARED_ALLOWED_SYSROOTS "${HMOS_SDK_NATIVE}/sysroot")
     endif()
+    foreach(FLYNES_SHARED_ZLIB_PATH IN ITEMS
+            "${FLYNES_SHARED_ZLIB_INCLUDE}"
+            "${FLYNES_SHARED_ZLIB_LIBRARY}")
+        file(REAL_PATH "${FLYNES_SHARED_ZLIB_PATH}" FLYNES_SHARED_ZLIB_PATH_REAL)
+        set(FLYNES_SHARED_ZLIB_PATH_ALLOWED FALSE)
+        foreach(FLYNES_SHARED_ALLOWED_SYSROOT IN LISTS FLYNES_SHARED_ALLOWED_SYSROOTS)
+            file(REAL_PATH "${FLYNES_SHARED_ALLOWED_SYSROOT}"
+                FLYNES_SHARED_ALLOWED_SYSROOT_REAL)
+            file(RELATIVE_PATH FLYNES_SHARED_ZLIB_PATH_RELATIVE
+                "${FLYNES_SHARED_ALLOWED_SYSROOT_REAL}"
+                "${FLYNES_SHARED_ZLIB_PATH_REAL}")
+            if(NOT FLYNES_SHARED_ZLIB_PATH_RELATIVE MATCHES "^\\.\\.($|/)" AND
+               NOT IS_ABSOLUTE "${FLYNES_SHARED_ZLIB_PATH_RELATIVE}")
+                set(FLYNES_SHARED_ZLIB_PATH_ALLOWED TRUE)
+                break()
+            endif()
+        endforeach()
+        if(NOT FLYNES_SHARED_ZLIB_PATH_ALLOWED)
+            message(FATAL_ERROR "The selected zlib escaped the target SDK sysroots")
+        endif()
+    endforeach()
     target_include_directories(flynes_app PRIVATE "${FLYNES_SHARED_ZLIB_INCLUDE}")
     target_link_libraries(flynes_app PRIVATE "${FLYNES_SHARED_ZLIB_LIBRARY}")
 else()
