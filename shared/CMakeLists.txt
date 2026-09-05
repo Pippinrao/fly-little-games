@@ -187,10 +187,52 @@ endfunction()
 
 flynes_enable_strict_warnings(flynes_app)
 
+function(flynes_add_runtime_library)
+    if(TARGET flynes_runtime)
+        return()
+    endif()
+    if(NOT TARGET nes_abi)
+        return()
+    endif()
+    add_library(flynes_runtime STATIC
+        src/runtime/flynes_runtime.cpp
+    )
+    target_include_directories(flynes_runtime PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_features(flynes_runtime PRIVATE cxx_std_17)
+    set_target_properties(flynes_runtime PROPERTIES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE YES
+    )
+    target_link_libraries(flynes_runtime PUBLIC nes_abi)
+    flynes_enable_strict_warnings(flynes_runtime)
+endfunction()
+
 if(FLYNES_BUILD_TESTS)
     enable_language(C)
     enable_testing()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    if(NOT TARGET nes_abi)
+        set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../core"
+                         "${CMAKE_CURRENT_BINARY_DIR}/nes_core")
+    endif()
+    flynes_add_runtime_library()
+
+    add_executable(flynes_runtime_test
+        tests/test_runtime.cpp
+    )
+    target_link_libraries(flynes_runtime_test PRIVATE flynes_runtime)
+    target_compile_features(flynes_runtime_test PRIVATE cxx_std_17)
+    target_compile_definitions(flynes_runtime_test PRIVATE
+        FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/fixtures/from_below.nes"
+        FLYNES_RUNTIME_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/include/flynes/flynes_runtime.h"
+    )
+    set_target_properties(flynes_runtime_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_runtime_test)
+    add_test(NAME flynes_runtime COMMAND flynes_runtime_test)
 
     set(FLYNES_ANDROID_NDK_ROOT "" CACHE PATH
         "Android NDK root for the cross-sysroot policy regression test")
@@ -560,3 +602,7 @@ if(FLYNES_BUILD_TESTS)
             ${CMAKE_CURRENT_BINARY_DIR}/unsupported-payload-fixture-generator-tests
     )
 endif()
+
+# Android (and other consumers that add core first) get the runtime library
+# without pulling nestopia into catalog-only host tests.
+flynes_add_runtime_library()
