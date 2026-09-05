@@ -4,11 +4,17 @@ project(flynes_harmony_contract_tests LANGUAGES CXX)
 
 include(CTest)
 
+set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FLYNES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../core"
+    "${CMAKE_CURRENT_BINARY_DIR}/nes_core"
+)
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../shared"
     "${CMAKE_CURRENT_BINARY_DIR}/flynes_shared"
 )
+flynes_add_runtime_library()
 
 add_executable(flynes_harmony_catalog_smoke_test
     catalog_smoke_test.cpp
@@ -56,3 +62,28 @@ else()
     )
 endif()
 add_test(NAME flynes_harmony_session_schema COMMAND flynes_harmony_session_schema_test)
+
+add_executable(flynes_harmony_runtime_smoke_test
+    runtime_smoke_test.cpp
+    ../entry/src/main/cpp/runtime_smoke.cpp
+)
+target_include_directories(flynes_harmony_runtime_smoke_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_runtime_smoke_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_runtime_smoke_test PROPERTIES CXX_EXTENSIONS NO)
+target_compile_definitions(flynes_harmony_runtime_smoke_test PRIVATE
+    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../core/tests/fixtures/from_below.nes"
+)
+target_link_libraries(flynes_harmony_runtime_smoke_test PRIVATE flynes_runtime)
+if(MSVC)
+    target_compile_options(flynes_harmony_runtime_smoke_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_runtime_smoke_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_runtime_smoke COMMAND flynes_harmony_runtime_smoke_test)
