@@ -2,8 +2,10 @@
 
 #include "app/catalog_persist.hpp"
 #include "app/catalog_state.hpp"
+#include "app/layout_persist.hpp"
 #include "app/settings_persist.hpp"
 #include "catalog/bounded_zip_archive.hpp"
+#include "flynes/product/control_layout.hpp"
 #include "catalog/content_identity.hpp"
 #include "catalog/rom_payload_parser.hpp"
 #include "catalog/unsupported_payload_classifier.hpp"
@@ -57,6 +59,7 @@ struct AppState final
     std::string data_root;
     std::shared_ptr<const CatalogData> catalog = std::make_shared<CatalogData>();
     SettingsData settings;
+    std::string control_layout_utf8;
 };
 
 bool source_scope_conflicts(const CatalogData& catalog, const SourceKey& source) noexcept
@@ -1204,6 +1207,7 @@ extern "C" fly_result fly_app_create(const fly_app_config* config, fly_app_t** a
         state->data_root.assign(config->data_root_utf8, config->data_root_utf8_length);
         state->catalog = flynes::app::load_catalog(state->data_root);
         state->settings = flynes::app::load_settings(state->data_root);
+        state->control_layout_utf8 = flynes::app::load_control_layout(state->data_root);
         auto app = std::make_unique<fly_app_t>(*config, std::move(state));
         *app_out = app.release();
         return FLY_RESULT_OK;
@@ -1711,6 +1715,70 @@ extern "C" fly_result fly_settings_apply(fly_app_t* app, const fly_settings_snap
             return FLY_RESULT_INTERNAL_ERROR;
         }
         app->state->settings = std::move(next);
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_control_layout_get(const fly_app_t* app,
+                                             char* utf8_out,
+                                             std::uint32_t capacity,
+                                             std::uint32_t* required_out)
+{
+    if (app == nullptr || required_out == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (!valid_output_buffer(utf8_out, capacity))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    try
+    {
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        const std::uint32_t required = required_string_size(app->state->control_layout_utf8);
+        *required_out = required;
+        if (capacity < required)
+        {
+            return FLY_RESULT_BUFFER_TOO_SMALL;
+        }
+        if (utf8_out != nullptr)
+        {
+            copy_string(utf8_out, app->state->control_layout_utf8);
+        }
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_control_layout_apply(fly_app_t* app,
+                                               const char* utf8,
+                                               std::uint32_t utf8_length)
+{
+    if (app == nullptr || utf8 == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    try
+    {
+        const std::string input(utf8, utf8_length);
+        std::string normalized;
+        if (!is_valid_utf8(utf8, utf8_length, 65536u))
+        {
+            normalized = flynes::product::ControlLayoutV2::recommended().encode();
+        }
+        else
+        {
+            normalized = flynes::product::ControlLayoutV2::decode_or_recommended(input).encode();
+        }
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        if (!flynes::app::save_control_layout(app->state->data_root, normalized))
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        app->state->control_layout_utf8 = std::move(normalized);
         return FLY_RESULT_OK;
     }
     catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }

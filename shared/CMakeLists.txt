@@ -11,6 +11,7 @@ add_library(flynes_app STATIC
     src/catalog/unsupported_payload_classifier.cpp
     src/app/catalog_persist.cpp
     src/app/settings_persist.cpp
+    src/app/layout_persist.cpp
     src/app/flynes_app.cpp
 )
 target_include_directories(flynes_app PUBLIC
@@ -195,6 +196,7 @@ add_library(flynes_product STATIC
 target_include_directories(flynes_product PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(flynes_product PUBLIC cxx_std_17)
 set_target_properties(flynes_product PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+target_link_libraries(flynes_app PUBLIC flynes_product)
 
 add_library(flynes_session_codec STATIC
     src/session/wire/sha256.cpp
@@ -365,6 +367,15 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_settings_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_settings_test)
     add_test(NAME flynes_settings COMMAND flynes_settings_test)
+
+    add_executable(flynes_control_layout_persist_test
+        tests/test_control_layout_persist.cpp
+    )
+    target_link_libraries(flynes_control_layout_persist_test PRIVATE flynes_app flynes_product)
+    target_compile_features(flynes_control_layout_persist_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_control_layout_persist_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_control_layout_persist_test)
+    add_test(NAME flynes_control_layout_persist COMMAND flynes_control_layout_persist_test)
 
     add_executable(flynes_c_header_test
         tests/test_c_header.c

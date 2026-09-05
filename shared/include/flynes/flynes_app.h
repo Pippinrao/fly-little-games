@@ -573,6 +573,26 @@ FLYNES_API fly_result fly_settings_get(const fly_app_t* app, fly_settings_snapsh
  */
 FLYNES_API fly_result fly_settings_apply(fly_app_t* app, const fly_settings_snapshot* snapshot);
 
+/*
+ * Reads the persisted ControlLayoutV2 wire string. On success the output is
+ * NUL-terminated and required_out includes that terminator. A NULL buffer with
+ * zero capacity is a valid size query. Missing or invalid on-disk payloads
+ * surface as the recommended layout encode.
+ */
+FLYNES_API fly_result fly_control_layout_get(const fly_app_t* app,
+                                             char* utf8_out,
+                                             uint32_t capacity,
+                                             uint32_t* required_out);
+
+/*
+ * Applies one ControlLayoutV2 wire string. Invalid UTF-8 or payload content is
+ * normalized through decode_or_recommended and persisted atomically to
+ * control_layout.v2 beside settings.flyset01.
+ */
+FLYNES_API fly_result fly_control_layout_apply(fly_app_t* app,
+                                               const char* utf8,
+                                               uint32_t utf8_length);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
