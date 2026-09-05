@@ -51,6 +51,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     FlyNesRuntimeBridge *runtime_;
     BOOL paused_;
     BOOL drawerOpen_;
+    BOOL checkpointFailed_;
 }
 
 - (void)viewDidLoad
@@ -60,6 +61,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     self.view.multipleTouchEnabled = YES;
     paused_ = NO;
     drawerOpen_ = NO;
+    checkpointFailed_ = NO;
 
     metalHost_ = [[UIView alloc] initWithFrame:self.view.bounds];
     metalHost_.translatesAutoresizingMaskIntoConstraints = NO;
@@ -162,6 +164,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     overlay_.hidden = YES;
     pauseButton_.hidden = YES;
     [runtime_ stepFrameWithButtons:0 error:nil];
+    checkpointFailed_ = ![runtime_ saveCheckpoint:nil];
 
     pauseLayer_ = [[UIView alloc] initWithFrame:self.view.bounds];
     pauseLayer_.translatesAutoresizingMaskIntoConstraints = NO;
@@ -185,6 +188,18 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 12.0;
     [drawer addSubview:stack];
+
+    if (checkpointFailed_)
+    {
+        UILabel *failure = [[UILabel alloc] init];
+        failure.translatesAutoresizingMaskIntoConstraints = NO;
+        failure.text = NSLocalizedString(@"pause.checkpoint_failed", nil);
+        failure.accessibilityIdentifier = @"pause_checkpoint_failed";
+        failure.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightRegular];
+        failure.textColor = [UIColor colorWithRed:1.0 green:0.42 blue:0.37 alpha:1.0];
+        failure.numberOfLines = 0;
+        [stack addArrangedSubview:failure];
+    }
 
     for (const flynes::product::PauseCommand command : flynes::product::kPauseDrawerCommands)
     {
@@ -252,6 +267,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 - (void)resumeFromPause
 {
     paused_ = NO;
+    checkpointFailed_ = NO;
     [self dismissPauseLayerKeepingPaused:NO];
 }
 

@@ -57,3 +57,4 @@
 "pause.resume" = "继续";
 "pause.game_center" = "游戏中心";
 "pause.settings" = "设置";
+"pause.checkpoint_failed" = "进度未能保存";

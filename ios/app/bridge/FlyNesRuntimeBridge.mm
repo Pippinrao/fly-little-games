@@ -97,6 +97,51 @@
     return YES;
 }
 
+- (BOOL)saveCheckpoint:(NSError **)error
+{
+    if (runtime_ == nullptr)
+    {
+        if (error != nullptr)
+        {
+            *error = [NSError errorWithDomain:@"com.flynes.runtime"
+                                         code:FLY_RESULT_INVALID_STATE
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
+        }
+        return NO;
+    }
+    size_t written = 0;
+    size_t needed = 0;
+    const fly_result query =
+        fly_runtime_save_checkpoint(runtime_, nullptr, 0, &written, &needed);
+    if (query != FLY_RESULT_BUFFER_TOO_SMALL || needed == 0)
+    {
+        const fly_result failure =
+            query == FLY_RESULT_OK ? FLY_RESULT_INTERNAL_ERROR : query;
+        if (error != nullptr)
+        {
+            *error = [NSError errorWithDomain:@"com.flynes.runtime"
+                                         code:failure
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
+        }
+        return NO;
+    }
+    std::vector<uint8_t> bytes(needed);
+    written = 0;
+    const fly_result status = fly_runtime_save_checkpoint(
+        runtime_, bytes.data(), bytes.size(), &written, &needed);
+    if (status != FLY_RESULT_OK)
+    {
+        if (error != nullptr)
+        {
+            *error = [NSError errorWithDomain:@"com.flynes.runtime"
+                                         code:status
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
+        }
+        return NO;
+    }
+    return YES;
+}
+
 - (NSData *)copyLatestRgb565Frame
 {
     if (runtime_ == nullptr)

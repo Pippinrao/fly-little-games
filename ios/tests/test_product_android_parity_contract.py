@@ -60,6 +60,26 @@ def main() -> int:
     require("UIInterfaceOrientationMaskLandscape" in run,
             "run surface must stay landscape")
 
+    runtime_bridge = (
+        read("ios/app/bridge/FlyNesRuntimeBridge.h")
+        + "\n"
+        + read("ios/app/bridge/FlyNesRuntimeBridge.mm")
+    )
+    require("saveCheckpoint" in runtime_bridge,
+            "runtime bridge must expose saveCheckpoint")
+    require("fly_runtime_save_checkpoint" in runtime_bridge,
+            "runtime bridge must call fly_runtime_save_checkpoint")
+    open_pause_at = run.find("- (void)openPauseDrawer")
+    require(open_pause_at >= 0, "run surface must implement openPauseDrawer")
+    open_pause_body = run[open_pause_at:open_pause_at + 1400]
+    require("saveCheckpoint" in open_pause_body,
+            "openPauseDrawer must auto-checkpoint via saveCheckpoint")
+    strings = read("ios/app/en.lproj/Localizable.strings")
+    require("pause.checkpoint_failed" in strings,
+            "pause checkpoint failure must be localized")
+    require("pause_checkpoint_failed" in run or "pause.checkpoint_failed" in run,
+            "openPauseDrawer must surface pause checkpoint failure")
+
     settings = read("ios/app/SettingsView.swift")
     for key in SECTION_KEYS:
         require(key in settings, f"settings missing {key}")

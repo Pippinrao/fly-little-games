@@ -57,3 +57,4 @@
 "pause.resume" = "Resume";
 "pause.game_center" = "Game Center";
 "pause.settings" = "Settings";
+"pause.checkpoint_failed" = "Progress was not stored";
