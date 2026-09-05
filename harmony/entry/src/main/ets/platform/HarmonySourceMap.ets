@@ -91,7 +91,7 @@ export class HarmonySourceMap {
   }
 
   newUuidHex(): string {
-    return util.generateRandomUUID(false);
+    return this.normalizeUuidHex(util.generateRandomUUID(false));
   }
 
   async flush(): Promise<void> {
@@ -117,7 +117,18 @@ export class HarmonySourceMap {
   }
 
   private requireHex(uuidHex: string): string {
-    const hex = uuidHex.trim().toLowerCase();
+    return this.normalizeUuidHex(uuidHex.trim());
+  }
+
+  private normalizeUuidHex(raw: string): string {
+    let hex = '';
+    const lower = raw.toLowerCase();
+    for (let index = 0; index < lower.length; index++) {
+      const ch = lower.charAt(index);
+      if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+        hex += ch;
+      }
+    }
     if (hex.length !== 32) {
       throw new Error('uuid hex must be 32 digits');
     }

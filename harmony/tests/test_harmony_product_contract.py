@@ -32,6 +32,15 @@ assert settings.find("section.display") < settings.find("section.about")
 src = Path("harmony/entry/src/main/ets/platform/HarmonySourceMap.ets").read_text(encoding="utf-8")
 assert "FLYCAT" not in src
 assert "uuid" in src.lower() or "UUID" in src
+# Dashed RFC-4122 from generateRandomUUID must normalize to 32 hex digits.
+assert "32" in src
+uuid_norm = (
+    "replace('-'" in src or 'replace("-")' in src or
+    "replaceAll('-'" in src or 'replaceAll("-")' in src or
+    "normalizeUuidHex" in src or
+    "/[^0-9a-f]/g" in src or "/[^0-9a-f]/gi" in src
+)
+assert uuid_norm, "HarmonySourceMap must strip hyphens from generated UUIDs"
 
 catalog = Path("harmony/entry/src/main/ets/service/CatalogProductService.ets").read_text(encoding="utf-8")
 dts = Path("harmony/entry/src/main/cpp/types/libentry/Index.d.ts").read_text(encoding="utf-8")
