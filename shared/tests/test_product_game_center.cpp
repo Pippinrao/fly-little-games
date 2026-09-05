@@ -103,6 +103,41 @@ void test_restore_reconcile()
     check(state.query() == "zelda", "keep query");
 }
 
+void test_select_preserves_spaced_canonical_id()
+{
+    using flynes::product::GameCenterState;
+
+    GameCenterState state;
+    state.select(" game ");
+    check(state.selected_canonical_id() == " game ", "select preserves spaces");
+}
+
+void test_restore_preserves_spaced_canonical_id()
+{
+    using flynes::product::GameCenterState;
+
+    const GameCenterState state = GameCenterState::restore("ALL", "", " game ");
+    check(state.selected_canonical_id() == " game ", "restore preserves spaces");
+}
+
+void test_rejects_nbsp_only_canonical_id()
+{
+    using flynes::product::GameCenterItem;
+
+    bool threw = false;
+    try
+    {
+        const std::string nbsp_only = "\xC2\xA0";
+        const GameCenterItem item{nbsp_only, "Title", "", false, false, 0, "file.nes"};
+        (void)item;
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    check(threw, "rejects nbsp-only canonical id");
+}
+
 void test_continuous_scrolling_returns_entire_filtered_library()
 {
     using flynes::product::GameCenterItem;
@@ -125,6 +160,9 @@ int main()
     test_filters_and_search();
     test_selection_per_category();
     test_restore_reconcile();
+    test_select_preserves_spaced_canonical_id();
+    test_restore_preserves_spaced_canonical_id();
+    test_rejects_nbsp_only_canonical_id();
     test_continuous_scrolling_returns_entire_filtered_library();
 
     if (failures == 0)

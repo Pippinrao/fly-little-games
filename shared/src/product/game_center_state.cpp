@@ -86,7 +86,7 @@ GameCenterState GameCenterState::restore(const std::string& category_name,
     state.query_ = query;
     if (!is_blank(selected_canonical_id))
     {
-        state.selections_[state.category_] = trim(selected_canonical_id);
+        state.selections_[state.category_] = selected_canonical_id;
     }
     return state;
 }
@@ -108,7 +108,7 @@ void GameCenterState::select(const std::string& canonical_id)
         selections_.erase(category_);
         return;
     }
-    selections_[category_] = trim(canonical_id);
+    selections_[category_] = canonical_id;
 }
 
 std::vector<GameCenterItem> GameCenterState::items_for(
