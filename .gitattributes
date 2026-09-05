@@ -16,4 +16,9 @@ app/src/test/resources/flynes_session_v1/** text eol=lf
 ios/abi/flynes_session_v1/** text eol=lf
 harmony/schema/flynes_session_v1/** text eol=lf
 shared/schema/golden/**/*.bin binary
+shared/schema/golden/**/*.hash text eol=lf
+shared/schema/golden/**/*.txt text eol=lf
+app/src/test/resources/flynes_session_v1/golden/**/*.bin binary
+ios/abi/flynes_session_v1/golden/**/*.bin binary
+harmony/schema/flynes_session_v1/golden/**/*.bin binary
 shared/schema/golden/**/*.json text eol=lf
