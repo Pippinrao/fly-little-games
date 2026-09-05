@@ -122,8 +122,6 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     NSData *rom = nil;
     if ([self canonicalIdMapsToBuiltinFromBelow])
         rom = [self bundledFromBelowRom];
-    if (rom.length == 0)
-        rom = [self bundledFromBelowRom];
     NSError *romError = nil;
     if (rom.length > 0)
         romReady_ = [runtime_ loadRom:rom error:&romError];
@@ -176,7 +174,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 {
     NSString *cid = self.canonicalId.lowercaseString;
     if (cid.length == 0)
-        return YES;
+        return NO;
     return [cid isEqualToString:@"builtin"] || [cid containsString:@"from_below"]
         || [cid containsString:@"from-below"];
 }

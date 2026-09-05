@@ -53,6 +53,10 @@
       "value": "内置游戏已就绪 · 可添加目录"
     },
     {
+      "name": "game_center_rom_open_failed",
+      "value": "无法打开该游戏。"
+    },
+    {
       "name": "pause_eyebrow",
       "value": "游戏已暂停"
     },

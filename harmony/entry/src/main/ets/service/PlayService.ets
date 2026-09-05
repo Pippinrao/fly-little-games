@@ -12,6 +12,11 @@ export const NES_BTN_DOWN = 0x20;
 export const NES_BTN_LEFT = 0x40;
 export const NES_BTN_RIGHT = 0x80;
 
+export function mapsToBuiltinFromBelow(canonicalId: string): boolean {
+  const id = canonicalId.trim().toLowerCase();
+  return id === 'builtin' || id.indexOf('from_below') >= 0 || id.indexOf('from-below') >= 0;
+}
+
 export class PlayService {
   private buttons: number = 0;
   private renderer: audio.AudioRenderer | undefined = undefined;
@@ -23,7 +28,10 @@ export class PlayService {
     return audio.AudioDataCallbackResult.VALID;
   };
 
-  async open(context: common.UIAbilityContext): Promise<void> {
+  async open(context: common.UIAbilityContext, canonicalId: string): Promise<void> {
+    if (!mapsToBuiltinFromBelow(canonicalId)) {
+      throw new Error('This game could not be opened.');
+    }
     let rom: Uint8Array;
     try {
       rom = context.resourceManager.getRawFileContentSync('from_below.nes');

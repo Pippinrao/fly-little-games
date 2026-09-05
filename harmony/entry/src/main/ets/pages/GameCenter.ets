@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { router } from '@kit.ArkUI';
 import nativeProduct, { GameCenterRow } from 'libentry.so';
 import { CatalogProductService } from '../service/CatalogProductService';
+import { mapsToBuiltinFromBelow } from '../service/PlayService';
 
 @Entry
 @Component
@@ -182,12 +183,18 @@ struct GameCenter {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
+      if (this.selectedCanonicalId.length > 0 && !this.canOpenSelected()) {
+        Text($r('app.string.game_center_rom_open_failed'))
+          .fontSize(14)
+          .fontColor('#FF6B5E')
+          .width('100%')
+      }
       Blank()
       Button($r('app.string.game_center_launch'))
         .width('100%')
         .height(this.catalog.launchButtonHeightVp(this.fontScale))
         .fontSize(16)
-        .enabled(this.selectedCanonicalId.length > 0)
+        .enabled(this.selectedCanonicalId.length > 0 && this.canOpenSelected())
         .onClick(() => {
           this.launchSelected();
         })
@@ -306,8 +313,15 @@ struct GameCenter {
     }
   }
 
+  private canOpenSelected(): boolean {
+    return mapsToBuiltinFromBelow(this.selectedCanonicalId);
+  }
+
   private launchSelected(): void {
     if (this.selectedCanonicalId.length === 0) {
+      return;
+    }
+    if (!this.canOpenSelected()) {
       return;
     }
     void router.pushUrl({

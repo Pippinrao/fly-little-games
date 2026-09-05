@@ -15,12 +15,25 @@ struct CatalogGameDetailView: View {
                     .textSelection(.enabled)
             }
             Section {
-                NavigationLink(value: LibraryRoute.run(game.canonicalId)) {
+                if mapsToBuiltinFromBelow {
+                    NavigationLink(value: LibraryRoute.run(game.canonicalId)) {
+                        Text("library.play")
+                    }
+                    .disabled(game.compatibilityState != 1)
+                } else {
                     Text("library.play")
+                        .foregroundStyle(.tertiary)
+                    Text("library.rom_open_failed")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(game.compatibilityState != 1)
             }
         }
         .navigationTitle("library.detail")
+    }
+
+    private var mapsToBuiltinFromBelow: Bool {
+        let cid = game.canonicalId.lowercased()
+        return cid == "builtin" || cid.contains("from_below") || cid.contains("from-below")
     }
 }

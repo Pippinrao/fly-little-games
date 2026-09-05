@@ -85,6 +85,10 @@
       "value": "Built-in ready · add a folder"
     },
     {
+      "name": "game_center_rom_open_failed",
+      "value": "This game could not be opened."
+    },
+    {
       "name": "pause_eyebrow",
       "value": "GAME PAUSED"
     },

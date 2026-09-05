@@ -22,11 +22,39 @@ assert "@State private allRows" not in gc
 assert "gameCenterFilter(this.allRows" not in gc
 
 run = Path("harmony/entry/src/main/ets/pages/RunGame.ets").read_text(encoding="utf-8")
+play = Path("harmony/entry/src/main/ets/service/PlayService.ets").read_text(encoding="utf-8")
 overlay = Path("harmony/entry/src/main/ets/overlay/GamepadOverlay.ets").read_text(encoding="utf-8")
 assert "GamepadOverlay" in run
 assert "play_save" not in run.lower()
 assert "Save" not in overlay
 assert "pauseCommands" in run or "PauseCommand" in run
+# Spec §5 launch-by-canonical-id; §6 ROM-open failure stays in Game Center.
+# Builtin From Below may load the bundled rawfile; any other id must not.
+assert "game_center_rom_open_failed" in strings
+assert "game_center_rom_open_failed" in gc
+launch_at = gc.find("launchSelected")
+assert launch_at >= 0, "Game Center must implement launchSelected"
+launch_end = gc.find("selectedRow", launch_at)
+launch_body = gc[launch_at:launch_end if launch_end > launch_at else launch_at + 900]
+assert "pushUrl" in launch_body
+assert "canOpen" in launch_body or "builtin" in launch_body or "from_below" in launch_body, (
+    "Launch must refuse non-builtin ids instead of always pushing RunGame")
+assert "from_below.nes" in play
+open_at = play.find("async open")
+open_end = play.find("setButtons", open_at)
+play_open = play[open_at:open_end if open_end > open_at else open_at + 1600]
+rom_at = play_open.find("from_below.nes")
+assert rom_at >= 0, "PlayService must still load bundled From Below for builtin"
+before_rom = play_open[:rom_at]
+assert "canonicalId" in play_open and (
+    "canonicalId" in before_rom or "builtin" in before_rom or "from-below" in before_rom
+), "PlayService must not open from_below.nes unless canonicalId maps to builtin"
+start_at = run.find("private async start")
+start_end = run.find("private startLoop", start_at)
+start_body = run[start_at:start_end if start_end > start_at else start_at + 700]
+assert "canonicalId" in start_body, "RunGame.start must pass or branch on canonicalId"
+assert "play.open(context,this.canonicalId)" in start_body.replace(" ", "").replace("\n", ""), (
+    "RunGame must pass the selected canonicalId into PlayService.open")
 assert "hitMapFromLayout" in overlay or "HitMap" in overlay
 # Canvas buffer is vp-sized while hit-map/draw use px; scale px onto the buffer.
 assert "setTransform" in overlay

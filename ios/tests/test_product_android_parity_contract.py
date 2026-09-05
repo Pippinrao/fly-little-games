@@ -153,6 +153,22 @@ def main() -> int:
             "run start must load the bundled From Below fixture")
     require("canonicalId" in run and "builtin" in run,
             "prefer canonical id when it maps to the From Below builtin")
+    first_bundled = view_load_body.find("bundledFromBelowRom")
+    require(first_bundled >= 0, "builtin path must still load bundled From Below")
+    second_bundled = view_load_body.find("bundledFromBelowRom", first_bundled + 1)
+    require(second_bundled < 0,
+            "non-builtin ids must not load bundled From Below as fallback")
+    maps_at = run.find("canonicalIdMapsToBuiltinFromBelow")
+    require(maps_at >= 0, "run start must map canonicalId onto the From Below builtin")
+    maps_end = run.find("autosaveURL", maps_at)
+    maps_fn = run[maps_at:maps_end if maps_end > maps_at else maps_at + 500]
+    empty_at = maps_fn.find("length == 0")
+    if empty_at < 0:
+        empty_at = maps_fn.find("length==0")
+    if empty_at >= 0:
+        empty_branch = maps_fn[empty_at:empty_at + 80].replace(" ", "")
+        require("returnYES" not in empty_branch,
+                "empty canonicalId must not map to bundled From Below")
     cmake = read("ios/app/CMakeLists.txt")
     require("from_below.nes" in cmake,
             "product CMake must package from_below.nes into the app bundle")
@@ -266,6 +282,11 @@ def main() -> int:
 
     run_swift = read("ios/app/RunGameView.swift")
     detail = read("ios/app/CatalogGameDetailView.swift")
+    require("library.rom_open_failed" in detail,
+            "Game Center detail must explain when Launch is refused")
+    require("from_below" in detail.lower() or "from-below" in detail.lower()
+            or "builtin" in detail.lower(),
+            "detail Play must branch on builtin mapping, not launch every id")
     review_errors = []
 
     def review_require(condition: bool, message: str) -> None:

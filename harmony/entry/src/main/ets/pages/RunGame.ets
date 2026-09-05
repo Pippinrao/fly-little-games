@@ -203,7 +203,7 @@ struct RunGame {
 
   private async start(context: common.UIAbilityContext): Promise<void> {
     try {
-      await this.play.open(context);
+      await this.play.open(context, this.canonicalId);
       this.started = true;
       this.status = '';
       this.startLoop();
