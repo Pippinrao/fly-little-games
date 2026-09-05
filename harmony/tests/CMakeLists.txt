@@ -33,3 +33,26 @@ else()
 endif()
 
 add_test(NAME flynes_harmony_catalog_smoke COMMAND flynes_harmony_catalog_smoke_test)
+
+add_executable(flynes_harmony_session_schema_test
+    schema_hash_test.cpp
+)
+target_include_directories(flynes_harmony_session_schema_test PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../shared/schema"
+)
+target_compile_features(flynes_harmony_session_schema_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_session_schema_test PROPERTIES CXX_EXTENSIONS NO)
+target_compile_definitions(flynes_harmony_session_schema_test PRIVATE
+    FLYNES_HARMONY_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_LIST_DIR}/../schema/flynes_session_v1"
+)
+if(MSVC)
+    target_compile_options(flynes_harmony_session_schema_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_session_schema_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_session_schema COMMAND flynes_harmony_session_schema_test)

@@ -608,6 +608,9 @@ if(FLYNES_BUILD_TESTS)
     target_compile_features(flynes_session_schema_registry_test PRIVATE cxx_std_17)
     set_target_properties(flynes_session_schema_registry_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_session_schema_registry_test)
+    target_include_directories(flynes_session_schema_registry_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/schema
+    )
     target_compile_definitions(flynes_session_schema_registry_test PRIVATE
         FLYNES_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema"
         FLYNES_ANDROID_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../app/src/test/resources/flynes_session_v1"

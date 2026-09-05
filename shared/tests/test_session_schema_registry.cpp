@@ -1,3 +1,5 @@
+#include "schema_registry_hash.h"
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -305,6 +307,8 @@ int main()
     const std::string recomputed = to_hex_lower(registry_hash(schema));
     check(published == recomputed,
           "schema_registry_hash must equal SHA256(domain||u32be(len)||exact_schema)");
+    check(published == FLYNES_SESSION_SCHEMA_REGISTRY_HASH_HEX,
+          "published hash must match the frozen C string");
 
     const char* copies[][2] = {
         {FLYNES_ANDROID_SESSION_SCHEMA_DIR, "Android JVM schema copy"},
@@ -330,12 +334,12 @@ int main()
     }
 
     const std::string text = as_text(schema);
-    check(text.find("\"schema_id\":\"flynes_session_v1\"") != std::string::npos,
+    check(text.find("\"schema_id\": \"flynes_session_v1\"") != std::string::npos,
           "schema must declare flynes_session_v1");
-    check(text.find("\"wire_endian\":\"network\"") != std::string::npos,
+    check(text.find("\"wire_endian\": \"network\"") != std::string::npos,
           "schema must freeze network endian");
     check(text.find("0x0000") != std::string::npos &&
-              text.find("\"illegal\"") != std::string::npos,
+              text.find("\"illegal_kinds\"") != std::string::npos,
           "schema must mark 0x0000 illegal");
     check(text.find("flynes_session.h") == std::string::npos,
           "schema artifact must not depend on flynes_session.h");
