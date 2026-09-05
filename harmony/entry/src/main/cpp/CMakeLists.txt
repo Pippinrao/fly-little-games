@@ -3,9 +3,14 @@ cmake_minimum_required(VERSION 3.22)
 project(flynes_harmony_bridge LANGUAGES CXX)
 
 set(FLYNES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 get_filename_component(FLYNES_REPOSITORY_ROOT
     "${CMAKE_CURRENT_LIST_DIR}/../../../../.."
     ABSOLUTE
+)
+add_subdirectory(
+    "${FLYNES_REPOSITORY_ROOT}/core"
+    "${CMAKE_CURRENT_BINARY_DIR}/nes_core"
 )
 add_subdirectory(
     "${FLYNES_REPOSITORY_ROOT}/shared"
@@ -15,6 +20,8 @@ add_subdirectory(
 add_library(entry SHARED
     napi_init.cpp
     catalog_smoke.cpp
+    play_session.cpp
+    product_bridge.cpp
 )
 target_compile_features(entry PRIVATE cxx_std_17)
 set_target_properties(entry PROPERTIES
@@ -33,6 +40,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 target_link_libraries(entry PRIVATE
     flynes_app
+    flynes_product
+    flynes_runtime
     libace_napi.z.so
 )
 target_link_options(entry PRIVATE
