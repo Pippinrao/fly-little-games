@@ -65,6 +65,11 @@ add_test(
             "${CMAKE_CURRENT_LIST_DIR}/test_product_shell_contract.py"
 )
 add_test(
+    NAME flynes_ios_product_metal_contract
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/test_product_metal_contract.py"
+)
+add_test(
     NAME flynes_ios_simulator_result_validator
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_LIST_DIR}/test_simulator_result_validator.py"

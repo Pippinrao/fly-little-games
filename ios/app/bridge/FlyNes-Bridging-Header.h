@@ -3,3 +3,5 @@
 #import "FlyNesBookmarkStore.h"
 #import "CatalogScanCoordinator.h"
 #import "RunSurfaceViewController.h"
+#import "FlyNesMetalRenderer.h"
+#import "FlyNesDisplayLinkPacer.h"

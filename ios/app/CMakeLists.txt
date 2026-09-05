@@ -47,6 +47,7 @@ set(FLYNES_PRODUCT_SWIFT
     CatalogSourceManagementView.swift
     SettingsView.swift
     RunGameView.swift
+    diagnostics/DiagnosticExport.swift
 )
 set(FLYNES_PRODUCT_OBJCXX
     bridge/FlyNesAppBridge.mm
@@ -55,12 +56,27 @@ set(FLYNES_PRODUCT_OBJCXX
     platform/CatalogScanCoordinator.mm
     run/RunSurfaceViewController.mm
     run/GamepadOverlayView.mm
+    metal/FlyNesMetalRenderer.mm
+    metal/FlyNesDisplayLinkPacer.mm
+)
+set(FLYNES_PRODUCT_METAL
+    metal/shaders/Nearest.metal
+    metal/shaders/SharpBilinear.metal
+    metal/shaders/Crt.metal
+    metal/shaders/Mmpx2x.metal
+    metal/shaders/ScaleFxPass0.metal
+    metal/shaders/ScaleFxPass1.metal
+    metal/shaders/ScaleFxPass2.metal
+    metal/shaders/ScaleFxPass3.metal
+    metal/shaders/ScaleFxPass4.metal
 )
 
 add_executable(FlyNES MACOSX_BUNDLE
     ${FLYNES_PRODUCT_SWIFT}
     ${FLYNES_PRODUCT_OBJCXX}
+    ${FLYNES_PRODUCT_METAL}
     bridge/FlyNes-Bridging-Header.h
+    metal/FALLBACK.md
     en.lproj/Localizable.strings
     zh-Hans.lproj/Localizable.strings
 )
@@ -80,6 +96,7 @@ target_include_directories(FlyNES PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/bridge"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform"
     "${CMAKE_CURRENT_SOURCE_DIR}/run"
+    "${CMAKE_CURRENT_SOURCE_DIR}/metal"
 )
 target_compile_features(FlyNES PRIVATE cxx_std_17)
 target_compile_options(FlyNES PRIVATE
