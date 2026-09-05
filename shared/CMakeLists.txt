@@ -188,6 +188,7 @@ endfunction()
 flynes_enable_strict_warnings(flynes_app)
 
 add_library(flynes_product STATIC
+    src/product/control_layout.cpp
     src/product/game_center_state.cpp
 )
 target_include_directories(flynes_product PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -309,6 +310,11 @@ if(FLYNES_BUILD_TESTS)
     target_link_libraries(flynes_product_game_center_test PRIVATE flynes_product)
     flynes_enable_strict_warnings(flynes_product_game_center_test)
     add_test(NAME flynes_product_game_center COMMAND flynes_product_game_center_test)
+
+    add_executable(flynes_product_control_layout_test tests/test_product_control_layout.cpp)
+    target_link_libraries(flynes_product_control_layout_test PRIVATE flynes_product)
+    flynes_enable_strict_warnings(flynes_product_control_layout_test)
+    add_test(NAME flynes_product_control_layout COMMAND flynes_product_control_layout_test)
 
     add_executable(flynes_catalog_scan_test
         tests/test_catalog_scan.cpp
