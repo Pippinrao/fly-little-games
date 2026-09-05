@@ -659,6 +659,21 @@ if(FLYNES_BUILD_TESTS)
     )
     add_test(NAME flynes_session_codec COMMAND flynes_session_codec_test)
 
+    add_executable(flynes_session_codec_loopback_test
+        tests/test_session_codec_loopback.cpp
+    )
+    target_link_libraries(flynes_session_codec_loopback_test PRIVATE flynes_session_codec)
+    if(WIN32)
+        target_link_libraries(flynes_session_codec_loopback_test PRIVATE ws2_32)
+    endif()
+    target_compile_features(flynes_session_codec_loopback_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_codec_loopback_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_codec_loopback_test)
+    target_compile_definitions(flynes_session_codec_loopback_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_codec_loopback COMMAND flynes_session_codec_loopback_test)
+
     add_executable(flynes_session_test
         tests/test_session.cpp
         tests/test_session_header.c
