@@ -245,7 +245,7 @@ export struct GamepadOverlay {
   @Prop insetR: number = 0;
   @Prop insetT: number = 0;
   @Prop insetB: number = 0;
-  @Prop layoutUtf8: string = '';
+  @Prop @Watch('onLayoutUtf8Changed') layoutUtf8: string = '';
   @Prop directionMode: number = MODE_FIXED;
   @Prop deadZone: number = 0.18;
   @Prop pressedBits: number = 0;
@@ -266,6 +266,12 @@ export struct GamepadOverlay {
   private stickY: number = 0;
   private knobX: number = 0;
   private knobY: number = 0;
+
+  onLayoutUtf8Changed(): void {
+    this.geometryKey = '';
+    this.rebuildHitMap();
+    this.redraw();
+  }
 
   private overlayOpacity(): number {
     const fields = this.layoutUtf8.split('|');
@@ -507,6 +513,12 @@ export struct GamepadOverlay {
     }
   }
 
+  private applyCanvasPixelScale(): void {
+    const bufferW = this.canvasContext.width;
+    const scale = bufferW > 0 && this.widthPx > 0 ? bufferW / this.widthPx : 1;
+    this.canvasContext.setTransform(scale, 0, 0, scale, 0, 0);
+  }
+
   private redraw(): void {
     this.rebuildHitMap();
     const ctx = this.canvasContext;
@@ -514,6 +526,7 @@ export struct GamepadOverlay {
     if (hit === undefined || this.widthPx <= 0 || this.heightPx <= 0) {
       return;
     }
+    this.applyCanvasPixelScale();
     ctx.clearRect(0, 0, this.widthPx, this.heightPx);
     if (this.math.joystickMode()) {
       this.drawJoystick(ctx, hit);

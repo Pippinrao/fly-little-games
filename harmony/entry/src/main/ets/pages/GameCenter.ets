@@ -12,7 +12,7 @@ struct GameCenter {
   @State private selectedCanonicalId: string = '';
   @State private compactHeader: boolean = false;
   @State private fontScale: number = 1.0;
-  @State private allRows: GameCenterRow[] = [];
+  private allRows: GameCenterRow[] = [];
   @State private visibleRows: GameCenterRow[] = [];
 
   aboutToAppear(): void {
@@ -289,7 +289,11 @@ struct GameCenter {
   }
 
   private applyFilter(): void {
-    this.visibleRows = nativeProduct.gameCenterFilter(this.allRows, this.category, this.query);
+    const rows: GameCenterRow[] = [];
+    for (let index = 0; index < this.allRows.length; index++) {
+      rows.push(this.allRows[index]);
+    }
+    this.visibleRows = nativeProduct.gameCenterFilter(rows, this.category, this.query);
     let stillVisible = false;
     for (let index = 0; index < this.visibleRows.length; index++) {
       if (this.visibleRows[index].canonicalId === this.selectedCanonicalId) {

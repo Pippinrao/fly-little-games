@@ -30,6 +30,10 @@ struct ControlLayout {
   @State private stageH: number = 1;
   @State private status: string = '';
   private dragName: string = '';
+  private dragStartX: number = 0;
+  private dragStartY: number = 0;
+  private fingerOriginX: number = 0;
+  private fingerOriginY: number = 0;
 
   aboutToAppear(): void {
     this.loadLayout();
@@ -38,10 +42,16 @@ struct ControlLayout {
   build() {
     Row() {
       Stack() {
-        Column()
+        Button()
           .width('100%')
           .height('100%')
           .backgroundColor('#0D0E11')
+          .stateEffect(false)
+          .onClick((event: ClickEvent) => {
+            const nx = event.x / Math.max(1, this.stageW);
+            const ny = event.y / Math.max(1, this.stageH);
+            this.moveSelected(nx, ny);
+          })
         ForEach(this.elements, (element: LayoutElement) => {
           Text(element.name)
             .fontSize(element.name === 'SELECT' || element.name === 'START' ? 11 : 16)
@@ -56,19 +66,33 @@ struct ControlLayout {
             })
             .borderRadius(element.name === 'A' || element.name === 'B' ? 40 : 10)
             .opacity(this.layoutOpacity)
-            .hitTestBehavior(HitTestMode.None)
-            .markAnchor({ x: this.elementWidth(element) / 2, y: this.elementHeight(element) / 2 })
-            .position({ x: element.x * this.stageW, y: element.y * this.stageH })
-        }, (element: LayoutElement) => element.name)
+            .position({
+              x: element.x * this.stageW - this.elementWidth(element) / 2,
+              y: element.y * this.stageH - this.elementHeight(element) / 2
+            })
+            .onTouch((event: TouchEvent) => {
+              this.handleControlTouch(element.name, event);
+            })
+            .gesture(
+              PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
+                .onActionStart(() => {
+                  this.beginDrag(element.name);
+                })
+                .onActionEnd((event: GestureEvent) => {
+                  this.updateDrag(element.name, event.offsetX, event.offsetY);
+                  this.dragName = '';
+                })
+                .onActionCancel(() => {
+                  this.dragName = '';
+                })
+            )
+        }, (element: LayoutElement) => `${element.name}:${element.x.toFixed(4)}:${element.y.toFixed(4)}:${element.scale.toFixed(4)}`)
       }
       .layoutWeight(1)
       .height('100%')
       .onAreaChange((_old: Area, area: Area) => {
         this.stageW = Number(area.width);
         this.stageH = Number(area.height);
-      })
-      .onTouch((event: TouchEvent) => {
-        this.handleStageTouch(event);
       })
 
       Column({ space: 10 }) {
@@ -147,40 +171,44 @@ struct ControlLayout {
     .backgroundColor('#121316')
   }
 
-  private handleStageTouch(event: TouchEvent): void {
-    if (event.touches.length === 0 && event.changedTouches.length === 0) {
+  private handleControlTouch(name: string, event: TouchEvent): void {
+    const touch = event.type === TouchType.Up || event.type === TouchType.Cancel
+      ? (event.changedTouches.length > 0 ? event.changedTouches[0] : undefined)
+      : (event.touches.length > 0 ? event.touches[0] : undefined);
+    if (touch === undefined) {
       return;
     }
-    const touch = event.type === TouchType.Up || event.type === TouchType.Cancel
-      ? event.changedTouches[0] : event.touches[0];
-    const nx = touch.x / Math.max(1, this.stageW);
-    const ny = touch.y / Math.max(1, this.stageH);
     if (event.type === TouchType.Down) {
-      const hit = this.hitElement(nx, ny);
-      if (hit.length > 0) {
-        this.selected = hit;
-        this.dragName = hit;
-      }
-    }
-    if (event.type === TouchType.Move && this.dragName.length > 0) {
-      this.selected = this.dragName;
-      this.moveSelected(nx, ny);
-    }
-    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.beginDrag(name);
+      this.fingerOriginX = touch.windowX;
+      this.fingerOriginY = touch.windowY;
+    } else if ((event.type === TouchType.Up || event.type === TouchType.Cancel) &&
+      this.dragName === name) {
+      this.updateDrag(name, touch.windowX - this.fingerOriginX, touch.windowY - this.fingerOriginY);
       this.dragName = '';
     }
   }
 
-  private hitElement(nx: number, ny: number): string {
-    for (let index = this.elements.length - 1; index >= 0; index--) {
-      const element = this.elements[index];
-      const halfW = this.elementWidth(element) / (2 * Math.max(1, this.stageW));
-      const halfH = this.elementHeight(element) / (2 * Math.max(1, this.stageH));
-      if (Math.abs(nx - element.x) <= halfW && Math.abs(ny - element.y) <= halfH) {
-        return element.name;
+  private beginDrag(name: string): void {
+    this.selected = name;
+    this.dragName = name;
+    this.dragStartX = 0;
+    this.dragStartY = 0;
+    for (let index = 0; index < this.elements.length; index++) {
+      if (this.elements[index].name === name) {
+        this.dragStartX = this.elements[index].x;
+        this.dragStartY = this.elements[index].y;
+        break;
       }
     }
-    return '';
+  }
+
+  private updateDrag(name: string, offsetX: number, offsetY: number): void {
+    this.selected = name;
+    this.dragName = name;
+    const nx = this.dragStartX + offsetX / Math.max(1, this.stageW);
+    const ny = this.dragStartY + offsetY / Math.max(1, this.stageH);
+    this.moveSelected(nx, ny);
   }
 
   private moveSelected(x: number, y: number): void {

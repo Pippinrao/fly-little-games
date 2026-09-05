@@ -23,6 +23,7 @@ struct RunGame {
   @State private insetB: number = 0;
   @State private layoutUtf8: string = '';
   @State private pauseIds: string[] = [];
+  @State private overlayMounted: boolean = true;
   @State private paused: boolean = false;
   @State private drawerOpen: boolean = false;
   @State private pressedBits: number = 0;
@@ -91,7 +92,7 @@ struct RunGame {
           .alt($r('app.string.play_screen_alt'))
       }
 
-      if (!this.paused) {
+      if (!this.drawerOpen && this.overlayMounted) {
         GamepadOverlay({
           density: this.density,
           insetL: this.insetL,
@@ -249,16 +250,18 @@ struct RunGame {
     if (this.drawerOpen) {
       return;
     }
-    this.play.setButtons(0);
-    this.pressedBits = 0;
-    this.stopLoop();
-    this.play.pauseOutput();
-    this.checkpointFailed = false;
-    try {
-      this.play.saveCheckpoint();
-    } catch (error) {
-      this.checkpointFailed = true;
-      this.status = error instanceof Error ? error.message : 'checkpoint failed';
+    if (!this.paused) {
+      this.play.setButtons(0);
+      this.pressedBits = 0;
+      this.stopLoop();
+      this.play.pauseOutput();
+      this.checkpointFailed = false;
+      try {
+        this.play.saveCheckpoint();
+      } catch (error) {
+        this.checkpointFailed = true;
+        this.status = error instanceof Error ? error.message : 'checkpoint failed';
+      }
     }
     this.paused = true;
     this.drawerOpen = true;
@@ -320,6 +323,14 @@ struct RunGame {
       const detail = error instanceof Error ? error.message : 'layout get failed';
       console.error(`FlyNES layout load failed: ${detail}`);
     }
+    this.remountOverlay();
+  }
+
+  private remountOverlay(): void {
+    this.overlayMounted = false;
+    setTimeout(() => {
+      this.overlayMounted = true;
+    }, 0);
   }
 
   private readDisplayMetrics(): void {
