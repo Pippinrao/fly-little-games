@@ -1,8 +1,12 @@
 #import "FlyNesAppBridge.h"
 
 #include <flynes/flynes_app.h>
+#include "flynes/product/game_center_item.hpp"
+#include "flynes/product/game_center_state.hpp"
 
 #include <cstring>
+#include <exception>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -30,6 +34,74 @@ float float_value(NSDictionary<NSString *, id> *settings, NSString *key, float f
     if ([value isKindOfClass:[NSNumber class]])
         return [value floatValue];
     return fallback;
+}
+
+std::string basename_utf8(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos)
+        return path;
+    return path.substr(slash + 1u);
+}
+
+NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& entry,
+                                                     const fly_catalog_user_state& user)
+{
+    const std::string canonical = entry.canonical_id_utf8 == nullptr ? std::string{}
+                                                                    : entry.canonical_id_utf8;
+    const std::string display = entry.display_name_utf8 == nullptr ? std::string{}
+                                                                  : entry.display_name_utf8;
+    const std::string relative = entry.source_relative_path_utf8 == nullptr
+                                     ? std::string{}
+                                     : entry.source_relative_path_utf8;
+    const std::string original_filename = !display.empty() ? display : basename_utf8(relative);
+    const std::string title_en = !display.empty() ? display : original_filename;
+    const std::string title_zh_hans;
+    std::int64_t last_played = 0;
+    if (user.last_played_sequence > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        last_played = std::numeric_limits<std::int64_t>::max();
+    else
+        last_played = static_cast<std::int64_t>(user.last_played_sequence);
+
+    return @{
+        @"canonicalId" : @(canonical.c_str()),
+        @"displayName" : @(title_en.c_str()),
+        @"titleEn" : @(title_en.c_str()),
+        @"titleZhHans" : @(title_zh_hans.c_str()),
+        @"originalFilename" : @(original_filename.c_str()),
+        @"compatibilityState" : @(entry.compatibility_state),
+        @"freshness" : @(entry.freshness),
+        @"sourceScope" : @(entry.source_scope),
+        @"favorite" : @(user.favorite),
+        @"lastPlayedSequence" : @(static_cast<std::uint64_t>(last_played)),
+        @"builtin" : @(entry.source_scope == FLY_SOURCE_SCOPE_BUILTIN ? YES : NO),
+    };
+}
+
+flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString *, id> *row)
+{
+    auto utf8 = [](id value) -> const char * {
+        if (![value isKindOfClass:[NSString class]])
+            return "";
+        const char *bytes = [value UTF8String];
+        return bytes != nullptr ? bytes : "";
+    };
+    std::int64_t last_played = 0;
+    if ([row[@"lastPlayedSequence"] isKindOfClass:[NSNumber class]])
+        last_played = [row[@"lastPlayedSequence"] longLongValue];
+    const bool builtin = [row[@"builtin"] respondsToSelector:@selector(boolValue)]
+                             ? [row[@"builtin"] boolValue]
+                             : NO;
+    const bool favorite = [row[@"favorite"] respondsToSelector:@selector(unsignedIntValue)]
+                              ? [row[@"favorite"] unsignedIntValue] != 0
+                              : NO;
+    return flynes::product::GameCenterItem{utf8(row[@"canonicalId"]),
+                                           utf8(row[@"titleEn"]),
+                                           utf8(row[@"titleZhHans"]),
+                                           builtin,
+                                           favorite,
+                                           last_played,
+                                           utf8(row[@"originalFilename"])};
 }
 
 } // namespace
@@ -279,18 +351,56 @@ float float_value(NSDictionary<NSString *, id> *settings, NSString *key, float f
         user.version = FLY_CATALOG_USER_STATE_VERSION_1;
         fly_catalog_user_state_get(app_, canonical,
                                    static_cast<uint32_t>(std::strlen(canonical)), &user);
-        [games addObject:@{
-            @"canonicalId" : @(canonical),
-            @"displayName" : @(display),
-            @"compatibilityState" : @(entry.compatibility_state),
-            @"freshness" : @(entry.freshness),
-            @"sourceScope" : @(entry.source_scope),
-            @"favorite" : @(user.favorite),
-            @"lastPlayedSequence" : @(user.last_played_sequence),
-        }];
+        [games addObject:catalog_row_dictionary(entry, user)];
     }
     fly_catalog_snapshot_release(snapshot);
     return games;
+}
+
+- (NSArray<NSDictionary<NSString *, id> *> *)gameCenterFilteredGamesForCategory:(NSString *)category
+                                                                         query:(NSString *)query
+{
+    NSArray<NSDictionary<NSString *, id> *> *rows = [self catalogSnapshotGames];
+    using flynes::product::GameCenterItem;
+    using flynes::product::GameCenterState;
+
+    std::vector<GameCenterItem> items;
+    items.reserve(static_cast<std::size_t>(rows.count));
+    NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *by_id =
+        [NSMutableDictionary dictionaryWithCapacity:rows.count];
+    for (NSDictionary<NSString *, id> *row in rows)
+    {
+        id canonical_value = row[@"canonicalId"];
+        if (![canonical_value isKindOfClass:[NSString class]] || [canonical_value length] == 0)
+            continue;
+        try
+        {
+            items.push_back(game_center_item_from_row(row));
+            by_id[canonical_value] = row;
+        }
+        catch (const std::exception&)
+        {
+            continue;
+        }
+    }
+
+    const char *category_utf8 = category.UTF8String;
+    const char *query_utf8 = query.UTF8String;
+    GameCenterState state = GameCenterState::restore(category_utf8 != nullptr ? category_utf8 : "",
+                                                     query_utf8 != nullptr ? query_utf8 : "",
+                                                     {});
+    const std::vector<GameCenterItem> filtered = state.filtered(items);
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *result =
+        [NSMutableArray arrayWithCapacity:static_cast<NSUInteger>(filtered.size())];
+    for (const GameCenterItem& item : filtered)
+    {
+        NSString *canonical = @(item.canonical_id.c_str());
+        NSDictionary<NSString *, id> *row = by_id[canonical];
+        if (row != nil)
+            [result addObject:row];
+    }
+    return result;
 }
 
 - (BOOL)scanBorrowedFd:(int)borrowedFd

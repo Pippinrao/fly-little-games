@@ -10,6 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *canonicalId;
 @property(nonatomic, copy, nullable) void (^onPauseCommand)(NSString *commandId);
 
+- (void)reloadProductSettings;
+
 @end
 
 NS_ASSUME_NONNULL_END

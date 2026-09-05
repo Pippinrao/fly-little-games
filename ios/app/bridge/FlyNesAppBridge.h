@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_BEGIN
                      error:(NSError * _Nullable * _Nullable)error;
 
 - (NSArray<NSDictionary<NSString *, id> *> *)catalogSnapshotGames;
+- (NSArray<NSDictionary<NSString *, id> *> *)gameCenterFilteredGamesForCategory:(NSString *)category
+                                                                         query:(NSString *)query;
 
 - (BOOL)scanBorrowedFd:(int)borrowedFd
           relativePath:(NSString *)relativePath

@@ -80,9 +80,20 @@ def main() -> int:
     require("D_PAD" in editor and "SELECT" in editor and "START" in editor,
             "layout editor must expose ControlLayoutV2 elements")
 
-    bridge = read("ios/app/bridge/FlyNesAppBridge.mm")
+    bridge = read("ios/app/bridge/FlyNesAppBridge.h") + "\n" + read("ios/app/bridge/FlyNesAppBridge.mm")
     require("fly_control_layout_get" in bridge and "fly_control_layout_apply" in bridge,
             "app bridge must call fly_control_layout_get/apply")
+    require("game_center_state.hpp" in bridge or "GameCenterState" in bridge,
+            "iOS must filter Game Center through flynes::product::GameCenterState, not a Swift fork")
+    require("GameCenterItem" in bridge,
+            "catalog rows must map into flynes::product::GameCenterItem")
+    require("filtered(" in bridge,
+            "iOS must call GameCenterState::filtered")
+    require("items_for" in bridge or "filtered(" in bridge,
+            "iOS must call GameCenterState::filtered / items_for")
+    require("title_en" in bridge and "title_zh_hans" in bridge
+            and "original_filename" in bridge,
+            "Game Center search must use title_en / title_zh_hans / original_filename")
 
     cmake = read("ios/app/CMakeLists.txt")
     require("flynes_product" in cmake, "product CMake must link flynes_product")
@@ -98,6 +109,13 @@ def main() -> int:
             "library IA must align with Game Center labels")
     require("tabItem" not in library and "TabView" not in library,
             "Game Center must not invent extra tabs")
+    require("gameCenterFilter" in library or "gameCenterFiltered" in library,
+            "Game Center must call an ObjC++ helper that uses GameCenterState::filtered")
+    require("localizedCaseInsensitiveContains" not in library,
+            "Game Center must not search displayName/canonicalId in Swift")
+    require("RECENT" in library and "FAVORITES" in library and "ALL" in library
+            and "BUILTIN" in library,
+            "Game Center categories must be the shared RECENT/FAVORITES/ALL/BUILTIN names")
 
     app = read("ios/app/FlyNESApp.swift")
     require("CatalogLibraryView" in app, "cold start must open Game Center")
@@ -161,6 +179,26 @@ def main() -> int:
                    "pause tap must use a sibling scrim beside the drawer, or shouldReceiveTouch only when touch.view is the scrim")
     review_require("[pauseLayer_ addGestureRecognizer" not in run,
                    "pause tap must not be installed on pauseLayer_; that layer includes the drawer")
+
+    run_header = read("ios/app/run/RunSurfaceViewController.h")
+    settings_at = run.find("PauseCommand::Settings")
+    review_require(settings_at >= 0, "pause must handle Settings")
+    settings_return = run.find("return;", settings_at) if settings_at >= 0 else -1
+    settings_branch = run[settings_at:settings_return + len("return;")] if settings_return >= 0 else ""
+    keeps_drawer = "dismissPauseLayerKeepingPaused" not in settings_branch
+    reopens_drawer = (
+        "onDismiss" in run_swift
+        and ("openPauseDrawer" in run_swift or "reopenPause" in run_swift
+             or "openPauseDrawer" in run_header)
+    )
+    review_require(keeps_drawer or reopens_drawer,
+                   "pause Settings keeps drawer or reopens it; overlay reloads layout on settings close")
+    review_require("dismissPauseLayerKeepingPaused:NO" not in settings_branch,
+                   "pause Settings must leave the session paused")
+    review_require("reloadProductSettings" in run_header,
+                   "run surface must expose reloadProductSettings because the settings sheet does not call viewWillAppear")
+    review_require("reloadProductSettings" in run_swift,
+                   "settings sheet close must reload overlay layout")
 
     require(not review_errors, "; ".join(review_errors))
 

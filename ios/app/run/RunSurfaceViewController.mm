@@ -240,7 +240,6 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     }
     if (command == flynes::product::PauseCommand::Settings)
     {
-        [self dismissPauseLayerKeepingPaused:YES];
         if (self.onPauseCommand != nil)
             self.onPauseCommand(commandId);
         return;

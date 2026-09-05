@@ -6,10 +6,10 @@ enum LibraryRoute: Hashable {
 }
 
 enum LibraryFilter: String, CaseIterable, Identifiable {
-    case recent
-    case favorites
-    case all
-    case builtin
+    case recent = "RECENT"
+    case favorites = "FAVORITES"
+    case all = "ALL"
+    case builtin = "BUILTIN"
 
     var id: String { rawValue }
 
@@ -89,31 +89,24 @@ struct CatalogLibraryView: View {
                 }
             }
             .onAppear(perform: reloadSnapshot)
+            .onChange(of: filter) { _, _ in
+                reloadSnapshot()
+            }
+            .onChange(of: searchText) { _, _ in
+                reloadSnapshot()
+            }
         }
     }
 
     private var visibleGames: [CatalogGame] {
-        snapshot.games.filter { game in
-            switch filter {
-            case .all:
-                return true
-            case .recent:
-                return game.lastPlayedSequence > 0
-            case .favorites:
-                return game.favorite != 0
-            case .builtin:
-                return game.sourceScope == 1
-            }
-        }
-        .filter { game in
-            searchText.isEmpty
-                || game.displayName.localizedCaseInsensitiveContains(searchText)
-                || game.canonicalId.localizedCaseInsensitiveContains(searchText)
-        }
+        snapshot.games
     }
 
     private func reloadSnapshot() {
-        let rows = FlyNesAppBridge.sharedInstance().catalogSnapshotGames()
+        let rows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
+            forCategory: filter.rawValue,
+            query: searchText
+        )
         let games: [CatalogGame] = rows.compactMap { row in
             guard let canonicalId = row["canonicalId"] as? String,
                   let displayName = row["displayName"] as? String else {
