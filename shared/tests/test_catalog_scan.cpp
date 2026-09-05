@@ -30,6 +30,21 @@ namespace {
 int failures = 0;
 std::atomic<unsigned int> temp_sequence{0};
 
+struct ScanDataRoots final
+{
+    std::vector<std::filesystem::path> paths;
+    ~ScanDataRoots()
+    {
+        std::error_code ignored;
+        for (const std::filesystem::path& path : paths)
+        {
+            std::filesystem::remove_all(path, ignored);
+        }
+    }
+};
+
+ScanDataRoots scan_data_roots;
+
 void check(bool condition, const char* message)
 {
     if (!condition)
@@ -304,15 +319,31 @@ fly_platform_capabilities make_capabilities()
 
 fly_app_t* make_app()
 {
+    std::filesystem::path data_path;
+    for (unsigned int attempt = 0u; attempt < 100u; ++attempt)
+    {
+        data_path = std::filesystem::temp_directory_path() /
+                    ("flynes-scan-data-" + std::to_string(temp_sequence.fetch_add(1u)));
+        std::error_code error;
+        if (std::filesystem::create_directory(data_path, error))
+        {
+            break;
+        }
+        data_path.clear();
+    }
+    check(!data_path.empty(), "scan test creates an isolated data root");
+    scan_data_roots.paths.push_back(data_path);
+    const std::string data_root = data_path.u8string();
+
     static const fly_platform_capabilities capabilities = make_capabilities();
     fly_app_config config{};
     config.struct_size = FLY_APP_CONFIG_V1_SIZE;
     config.version = FLY_APP_CONFIG_VERSION_1;
-    config.data_root_utf8 = "scan-data";
-    config.cache_root_utf8 = "scan-cache";
+    config.data_root_utf8 = data_root.data();
+    config.cache_root_utf8 = data_root.data();
     config.platform_capabilities = &capabilities;
-    config.data_root_utf8_length = 9u;
-    config.cache_root_utf8_length = 10u;
+    config.data_root_utf8_length = static_cast<std::uint32_t>(data_root.size());
+    config.cache_root_utf8_length = static_cast<std::uint32_t>(data_root.size());
     fly_app_t* app = nullptr;
     check(fly_app_create(&config, &app) == FLY_RESULT_OK, "scan test creates app");
     return app;

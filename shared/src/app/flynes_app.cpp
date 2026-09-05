@@ -1,5 +1,7 @@
 #include <flynes/flynes_app.h>
 
+#include "app/catalog_persist.hpp"
+#include "app/catalog_state.hpp"
 #include "catalog/bounded_zip_archive.hpp"
 #include "catalog/content_identity.hpp"
 #include "catalog/rom_payload_parser.hpp"
@@ -29,6 +31,11 @@
 
 namespace {
 
+using flynes::app::CatalogData;
+using flynes::app::CatalogEntryData;
+using flynes::app::SourceKey;
+using flynes::app::SourceRecord;
+using flynes::app::same_source;
 using flynes::catalog::BoundedZipArchive;
 using flynes::catalog::BoundedZipEntry;
 using flynes::catalog::BoundedZipLimits;
@@ -40,65 +47,18 @@ using flynes::catalog::RomFormat;
 using flynes::catalog::RomParseResult;
 using flynes::catalog::RomWarning;
 
-struct SourceKey final
-{
-    std::array<std::uint8_t, 16> uuid{};
-    std::uint32_t scope = 0u;
-};
-
-bool same_source(const SourceKey& left, const SourceKey& right) noexcept
-{
-    return left.scope == right.scope && left.uuid == right.uuid;
-}
-
-struct CatalogEntryData final
-{
-    SourceKey source;
-    std::uint64_t payload_size = 0u;
-    std::uint64_t physical_size = 0u;
-    std::uint64_t expected_bytes = 0u;
-    std::uint64_t prg_bytes = 0u;
-    std::uint64_t chr_bytes = 0u;
-    std::int32_t mapper = -1;
-    std::int32_t submapper = -1;
-    std::uint32_t disk_sides = 0u;
-    std::array<std::uint8_t, 20> payload_sha1{};
-    std::array<std::uint8_t, 32> payload_sha256{};
-    std::array<std::uint8_t, 32> physical_sha256{};
-    std::array<std::uint8_t, 4> payload_crc32{};
-    std::uint32_t package_format = 0u;
-    std::uint32_t rom_format = 0u;
-    std::uint32_t compatibility_state = 0u;
-    std::uint32_t compatibility_reason = 0u;
-    std::uint32_t freshness = FLY_CATALOG_FRESHNESS_FRESH;
-    std::uint32_t flags = 0u;
-    std::string canonical_id;
-    std::string variant_id;
-    std::string display_name;
-    std::string source_relative_path;
-    std::string package_id;
-    std::vector<std::uint8_t> zip_raw_name;
-    std::int32_t zip_local_header_offset = -1;
-};
-
-struct CatalogData final
-{
-    std::uint64_t generation = 0u;
-    std::vector<CatalogEntryData> entries;
-    std::vector<SourceKey> sources;
-};
-
 struct AppState final
 {
     std::mutex mutex;
+    std::string data_root;
     std::shared_ptr<const CatalogData> catalog = std::make_shared<CatalogData>();
 };
 
 bool source_scope_conflicts(const CatalogData& catalog, const SourceKey& source) noexcept
 {
-    for (const SourceKey& existing : catalog.sources)
+    for (const SourceRecord& existing : catalog.sources)
     {
-        if (existing.uuid == source.uuid && existing.scope != source.scope)
+        if (existing.key.uuid == source.uuid && existing.key.scope != source.scope)
         {
             return true;
         }
@@ -106,17 +66,23 @@ bool source_scope_conflicts(const CatalogData& catalog, const SourceKey& source)
     return false;
 }
 
-void upsert_source(std::vector<SourceKey>& sources, const SourceKey& source)
+void upsert_source(std::vector<SourceRecord>& sources,
+                   const SourceKey& source,
+                   std::uint32_t completeness)
 {
-    for (SourceKey& existing : sources)
+    for (SourceRecord& existing : sources)
     {
-        if (existing.uuid == source.uuid)
+        if (existing.key.uuid == source.uuid)
         {
-            existing.scope = source.scope;
+            existing.key.scope = source.scope;
+            existing.last_completeness = completeness;
             return;
         }
     }
-    sources.push_back(source);
+    SourceRecord record;
+    record.key = source;
+    record.last_completeness = completeness;
+    sources.push_back(std::move(record));
 }
 
 enum class CandidateDisposition : std::uint8_t
@@ -945,7 +911,10 @@ std::shared_ptr<const CatalogData> reconcile_catalog(
     auto next = std::make_shared<CatalogData>();
     next->generation = current.generation + 1u;
     next->sources = current.sources;
-    upsert_source(next->sources, source);
+    next->users = current.users;
+    next->next_favorite_revision = current.next_favorite_revision;
+    next->next_play_sequence = current.next_play_sequence;
+    upsert_source(next->sources, source, completeness);
     next->entries.reserve(current.entries.size());
     for (const CatalogEntryData& existing : current.entries)
     {
@@ -1066,6 +1035,8 @@ extern "C" fly_result fly_app_create(const fly_app_config* config, fly_app_t** a
     try
     {
         auto state = std::make_shared<AppState>();
+        state->data_root.assign(config->data_root_utf8, config->data_root_utf8_length);
+        state->catalog = flynes::app::load_catalog(state->data_root);
         auto app = std::make_unique<fly_app_t>(*config, std::move(state));
         *app_out = app.release();
         return FLY_RESULT_OK;
@@ -1182,6 +1153,10 @@ extern "C" fly_result fly_scan_commit(fly_scan_t* scan,
         if (app->catalog->generation != scan->base_generation) return FLY_RESULT_CONFLICT;
         std::shared_ptr<const CatalogData> next = reconcile_catalog(
             *app->catalog, scan->source, final_completeness, scan->candidates);
+        if (!flynes::app::save_catalog(app->data_root, *next))
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
         app->catalog = std::move(next);
         return FLY_RESULT_OK;
     }

@@ -9,6 +9,7 @@ add_library(flynes_app STATIC
     src/catalog/content_identity.cpp
     src/catalog/rom_payload_parser.cpp
     src/catalog/unsupported_payload_classifier.cpp
+    src/app/catalog_persist.cpp
     src/app/flynes_app.cpp
 )
 target_include_directories(flynes_app PUBLIC
@@ -235,6 +236,18 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_catalog_scan_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_catalog_scan_test)
     add_test(NAME flynes_catalog_scan COMMAND flynes_catalog_scan_test)
+
+    add_executable(flynes_catalog_persist_test
+        tests/test_catalog_persist.cpp
+    )
+    target_link_libraries(flynes_catalog_persist_test PRIVATE flynes_app)
+    target_include_directories(flynes_catalog_persist_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(flynes_catalog_persist_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_catalog_persist_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_catalog_persist_test)
+    add_test(NAME flynes_catalog_persist COMMAND flynes_catalog_persist_test)
 
     add_executable(flynes_c_header_test
         tests/test_c_header.c
