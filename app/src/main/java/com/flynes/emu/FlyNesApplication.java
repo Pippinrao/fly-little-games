@@ -3,6 +3,7 @@ package com.flynes.emu;
 import android.app.Application;
 
 import com.flynes.emu.catalog.android.AndroidCatalogRuntime;
+import com.flynes.emu.settings.ControlLayoutRepository;
 import com.flynes.emu.settings.SettingsRepository;
 
 /** Process-scoped owner for the catalog and exact-launch pipeline. */
@@ -20,5 +21,9 @@ public final class FlyNesApplication extends Application {
     public AndroidGameLaunchService gameLaunchService() { return gameLaunchService; }
     public SettingsRepository settingsRepository() {
         return catalogRuntime == null ? null : catalogRuntime.settingsRepository();
+    }
+
+    public ControlLayoutRepository.Backend controlLayoutBackend() {
+        return catalogRuntime == null ? null : catalogRuntime.controlLayoutBackend();
     }
 }

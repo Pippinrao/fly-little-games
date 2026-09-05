@@ -26,6 +26,7 @@ import com.flynes.emu.catalog.scan.RomPackageScanner;
 import com.flynes.emu.catalog.scan.ScanLimits;
 import com.flynes.emu.catalog.source.SourceEnumerator;
 import com.flynes.emu.catalog.source.SourceRegistry;
+import com.flynes.emu.settings.ControlLayoutRepository;
 import com.flynes.emu.settings.DualSettingsStore;
 import com.flynes.emu.settings.NativeSettingsStore;
 import com.flynes.emu.settings.SettingsRepository;
@@ -141,6 +142,10 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
 
     public SettingsRepository settingsRepository() {
         return settingsRepository;
+    }
+
+    public ControlLayoutRepository.Backend controlLayoutBackend() {
+        return nativeApp;
     }
 
     public Future<BootstrapResult> bootstrap() {

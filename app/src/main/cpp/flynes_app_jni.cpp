@@ -534,4 +534,48 @@ Java_com_flynes_emu_app_FlyNesApp_nativeSourceGet(
     return FLY_RESULT_OK;
 }
 
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_app_FlyNesApp_nativeControlLayoutGet(
+    JNIEnv* env, jclass, jlong app, jbyteArray out, jintArray requiredOut)
+{
+    if (requiredOut == nullptr || env->GetArrayLength(requiredOut) < 1)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    uint32_t required = 0;
+    char* buffer = nullptr;
+    uint32_t capacity = 0;
+    std::vector<char> storage;
+    if (out != nullptr)
+    {
+        const jsize length = env->GetArrayLength(out);
+        if (length < 0)
+        {
+            return FLY_RESULT_INVALID_ARGUMENT;
+        }
+        capacity = static_cast<uint32_t>(length);
+        storage.resize(capacity);
+        buffer = storage.empty() ? nullptr : storage.data();
+    }
+    const fly_result result = fly_control_layout_get(app_from(app), buffer, capacity, &required);
+    const jint requiredValue = static_cast<jint>(required);
+    env->SetIntArrayRegion(requiredOut, 0, 1, &requiredValue);
+    if (result == FLY_RESULT_OK && out != nullptr && !storage.empty())
+    {
+        const jsize copy = static_cast<jsize>(
+            std::min(storage.size(), static_cast<size_t>(env->GetArrayLength(out))));
+        env->SetByteArrayRegion(out, 0, copy, reinterpret_cast<const jbyte*>(storage.data()));
+    }
+    return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_app_FlyNesApp_nativeControlLayoutApply(
+    JNIEnv* env, jclass, jlong app, jbyteArray utf8)
+{
+    const std::string text = copy_bytes(env, utf8);
+    return fly_control_layout_apply(
+        app_from(app), text.data(), static_cast<uint32_t>(text.size()));
+}
+
 } // extern "C"

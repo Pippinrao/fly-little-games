@@ -1,6 +1,7 @@
 package com.flynes.emu.app;
 
 import com.flynes.emu.catalog.persistence.CanonicalUserState;
+import com.flynes.emu.settings.ControlLayoutRepository;
 import com.flynes.emu.settings.FlySettingsSnapshot;
 import com.flynes.emu.settings.NativeSettingsStore;
 
@@ -11,13 +12,14 @@ import java.util.Objects;
 
 /** JNI owner of one fly_app_t. Unit tests use fakes; production loads libnescore. */
 public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.Backend,
-        AutoCloseable {
+        ControlLayoutRepository.Backend, AutoCloseable {
     static {
         System.loadLibrary("nescore");
     }
 
     public static final int SCAN_FILE_FLAG_EXPECTED_PHYSICAL_SHA256 = 1;
     public static final int RESULT_OK = 0;
+    public static final int RESULT_BUFFER_TOO_SMALL = -5;
 
     private long app;
     private long scan;
@@ -112,6 +114,24 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
         };
         return nativeSettingsApply(app, ints, floats, utf8(snapshot.localeTag()),
                 utf8(snapshot.lastPlayedId())) == RESULT_OK;
+    }
+
+    @Override public String controlLayoutGet() {
+        int[] required = new int[1];
+        int sized = nativeControlLayoutGet(app, null, required);
+        if (sized != RESULT_OK && sized != RESULT_BUFFER_TOO_SMALL) {
+            throw new IllegalStateException("fly_control_layout_get failed: " + sized);
+        }
+        byte[] buffer = new byte[Math.max(1, required[0])];
+        int result = nativeControlLayoutGet(app, buffer, required);
+        if (result != RESULT_OK) {
+            throw new IllegalStateException("fly_control_layout_get failed: " + result);
+        }
+        return cString(buffer, required[0]);
+    }
+
+    @Override public boolean controlLayoutApply(String utf8) {
+        return nativeControlLayoutApply(app, utf8(utf8)) == RESULT_OK;
     }
 
     public List<NativeCatalogEntry> catalogEntries() {
@@ -242,4 +262,6 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
     private static native void nativeCatalogRelease(long snapshot);
     private static native int nativeSourceCount(long app, long[] out);
     private static native int nativeSourceGet(long app, long index, byte[] uuid, int[] fields);
+    private static native int nativeControlLayoutGet(long app, byte[] out, int[] required);
+    private static native int nativeControlLayoutApply(long app, byte[] utf8);
 }
