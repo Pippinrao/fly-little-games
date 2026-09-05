@@ -18,8 +18,7 @@ import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.input.ControlVisualGeometry;
 import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.settings.AppSettings;
-import com.flynes.emu.settings.SettingsRepository;
-import com.flynes.emu.settings.SharedPreferencesSettingsStore;
+import com.flynes.emu.settings.SettingsAccess;
 
 import java.util.ArrayDeque;
 import java.util.List;
@@ -33,7 +32,7 @@ final class ControlLayoutEditorView extends View {
     private Listener listener; private boolean tryMode;
     private final AppSettings settings;
     private final EditorAccessibilityHelper accessibility;
-    ControlLayoutEditorView(Context context){super(context);settings=new SettingsRepository(new SharedPreferencesSettingsStore(context)).load();setFocusable(true);setClickable(true);setContentDescription(context.getString(R.string.control_layout_hint));accessibility=new EditorAccessibilityHelper(this);ViewCompat.setAccessibilityDelegate(this,accessibility);}
+    ControlLayoutEditorView(Context context){super(context);settings=SettingsAccess.repository(context).load();setFocusable(true);setClickable(true);setContentDescription(context.getString(R.string.control_layout_hint));accessibility=new EditorAccessibilityHelper(this);ViewCompat.setAccessibilityDelegate(this,accessibility);}
     void setLayout(ControlLayoutV2 value){layout=value;invalidate();accessibility.invalidateRoot();}
     ControlLayoutV2 layout(){return layout;}
     void setListener(Listener value){listener=value;}

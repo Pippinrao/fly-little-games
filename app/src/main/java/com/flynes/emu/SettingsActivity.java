@@ -10,11 +10,11 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.DisplaySettingsFragment;
+import com.flynes.emu.settings.SettingsAccess;
 import com.flynes.emu.settings.SettingsKeys;
 import com.flynes.emu.settings.SettingsFragment;
 import com.flynes.emu.settings.SettingsRepository;
 import com.flynes.emu.settings.SettingsSection;
-import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.appbar.MaterialToolbar;
 
@@ -104,6 +104,6 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private static AppSettings load(Context context) {
-        return new SettingsRepository(new SharedPreferencesSettingsStore(context)).load();
+        return SettingsAccess.repository(context).load();
     }
 }

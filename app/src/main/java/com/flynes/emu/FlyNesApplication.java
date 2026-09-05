@@ -3,6 +3,7 @@ package com.flynes.emu;
 import android.app.Application;
 
 import com.flynes.emu.catalog.android.AndroidCatalogRuntime;
+import com.flynes.emu.settings.SettingsRepository;
 
 /** Process-scoped owner for the catalog and exact-launch pipeline. */
 public final class FlyNesApplication extends Application {
@@ -17,4 +18,7 @@ public final class FlyNesApplication extends Application {
 
     public AndroidCatalogRuntime catalogRuntime() { return catalogRuntime; }
     public AndroidGameLaunchService gameLaunchService() { return gameLaunchService; }
+    public SettingsRepository settingsRepository() {
+        return catalogRuntime == null ? null : catalogRuntime.settingsRepository();
+    }
 }
