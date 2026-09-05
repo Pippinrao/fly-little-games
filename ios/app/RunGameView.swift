@@ -34,16 +34,16 @@ struct RunGameView: UIViewControllerRepresentable {
     }
 }
 
-/// Pause drawer Resume / Game Center / Settings. Game Center pops to the library.
+/// Pause drawer Resume / Game Center / Settings. Game Center pops to the library root.
 struct RunGameContainer: View {
     let canonicalId: String
-    @Environment(\.dismiss) private var dismiss
+    @Binding var path: NavigationPath
     @State private var showSettings = false
 
     var body: some View {
         RunGameView(canonicalId: canonicalId) { command in
             if command == "game_center" {
-                dismiss()
+                path = NavigationPath()
             } else if command == "settings" {
                 showSettings = true
             }

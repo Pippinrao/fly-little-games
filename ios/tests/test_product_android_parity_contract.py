@@ -116,6 +116,54 @@ def main() -> int:
     require("bookmark" in bookmark.lower(),
             "bookmark store must keep security-scoped bookmarks platform-only")
 
+    run_swift = read("ios/app/RunGameView.swift")
+    detail = read("ios/app/CatalogGameDetailView.swift")
+    review_errors = []
+
+    def review_require(condition: bool, message: str) -> None:
+        if not condition:
+            review_errors.append(message)
+
+    review_require("navigationDestination" in library,
+                   "Game Center must own navigationDestination so pause can pop Library → Detail → Run")
+    compact_run_swift = run_swift.replace(" ", "")
+    pops_to_root = (
+        "path=NavigationPath()" in compact_run_swift
+        or "removeLast(path.count)" in compact_run_swift
+        or "popToRoot" in run_swift
+    )
+    review_require(pops_to_root,
+                   "pause Game Center must pop to the library root, not dismiss() one NavigationLink")
+    gc_at = run_swift.find("game_center")
+    review_require(gc_at >= 0, "pause must handle game_center")
+    if gc_at >= 0:
+        review_require("dismiss()" not in run_swift[gc_at:gc_at + 180],
+                       "pause Game Center must not dismiss() a single NavigationLink")
+    review_require("LibraryRoute" in detail or "navigationDestination" in detail,
+                   "Play must push run as a path value, not a nested NavigationLink destination")
+
+    uses_named_space = "coordinateSpace" in editor and ".named" in editor
+    uses_translation = "translation" in editor
+    review_require(uses_named_space or uses_translation,
+                   "layout drag must use named coordinateSpace on the stage or translation from the start normalized point")
+    if "value.location" in editor and not uses_named_space:
+        review_require(False,
+                       "DragGesture.location without a named stage space is the control's local point")
+
+    has_sibling_scrim = (
+        "UIView *scrim" in run
+        or "scrimView" in run
+        or "pauseScrim" in run
+        or "scrim_" in run
+    )
+    has_touch_filter = "shouldReceiveTouch" in run
+    review_require(has_sibling_scrim or has_touch_filter,
+                   "pause tap must use a sibling scrim beside the drawer, or shouldReceiveTouch only when touch.view is the scrim")
+    review_require("[pauseLayer_ addGestureRecognizer" not in run,
+                   "pause tap must not be installed on pauseLayer_; that layer includes the drawer")
+
+    require(not review_errors, "; ".join(review_errors))
+
     print("flynes_ios_product_android_parity_contract: PASS")
     return 0
 

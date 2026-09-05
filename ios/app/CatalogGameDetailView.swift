@@ -15,9 +15,7 @@ struct CatalogGameDetailView: View {
                     .textSelection(.enabled)
             }
             Section {
-                NavigationLink {
-                    RunGameContainer(canonicalId: game.canonicalId)
-                } label: {
+                NavigationLink(value: LibraryRoute.run(game.canonicalId)) {
                     Text("library.play")
                 }
                 .disabled(game.compatibilityState != 1)

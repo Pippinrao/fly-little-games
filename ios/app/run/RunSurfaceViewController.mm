@@ -165,14 +165,19 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 
     pauseLayer_ = [[UIView alloc] initWithFrame:self.view.bounds];
     pauseLayer_.translatesAutoresizingMaskIntoConstraints = NO;
-    pauseLayer_.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.54];
-    UITapGestureRecognizer *scrim =
+    pauseLayer_.backgroundColor = UIColor.clearColor;
+
+    UIView *scrim = [[UIView alloc] init];
+    scrim.translatesAutoresizingMaskIntoConstraints = NO;
+    scrim.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.54];
+    UITapGestureRecognizer *scrimTap =
         [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(resumeFromPause)];
-    [pauseLayer_ addGestureRecognizer:scrim];
+    [scrim addGestureRecognizer:scrimTap];
 
     UIView *drawer = [[UIView alloc] init];
     drawer.translatesAutoresizingMaskIntoConstraints = NO;
     drawer.backgroundColor = [UIColor colorWithRed:0.11 green:0.11 blue:0.13 alpha:1.0];
+    [pauseLayer_ addSubview:scrim];
     [pauseLayer_ addSubview:drawer];
 
     UIStackView *stack = [[UIStackView alloc] init];
@@ -210,6 +215,10 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
         [pauseLayer_.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [pauseLayer_.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [pauseLayer_.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [scrim.leadingAnchor constraintEqualToAnchor:pauseLayer_.leadingAnchor],
+        [scrim.trailingAnchor constraintEqualToAnchor:drawer.leadingAnchor],
+        [scrim.topAnchor constraintEqualToAnchor:pauseLayer_.topAnchor],
+        [scrim.bottomAnchor constraintEqualToAnchor:pauseLayer_.bottomAnchor],
         [drawer.trailingAnchor constraintEqualToAnchor:pauseLayer_.trailingAnchor],
         [drawer.topAnchor constraintEqualToAnchor:pauseLayer_.topAnchor],
         [drawer.bottomAnchor constraintEqualToAnchor:pauseLayer_.bottomAnchor],

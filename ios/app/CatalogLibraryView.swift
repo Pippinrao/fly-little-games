@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum LibraryRoute: Hashable {
+    case detail(CatalogGame)
+    case run(String)
+}
+
 enum LibraryFilter: String, CaseIterable, Identifiable {
     case recent
     case favorites
@@ -25,13 +30,14 @@ struct CatalogLibraryView: View {
     @State private var snapshot: CatalogSnapshot
     @State private var filter: LibraryFilter = .all
     @State private var searchText = ""
+    @State private var path = NavigationPath()
 
     init(snapshot: CatalogSnapshot = CatalogSnapshot(generation: 0, games: [])) {
         _snapshot = State(initialValue: snapshot)
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if visibleGames.isEmpty {
                     ContentUnavailableView(
@@ -41,9 +47,7 @@ struct CatalogLibraryView: View {
                     )
                 } else {
                     List(visibleGames) { game in
-                        NavigationLink {
-                            CatalogGameDetailView(game: game)
-                        } label: {
+                        NavigationLink(value: LibraryRoute.detail(game)) {
                             CatalogGameRow(game: game)
                         }
                     }
@@ -74,6 +78,14 @@ struct CatalogLibraryView: View {
                     } label: {
                         Text("settings.title")
                     }
+                }
+            }
+            .navigationDestination(for: LibraryRoute.self) { route in
+                switch route {
+                case .detail(let game):
+                    CatalogGameDetailView(game: game)
+                case .run(let canonicalId):
+                    RunGameContainer(canonicalId: canonicalId, path: $path)
                 }
             }
             .onAppear(perform: reloadSnapshot)

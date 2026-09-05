@@ -39,6 +39,7 @@ struct ControlLayoutEditorView: View {
                             }
                     }
                 }
+                .coordinateSpace(name: "layoutStage")
                 .onAppear { stage = geo.size }
                 .onChange(of: geo.size) { _, size in
                     stage = size
@@ -88,7 +89,7 @@ struct ControlLayoutEditorView: View {
     }
 
     private func drag(_ name: String, in size: CGSize) -> some Gesture {
-        DragGesture()
+        DragGesture(coordinateSpace: .named("layoutStage"))
             .onChanged { value in
                 selected = name
                 if let index = elements.firstIndex(where: { $0.name == name }) {
