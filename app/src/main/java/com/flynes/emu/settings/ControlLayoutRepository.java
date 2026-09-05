@@ -14,6 +14,8 @@ import java.util.Objects;
  */
 public final class ControlLayoutRepository {
     public static final String KEY = "controls.layout_v2";
+    /** One-shot marker: legacy SharedPreferences layout was seeded into native persist. */
+    public static final String MIGRATED_KEY = "controls.layout_v2.native_migrated";
 
     /** Native or in-memory owner of the UTF-8 layout string. */
     public interface Backend {
@@ -24,7 +26,13 @@ public final class ControlLayoutRepository {
     private final Backend backend;
 
     public ControlLayoutRepository(Backend backend) {
+        this(backend, null);
+    }
+
+    /** Production/test path: native backend with optional legacy prefs seed. */
+    public ControlLayoutRepository(Backend backend, SettingsStore legacyPrefs) {
         this.backend = Objects.requireNonNull(backend, "backend");
+        maybeMigrateLegacyLayout(legacyPrefs);
     }
 
     public ControlLayoutRepository(SettingsStore store) {
@@ -32,7 +40,7 @@ public final class ControlLayoutRepository {
     }
 
     public ControlLayoutRepository(Context context) {
-        this(backendFor(context));
+        this(backendFor(context), legacyPrefsFor(context));
     }
 
     public ControlLayoutV2 load() {
@@ -57,6 +65,31 @@ public final class ControlLayoutRepository {
             }
         }
         return new SettingsStoreBackend(new SharedPreferencesSettingsStore(context));
+    }
+
+    private static SettingsStore legacyPrefsFor(Context context) {
+        Context application = context.getApplicationContext();
+        if (application instanceof FlyNesApplication) {
+            return new SharedPreferencesSettingsStore(context);
+        }
+        return null;
+    }
+
+    private void maybeMigrateLegacyLayout(SettingsStore legacyPrefs) {
+        if (legacyPrefs == null) {
+            return;
+        }
+        Map<String, ?> values = legacyPrefs.snapshot();
+        if (Boolean.TRUE.equals(values.get(MIGRATED_KEY))) {
+            return;
+        }
+        Object legacy = values.get(KEY);
+        if (legacy instanceof String legacyUtf8 && !legacyUtf8.isEmpty()) {
+            if (!backend.controlLayoutApply(legacyUtf8)) {
+                return;
+            }
+        }
+        legacyPrefs.commit(new SettingsBatch.Builder().putBoolean(MIGRATED_KEY, true).build());
     }
 
     private static final class SettingsStoreBackend implements Backend {

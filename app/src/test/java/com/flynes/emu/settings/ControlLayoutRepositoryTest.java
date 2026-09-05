@@ -1,6 +1,7 @@
 package com.flynes.emu.settings;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import com.flynes.emu.input.ControlLayoutV2;
 import org.junit.Test;
 import java.util.Collections;
@@ -15,6 +16,22 @@ public final class ControlLayoutRepositoryTest {
         repository.reset(); assertEquals(ControlLayoutV2.recommended(),repository.load());
         store.values.put(ControlLayoutRepository.KEY,"v2|broken");
         assertEquals(ControlLayoutV2.recommended(),repository.load());
+    }
+
+    @Test public void loadMigratesLegacyPrefsIntoNativeBackendOnce() {
+        ControlLayoutV2 movedA = ControlLayoutV2.recommended()
+                .move(ControlLayoutV2.Element.A, .90f, .50f);
+        MemoryBackend backend = new MemoryBackend("");
+        MemoryStore prefs = new MemoryStore();
+        prefs.values.put(ControlLayoutRepository.KEY, movedA.encode());
+        ControlLayoutRepository repository = new ControlLayoutRepository(backend, prefs);
+        assertEquals(movedA, repository.load());
+        assertEquals(movedA.encode(), backend.utf8);
+        assertTrue(Boolean.TRUE.equals(prefs.values.get(ControlLayoutRepository.MIGRATED_KEY)));
+        prefs.values.put(ControlLayoutRepository.KEY, ControlLayoutV2.recommended().encode());
+        ControlLayoutV2 nativeOnly = movedA.move(ControlLayoutV2.Element.B, .50f, .50f);
+        backend.utf8 = nativeOnly.encode();
+        assertEquals(nativeOnly, repository.load());
     }
 
     @Test public void loadDecodesNativeStringAndRoundTripsRecommendedEncode() {
