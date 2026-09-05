@@ -107,6 +107,210 @@
     {
       "name": "pause_checkpoint_failed",
       "value": "Progress was not stored"
+    },
+    {
+      "name": "settings_display",
+      "value": "Display"
+    },
+    {
+      "name": "settings_controls",
+      "value": "Controls"
+    },
+    {
+      "name": "settings_audio",
+      "value": "Audio"
+    },
+    {
+      "name": "settings_game_language",
+      "value": "Game & Language"
+    },
+    {
+      "name": "settings_about",
+      "value": "About"
+    },
+    {
+      "name": "settings_aspect",
+      "value": "Aspect"
+    },
+    {
+      "name": "settings_aspect_4_3",
+      "value": "4:3"
+    },
+    {
+      "name": "settings_aspect_square",
+      "value": "Square pixels"
+    },
+    {
+      "name": "settings_aspect_integer",
+      "value": "Integer scale"
+    },
+    {
+      "name": "settings_video_quality",
+      "value": "Video quality"
+    },
+    {
+      "name": "settings_video_power_saver",
+      "value": "Power saver"
+    },
+    {
+      "name": "settings_video_balanced",
+      "value": "Balanced"
+    },
+    {
+      "name": "settings_video_extreme_locked",
+      "value": "Extreme (locked — device evidence required)"
+    },
+    {
+      "name": "settings_video_custom",
+      "value": "Custom"
+    },
+    {
+      "name": "settings_adaptive_protection",
+      "value": "Adaptive protection"
+    },
+    {
+      "name": "direction_control",
+      "value": "Direction control"
+    },
+    {
+      "name": "direction_joystick",
+      "value": "Following joystick"
+    },
+    {
+      "name": "direction_fixed_joystick",
+      "value": "Fixed joystick"
+    },
+    {
+      "name": "direction_dpad",
+      "value": "D-pad"
+    },
+    {
+      "name": "haptic_level",
+      "value": "Haptic intensity"
+    },
+    {
+      "name": "haptic_off",
+      "value": "Off"
+    },
+    {
+      "name": "haptic_light",
+      "value": "Light"
+    },
+    {
+      "name": "haptic_standard",
+      "value": "Standard"
+    },
+    {
+      "name": "haptic_strong",
+      "value": "Strong"
+    },
+    {
+      "name": "distinct_ab_haptics",
+      "value": "Distinct A/B haptics"
+    },
+    {
+      "name": "reset_controls",
+      "value": "Reset controls"
+    },
+    {
+      "name": "audio_enabled",
+      "value": "Game audio"
+    },
+    {
+      "name": "audio_focus",
+      "value": "Audio focus"
+    },
+    {
+      "name": "audio_focus_pause",
+      "value": "Pause"
+    },
+    {
+      "name": "audio_focus_duck",
+      "value": "Duck"
+    },
+    {
+      "name": "audio_focus_ignore",
+      "value": "Ignore"
+    },
+    {
+      "name": "app_language",
+      "value": "App language"
+    },
+    {
+      "name": "language_system",
+      "value": "System default"
+    },
+    {
+      "name": "language_en",
+      "value": "English"
+    },
+    {
+      "name": "language_zh",
+      "value": "简体中文"
+    },
+    {
+      "name": "autosave",
+      "value": "Autosave"
+    },
+    {
+      "name": "manage_sources",
+      "value": "Game sources"
+    },
+    {
+      "name": "about_app",
+      "value": "FlyNES"
+    },
+    {
+      "name": "licenses_summary",
+      "value": "Built-in From Below is MIT-licensed. See rawfile LICENSE-from-below.txt."
+    },
+    {
+      "name": "control_layout_title",
+      "value": "Control layout"
+    },
+    {
+      "name": "control_layout_hint",
+      "value": "Tap a control, then drag or resize it."
+    },
+    {
+      "name": "control_layout_scale",
+      "value": "Selected control size"
+    },
+    {
+      "name": "control_layout_opacity_label",
+      "value": "Control opacity"
+    },
+    {
+      "name": "control_layout_recommended",
+      "value": "Recommended default"
+    },
+    {
+      "name": "control_layout_save",
+      "value": "Save layout"
+    },
+    {
+      "name": "control_layout_discard",
+      "value": "Discard"
+    },
+    {
+      "name": "sources_add_folder",
+      "value": "Add folder"
+    },
+    {
+      "name": "sources_empty",
+      "value": "No folders yet. Add a folder to scan your games."
+    },
+    {
+      "name": "sources_stale",
+      "value": "This source needs to be authorized again."
+    },
+    {
+      "name": "sources_reauth",
+      "value": "Authorize again"
+    },
+    {
+      "name": "permission_file_access_persist",
+      "value": "Keep access to folders you pick as game sources"
     }
   ]
 }

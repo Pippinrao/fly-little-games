@@ -28,13 +28,14 @@ struct RunGame {
   @State private pressedBits: number = 0;
   @State private checkpointFailed: boolean = false;
   @State private status: string = '';
+  @State private directionMode: number = DIRECTION_FIXED_JOYSTICK;
+  @State private deadZone: number = DEFAULT_DEAD_ZONE;
 
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, Object>;
     if (params !== undefined && params['canonicalId'] !== undefined) {
       this.canonicalId = params['canonicalId'] as string;
     }
-    this.layoutUtf8 = nativePlay.controlLayoutRecommended();
     this.pauseIds = nativePlay.pauseCommands();
     this.readDisplayMetrics();
     const hostContext = this.getUIContext().getHostContext();
@@ -43,6 +44,8 @@ struct RunGame {
       return;
     }
     const context = hostContext as common.UIAbilityContext;
+    this.ensureApp(context);
+    this.loadPersistedLayout();
     this.requestLandscape(context);
     if (!this.started) {
       void this.start(context);
@@ -50,6 +53,7 @@ struct RunGame {
   }
 
   onPageShow(): void {
+    this.loadPersistedLayout();
     if (this.started && !this.paused) {
       this.startLoop();
     }
@@ -95,8 +99,8 @@ struct RunGame {
           insetT: this.insetT,
           insetB: this.insetB,
           layoutUtf8: this.layoutUtf8,
-          directionMode: DIRECTION_FIXED_JOYSTICK,
-          deadZone: DEFAULT_DEAD_ZONE,
+          directionMode: this.directionMode,
+          deadZone: this.deadZone,
           pressedBits: this.pressedBits,
           onButtons: (bits: number) => {
             this.handleOverlayButtons(bits);
@@ -299,6 +303,23 @@ struct RunGame {
       return $r('app.string.pause_game_center');
     }
     return $r('app.string.pause_settings');
+  }
+
+  private ensureApp(context: common.UIAbilityContext): void {
+    nativePlay.appOpen(context.filesDir, context.cacheDir);
+  }
+
+  private loadPersistedLayout(): void {
+    try {
+      this.layoutUtf8 = nativePlay.controlLayoutGet();
+      const settings = nativePlay.settingsGet();
+      this.directionMode = Math.max(0, Math.min(2, settings.directionMode - 1));
+      this.deadZone = settings.deadZone;
+    } catch (error) {
+      this.layoutUtf8 = nativePlay.controlLayoutRecommended();
+      const detail = error instanceof Error ? error.message : 'layout get failed';
+      console.error(`FlyNES layout load failed: ${detail}`);
+    }
   }
 
   private readDisplayMetrics(): void {

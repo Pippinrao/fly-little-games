@@ -25,4 +25,12 @@ assert "Save" not in overlay
 assert "pauseCommands" in run or "PauseCommand" in run
 assert "hitMapFromLayout" in overlay or "HitMap" in overlay
 
+settings = Path("harmony/entry/src/main/ets/pages/Settings.ets").read_text(encoding="utf-8")
+for key in ("section.display", "section.controls", "section.audio", "section.game_language", "section.about"):
+    assert key in settings
+assert settings.find("section.display") < settings.find("section.about")
+src = Path("harmony/entry/src/main/ets/platform/HarmonySourceMap.ets").read_text(encoding="utf-8")
+assert "FLYCAT" not in src
+assert "uuid" in src.lower() or "UUID" in src
+
 print("flynes_harmony_product_contract: PASS")

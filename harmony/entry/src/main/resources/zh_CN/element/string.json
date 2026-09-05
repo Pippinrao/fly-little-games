@@ -75,6 +75,210 @@
     {
       "name": "pause_checkpoint_failed",
       "value": "进度未能保存"
+    },
+    {
+      "name": "settings_display",
+      "value": "显示"
+    },
+    {
+      "name": "settings_controls",
+      "value": "操控"
+    },
+    {
+      "name": "settings_audio",
+      "value": "音频"
+    },
+    {
+      "name": "settings_game_language",
+      "value": "游戏与语言"
+    },
+    {
+      "name": "settings_about",
+      "value": "关于"
+    },
+    {
+      "name": "settings_aspect",
+      "value": "画面比例"
+    },
+    {
+      "name": "settings_aspect_4_3",
+      "value": "4:3"
+    },
+    {
+      "name": "settings_aspect_square",
+      "value": "方形像素"
+    },
+    {
+      "name": "settings_aspect_integer",
+      "value": "整数倍缩放"
+    },
+    {
+      "name": "settings_video_quality",
+      "value": "画质"
+    },
+    {
+      "name": "settings_video_power_saver",
+      "value": "省电"
+    },
+    {
+      "name": "settings_video_balanced",
+      "value": "均衡"
+    },
+    {
+      "name": "settings_video_extreme_locked",
+      "value": "极致（锁定 — 需要设备证据）"
+    },
+    {
+      "name": "settings_video_custom",
+      "value": "自定义"
+    },
+    {
+      "name": "settings_adaptive_protection",
+      "value": "自适应保护"
+    },
+    {
+      "name": "direction_control",
+      "value": "方向操控"
+    },
+    {
+      "name": "direction_joystick",
+      "value": "跟随摇杆"
+    },
+    {
+      "name": "direction_fixed_joystick",
+      "value": "固定摇杆"
+    },
+    {
+      "name": "direction_dpad",
+      "value": "十字键"
+    },
+    {
+      "name": "haptic_level",
+      "value": "振动强度"
+    },
+    {
+      "name": "haptic_off",
+      "value": "关"
+    },
+    {
+      "name": "haptic_light",
+      "value": "轻"
+    },
+    {
+      "name": "haptic_standard",
+      "value": "标准"
+    },
+    {
+      "name": "haptic_strong",
+      "value": "强"
+    },
+    {
+      "name": "distinct_ab_haptics",
+      "value": "A/B 使用不同振动反馈"
+    },
+    {
+      "name": "reset_controls",
+      "value": "重置操控"
+    },
+    {
+      "name": "audio_enabled",
+      "value": "游戏音频"
+    },
+    {
+      "name": "audio_focus",
+      "value": "音频焦点"
+    },
+    {
+      "name": "audio_focus_pause",
+      "value": "暂停"
+    },
+    {
+      "name": "audio_focus_duck",
+      "value": "降低音量"
+    },
+    {
+      "name": "audio_focus_ignore",
+      "value": "忽略"
+    },
+    {
+      "name": "app_language",
+      "value": "应用语言"
+    },
+    {
+      "name": "language_system",
+      "value": "跟随系统"
+    },
+    {
+      "name": "language_en",
+      "value": "English"
+    },
+    {
+      "name": "language_zh",
+      "value": "简体中文"
+    },
+    {
+      "name": "autosave",
+      "value": "自动存档"
+    },
+    {
+      "name": "manage_sources",
+      "value": "游戏来源"
+    },
+    {
+      "name": "about_app",
+      "value": "FlyNES"
+    },
+    {
+      "name": "licenses_summary",
+      "value": "内置《来自下方》为 MIT 许可。详见 rawfile LICENSE-from-below.txt。"
+    },
+    {
+      "name": "control_layout_title",
+      "value": "操控布局"
+    },
+    {
+      "name": "control_layout_hint",
+      "value": "点选控件后拖动或缩放。"
+    },
+    {
+      "name": "control_layout_scale",
+      "value": "选中控件大小"
+    },
+    {
+      "name": "control_layout_opacity_label",
+      "value": "控件透明度"
+    },
+    {
+      "name": "control_layout_recommended",
+      "value": "恢复推荐默认"
+    },
+    {
+      "name": "control_layout_save",
+      "value": "保存布局"
+    },
+    {
+      "name": "control_layout_discard",
+      "value": "放弃"
+    },
+    {
+      "name": "sources_add_folder",
+      "value": "添加目录"
+    },
+    {
+      "name": "sources_empty",
+      "value": "还没有目录。添加目录后即可扫描自己的游戏。"
+    },
+    {
+      "name": "sources_stale",
+      "value": "此来源需要重新授权。"
+    },
+    {
+      "name": "sources_reauth",
+      "value": "重新授权"
+    },
+    {
+      "name": "permission_file_access_persist",
+      "value": "保留你选择的游戏目录访问权限"
     }
   ]
 }

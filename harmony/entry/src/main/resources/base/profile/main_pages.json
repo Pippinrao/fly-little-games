@@ -4,6 +4,7 @@
     "pages/RunGame",
     "pages/Sources",
     "pages/Settings",
+    "pages/ControlLayout",
     "pages/Index"
   ]
 }
