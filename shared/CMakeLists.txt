@@ -201,6 +201,19 @@ set_target_properties(flynes_session_codec PROPERTIES
 )
 flynes_enable_strict_warnings(flynes_session_codec)
 
+add_library(flynes_session STATIC
+    src/session/flynes_session.cpp
+)
+target_include_directories(flynes_session PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_features(flynes_session PRIVATE cxx_std_17)
+set_target_properties(flynes_session PROPERTIES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE YES
+)
+flynes_enable_strict_warnings(flynes_session)
+
 function(flynes_add_runtime_library)
     if(TARGET flynes_runtime)
         return()
@@ -645,6 +658,19 @@ if(FLYNES_BUILD_TESTS)
         FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
     )
     add_test(NAME flynes_session_codec COMMAND flynes_session_codec_test)
+
+    add_executable(flynes_session_test
+        tests/test_session.cpp
+        tests/test_session_header.c
+    )
+    target_link_libraries(flynes_session_test PRIVATE flynes_session)
+    target_compile_features(flynes_session_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_test PROPERTIES
+        CXX_EXTENSIONS NO
+        LINKER_LANGUAGE CXX
+    )
+    flynes_enable_strict_warnings(flynes_session_test)
+    add_test(NAME flynes_session COMMAND flynes_session_test)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library
