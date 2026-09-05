@@ -52,5 +52,4 @@ export const playOpen: (rom: Uint8Array | ArrayBuffer) => void;
 export const playSetButtons: (buttons: number) => void;
 export const playStep: () => PlayStepResult;
 export const playSaveCheckpoint: () => ArrayBuffer;
-export const playLoadCheckpoint: (checkpoint: Uint8Array | ArrayBuffer) => void;
 export const playClose: () => void;

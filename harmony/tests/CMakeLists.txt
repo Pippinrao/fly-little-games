@@ -135,6 +135,8 @@ else()
     )
 endif()
 add_test(NAME flynes_harmony_product_bridge COMMAND flynes_harmony_product_bridge_test)
+set_tests_properties(flynes_harmony_product_bridge PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
 
 add_executable(flynes_harmony_nearby_adapter_test
     nearby_adapter_test.cpp

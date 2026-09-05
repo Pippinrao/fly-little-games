@@ -586,39 +586,6 @@ napi_value PlaySaveCheckpoint(napi_env env, napi_callback_info info)
     }
 }
 
-napi_value PlayLoadCheckpoint(napi_env env, napi_callback_info info)
-{
-    try
-    {
-        std::size_t argument_count = 1;
-        napi_value arguments[1] = {nullptr};
-        require_napi(napi_get_cb_info(
-                         env, info, &argument_count, arguments, nullptr, nullptr),
-                     "read playLoadCheckpoint arguments");
-        if (argument_count < 1)
-        {
-            throw NapiTypeError("playLoadCheckpoint requires checkpoint bytes");
-        }
-        const std::vector<std::uint8_t> bytes = read_buffer(env, arguments[0], "checkpoint");
-        require_play().load_checkpoint(bytes.data(), bytes.size());
-        napi_value undefined = nullptr;
-        require_napi(napi_get_undefined(env, &undefined), "playLoadCheckpoint undefined");
-        return undefined;
-    }
-    catch (const NapiTypeError& error)
-    {
-        return report_error(env, error.what(), true);
-    }
-    catch (const std::exception& error)
-    {
-        return report_error(env, error.what(), false);
-    }
-    catch (...)
-    {
-        return report_error(env, "playLoadCheckpoint failed: unknown native error", false);
-    }
-}
-
 napi_value PlayClose(napi_env env, napi_callback_info info)
 {
     try
@@ -878,7 +845,6 @@ napi_value Init(napi_env env, napi_value exports)
             {"playSetButtons", nullptr, PlaySetButtons, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"playStep", nullptr, PlayStep, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"playSaveCheckpoint", nullptr, PlaySaveCheckpoint, nullptr, nullptr, nullptr, napi_default, nullptr},
-            {"playLoadCheckpoint", nullptr, PlayLoadCheckpoint, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"playClose", nullptr, PlayClose, nullptr, nullptr, nullptr, napi_default, nullptr},
         };
         require_napi(napi_define_properties(

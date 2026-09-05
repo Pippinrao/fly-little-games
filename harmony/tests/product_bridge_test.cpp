@@ -1,7 +1,9 @@
 #include "product_bridge.hpp"
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,6 +62,32 @@ void test_decode_or_recommended_v1_joy_equals_recommended_encode()
     expect(decoded == recommended, "decode_or_recommended(v1|JOY) equals recommended encode");
 }
 
+std::string read_text_file(std::string_view relative_path)
+{
+    std::ifstream input{std::string{relative_path}};
+    if (!input.is_open())
+    {
+        return {};
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+void test_public_surface_does_not_export_play_load_checkpoint()
+{
+    const std::string index_dts = read_text_file(
+        "../entry/src/main/cpp/types/libentry/Index.d.ts");
+    const std::string napi_init = read_text_file("../entry/src/main/cpp/napi_init.cpp");
+
+    expect(!index_dts.empty(), "Index.d.ts is readable from host test cwd");
+    expect(!napi_init.empty(), "napi_init.cpp is readable from host test cwd");
+    expect(index_dts.find("playLoadCheckpoint") == std::string::npos,
+           "Index.d.ts must not export playLoadCheckpoint");
+    expect(napi_init.find("\"playLoadCheckpoint\"") == std::string::npos,
+           "napi_init.cpp must not register playLoadCheckpoint");
+}
+
 void test_hit_map_carries_dpad_and_control_geometry_without_pause()
 {
     const std::string layout = flynes::harmony::control_layout_recommended();
@@ -94,6 +122,7 @@ int main()
     test_filter_zh_query_selects_contra();
     test_pause_commands_are_exactly_three_snake_ids();
     test_decode_or_recommended_v1_joy_equals_recommended_encode();
+    test_public_surface_does_not_export_play_load_checkpoint();
     test_hit_map_carries_dpad_and_control_geometry_without_pause();
 
     if (failures != 0)
