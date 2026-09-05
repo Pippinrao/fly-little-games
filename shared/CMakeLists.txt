@@ -601,6 +601,21 @@ if(FLYNES_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/unsupported_payload/generate_v1.py
             ${CMAKE_CURRENT_BINARY_DIR}/unsupported-payload-fixture-generator-tests
     )
+
+    add_executable(flynes_session_schema_registry_test
+        tests/test_session_schema_registry.cpp
+    )
+    target_compile_features(flynes_session_schema_registry_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_schema_registry_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_schema_registry_test)
+    target_compile_definitions(flynes_session_schema_registry_test PRIVATE
+        FLYNES_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema"
+        FLYNES_ANDROID_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../app/src/test/resources/flynes_session_v1"
+        FLYNES_IOS_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../ios/abi/flynes_session_v1"
+        FLYNES_HARMONY_SESSION_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../harmony/schema/flynes_session_v1"
+    )
+    add_test(NAME flynes_session_schema_registry
+        COMMAND flynes_session_schema_registry_test)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library
