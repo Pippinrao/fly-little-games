@@ -2,6 +2,7 @@
 
 #include "app/catalog_persist.hpp"
 #include "app/catalog_state.hpp"
+#include "app/settings_persist.hpp"
 #include "catalog/bounded_zip_archive.hpp"
 #include "catalog/content_identity.hpp"
 #include "catalog/rom_payload_parser.hpp"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +35,7 @@ namespace {
 
 using flynes::app::CatalogData;
 using flynes::app::CatalogEntryData;
+using flynes::app::SettingsData;
 using flynes::app::SourceKey;
 using flynes::app::SourceRecord;
 using flynes::app::UserRecord;
@@ -53,6 +56,7 @@ struct AppState final
     std::mutex mutex;
     std::string data_root;
     std::shared_ptr<const CatalogData> catalog = std::make_shared<CatalogData>();
+    SettingsData settings;
 };
 
 bool source_scope_conflicts(const CatalogData& catalog, const SourceKey& source) noexcept
@@ -1031,6 +1035,118 @@ std::uint32_t source_freshness_summary(const CatalogData& catalog, const SourceK
     return FLY_CATALOG_FRESHNESS_FRESH;
 }
 
+bool in_closed_range(float value, float minimum, float maximum) noexcept
+{
+    return !std::isnan(value) && value >= minimum && value <= maximum;
+}
+
+bool is_flag(std::uint32_t value) noexcept
+{
+    return value == 0u || value == 1u;
+}
+
+fly_result validate_settings_snapshot(const fly_settings_snapshot& snapshot) noexcept
+{
+    if (snapshot.struct_size < FLY_SETTINGS_SNAPSHOT_V1_SIZE)
+    {
+        return FLY_RESULT_STRUCT_TOO_SMALL;
+    }
+    if (snapshot.version != FLY_SETTINGS_SNAPSHOT_VERSION_1)
+    {
+        return FLY_RESULT_UNSUPPORTED_VERSION;
+    }
+    if (snapshot.aspect_mode < FLY_ASPECT_FOUR_BY_THREE ||
+        snapshot.aspect_mode > FLY_ASPECT_INTEGER_SCALE ||
+        snapshot.video_quality_preset < FLY_VIDEO_QUALITY_POWER_SAVER ||
+        snapshot.video_quality_preset > FLY_VIDEO_QUALITY_CUSTOM ||
+        snapshot.custom_refresh_policy < FLY_REFRESH_FOLLOW_SYSTEM ||
+        snapshot.custom_refresh_policy > FLY_REFRESH_HZ_120 ||
+        snapshot.custom_temporal_mode < FLY_TEMPORAL_NATIVE ||
+        snapshot.custom_temporal_mode > FLY_TEMPORAL_MOTION_INTERPOLATION ||
+        snapshot.custom_spatial_mode < FLY_SPATIAL_NEAREST ||
+        snapshot.custom_spatial_mode > FLY_SPATIAL_SCALEFX ||
+        snapshot.custom_post_effect < FLY_POST_EFFECT_NONE ||
+        snapshot.custom_post_effect > FLY_POST_EFFECT_CRT ||
+        snapshot.layout_preset < FLY_LAYOUT_STANDARD_BA ||
+        snapshot.layout_preset > FLY_LAYOUT_MIRRORED_AB ||
+        snapshot.direction_mode < FLY_DIRECTION_JOYSTICK ||
+        snapshot.direction_mode > FLY_DIRECTION_DPAD ||
+        snapshot.haptic_level < FLY_HAPTIC_OFF ||
+        snapshot.haptic_level > FLY_HAPTIC_STRONG ||
+        snapshot.audio_focus_policy < FLY_AUDIO_FOCUS_PAUSE ||
+        snapshot.audio_focus_policy > FLY_AUDIO_FOCUS_IGNORE)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (!is_flag(snapshot.adaptive_protection) || !is_flag(snapshot.distinct_ab_haptics) ||
+        !is_flag(snapshot.audio_enabled) || !is_flag(snapshot.autosave_enabled))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (!in_closed_range(snapshot.button_scale, FLY_SETTINGS_BUTTON_SCALE_MIN,
+                         FLY_SETTINGS_BUTTON_SCALE_MAX) ||
+        !in_closed_range(snapshot.vertical_offset, FLY_SETTINGS_VERTICAL_OFFSET_MIN,
+                         FLY_SETTINGS_VERTICAL_OFFSET_MAX) ||
+        !in_closed_range(snapshot.control_opacity, FLY_SETTINGS_CONTROL_OPACITY_MIN,
+                         FLY_SETTINGS_CONTROL_OPACITY_MAX) ||
+        !in_closed_range(snapshot.joystick_scale, FLY_SETTINGS_JOYSTICK_SCALE_MIN,
+                         FLY_SETTINGS_JOYSTICK_SCALE_MAX) ||
+        !in_closed_range(snapshot.dead_zone, FLY_SETTINGS_DEAD_ZONE_MIN,
+                         FLY_SETTINGS_DEAD_ZONE_MAX))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (!is_valid_utf8(snapshot.locale_tag_utf8,
+                       snapshot.locale_tag_utf8_length,
+                       FLY_SETTINGS_LOCALE_MAX_UTF8_BYTES))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (snapshot.last_played_id_utf8_length != 0u &&
+        !is_valid_utf8(snapshot.last_played_id_utf8,
+                       snapshot.last_played_id_utf8_length,
+                       FLY_CANONICAL_ID_MAX_UTF8_BYTES))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return FLY_RESULT_OK;
+}
+
+SettingsData settings_from_snapshot(const fly_settings_snapshot& snapshot)
+{
+    SettingsData settings;
+    settings.aspect_mode = snapshot.aspect_mode;
+    settings.video_quality_preset = snapshot.video_quality_preset;
+    settings.custom_refresh_policy = snapshot.custom_refresh_policy;
+    settings.custom_temporal_mode = snapshot.custom_temporal_mode;
+    settings.custom_spatial_mode = snapshot.custom_spatial_mode;
+    settings.custom_post_effect = snapshot.custom_post_effect;
+    settings.adaptive_protection = snapshot.adaptive_protection;
+    settings.layout_preset = snapshot.layout_preset;
+    settings.direction_mode = snapshot.direction_mode;
+    settings.button_scale = snapshot.button_scale;
+    settings.vertical_offset = snapshot.vertical_offset;
+    settings.control_opacity = snapshot.control_opacity;
+    settings.joystick_scale = snapshot.joystick_scale;
+    settings.dead_zone = snapshot.dead_zone;
+    settings.haptic_level = snapshot.haptic_level;
+    settings.distinct_ab_haptics = snapshot.distinct_ab_haptics;
+    settings.audio_enabled = snapshot.audio_enabled;
+    settings.audio_focus_policy = snapshot.audio_focus_policy;
+    settings.autosave_enabled = snapshot.autosave_enabled;
+    settings.locale_tag.assign(snapshot.locale_tag_utf8, snapshot.locale_tag_utf8_length);
+    if (snapshot.last_played_id_utf8_length == 0u)
+    {
+        settings.last_played_id.clear();
+    }
+    else
+    {
+        settings.last_played_id.assign(snapshot.last_played_id_utf8,
+                                       snapshot.last_played_id_utf8_length);
+    }
+    return settings;
+}
+
 } // namespace
 
 struct fly_app_handle final
@@ -1087,6 +1203,7 @@ extern "C" fly_result fly_app_create(const fly_app_config* config, fly_app_t** a
         auto state = std::make_shared<AppState>();
         state->data_root.assign(config->data_root_utf8, config->data_root_utf8_length);
         state->catalog = flynes::app::load_catalog(state->data_root);
+        state->settings = flynes::app::load_settings(state->data_root);
         auto app = std::make_unique<fly_app_t>(*config, std::move(state));
         *app_out = app.release();
         return FLY_RESULT_OK;
@@ -1504,6 +1621,96 @@ extern "C" fly_result fly_source_status_get(const fly_app_t* app,
         output.last_completeness = source.last_completeness;
         output.freshness = source_freshness_summary(catalog, source.key);
         *status_out = output;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_settings_get(const fly_app_t* app, fly_settings_snapshot* snapshot_out)
+{
+    if (app == nullptr || snapshot_out == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (snapshot_out->struct_size < FLY_SETTINGS_SNAPSHOT_V1_SIZE)
+    {
+        return FLY_RESULT_STRUCT_TOO_SMALL;
+    }
+    if (snapshot_out->version != FLY_SETTINGS_SNAPSHOT_VERSION_1)
+    {
+        return FLY_RESULT_UNSUPPORTED_VERSION;
+    }
+    if (!valid_output_buffer(snapshot_out->locale_tag_utf8, snapshot_out->locale_tag_capacity) ||
+        !valid_output_buffer(snapshot_out->last_played_id_utf8,
+                             snapshot_out->last_played_id_capacity))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    try
+    {
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        const SettingsData& settings = app->state->settings;
+        const std::uint32_t locale_required = required_string_size(settings.locale_tag);
+        const std::uint32_t last_required = required_string_size(settings.last_played_id);
+        if (snapshot_out->locale_tag_capacity < locale_required ||
+            snapshot_out->last_played_id_capacity < last_required)
+        {
+            snapshot_out->locale_tag_required = locale_required;
+            snapshot_out->last_played_id_required = last_required;
+            return FLY_RESULT_BUFFER_TOO_SMALL;
+        }
+        fly_settings_snapshot output = *snapshot_out;
+        output.aspect_mode = settings.aspect_mode;
+        output.video_quality_preset = settings.video_quality_preset;
+        output.custom_refresh_policy = settings.custom_refresh_policy;
+        output.custom_temporal_mode = settings.custom_temporal_mode;
+        output.custom_spatial_mode = settings.custom_spatial_mode;
+        output.custom_post_effect = settings.custom_post_effect;
+        output.adaptive_protection = settings.adaptive_protection;
+        output.layout_preset = settings.layout_preset;
+        output.direction_mode = settings.direction_mode;
+        output.button_scale = settings.button_scale;
+        output.vertical_offset = settings.vertical_offset;
+        output.control_opacity = settings.control_opacity;
+        output.joystick_scale = settings.joystick_scale;
+        output.dead_zone = settings.dead_zone;
+        output.haptic_level = settings.haptic_level;
+        output.distinct_ab_haptics = settings.distinct_ab_haptics;
+        output.audio_enabled = settings.audio_enabled;
+        output.audio_focus_policy = settings.audio_focus_policy;
+        output.autosave_enabled = settings.autosave_enabled;
+        output.locale_tag_required = locale_required;
+        output.last_played_id_required = last_required;
+        copy_string(snapshot_out->locale_tag_utf8, settings.locale_tag);
+        copy_string(snapshot_out->last_played_id_utf8, settings.last_played_id);
+        *snapshot_out = output;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_settings_apply(fly_app_t* app, const fly_settings_snapshot* snapshot)
+{
+    if (app == nullptr || snapshot == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    const fly_result validation = validate_settings_snapshot(*snapshot);
+    if (validation != FLY_RESULT_OK)
+    {
+        return validation;
+    }
+    try
+    {
+        SettingsData next = settings_from_snapshot(*snapshot);
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        if (!flynes::app::save_settings(app->state->data_root, next))
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        app->state->settings = std::move(next);
         return FLY_RESULT_OK;
     }
     catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }

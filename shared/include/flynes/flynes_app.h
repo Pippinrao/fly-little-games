@@ -333,6 +333,135 @@ typedef struct fly_source_status
 #define FLY_SOURCE_STATUS_V1_SIZE \
     ((uint32_t)(offsetof(fly_source_status, freshness) + sizeof(uint32_t)))
 
+/* Stable settings enumerations. Values are append-only and are not Java ordinals. */
+enum fly_aspect_mode
+{
+    FLY_ASPECT_FOUR_BY_THREE = 1,
+    FLY_ASPECT_SQUARE_PIXELS = 2,
+    FLY_ASPECT_INTEGER_SCALE = 3
+};
+
+enum fly_video_quality_preset
+{
+    FLY_VIDEO_QUALITY_POWER_SAVER = 1,
+    FLY_VIDEO_QUALITY_BALANCED = 2,
+    FLY_VIDEO_QUALITY_EXTREME = 3,
+    FLY_VIDEO_QUALITY_CUSTOM = 4
+};
+
+enum fly_refresh_policy
+{
+    FLY_REFRESH_FOLLOW_SYSTEM = 1,
+    FLY_REFRESH_LEGACY_AUTO_INTEGER_MULTIPLE = 2,
+    FLY_REFRESH_HZ_60 = 3,
+    FLY_REFRESH_HZ_90 = 4,
+    FLY_REFRESH_HZ_120 = 5
+};
+
+enum fly_temporal_mode
+{
+    FLY_TEMPORAL_NATIVE = 1,
+    FLY_TEMPORAL_MOTION_INTERPOLATION = 2
+};
+
+enum fly_spatial_mode
+{
+    FLY_SPATIAL_NEAREST = 1,
+    FLY_SPATIAL_SHARP_BILINEAR = 2,
+    FLY_SPATIAL_MMPX = 3,
+    FLY_SPATIAL_SCALEFX = 4
+};
+
+enum fly_post_effect
+{
+    FLY_POST_EFFECT_NONE = 1,
+    FLY_POST_EFFECT_CRT = 2
+};
+
+enum fly_layout_preset
+{
+    FLY_LAYOUT_STANDARD_BA = 1,
+    FLY_LAYOUT_MIRRORED_AB = 2
+};
+
+enum fly_direction_mode
+{
+    FLY_DIRECTION_JOYSTICK = 1,
+    FLY_DIRECTION_FIXED_JOYSTICK = 2,
+    FLY_DIRECTION_DPAD = 3
+};
+
+enum fly_haptic_level
+{
+    FLY_HAPTIC_OFF = 1,
+    FLY_HAPTIC_LIGHT = 2,
+    FLY_HAPTIC_STANDARD = 3,
+    FLY_HAPTIC_STRONG = 4
+};
+
+enum fly_audio_focus_policy
+{
+    FLY_AUDIO_FOCUS_PAUSE = 1,
+    FLY_AUDIO_FOCUS_DUCK = 2,
+    FLY_AUDIO_FOCUS_IGNORE = 3
+};
+
+#define FLY_SETTINGS_SNAPSHOT_VERSION_1 UINT32_C(1)
+#define FLY_SETTINGS_LOCALE_MAX_UTF8_BYTES UINT32_C(128)
+#define FLY_SETTINGS_BUTTON_SCALE_MIN 0.80f
+#define FLY_SETTINGS_BUTTON_SCALE_MAX 1.40f
+#define FLY_SETTINGS_VERTICAL_OFFSET_MIN (-0.25f)
+#define FLY_SETTINGS_VERTICAL_OFFSET_MAX 0.25f
+#define FLY_SETTINGS_CONTROL_OPACITY_MIN 0.40f
+#define FLY_SETTINGS_CONTROL_OPACITY_MAX 1.00f
+#define FLY_SETTINGS_JOYSTICK_SCALE_MIN 0.80f
+#define FLY_SETTINGS_JOYSTICK_SCALE_MAX 1.40f
+#define FLY_SETTINGS_DEAD_ZONE_MIN 0.08f
+#define FLY_SETTINGS_DEAD_ZONE_MAX 0.45f
+
+/*
+ * One complete settings snapshot. Get fills caller buffers and reports required
+ * sizes including a NUL terminator. Apply copies locale_tag_utf8_length and
+ * last_played_id_utf8_length as explicit UTF-8 ranges; a zero-length
+ * last_played id is valid, locale must be non-empty. Invalid values fail
+ * without changing prior settings.
+ */
+typedef struct fly_settings_snapshot
+{
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t aspect_mode;
+    uint32_t video_quality_preset;
+    uint32_t custom_refresh_policy;
+    uint32_t custom_temporal_mode;
+    uint32_t custom_spatial_mode;
+    uint32_t custom_post_effect;
+    uint32_t adaptive_protection;
+    uint32_t layout_preset;
+    uint32_t direction_mode;
+    float button_scale;
+    float vertical_offset;
+    float control_opacity;
+    float joystick_scale;
+    float dead_zone;
+    uint32_t haptic_level;
+    uint32_t distinct_ab_haptics;
+    uint32_t audio_enabled;
+    uint32_t audio_focus_policy;
+    uint32_t autosave_enabled;
+    char* locale_tag_utf8;
+    char* last_played_id_utf8;
+    uint32_t locale_tag_capacity;
+    uint32_t locale_tag_required;
+    uint32_t locale_tag_utf8_length;
+    uint32_t last_played_id_capacity;
+    uint32_t last_played_id_required;
+    uint32_t last_played_id_utf8_length;
+} fly_settings_snapshot;
+
+#define FLY_SETTINGS_SNAPSHOT_V1_SIZE \
+    ((uint32_t)(offsetof(fly_settings_snapshot, last_played_id_utf8_length) + sizeof(uint32_t)))
+
 /*
  * Creates an application instance. On every failure where app_out is non-NULL,
  * *app_out is set to NULL. Version 1 requires the complete V1 prefix of both
@@ -435,6 +564,14 @@ FLYNES_API fly_result fly_source_status_count(const fly_app_t* app, uint64_t* co
 FLYNES_API fly_result fly_source_status_get(const fly_app_t* app,
                                             uint64_t index,
                                             fly_source_status* status_out);
+
+FLYNES_API fly_result fly_settings_get(const fly_app_t* app, fly_settings_snapshot* snapshot_out);
+
+/*
+ * Replaces the entire settings snapshot atomically. On success the snapshot is
+ * persisted to settings.flyset01 independently of the catalog file.
+ */
+FLYNES_API fly_result fly_settings_apply(fly_app_t* app, const fly_settings_snapshot* snapshot);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -10,6 +10,7 @@ add_library(flynes_app STATIC
     src/catalog/rom_payload_parser.cpp
     src/catalog/unsupported_payload_classifier.cpp
     src/app/catalog_persist.cpp
+    src/app/settings_persist.cpp
     src/app/flynes_app.cpp
 )
 target_include_directories(flynes_app PUBLIC
@@ -257,6 +258,15 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_catalog_user_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_catalog_user_test)
     add_test(NAME flynes_catalog_user COMMAND flynes_catalog_user_test)
+
+    add_executable(flynes_settings_test
+        tests/test_settings.cpp
+    )
+    target_link_libraries(flynes_settings_test PRIVATE flynes_app)
+    target_compile_features(flynes_settings_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_settings_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_settings_test)
+    add_test(NAME flynes_settings COMMAND flynes_settings_test)
 
     add_executable(flynes_c_header_test
         tests/test_c_header.c

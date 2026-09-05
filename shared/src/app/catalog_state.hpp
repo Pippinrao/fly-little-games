@@ -76,6 +76,31 @@ struct CatalogData final
     std::uint64_t next_play_sequence = 0u;
 };
 
+struct SettingsData final
+{
+    std::uint32_t aspect_mode = FLY_ASPECT_FOUR_BY_THREE;
+    std::uint32_t video_quality_preset = FLY_VIDEO_QUALITY_BALANCED;
+    std::uint32_t custom_refresh_policy = FLY_REFRESH_HZ_60;
+    std::uint32_t custom_temporal_mode = FLY_TEMPORAL_NATIVE;
+    std::uint32_t custom_spatial_mode = FLY_SPATIAL_SHARP_BILINEAR;
+    std::uint32_t custom_post_effect = FLY_POST_EFFECT_NONE;
+    std::uint32_t adaptive_protection = 1u;
+    std::uint32_t layout_preset = FLY_LAYOUT_STANDARD_BA;
+    std::uint32_t direction_mode = FLY_DIRECTION_FIXED_JOYSTICK;
+    float button_scale = 1.0f;
+    float vertical_offset = 0.0f;
+    float control_opacity = 0.78f;
+    float joystick_scale = 1.0f;
+    float dead_zone = 0.18f;
+    std::uint32_t haptic_level = FLY_HAPTIC_LIGHT;
+    std::uint32_t distinct_ab_haptics = 1u;
+    std::uint32_t audio_enabled = 1u;
+    std::uint32_t audio_focus_policy = FLY_AUDIO_FOCUS_PAUSE;
+    std::uint32_t autosave_enabled = 1u;
+    std::string locale_tag{"system"};
+    std::string last_played_id;
+};
+
 } // namespace flynes::app
 
 #endif
