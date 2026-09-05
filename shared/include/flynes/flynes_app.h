@@ -42,7 +42,10 @@ enum fly_result_code
 #define FLY_SCAN_CONFIG_VERSION_1 UINT32_C(1)
 #define FLY_SCAN_FILE_VERSION_1 UINT32_C(1)
 #define FLY_SCAN_FILE_RESULT_VERSION_1 UINT32_C(1)
+#define FLY_CATALOG_USER_STATE_VERSION_1 UINT32_C(1)
+#define FLY_SOURCE_STATUS_VERSION_1 UINT32_C(1)
 #define FLY_APP_ROOT_MAX_UTF8_BYTES UINT32_C(4096)
+#define FLY_CANONICAL_ID_MAX_UTF8_BYTES UINT32_C(4096)
 #define FLY_SCAN_RELATIVE_PATH_MAX_UTF8_BYTES UINT32_C(4096)
 #define FLY_SCAN_DISPLAY_NAME_MAX_UTF8_BYTES UINT32_C(1024)
 #define FLY_SCAN_MAX_PACKAGE_BYTES UINT64_C(8388608)
@@ -295,6 +298,42 @@ typedef struct fly_scan_file_result
     ((uint32_t)(offsetof(fly_scan_file_result, reserved) + sizeof(uint32_t)))
 
 /*
+ * Caller-owned user record for one canonical_id. favorite is 0 or 1.
+ * favorite_revision and last_played_sequence are library-owned monotonic
+ * counters. Unknown canonical IDs read as zeros without creating a row.
+ */
+typedef struct fly_catalog_user_state
+{
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t favorite;
+    uint32_t play_count;
+    uint64_t favorite_revision;
+    uint64_t last_played_sequence;
+} fly_catalog_user_state;
+
+#define FLY_CATALOG_USER_STATE_V1_SIZE \
+    ((uint32_t)(offsetof(fly_catalog_user_state, last_played_sequence) + sizeof(uint64_t)))
+
+/*
+ * Portable source registry row. last_completeness is the last committed scan
+ * completeness for this UUID. freshness is FRESH unless the live catalog still
+ * holds a stale row for the source. No locator or URI is present.
+ */
+typedef struct fly_source_status
+{
+    uint32_t struct_size;
+    uint32_t version;
+    uint8_t source_uuid[16];
+    uint32_t source_scope;
+    uint32_t last_completeness;
+    uint32_t freshness;
+} fly_source_status;
+
+#define FLY_SOURCE_STATUS_V1_SIZE \
+    ((uint32_t)(offsetof(fly_source_status, freshness) + sizeof(uint32_t)))
+
+/*
  * Creates an application instance. On every failure where app_out is non-NULL,
  * *app_out is set to NULL. Version 1 requires the complete V1 prefix of both
  * configuration structures; larger struct_size values are accepted.
@@ -359,6 +398,43 @@ FLYNES_API fly_result fly_catalog_snapshot_get(const fly_catalog_snapshot_t* sna
 
 /* NULL-safe. */
 FLYNES_API void fly_catalog_snapshot_release(fly_catalog_snapshot_t* snapshot);
+
+/*
+ * Reads the user record for one canonical_id. Missing IDs write the empty
+ * record (favorite 0, counters 0) rather than OUT_OF_RANGE. The identifier is
+ * an explicit UTF-8 byte range copied during the call.
+ */
+FLYNES_API fly_result fly_catalog_user_state_get(const fly_app_t* app,
+                                                 const char* canonical_id_utf8,
+                                                 uint32_t canonical_id_utf8_length,
+                                                 fly_catalog_user_state* state_out);
+
+/*
+ * Sets favorite for canonical_id and assigns the next monotonic favorite
+ * revision. favorite must be 0 or 1. Persists through FLYCAT01.
+ */
+FLYNES_API fly_result fly_catalog_favorite_set(fly_app_t* app,
+                                               const char* canonical_id_utf8,
+                                               uint32_t canonical_id_utf8_length,
+                                               uint32_t favorite);
+
+/*
+ * Records a play against canonical_id: increments play_count and assigns the
+ * next last_played_sequence. Does not launch a session. Persists through FLYCAT01.
+ */
+FLYNES_API fly_result fly_catalog_mark_played(fly_app_t* app,
+                                              const char* canonical_id_utf8,
+                                              uint32_t canonical_id_utf8_length);
+
+FLYNES_API fly_result fly_source_status_count(const fly_app_t* app, uint64_t* count_out);
+
+/*
+ * Retrieves one source-registry row. An index outside the current registry
+ * returns FLY_RESULT_OUT_OF_RANGE without modifying status_out.
+ */
+FLYNES_API fly_result fly_source_status_get(const fly_app_t* app,
+                                            uint64_t index,
+                                            fly_source_status* status_out);
 
 #ifdef __cplusplus
 } /* extern "C" */

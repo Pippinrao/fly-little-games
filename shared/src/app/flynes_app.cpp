@@ -35,6 +35,7 @@ using flynes::app::CatalogData;
 using flynes::app::CatalogEntryData;
 using flynes::app::SourceKey;
 using flynes::app::SourceRecord;
+using flynes::app::UserRecord;
 using flynes::app::same_source;
 using flynes::catalog::BoundedZipArchive;
 using flynes::catalog::BoundedZipEntry;
@@ -981,6 +982,55 @@ void copy_string(char* destination, const std::string& value) noexcept
     destination[value.size()] = '\0';
 }
 
+fly_result validate_canonical_id(const char* bytes, std::uint32_t length) noexcept
+{
+    if (!is_valid_utf8(bytes, length, FLY_CANONICAL_ID_MAX_UTF8_BYTES))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return FLY_RESULT_OK;
+}
+
+const UserRecord* find_user(const CatalogData& catalog, std::string_view canonical_id) noexcept
+{
+    for (const UserRecord& user : catalog.users)
+    {
+        if (user.canonical_id == canonical_id)
+        {
+            return &user;
+        }
+    }
+    return nullptr;
+}
+
+UserRecord& upsert_user(CatalogData& catalog, std::string_view canonical_id)
+{
+    for (UserRecord& user : catalog.users)
+    {
+        if (user.canonical_id == canonical_id)
+        {
+            return user;
+        }
+    }
+    UserRecord created;
+    created.canonical_id.assign(canonical_id.data(), canonical_id.size());
+    catalog.users.push_back(std::move(created));
+    return catalog.users.back();
+}
+
+std::uint32_t source_freshness_summary(const CatalogData& catalog, const SourceKey& source) noexcept
+{
+    for (const CatalogEntryData& entry : catalog.entries)
+    {
+        if (same_source(entry.source, source) &&
+            entry.freshness == FLY_CATALOG_FRESHNESS_STALE)
+        {
+            return FLY_CATALOG_FRESHNESS_STALE;
+        }
+    }
+    return FLY_CATALOG_FRESHNESS_FRESH;
+}
+
 } // namespace
 
 struct fly_app_handle final
@@ -1285,4 +1335,177 @@ extern "C" fly_result fly_catalog_snapshot_get(const fly_catalog_snapshot_t* sna
 extern "C" void fly_catalog_snapshot_release(fly_catalog_snapshot_t* snapshot)
 {
     delete snapshot;
+}
+
+extern "C" fly_result fly_catalog_user_state_get(const fly_app_t* app,
+                                                 const char* canonical_id_utf8,
+                                                 std::uint32_t canonical_id_utf8_length,
+                                                 fly_catalog_user_state* state_out)
+{
+    if (app == nullptr || state_out == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (state_out->struct_size < FLY_CATALOG_USER_STATE_V1_SIZE)
+    {
+        return FLY_RESULT_STRUCT_TOO_SMALL;
+    }
+    if (state_out->version != FLY_CATALOG_USER_STATE_VERSION_1)
+    {
+        return FLY_RESULT_UNSUPPORTED_VERSION;
+    }
+    const fly_result id_validation = validate_canonical_id(canonical_id_utf8,
+                                                           canonical_id_utf8_length);
+    if (id_validation != FLY_RESULT_OK)
+    {
+        return id_validation;
+    }
+    try
+    {
+        const std::string_view canonical_id(canonical_id_utf8, canonical_id_utf8_length);
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        fly_catalog_user_state output = *state_out;
+        output.favorite = 0u;
+        output.play_count = 0u;
+        output.favorite_revision = 0u;
+        output.last_played_sequence = 0u;
+        if (const UserRecord* user = find_user(*app->state->catalog, canonical_id))
+        {
+            output.favorite = user->favorite ? 1u : 0u;
+            output.play_count = user->play_count;
+            output.favorite_revision = user->favorite_revision;
+            output.last_played_sequence = user->last_played_sequence;
+        }
+        *state_out = output;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_catalog_favorite_set(fly_app_t* app,
+                                               const char* canonical_id_utf8,
+                                               std::uint32_t canonical_id_utf8_length,
+                                               std::uint32_t favorite)
+{
+    if (app == nullptr || (favorite != 0u && favorite != 1u))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    const fly_result id_validation = validate_canonical_id(canonical_id_utf8,
+                                                           canonical_id_utf8_length);
+    if (id_validation != FLY_RESULT_OK)
+    {
+        return id_validation;
+    }
+    try
+    {
+        const std::string_view canonical_id(canonical_id_utf8, canonical_id_utf8_length);
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        auto next = std::make_shared<CatalogData>(*app->state->catalog);
+        if (next->next_favorite_revision == std::numeric_limits<std::uint64_t>::max())
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        UserRecord& user = upsert_user(*next, canonical_id);
+        user.favorite = favorite == 1u;
+        user.favorite_revision = ++next->next_favorite_revision;
+        if (!flynes::app::save_catalog(app->state->data_root, *next))
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        app->state->catalog = std::move(next);
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_catalog_mark_played(fly_app_t* app,
+                                              const char* canonical_id_utf8,
+                                              std::uint32_t canonical_id_utf8_length)
+{
+    if (app == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    const fly_result id_validation = validate_canonical_id(canonical_id_utf8,
+                                                           canonical_id_utf8_length);
+    if (id_validation != FLY_RESULT_OK)
+    {
+        return id_validation;
+    }
+    try
+    {
+        const std::string_view canonical_id(canonical_id_utf8, canonical_id_utf8_length);
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        auto next = std::make_shared<CatalogData>(*app->state->catalog);
+        if (next->next_play_sequence == std::numeric_limits<std::uint64_t>::max())
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        UserRecord& user = upsert_user(*next, canonical_id);
+        if (user.play_count == std::numeric_limits<std::uint32_t>::max())
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        ++user.play_count;
+        user.last_played_sequence = ++next->next_play_sequence;
+        if (!flynes::app::save_catalog(app->state->data_root, *next))
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        app->state->catalog = std::move(next);
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_source_status_count(const fly_app_t* app, std::uint64_t* count_out)
+{
+    if (app == nullptr || count_out == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    std::lock_guard<std::mutex> lock(app->state->mutex);
+    *count_out = static_cast<std::uint64_t>(app->state->catalog->sources.size());
+    return FLY_RESULT_OK;
+}
+
+extern "C" fly_result fly_source_status_get(const fly_app_t* app,
+                                            std::uint64_t index,
+                                            fly_source_status* status_out)
+{
+    if (app == nullptr || status_out == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (status_out->struct_size < FLY_SOURCE_STATUS_V1_SIZE)
+    {
+        return FLY_RESULT_STRUCT_TOO_SMALL;
+    }
+    if (status_out->version != FLY_SOURCE_STATUS_VERSION_1)
+    {
+        return FLY_RESULT_UNSUPPORTED_VERSION;
+    }
+    try
+    {
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        const CatalogData& catalog = *app->state->catalog;
+        if (index >= catalog.sources.size())
+        {
+            return FLY_RESULT_OUT_OF_RANGE;
+        }
+        const SourceRecord& source = catalog.sources[static_cast<std::size_t>(index)];
+        fly_source_status output = *status_out;
+        std::copy(source.key.uuid.begin(), source.key.uuid.end(), output.source_uuid);
+        output.source_scope = source.key.scope;
+        output.last_completeness = source.last_completeness;
+        output.freshness = source_freshness_summary(catalog, source.key);
+        *status_out = output;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
 }
