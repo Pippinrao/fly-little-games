@@ -1,8 +1,10 @@
 #include "flynes/product/control_layout.hpp"
 
 #include <array>
+#include <charconv>
 #include <cmath>
-#include <cstdio>
+#include <iomanip>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -104,17 +106,18 @@ ControlLayoutV2::Direction direction_from_wire_name(std::string_view name)
 
 std::string format_float(float value)
 {
-    char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%.4f", static_cast<double>(value));
-    return buffer;
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::fixed << std::setprecision(4) << static_cast<double>(value);
+    return out.str();
 }
 
 float parse_float(std::string_view value)
 {
-    std::string text(value);
-    char* end = nullptr;
-    const float parsed = std::strtof(text.c_str(), &end);
-    if (end == text.c_str() || (end != nullptr && *end != '\0') || !is_finite(parsed))
+    float parsed = 0.0f;
+    const std::from_chars_result result =
+        std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || !is_finite(parsed))
     {
         throw std::invalid_argument("non-finite");
     }

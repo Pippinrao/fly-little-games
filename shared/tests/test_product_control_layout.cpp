@@ -1,7 +1,10 @@
 #include "flynes/product/control_layout.hpp"
 
+#include <clocale>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace {
 
@@ -40,6 +43,70 @@ void test_malformed_migrates_to_recommended()
     check(ControlLayoutV2::decode_or_recommended("v1|JOY") == recommended, "v1");
     check(ControlLayoutV2::decode_or_recommended("v2|NaN") == recommended, "nan");
     check(ControlLayoutV2::decode_or_recommended("") == recommended, "empty");
+}
+
+class LocaleGuard
+{
+public:
+    explicit LocaleGuard(const char* locale_name)
+    {
+        if (const char* current = std::setlocale(LC_ALL, nullptr))
+        {
+            saved_ = current;
+        }
+        std::setlocale(LC_ALL, locale_name);
+    }
+
+    ~LocaleGuard()
+    {
+        if (!saved_.empty())
+        {
+            std::setlocale(LC_ALL, saved_.c_str());
+        }
+    }
+
+private:
+    std::string saved_;
+};
+
+const char* comma_decimal_locale()
+{
+#if defined(_WIN32)
+    return "French_France.1252";
+#else
+    return "fr_FR.UTF-8";
+#endif
+}
+
+void test_encode_decode_uses_us_decimal_under_comma_locale()
+{
+    using flynes::product::ControlLayoutV2;
+
+    LocaleGuard locale_guard(comma_decimal_locale());
+
+    const ControlLayoutV2 layout = ControlLayoutV2::recommended()
+                                       .move(ControlLayoutV2::Element::A, 0.91f, 0.55f)
+                                       .with_opacity(0.63f);
+    const std::string encoded = layout.encode();
+
+    check(encoded.find("0.6300") != std::string::npos, "opacity uses dot decimal");
+    check(encoded.find("0,6300") == std::string::npos, "opacity avoids comma decimal");
+    check(layout == ControlLayoutV2::decode(encoded), "roundtrip under comma locale");
+}
+
+void test_recommended_wire_format()
+{
+    using flynes::product::ControlLayoutV2;
+
+    static constexpr const char* kExpected =
+        "v2|0.5200|LANDSCAPE|"
+        "D_PAD,0.1000,0.7600,1.0000|"
+        "A,0.9400,0.6400,1.0000|"
+        "B,0.8700,0.8600,1.0000|"
+        "SELECT,0.0900,0.2800,1.0000|"
+        "START,0.9400,0.2800,1.0000";
+
+    check(ControlLayoutV2::recommended().encode() == kExpected, "recommended wire format");
 }
 
 void test_recommended_placements()
@@ -82,6 +149,8 @@ int main()
 {
     test_codec_roundtrip();
     test_malformed_migrates_to_recommended();
+    test_encode_decode_uses_us_decimal_under_comma_locale();
+    test_recommended_wire_format();
     test_recommended_placements();
 
     if (failures == 0)
