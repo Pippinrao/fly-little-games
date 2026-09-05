@@ -16,6 +16,7 @@ REQUIRED = (
     "ios/app/CatalogGameDetailView.swift",
     "ios/app/CatalogSourceManagementView.swift",
     "ios/app/SettingsView.swift",
+    "ios/app/ControlLayoutEditorView.swift",
     "ios/app/RunGameView.swift",
     "ios/app/run/RunSurfaceViewController.h",
     "ios/app/run/RunSurfaceViewController.mm",
@@ -64,7 +65,9 @@ def main() -> int:
     texts = {relative: read(relative) for relative in REQUIRED}
 
     app = texts["ios/app/FlyNESApp.swift"]
-    require("SettingsView" in app, "product app must present SettingsView")
+    library = texts["ios/app/CatalogLibraryView.swift"]
+    require("SettingsView" in app or "SettingsView" in library,
+            "product app must present SettingsView")
     require("CatalogLibraryView" in app, "product app must still present CatalogLibraryView")
 
     settings = texts["ios/app/SettingsView.swift"]
@@ -139,6 +142,8 @@ def main() -> int:
             "product CMake must not build the Stage-1 smoke target")
     require("flynes_app" in cmake and "flynes_runtime" in cmake,
             "product CMake must link flynes_app and flynes_runtime")
+    require("flynes_product" in cmake,
+            "product CMake must link flynes_product")
     require("flynes_add_runtime_library" in cmake,
             "product must create flynes_runtime after core is present")
     require("CODE_SIGNING_ALLOWED" in cmake and "NO" in cmake,

@@ -10,24 +10,24 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
 
     var titleKey: LocalizedStringKey {
         switch self {
-        case .recent: return "library.recent"
-        case .favorites: return "library.favorites"
-        case .all: return "library.all"
-        case .builtin: return "library.builtin"
+        case .recent: return "game_center.recent"
+        case .favorites: return "game_center.favorites"
+        case .all: return "game_center.all"
+        case .builtin: return "game_center.builtin"
         }
     }
 }
 
-/// Read-only library list of every game in a `CatalogSnapshot`.
+/// Game Center: four categories, search, landscape-first, no extra tabs.
 /// Scanning still happens through borrowed FDs in platform code; this view
 /// never holds security-scoped bookmarks.
 struct CatalogLibraryView: View {
-    let snapshot: CatalogSnapshot
+    @State private var snapshot: CatalogSnapshot
     @State private var filter: LibraryFilter = .all
     @State private var searchText = ""
 
     init(snapshot: CatalogSnapshot = CatalogSnapshot(generation: 0, games: [])) {
-        self.snapshot = snapshot
+        _snapshot = State(initialValue: snapshot)
     }
 
     var body: some View {
@@ -49,26 +49,34 @@ struct CatalogLibraryView: View {
                     }
                 }
             }
-            .navigationTitle("library.title")
+            .navigationTitle("game_center.title")
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: Text("library.search"))
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Picker("library.title", selection: $filter) {
+                    Picker("game_center.title", selection: $filter) {
                         ForEach(LibraryFilter.allCases) { item in
                             Text(item.titleKey).tag(item)
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 420)
+                    .frame(maxWidth: 520)
+                    .frame(minHeight: 44)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     NavigationLink {
                         CatalogSourceManagementView()
                     } label: {
                         Text("library.sources")
                     }
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
+                        Text("settings.title")
+                    }
                 }
             }
+            .onAppear(perform: reloadSnapshot)
         }
     }
 
@@ -90,5 +98,25 @@ struct CatalogLibraryView: View {
                 || game.displayName.localizedCaseInsensitiveContains(searchText)
                 || game.canonicalId.localizedCaseInsensitiveContains(searchText)
         }
+    }
+
+    private func reloadSnapshot() {
+        let rows = FlyNesAppBridge.sharedInstance().catalogSnapshotGames()
+        let games: [CatalogGame] = rows.compactMap { row in
+            guard let canonicalId = row["canonicalId"] as? String,
+                  let displayName = row["displayName"] as? String else {
+                return nil
+            }
+            return CatalogGame(
+                canonicalId: canonicalId,
+                displayName: displayName,
+                compatibilityState: (row["compatibilityState"] as? NSNumber)?.uint32Value ?? 0,
+                freshness: (row["freshness"] as? NSNumber)?.uint32Value ?? 0,
+                sourceScope: (row["sourceScope"] as? NSNumber)?.uint32Value ?? 0,
+                favorite: (row["favorite"] as? NSNumber)?.uint32Value ?? 0,
+                lastPlayedSequence: (row["lastPlayedSequence"] as? NSNumber)?.uint64Value ?? 0
+            )
+        }
+        snapshot = CatalogSnapshot(generation: snapshot.generation &+ 1, games: games)
     }
 }

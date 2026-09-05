@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Host checks that the iOS product shell matches the Android/Harmony contract.
+
+Runnable on Windows. Does not claim simulator or device parity.
+"""
+
+from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+SECTION_KEYS = (
+    "section.display",
+    "section.controls",
+    "section.audio",
+    "section.game_language",
+    "section.about",
+)
+
+PAUSE_IDS = ("resume", "game_center", "settings")
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def read(relative: str) -> str:
+    path = ROOT / relative
+    require(path.is_file(), f"missing required product file: {relative}")
+    return path.read_text(encoding="utf-8")
+
+
+def main() -> int:
+    overlay = read("ios/app/run/GamepadOverlayView.mm")
+    require("GamepadHitMap" in overlay or "flynes::product" in overlay,
+            "overlay must place controls via GamepadHitMap / flynes::product")
+    require("ControlLayoutV2" in overlay or "from_layout" in overlay,
+            "overlay must consume ControlLayoutV2")
+    require("from_layout" in overlay, "overlay must build the hit map from ControlLayoutV2")
+    require("Save" not in overlay and "Load" not in overlay,
+            "overlay HUD must not include Save/Load")
+    require("Control::Start" in overlay or "NES_START" in overlay,
+            "overlay START must remain a NES START control")
+    require("OPEN_PAUSE" not in overlay,
+            "overlay START must not open the pause drawer")
+
+    run = read("ios/app/run/RunSurfaceViewController.mm")
+    require("OPEN_PAUSE" in run or "Pause" in run,
+            "run surface must expose an independent pause entry")
+    require(run.count("Game Center") + run.count("game_center") >= 1,
+            "pause drawer must include Game Center")
+    require("kPauseDrawerCommands" in run,
+            "pause drawer commands must come from kPauseDrawerCommands")
+    for pause_id in PAUSE_IDS:
+        require(pause_id in run, f"pause drawer must include {pause_id}")
+    require("play_save" not in run.lower() and "Save/Load" not in run,
+            "run HUD must not include Save/Load")
+    require("UIInterfaceOrientationMaskLandscape" in run,
+            "run surface must stay landscape")
+
+    settings = read("ios/app/SettingsView.swift")
+    for key in SECTION_KEYS:
+        require(key in settings, f"settings missing {key}")
+    positions = [settings.find(key) for key in SECTION_KEYS]
+    require(all(pos >= 0 for pos in positions), "settings section keys must all be present")
+    require(positions == sorted(positions),
+            "settings sections must follow Android order: display, controls, audio, game_language, about")
+    require("ControlLayout" in settings or "controlLayout" in settings,
+            "controls section must open the layout editor")
+    require("FlyNesAppBridge" in settings,
+            "settings must bind through FlyNesAppBridge")
+
+    editor = read("ios/app/ControlLayoutEditorView.swift")
+    require("FlyNesAppBridge" in editor,
+            "layout editor must write shared persist via FlyNesAppBridge")
+    require("controlLayoutApply" in editor or "fly_control_layout_apply" in editor,
+            "layout editor must apply ControlLayoutV2 through fly_control_layout_*")
+    require("D_PAD" in editor and "SELECT" in editor and "START" in editor,
+            "layout editor must expose ControlLayoutV2 elements")
+
+    bridge = read("ios/app/bridge/FlyNesAppBridge.mm")
+    require("fly_control_layout_get" in bridge and "fly_control_layout_apply" in bridge,
+            "app bridge must call fly_control_layout_get/apply")
+
+    cmake = read("ios/app/CMakeLists.txt")
+    require("flynes_product" in cmake, "product CMake must link flynes_product")
+    require("ControlLayoutEditorView.swift" in cmake,
+            "product CMake must compile the layout editor")
+
+    library = read("ios/app/CatalogLibraryView.swift")
+    require("LibraryFilter" in library or "Category" in library,
+            "Game Center must keep four category filters")
+    for token in ("recent", "favorites", "all", "builtin"):
+        require(token in library.lower(), f"Game Center must expose {token}")
+    require("game_center" in library.lower() or "Game Center" in library,
+            "library IA must align with Game Center labels")
+    require("tabItem" not in library and "TabView" not in library,
+            "Game Center must not invent extra tabs")
+
+    app = read("ios/app/FlyNESApp.swift")
+    require("CatalogLibraryView" in app, "cold start must open Game Center")
+    require("tabItem" not in app and ".tabItem" not in app,
+            "product must not add a bottom Settings tab")
+    require("SettingsView" in library or "SettingsView" in app,
+            "Settings must remain reachable from Game Center")
+
+    bookmark_h = read("ios/app/platform/FlyNesBookmarkStore.h")
+    bookmark_mm = read("ios/app/platform/FlyNesBookmarkStore.mm")
+    bookmark = bookmark_h + "\n" + bookmark_mm
+    require("UUID" in bookmark or "uuid" in bookmark.lower(),
+            "bookmark store must remain a UUID→bookmark map")
+    require("FLYCAT01" not in bookmark,
+            "bookmark store must not store locators in FLYCAT01")
+    require("bookmark" in bookmark.lower(),
+            "bookmark store must keep security-scoped bookmarks platform-only")
+
+    print("flynes_ios_product_android_parity_contract: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except AssertionError as error:
+        print(f"flynes_ios_product_android_parity_contract: FAIL: {error}",
+              file=sys.stderr)
+        raise SystemExit(1)

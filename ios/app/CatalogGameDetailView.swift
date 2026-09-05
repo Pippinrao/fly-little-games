@@ -16,7 +16,7 @@ struct CatalogGameDetailView: View {
             }
             Section {
                 NavigationLink {
-                    RunGameView(canonicalId: game.canonicalId)
+                    RunGameContainer(canonicalId: game.canonicalId)
                 } label: {
                     Text("library.play")
                 }

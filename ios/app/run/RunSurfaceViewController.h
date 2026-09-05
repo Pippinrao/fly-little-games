@@ -8,6 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface RunSurfaceViewController : UIViewController
 
 @property(nonatomic, copy) NSString *canonicalId;
+@property(nonatomic, copy, nullable) void (^onPauseCommand)(NSString *commandId);
 
 @end
 

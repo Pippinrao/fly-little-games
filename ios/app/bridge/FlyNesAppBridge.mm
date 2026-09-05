@@ -209,7 +209,24 @@ float float_value(NSDictionary<NSString *, id> *settings, NSString *key, float f
     current.direction_mode = uint32_value(settings, @"direction_mode", current.direction_mode);
     current.control_opacity = float_value(settings, @"control_opacity", current.control_opacity);
     current.haptic_level = uint32_value(settings, @"haptic_level", current.haptic_level);
+    current.distinct_ab_haptics =
+        uint32_value(settings, @"distinct_ab_haptics", current.distinct_ab_haptics);
+    current.adaptive_protection =
+        uint32_value(settings, @"adaptive_protection", current.adaptive_protection);
     current.audio_enabled = uint32_value(settings, @"audio_enabled", current.audio_enabled);
+    current.audio_focus_policy =
+        uint32_value(settings, @"audio_focus_policy", current.audio_focus_policy);
+    current.autosave_enabled = uint32_value(settings, @"autosave_enabled", current.autosave_enabled);
+    id locale_value = settings[@"locale_tag"];
+    if ([locale_value isKindOfClass:[NSString class]])
+    {
+        const char *locale_utf8 = [locale_value UTF8String];
+        if (locale_utf8 != nullptr)
+        {
+            std::strncpy(locale, locale_utf8, sizeof(locale) - 1);
+            locale[sizeof(locale) - 1] = '\0';
+        }
+    }
     current.locale_tag_utf8_length = static_cast<uint32_t>(std::strlen(locale));
     current.last_played_id_utf8_length = static_cast<uint32_t>(std::strlen(last_played));
 
@@ -336,6 +353,52 @@ float float_value(NSDictionary<NSString *, id> *settings, NSString *key, float f
     {
         if (error != nullptr)
             *error = flynes_error(result, @"fly_scan_commit failed");
+        return NO;
+    }
+    return YES;
+}
+
+- (NSString *)controlLayoutGet
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    NSError *create_error = nil;
+    if (app_ == nullptr && ![self ensureAppLocked:&create_error])
+        return @"";
+
+    std::uint32_t required = 0;
+    const fly_result sized = fly_control_layout_get(app_, nullptr, 0, &required);
+    if (sized != FLY_RESULT_OK && sized != FLY_RESULT_BUFFER_TOO_SMALL)
+        return @"";
+
+    std::vector<char> bytes(required == 0 ? 1u : required, '\0');
+    if (fly_control_layout_get(app_, bytes.data(), static_cast<std::uint32_t>(bytes.size()),
+                               &required)
+        != FLY_RESULT_OK)
+        return @"";
+    if (required == 0)
+        return @"";
+    const NSUInteger length = static_cast<NSUInteger>(required - 1u);
+    NSString *utf8 = [[NSString alloc] initWithBytes:bytes.data()
+                                              length:length
+                                            encoding:NSUTF8StringEncoding];
+    return utf8 != nil ? utf8 : @"";
+}
+
+- (BOOL)controlLayoutApply:(NSString *)utf8 error:(NSError **)error
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (app_ == nullptr && ![self ensureAppLocked:error])
+        return NO;
+
+    const char *bytes = utf8.UTF8String;
+    if (bytes == nullptr)
+        bytes = "";
+    const fly_result result =
+        fly_control_layout_apply(app_, bytes, static_cast<std::uint32_t>(std::strlen(bytes)));
+    if (result != FLY_RESULT_OK)
+    {
+        if (error != nullptr)
+            *error = flynes_error(result, @"fly_control_layout_apply failed");
         return NO;
     }
     return YES;

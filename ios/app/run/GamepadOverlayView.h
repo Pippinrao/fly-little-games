@@ -17,7 +17,9 @@ typedef NS_ENUM(NSInteger, FlyNesJoystickMode) {
 
 @property(nonatomic) float controlOpacity;
 @property(nonatomic) FlyNesJoystickMode joystickMode;
+@property(nonatomic) float deadZone;
 @property(nonatomic) uint32_t hapticLevel;
+@property(nonatomic, copy) NSString *layoutUtf8;
 @property(nonatomic, copy, nullable) void (^buttonsChanged)(uint32_t buttons);
 
 @end

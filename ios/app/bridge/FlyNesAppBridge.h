@@ -19,6 +19,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)applySettings:(NSDictionary<NSString *, id> *)settings
                 error:(NSError * _Nullable * _Nullable)error;
 
+- (NSString *)controlLayoutGet;
+- (BOOL)controlLayoutApply:(NSString *)utf8
+                     error:(NSError * _Nullable * _Nullable)error;
+
 - (NSArray<NSDictionary<NSString *, id> *> *)catalogSnapshotGames;
 
 - (BOOL)scanBorrowedFd:(int)borrowedFd

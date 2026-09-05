@@ -46,6 +46,7 @@ set(FLYNES_PRODUCT_SWIFT
     CatalogGameDetailView.swift
     CatalogSourceManagementView.swift
     SettingsView.swift
+    ControlLayoutEditorView.swift
     RunGameView.swift
     diagnostics/DiagnosticExport.swift
 )
@@ -109,6 +110,7 @@ target_compile_options(FlyNES PRIVATE
 target_link_libraries(FlyNES PRIVATE
     flynes_app
     flynes_runtime
+    flynes_product
     nes_abi
     "-framework Foundation"
     "-framework UIKit"
