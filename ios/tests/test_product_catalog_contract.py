@@ -59,6 +59,12 @@ def main() -> int:
             "library view must list catalog games")
     require("catalog snapshot" in library.lower() or "CatalogSnapshot" in library,
             "library view must be driven by a catalog snapshot")
+    lowered = library.lower()
+    for token in ("recent", "favorite", "builtin", "search"):
+        require(token in lowered, f"library view must expose a {token} placeholder")
+    require("CatalogGameDetailView" in library, "library view must open a detail placeholder")
+    require("CatalogSourceManagementView" in library,
+            "library view must expose a source-management placeholder")
 
     game = sources["ios/app/CatalogGame.swift"]
     require("canonicalId" in game, "game model must carry canonicalId")

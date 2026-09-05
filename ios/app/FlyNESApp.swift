@@ -4,7 +4,16 @@ import SwiftUI
 struct FlyNESApp: App {
     var body: some Scene {
         WindowGroup {
-            CatalogLibraryView()
+            TabView {
+                CatalogLibraryView()
+                    .tabItem {
+                        Label("library.title", systemImage: "square.stack")
+                    }
+                SettingsView()
+                    .tabItem {
+                        Label("settings.title", systemImage: "gearshape")
+                    }
+            }
         }
     }
 }

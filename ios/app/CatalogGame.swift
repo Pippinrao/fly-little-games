@@ -9,6 +9,9 @@ struct CatalogGame: Identifiable, Equatable, Hashable {
     let displayName: String
     let compatibilityState: UInt32
     let freshness: UInt32
+    let sourceScope: UInt32
+    let favorite: UInt32
+    let lastPlayedSequence: UInt64
 }
 
 /// Immutable generation published by `fly_catalog_snapshot`.

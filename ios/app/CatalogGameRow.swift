@@ -5,8 +5,15 @@ struct CatalogGameRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(game.displayName)
-                .font(.body)
+            HStack {
+                Text(game.displayName)
+                    .font(.body)
+                if game.favorite != 0 {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.yellow)
+                        .accessibilityHidden(true)
+                }
+            }
             Text(game.canonicalId)
                 .font(.caption)
                 .foregroundStyle(.secondary)
