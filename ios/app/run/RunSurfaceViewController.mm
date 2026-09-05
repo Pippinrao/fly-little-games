@@ -117,6 +117,13 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 
     runtime_ = [[FlyNesRuntimeBridge alloc] init];
     [runtime_ createRuntime:nil];
+    NSData *rom = nil;
+    if ([self canonicalIdMapsToBuiltinFromBelow])
+        rom = [self bundledFromBelowRom];
+    if (rom.length == 0)
+        rom = [self bundledFromBelowRom];
+    if (rom.length > 0)
+        [runtime_ loadRom:rom error:nil];
     [self restoreAutosave];
     [self reloadProductSettings];
 }
@@ -149,6 +156,23 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     if (dead != nil)
         overlay_.deadZone = dead.floatValue;
     overlay_.layoutUtf8 = FlyNesAppBridge.sharedInstance.controlLayoutGet;
+}
+
+- (NSData *)bundledFromBelowRom
+{
+    NSString *path = [NSBundle.mainBundle pathForResource:@"from_below" ofType:@"nes"];
+    if (path == nil)
+        return nil;
+    return [NSData dataWithContentsOfFile:path];
+}
+
+- (BOOL)canonicalIdMapsToBuiltinFromBelow
+{
+    NSString *cid = self.canonicalId.lowercaseString;
+    if (cid.length == 0)
+        return YES;
+    return [cid isEqualToString:@"builtin"] || [cid containsString:@"from_below"]
+        || [cid containsString:@"from-below"];
 }
 
 - (NSURL *)autosaveURL

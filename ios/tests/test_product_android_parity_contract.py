@@ -106,6 +106,30 @@ def main() -> int:
     view_load_body = run[view_load_at:view_will_at if view_will_at > view_load_at else view_load_at + 1600]
     require("loadCheckpoint" in view_load_body or "restoreAutosave" in view_load_body,
             "next run must loadCheckpoint from autosave.nst before stepping")
+    load_rom_at = view_load_body.find("loadRom")
+    restore_at = view_load_body.find("restoreAutosave")
+    checkpoint_at = view_load_body.find("loadCheckpoint")
+    require(load_rom_at >= 0,
+            "run start must call loadRom before restoreAutosave / loadCheckpoint")
+    first_restore = restore_at if restore_at >= 0 else checkpoint_at
+    if restore_at >= 0 and checkpoint_at >= 0:
+        first_restore = min(restore_at, checkpoint_at)
+    require(first_restore >= 0, "run start must restore autosave after loadRom")
+    require(load_rom_at < first_restore,
+            "loadRom must precede restoreAutosave / loadCheckpoint")
+    require("from_below" in run,
+            "run start must load the bundled From Below fixture")
+    require("canonicalId" in run and "builtin" in run,
+            "prefer canonical id when it maps to the From Below builtin")
+    cmake = read("ios/app/CMakeLists.txt")
+    require("from_below.nes" in cmake,
+            "product CMake must package from_below.nes into the app bundle")
+    require("LICENSE-from-below" in cmake,
+            "product CMake must package the From Below LICENSE")
+    require("MACOSX_PACKAGE_LOCATION" in cmake and "Resources" in cmake,
+            "from_below.nes must be packaged as a bundle resource")
+    require((ROOT / "harmony/entry/src/main/resources/rawfile/from_below.nes").is_file(),
+            "Harmony From Below fixture must remain the legal bundled ROM")
     strings = read("ios/app/en.lproj/Localizable.strings")
     require("pause.checkpoint_failed" in strings,
             "pause checkpoint failure must be localized")

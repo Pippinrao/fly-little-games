@@ -72,6 +72,11 @@ set(FLYNES_PRODUCT_METAL
     metal/shaders/ScaleFxPass4.metal
 )
 
+set(FLYNES_IOS_ROM_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../harmony/entry/src/main/resources/rawfile/from_below.nes")
+set(FLYNES_IOS_ROM_LICENSE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../harmony/entry/src/main/resources/rawfile/LICENSE-from-below.txt")
+
 add_executable(FlyNES MACOSX_BUNDLE
     ${FLYNES_PRODUCT_SWIFT}
     ${FLYNES_PRODUCT_OBJCXX}
@@ -80,6 +85,8 @@ add_executable(FlyNES MACOSX_BUNDLE
     metal/FALLBACK.md
     en.lproj/Localizable.strings
     zh-Hans.lproj/Localizable.strings
+    "${FLYNES_IOS_ROM_FIXTURE}"
+    "${FLYNES_IOS_ROM_LICENSE}"
 )
 set_source_files_properties(
     en.lproj/Localizable.strings
@@ -88,6 +95,11 @@ set_source_files_properties(
 set_source_files_properties(
     zh-Hans.lproj/Localizable.strings
     PROPERTIES MACOSX_PACKAGE_LOCATION "zh-Hans.lproj"
+)
+set_source_files_properties(
+    "${FLYNES_IOS_ROM_FIXTURE}"
+    "${FLYNES_IOS_ROM_LICENSE}"
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
 )
 set_source_files_properties(${FLYNES_PRODUCT_SWIFT} PROPERTIES
     XCODE_EXPLICIT_FILE_TYPE sourcecode.swift
