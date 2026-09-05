@@ -187,6 +187,20 @@ endfunction()
 
 flynes_enable_strict_warnings(flynes_app)
 
+add_library(flynes_session_codec STATIC
+    src/session/wire/sha256.cpp
+    src/session/wire/session_codec.cpp
+)
+target_include_directories(flynes_session_codec PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+)
+target_compile_features(flynes_session_codec PRIVATE cxx_std_17)
+set_target_properties(flynes_session_codec PROPERTIES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE YES
+)
+flynes_enable_strict_warnings(flynes_session_codec)
+
 function(flynes_add_runtime_library)
     if(TARGET flynes_runtime)
         return()
@@ -619,6 +633,18 @@ if(FLYNES_BUILD_TESTS)
     )
     add_test(NAME flynes_session_schema_registry
         COMMAND flynes_session_schema_registry_test)
+
+    add_executable(flynes_session_codec_test
+        tests/test_session_codec.cpp
+    )
+    target_link_libraries(flynes_session_codec_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_session_codec_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_codec_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_codec_test)
+    target_compile_definitions(flynes_session_codec_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_codec COMMAND flynes_session_codec_test)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library

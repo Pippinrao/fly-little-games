@@ -9,3 +9,11 @@ shared/tests/fixtures/catalog/identity/**/*.bin binary
 shared/tests/fixtures/catalog/identity/v1/*.tsv text eol=lf
 shared/tests/fixtures/catalog/unsupported_payload/**/*.bin binary
 shared/tests/fixtures/catalog/unsupported_payload/v1/*.tsv text eol=lf
+shared/schema/flynes_session_v1.schema text eol=lf
+shared/schema/schema_registry_hash.txt text eol=lf
+shared/schema/schema_registry_hash.h text eol=lf
+app/src/test/resources/flynes_session_v1/** text eol=lf
+ios/abi/flynes_session_v1/** text eol=lf
+harmony/schema/flynes_session_v1/** text eol=lf
+shared/schema/golden/**/*.bin binary
+shared/schema/golden/**/*.json text eol=lf
