@@ -33,6 +33,9 @@ add_library(nescore SHARED
     video/video_presenter_jni.cpp)
 target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
 target_link_libraries(nescore nes_abi nestopia video_algorithms flynes_app)
+if(TARGET flynes_runtime)
+    target_link_libraries(nescore flynes_runtime)
+endif()
 
 # Safety net: zlib is required by NstZlib.cpp (compressed save states).
 # It propagates PUBLIC through nestopia -> nes_abi, but link it explicitly
