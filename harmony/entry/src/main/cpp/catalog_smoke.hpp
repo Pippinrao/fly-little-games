@@ -9,6 +9,8 @@ struct CatalogSmokeResult final
 {
     std::string generation;
     std::string count;
+    std::string source_count;
+    std::string locale_tag;
 };
 
 [[nodiscard]] CatalogSmokeResult run_catalog_smoke(std::string_view data_root,

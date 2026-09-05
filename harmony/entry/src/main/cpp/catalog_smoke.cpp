@@ -99,6 +99,20 @@ CatalogSmokeResult run_catalog_smoke(std::string_view data_root, std::string_vie
     }
     AppHandle app(raw_app);
 
+    std::uint64_t source_count = 0;
+    require_ok(fly_source_status_count(app.get(), &source_count), "fly_source_status_count");
+
+    std::array<char, FLY_SETTINGS_LOCALE_MAX_UTF8_BYTES + 1u> locale{};
+    std::array<char, FLY_CANONICAL_ID_MAX_UTF8_BYTES + 1u> last_played{};
+    fly_settings_snapshot settings{};
+    settings.struct_size = FLY_SETTINGS_SNAPSHOT_V1_SIZE;
+    settings.version = FLY_SETTINGS_SNAPSHOT_VERSION_1;
+    settings.locale_tag_utf8 = locale.data();
+    settings.locale_tag_capacity = static_cast<std::uint32_t>(locale.size());
+    settings.last_played_id_utf8 = last_played.data();
+    settings.last_played_id_capacity = static_cast<std::uint32_t>(last_played.size());
+    require_ok(fly_settings_get(app.get(), &settings), "fly_settings_get");
+
     fly_catalog_snapshot_t* raw_snapshot = nullptr;
     require_ok(fly_catalog_snapshot(app.get(), &raw_snapshot), "fly_catalog_snapshot");
     if (raw_snapshot == nullptr)
@@ -118,7 +132,12 @@ CatalogSmokeResult run_catalog_smoke(std::string_view data_root, std::string_vie
     require_ok(fly_catalog_snapshot_count(snapshot.get(), &count),
                "fly_catalog_snapshot_count");
 
-    CatalogSmokeResult result{decimal_string(generation), decimal_string(count)};
+    CatalogSmokeResult result{
+        decimal_string(generation),
+        decimal_string(count),
+        decimal_string(source_count),
+        std::string(locale.data()),
+    };
     snapshot.reset();
     return result;
 }

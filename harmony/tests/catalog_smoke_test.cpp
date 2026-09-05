@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -40,13 +41,45 @@ std::string capture_error(Function&& function)
     return {};
 }
 
+std::filesystem::path make_temp_root(const char* prefix)
+{
+    static unsigned int sequence = 0u;
+    for (unsigned int attempt = 0u; attempt < 100u; ++attempt)
+    {
+        std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                     (std::string(prefix) + std::to_string(++sequence));
+        std::error_code error;
+        if (std::filesystem::create_directory(path, error))
+        {
+            return path;
+        }
+    }
+    return {};
+}
+
 void test_lifecycle_smoke_returns_decimal_snapshot_values()
 {
+    const std::filesystem::path data = make_temp_root("flynes-harmony-data-");
+    const std::filesystem::path cache = make_temp_root("flynes-harmony-cache-");
+    expect(!data.empty() && !cache.empty(), "lifecycle smoke needs isolated roots");
+    if (data.empty() || cache.empty())
+    {
+        return;
+    }
+
+    const std::string data_root = data.u8string();
+    const std::string cache_root = cache.u8string();
     const flynes::harmony::CatalogSmokeResult result =
-        flynes::harmony::run_catalog_smoke("data", "cache");
+        flynes::harmony::run_catalog_smoke(data_root, cache_root);
 
     expect(result.generation == "0", "generation must be returned as a decimal string");
     expect(result.count == "0", "count must be returned as a decimal string");
+    expect(result.source_count == "0", "empty catalog must report zero source-status rows");
+    expect(result.locale_tag == "system", "settings snapshot must expose the default locale tag");
+
+    std::error_code ignored;
+    std::filesystem::remove_all(data, ignored);
+    std::filesystem::remove_all(cache, ignored);
 }
 
 void test_empty_root_is_rejected_before_create()
