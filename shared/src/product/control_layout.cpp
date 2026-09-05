@@ -1,12 +1,12 @@
 #include "flynes/product/control_layout.hpp"
 
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <iomanip>
 #include <locale>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -114,10 +114,11 @@ std::string format_float(float value)
 
 float parse_float(std::string_view value)
 {
+    std::istringstream in{std::string(value)};
+    in.imbue(std::locale::classic());
     float parsed = 0.0f;
-    const std::from_chars_result result =
-        std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || !is_finite(parsed))
+    in >> parsed;
+    if (!in || in.peek() != std::char_traits<char>::eof() || !is_finite(parsed))
     {
         throw std::invalid_argument("non-finite");
     }

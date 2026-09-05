@@ -2,19 +2,87 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "FlyNES app/catalog validation module"
+      "value": "FlyNES HarmonyOS play module"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "Runs the FlyNES app/catalog lifecycle smoke"
+      "value": "Runs the FlyNES HarmonyOS play loop"
     },
     {
       "name": "EntryAbility_label",
-      "value": "FlyNES Validation"
+      "value": "FlyNES"
     },
     {
       "name": "validation_title",
       "value": "FlyNES Catalog Smoke"
+    },
+    {
+      "name": "play_title",
+      "value": "FlyNES"
+    },
+    {
+      "name": "play_save",
+      "value": "Save"
+    },
+    {
+      "name": "play_load",
+      "value": "Load"
+    },
+    {
+      "name": "play_screen_alt",
+      "value": "NES picture"
+    },
+    {
+      "name": "game_center_title",
+      "value": "GAME CENTER"
+    },
+    {
+      "name": "game_center_recent",
+      "value": "Recent"
+    },
+    {
+      "name": "game_center_favorites",
+      "value": "Favorites"
+    },
+    {
+      "name": "game_center_all",
+      "value": "All"
+    },
+    {
+      "name": "game_center_builtin",
+      "value": "Built-in"
+    },
+    {
+      "name": "game_center_launch",
+      "value": "Start game"
+    },
+    {
+      "name": "game_center_sources",
+      "value": "Game sources"
+    },
+    {
+      "name": "game_center_settings",
+      "value": "Settings"
+    },
+    {
+      "name": "game_center_search",
+      "value": "Search games…"
+    },
+    {
+      "name": "game_center_empty_category",
+      "value": "No games in this category"
+    },
+    {
+      "name": "game_center_empty_search",
+      "value": "No games match your search"
+    },
+    {
+      "name": "game_center_no_external_sources",
+      "value": "Built-in game ready · add a folder for your own games"
+    },
+    {
+      "name": "game_center_no_external_sources_compact",
+      "value": "Built-in ready · add a folder"
     }
   ]
 }

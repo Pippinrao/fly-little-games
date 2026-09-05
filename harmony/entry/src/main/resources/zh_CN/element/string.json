@@ -1,0 +1,56 @@
+{
+  "string": [
+    {
+      "name": "game_center_title",
+      "value": "游戏中心"
+    },
+    {
+      "name": "game_center_recent",
+      "value": "最近"
+    },
+    {
+      "name": "game_center_favorites",
+      "value": "收藏"
+    },
+    {
+      "name": "game_center_all",
+      "value": "全部"
+    },
+    {
+      "name": "game_center_builtin",
+      "value": "内置"
+    },
+    {
+      "name": "game_center_launch",
+      "value": "开始游戏"
+    },
+    {
+      "name": "game_center_sources",
+      "value": "游戏来源"
+    },
+    {
+      "name": "game_center_settings",
+      "value": "设置"
+    },
+    {
+      "name": "game_center_search",
+      "value": "搜索游戏…"
+    },
+    {
+      "name": "game_center_empty_category",
+      "value": "此分类中没有游戏"
+    },
+    {
+      "name": "game_center_empty_search",
+      "value": "没有匹配的游戏"
+    },
+    {
+      "name": "game_center_no_external_sources",
+      "value": "内置游戏已就绪 · 添加目录即可浏览自己的游戏"
+    },
+    {
+      "name": "game_center_no_external_sources_compact",
+      "value": "内置游戏已就绪 · 可添加目录"
+    }
+  ]
+}

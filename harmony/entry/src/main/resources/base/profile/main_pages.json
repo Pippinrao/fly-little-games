@@ -1,5 +1,9 @@
 {
   "src": [
+    "pages/GameCenter",
+    "pages/RunGame",
+    "pages/Sources",
+    "pages/Settings",
     "pages/Index"
   ]
 }

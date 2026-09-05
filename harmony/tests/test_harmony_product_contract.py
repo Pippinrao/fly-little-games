@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""File gates for Harmony Game Center as the default product entry."""
+
+from pathlib import Path
+
+text = Path("harmony/entry/src/main/ets/entryability/EntryAbility.ets").read_text(encoding="utf-8")
+assert "pages/GameCenter" in text
+assert "pages/Index" not in text or "GameCenter" in text
+pages = Path("harmony/entry/src/main/resources/base/profile/main_pages.json").read_text(encoding="utf-8")
+assert "pages/GameCenter" in pages
+gc = Path("harmony/entry/src/main/ets/pages/GameCenter.ets").read_text(encoding="utf-8")
+strings = Path("harmony/entry/src/main/resources/base/element/string.json").read_text(encoding="utf-8")
+for key in ("game_center_recent", "game_center_favorites", "game_center_all",
+            "game_center_builtin", "game_center_launch", "game_center_sources"):
+    assert key in strings
+    assert key in gc or f"$r('app.string.{key}')" in gc.replace('"', "'")
+assert "gameCenterFilter" in gc
+assert "play_save" not in gc
+
+print("flynes_harmony_product_contract: PASS")
