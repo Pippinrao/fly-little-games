@@ -17,4 +17,12 @@ for key in ("game_center_recent", "game_center_favorites", "game_center_all",
 assert "gameCenterFilter" in gc
 assert "play_save" not in gc
 
+run = Path("harmony/entry/src/main/ets/pages/RunGame.ets").read_text(encoding="utf-8")
+overlay = Path("harmony/entry/src/main/ets/overlay/GamepadOverlay.ets").read_text(encoding="utf-8")
+assert "GamepadOverlay" in run
+assert "play_save" not in run.lower()
+assert "Save" not in overlay
+assert "pauseCommands" in run or "PauseCommand" in run
+assert "hitMapFromLayout" in overlay or "HitMap" in overlay
+
 print("flynes_harmony_product_contract: PASS")

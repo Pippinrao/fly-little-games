@@ -51,6 +51,30 @@
     {
       "name": "game_center_no_external_sources_compact",
       "value": "内置游戏已就绪 · 可添加目录"
+    },
+    {
+      "name": "pause_eyebrow",
+      "value": "游戏已暂停"
+    },
+    {
+      "name": "pause_title",
+      "value": "游戏暂停"
+    },
+    {
+      "name": "pause_resume",
+      "value": "继续"
+    },
+    {
+      "name": "pause_game_center",
+      "value": "游戏中心"
+    },
+    {
+      "name": "pause_settings",
+      "value": "设置"
+    },
+    {
+      "name": "pause_checkpoint_failed",
+      "value": "进度未能保存"
     }
   ]
 }

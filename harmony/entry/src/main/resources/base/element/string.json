@@ -83,6 +83,30 @@
     {
       "name": "game_center_no_external_sources_compact",
       "value": "Built-in ready · add a folder"
+    },
+    {
+      "name": "pause_eyebrow",
+      "value": "GAME PAUSED"
+    },
+    {
+      "name": "pause_title",
+      "value": "Game paused"
+    },
+    {
+      "name": "pause_resume",
+      "value": "Resume"
+    },
+    {
+      "name": "pause_game_center",
+      "value": "Game Center"
+    },
+    {
+      "name": "pause_settings",
+      "value": "Settings"
+    },
+    {
+      "name": "pause_checkpoint_failed",
+      "value": "Progress was not stored"
     }
   ]
 }
