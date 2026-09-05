@@ -58,3 +58,4 @@
 "pause.game_center" = "游戏中心";
 "pause.settings" = "设置";
 "pause.checkpoint_failed" = "进度未能保存";
+"library.rom_open_failed" = "无法打开该游戏。";

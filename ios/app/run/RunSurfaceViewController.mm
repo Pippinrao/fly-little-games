@@ -53,6 +53,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     BOOL drawerOpen_;
     BOOL checkpointFailed_;
     BOOL autosaveRestored_;
+    BOOL romReady_;
 }
 
 - (void)viewDidLoad
@@ -64,6 +65,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     drawerOpen_ = NO;
     checkpointFailed_ = NO;
     autosaveRestored_ = NO;
+    romReady_ = NO;
 
     metalHost_ = [[UIView alloc] initWithFrame:self.view.bounds];
     metalHost_.translatesAutoresizingMaskIntoConstraints = NO;
@@ -122,9 +124,13 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
         rom = [self bundledFromBelowRom];
     if (rom.length == 0)
         rom = [self bundledFromBelowRom];
+    NSError *romError = nil;
     if (rom.length > 0)
-        [runtime_ loadRom:rom error:nil];
-    [self restoreAutosave];
+        romReady_ = [runtime_ loadRom:rom error:&romError];
+    if (romReady_)
+        [self restoreAutosave];
+    else
+        [self surfaceRomOpenFailure];
     [self reloadProductSettings];
 }
 
@@ -213,6 +219,8 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 
 - (void)restoreAutosave
 {
+    if (!romReady_)
+        return;
     NSDictionary<NSString *, id> *snapshot = FlyNesAppBridge.sharedInstance.settingsGet;
     NSNumber *enabled = snapshot[@"autosave_enabled"];
     if (enabled != nil && enabled.unsignedIntValue == 0)
@@ -226,9 +234,31 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     [runtime_ loadCheckpoint:blob error:nil];
 }
 
+- (void)surfaceRomOpenFailure
+{
+    NSString *message = NSLocalizedString(@"library.rom_open_failed", nil);
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:nil
+                                            message:message
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    alert.view.accessibilityIdentifier = @"library_rom_open_failed";
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:NSLocalizedString(@"pause.game_center", nil)
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction *_Nonnull action) {
+                                              RunSurfaceViewController *strong = weakSelf;
+                                              if (strong == nil || strong.onPauseCommand == nil)
+                                                  return;
+                                              strong.onPauseCommand(@"game_center");
+                                            }]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self presentViewController:alert animated:YES completion:nil];
+    });
+}
+
 - (void)applyOverlayButtons:(uint32_t)buttons
 {
-    if (paused_ || drawerOpen_)
+    if (!romReady_ || paused_ || drawerOpen_)
         return;
     if (!autosaveRestored_)
     {

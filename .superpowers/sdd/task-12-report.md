@@ -279,3 +279,148 @@ Exit codes: 0 / 0.
 - `FlyNesRuntimeBridge.saveCheckpoint` wraps the two-pass `fly_runtime_save_checkpoint` sizing call (same pattern as Harmony `PlaySession::save_checkpoint`).
 - `RunSurfaceViewController.openPauseDrawer` steps with buttons 0, saves checkpoint, and adds a drawer label with `accessibilityIdentifier` `pause_checkpoint_failed` when save fails.
 - Localized strings: `pause.checkpoint_failed` (en/zh-Hans). No HUD Save/Load.
+
+Commit: `5cf4f15` `fix(ios): auto-checkpoint when opening the pause drawer`
+
+## Review fix (Important, Task 12 — persist pause autosave)
+
+`saveCheckpoint` now returns `NSData` instead of dropping a local `std::vector`. Pause writes `Documents/saves/<canonicalId>/autosave.nst` atomically. Next run of that ROM calls `loadCheckpoint` (`fly_runtime_load_checkpoint`) before stepping when `autosave_enabled` is on (default). Persist failure still shows `pause_checkpoint_failed`; Resume and Game Center remain allowed. No HUD Save/Load.
+
+### RED
+
+Command (repo root, gates added before source fixes):
+
+```powershell
+python ios/tests/test_product_android_parity_contract.py
+```
+
+Output:
+
+```text
+flynes_ios_product_android_parity_contract: FAIL: saveCheckpoint must return NSData, not discard the checkpoint blob
+EXIT:1
+```
+
+Exit code: 1. Failed because `saveCheckpoint` was `BOOL` and discarded the checkpoint vector. Additional gates (not reached on this run) require `loadCheckpoint`, `autosave.nst`, and an atomic write path.
+
+### GREEN
+
+Command (repo root):
+
+```powershell
+python ios/tests/test_product_android_parity_contract.py
+python ios/tests/test_product_shell_contract.py
+```
+
+Output:
+
+```text
+flynes_ios_product_android_parity_contract: PASS
+flynes_ios_product_shell_contract: PASS
+```
+
+Exit codes: 0 / 0.
+
+### Code
+
+- `FlyNesRuntimeBridge.saveCheckpoint` returns `NSData` from `fly_runtime_save_checkpoint`. `loadCheckpoint` wraps `fly_runtime_load_checkpoint`. Not exported as overlay HUD.
+- `RunSurfaceViewController` persists the blob to per-ROM `saves/<canonicalId>/autosave.nst` with `NSDataWritingAtomic`. Failed persist sets `pause_checkpoint_failed`.
+- `restoreAutosave` runs from `viewDidLoad` and again before the first step; skipped when `autosave_enabled` is 0.
+- No HUD Save/Load. No simulator/device parity claim. Restore still needs a loaded ROM (`loadRom` is not yet called on the run surface).
+
+Commit: `91fda40` `fix(ios): persist pause autosave across Game Center teardown`
+
+## Review fix (Important, Task 12 — load ROM before autosave)
+
+Run start now loads bundled From Below (`harmony/.../rawfile/from_below.nes` + LICENSE, packaged as app Resources) via `loadRom` before `restoreAutosave` / `loadCheckpoint`. Canonical id maps to that builtin when it is `builtin` / `from_below` / `from-below`; otherwise From Below still loads as the Windows-host product minimum (no FilePicker). Pause persist stays `Documents/saves/<canonicalId>/autosave.nst`. No HUD Save/Load. No simulator/device parity claim.
+
+### RED
+
+Command (repo root, gates added before source fixes):
+
+```powershell
+python ios/tests/test_product_android_parity_contract.py
+python ios/tests/test_product_shell_contract.py
+```
+
+Output:
+
+```text
+flynes_ios_product_android_parity_contract: FAIL: run start must call loadRom before restoreAutosave / loadCheckpoint
+EXIT:1
+flynes_ios_product_shell_contract: FAIL: product CMake must package the From Below NES fixture
+SHELL_EXIT:1
+```
+
+Exit codes: 1 / 1. Failed because `viewDidLoad` called `restoreAutosave` after `createRuntime` with no `loadRom`, and product CMake did not package `from_below.nes`.
+
+### GREEN
+
+Command (repo root):
+
+```powershell
+python ios/tests/test_product_android_parity_contract.py
+python ios/tests/test_product_shell_contract.py
+```
+
+Output:
+
+```text
+flynes_ios_product_android_parity_contract: PASS
+flynes_ios_product_shell_contract: PASS
+```
+
+Exit codes: 0 / 0.
+
+### Code
+
+- `ios/app/CMakeLists.txt` packages Harmony `from_below.nes` and `LICENSE-from-below.txt` into bundle Resources.
+- `RunSurfaceViewController.viewDidLoad`: `createRuntime` → `loadRom` (bundled From Below) → `restoreAutosave`.
+- Pause still writes `Documents/saves/<canonicalId>/autosave.nst`. No HUD Save/Load. No simulator/device parity claim.
+
+Commit: `c921f41` `fix(ios): load builtin ROM before restoring pause autosave`
+
+## Review fix (Important, Task 12 — checkpoint timeline, builtin From Below, ROM-open gate)
+
+`loadCheckpoint` now copies latest-frame metadata after `fly_runtime_load_checkpoint` and sets `frame_index_ = meta.frame_index + 1` (Harmony `PlaySession::load_checkpoint`). Game Center injects canonicalId `builtin` / From Below / `from_below.nes` with `FLY_COMPATIBILITY_PLAYABLE` before `GameCenterState::filtered` when the snapshot omits it. `restoreAutosave` runs only after `loadRom` succeeds (`romReady_`); ROM open failure shows localized `library.rom_open_failed` and returns to Game Center. No HUD Save/Load. No device parity claim.
+
+### RED
+
+Command (repo root, gates added before source fixes):
+
+```powershell
+python ios/tests/test_product_android_parity_contract.py
+```
+
+Output:
+
+```text
+flynes_ios_product_android_parity_contract: FAIL: loadCheckpoint must copy latest frame metadata after fly_runtime_load_checkpoint
+EXIT:1
+```
+
+Exit code: 1. Failed because `loadCheckpoint` returned after `fly_runtime_load_checkpoint` without `fly_runtime_copy_latest_frame` or `frame_index_` resync. Additional gates (not reached on this run) require builtin From Below injection before `filtered(` and `restoreAutosave` gated on successful `loadRom` (not `error:nil`).
+
+### GREEN
+
+Command (repo root):
+
+```powershell
+python ios/tests/test_product_android_parity_contract.py
+python ios/tests/test_product_shell_contract.py
+```
+
+Output:
+
+```text
+flynes_ios_product_android_parity_contract: PASS
+flynes_ios_product_shell_contract: PASS
+```
+
+Exit codes: 0 / 0.
+
+### Code
+
+- `FlyNesRuntimeBridge.loadCheckpoint`: after a successful load, `fly_runtime_copy_latest_frame` then `frame_index_ = meta.frame_index + 1`.
+- `FlyNesAppBridge.gameCenterFilteredGamesForCategory:query:` unshifts the Harmony builtin From Below row (`canonicalId` `builtin`, playable) when missing, then `GameCenterState::filtered`.
+- `RunSurfaceViewController`: `loadRom:... error:&romError`; restore only if `romReady_`; otherwise `library.rom_open_failed` alert and `game_center`. No HUD Save/Load. No simulator/device parity claim.

@@ -167,6 +167,23 @@
         }
         return NO;
     }
+    std::vector<uint8_t> pixels(FLY_RUNTIME_RGB565_BYTES);
+    fly_latest_frame_v1 meta{};
+    meta.struct_size = FLY_LATEST_FRAME_V1_SIZE;
+    meta.version = FLY_LATEST_FRAME_VERSION_1;
+    const fly_result copied = fly_runtime_copy_latest_frame(
+        runtime_, pixels.data(), pixels.size(), &meta);
+    if (copied != FLY_RESULT_OK)
+    {
+        if (error != nullptr)
+        {
+            *error = [NSError errorWithDomain:@"com.flynes.runtime"
+                                         code:copied
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_copy_latest_frame failed"}];
+        }
+        return NO;
+    }
+    frame_index_ = meta.frame_index + 1;
     return YES;
 }
 

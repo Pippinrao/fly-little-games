@@ -360,7 +360,33 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
 - (NSArray<NSDictionary<NSString *, id> *> *)gameCenterFilteredGamesForCategory:(NSString *)category
                                                                          query:(NSString *)query
 {
-    NSArray<NSDictionary<NSString *, id> *> *rows = [self catalogSnapshotGames];
+    NSArray<NSDictionary<NSString *, id> *> *snapshot = [self catalogSnapshotGames];
+    NSMutableArray<NSDictionary<NSString *, id> *> *rows =
+        [NSMutableArray arrayWithCapacity:snapshot.count + 1u];
+    BOOL has_builtin = NO;
+    for (NSDictionary<NSString *, id> *row in snapshot)
+    {
+        [rows addObject:row];
+        if ([row[@"canonicalId"] isEqualToString:@"builtin"])
+            has_builtin = YES;
+    }
+    if (!has_builtin)
+    {
+        [rows insertObject:@{
+            @"canonicalId" : @"builtin",
+            @"displayName" : @"From Below",
+            @"titleEn" : @"From Below",
+            @"titleZhHans" : @"来自下方",
+            @"originalFilename" : @"from_below.nes",
+            @"compatibilityState" : @(FLY_COMPATIBILITY_PLAYABLE),
+            @"freshness" : @(0),
+            @"sourceScope" : @(FLY_SOURCE_SCOPE_BUILTIN),
+            @"favorite" : @(0),
+            @"lastPlayedSequence" : @(0ULL),
+            @"builtin" : @YES,
+        } atIndex:0];
+    }
+
     using flynes::product::GameCenterItem;
     using flynes::product::GameCenterState;
 

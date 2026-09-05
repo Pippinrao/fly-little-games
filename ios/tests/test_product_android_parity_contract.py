@@ -83,6 +83,18 @@ def main() -> int:
             "runtime bridge must expose loadCheckpoint")
     require("fly_runtime_load_checkpoint" in runtime_bridge,
             "loadCheckpoint must wrap fly_runtime_load_checkpoint")
+    load_cp_at = runtime_bridge.rfind("- (BOOL)loadCheckpoint")
+    require(load_cp_at >= 0, "runtime bridge must define loadCheckpoint")
+    copy_latest_at = runtime_bridge.find("- (NSData *)copyLatestRgb565Frame", load_cp_at)
+    load_cp_body = runtime_bridge[load_cp_at:copy_latest_at if copy_latest_at > load_cp_at else load_cp_at + 2200]
+    require("fly_runtime_copy_latest_frame" in load_cp_body or "copyLatestRgb565Frame" in load_cp_body
+            or "copyLatest" in load_cp_body,
+            "loadCheckpoint must copy latest frame metadata after fly_runtime_load_checkpoint")
+    require("frame_index_" in load_cp_body,
+            "loadCheckpoint must resync frame_index_ after restore")
+    compact_load_cp = load_cp_body.replace(" ", "").replace("\n", "")
+    require("frame_index+1" in compact_load_cp,
+            "loadCheckpoint must set the bridge next frame index to last+1")
     persist_src = runtime_bridge + "\n" + run
     require("autosave.nst" in persist_src,
             "pause autosave must persist as per-ROM autosave.nst")
@@ -117,6 +129,26 @@ def main() -> int:
     require(first_restore >= 0, "run start must restore autosave after loadRom")
     require(load_rom_at < first_restore,
             "loadRom must precede restoreAutosave / loadCheckpoint")
+    load_rom_end = view_load_body.find(";", load_rom_at)
+    load_rom_call = view_load_body[load_rom_at:load_rom_end + 1 if load_rom_end >= 0 else load_rom_at + 80]
+    require("error:nil" not in load_rom_call.replace(" ", ""),
+            "loadRom must not ignore NSError with error:nil")
+    between_load_and_restore = view_load_body[load_rom_at:first_restore]
+    require("if" in between_load_and_restore,
+            "restoreAutosave must be gated on successful loadRom")
+    restore_fn_at = run.find("- (void)restoreAutosave")
+    require(restore_fn_at >= 0, "run surface must implement restoreAutosave")
+    apply_at = run.find("- (void)applyOverlayButtons")
+    restore_fn = run[restore_fn_at:apply_at if apply_at > restore_fn_at else restore_fn_at + 900]
+    require("romReady_" in restore_fn or "romLoaded_" in restore_fn,
+            "restoreAutosave must refuse unless loadRom succeeded")
+    require("rom_open_failed" in run,
+            "ROM open failure must surface a visible localized message")
+    require("library.rom_open_failed" in run or "run.rom_open_failed" in run,
+            "ROM open failure must use a localized string, not a debug HUD")
+    require("debugHud" not in run and "debug_hud" not in run.lower()
+            and "Debug HUD" not in run,
+            "ROM open failure must not dump into a debug HUD")
     require("from_below" in run,
             "run start must load the bundled From Below fixture")
     require("canonicalId" in run and "builtin" in run,
@@ -135,6 +167,8 @@ def main() -> int:
             "pause checkpoint failure must be localized")
     require("pause_checkpoint_failed" in run or "pause.checkpoint_failed" in run,
             "openPauseDrawer must surface pause checkpoint failure")
+    require("library.rom_open_failed" in strings or "run.rom_open_failed" in strings,
+            "ROM open failure must be localized (spec §6)")
     require("play_save" not in run.lower() and "Save/Load" not in run,
             "run HUD must not include Save/Load")
 
@@ -172,6 +206,24 @@ def main() -> int:
     require("title_en" in bridge and "title_zh_hans" in bridge
             and "original_filename" in bridge,
             "Game Center search must use title_en / title_zh_hans / original_filename")
+    gc_at = bridge.rfind("gameCenterFilteredGamesForCategory")
+    require(gc_at >= 0, "app bridge must implement gameCenterFilteredGamesForCategory")
+    scan_at = bridge.find("scanBorrowedFd", gc_at)
+    gc_body = bridge[gc_at:scan_at if scan_at > gc_at else gc_at + 3500]
+    require("From Below" in gc_body,
+            "Game Center must inject builtin From Below when the snapshot omits it")
+    require("from_below.nes" in gc_body,
+            "injected From Below row must use from_below.nes")
+    require('"builtin"' in gc_body or "@\"builtin\"" in gc_body,
+            "injected From Below row must use canonicalId builtin")
+    inject_at = gc_body.find("From Below")
+    filtered_at = gc_body.find("filtered(")
+    require(inject_at >= 0 and filtered_at >= 0 and inject_at < filtered_at,
+            "Game Center must inject builtin From Below before GameCenterState::filtered")
+    require("FLY_COMPATIBILITY_PLAYABLE" in gc_body
+            or "compatibilityState" in gc_body and "@(1)" in gc_body
+            or "compatibilityState" in gc_body and "PLAYABLE" in gc_body,
+            "injected From Below row must be playable (compatibilityState == 1)")
 
     cmake = read("ios/app/CMakeLists.txt")
     require("flynes_product" in cmake, "product CMake must link flynes_product")
