@@ -85,6 +85,7 @@ struct CatalogData final
 {
     std::uint64_t generation = 0u;
     std::vector<CatalogEntryData> entries;
+    std::vector<SourceKey> sources;
 };
 
 struct AppState final
@@ -95,14 +96,27 @@ struct AppState final
 
 bool source_scope_conflicts(const CatalogData& catalog, const SourceKey& source) noexcept
 {
-    for (const CatalogEntryData& entry : catalog.entries)
+    for (const SourceKey& existing : catalog.sources)
     {
-        if (entry.source.uuid == source.uuid && entry.source.scope != source.scope)
+        if (existing.uuid == source.uuid && existing.scope != source.scope)
         {
             return true;
         }
     }
     return false;
+}
+
+void upsert_source(std::vector<SourceKey>& sources, const SourceKey& source)
+{
+    for (SourceKey& existing : sources)
+    {
+        if (existing.uuid == source.uuid)
+        {
+            existing.scope = source.scope;
+            return;
+        }
+    }
+    sources.push_back(source);
 }
 
 enum class CandidateDisposition : std::uint8_t
@@ -401,6 +415,45 @@ struct DescriptorReadResult final
     std::vector<std::uint8_t> bytes;
 };
 
+#if defined(_WIN32)
+class RestoreFdOffset final
+{
+public:
+    explicit RestoreFdOffset(std::int32_t fd)
+        : fd_(fd), original_(_lseeki64(fd, 0, SEEK_CUR))
+    {
+        if (original_ < 0 || _lseeki64(fd_, 0, SEEK_SET) < 0)
+        {
+            original_ = -1;
+        }
+    }
+    RestoreFdOffset(const RestoreFdOffset&) = delete;
+    RestoreFdOffset& operator=(const RestoreFdOffset&) = delete;
+    ~RestoreFdOffset()
+    {
+        if (original_ >= 0)
+        {
+            static_cast<void>(_lseeki64(fd_, original_, SEEK_SET));
+        }
+    }
+    bool ready() const noexcept { return original_ >= 0; }
+    bool restore() noexcept
+    {
+        if (original_ < 0)
+        {
+            return false;
+        }
+        const bool ok = _lseeki64(fd_, original_, SEEK_SET) >= 0;
+        original_ = -1;
+        return ok;
+    }
+
+private:
+    std::int32_t fd_;
+    __int64 original_;
+};
+#endif
+
 DescriptorReadResult read_descriptor_bounded(std::int32_t fd)
 {
     DescriptorReadResult result;
@@ -409,8 +462,8 @@ DescriptorReadResult read_descriptor_bounded(std::int32_t fd)
         return result;
     }
 #if defined(_WIN32)
-    const __int64 original_offset = _lseeki64(fd, 0, SEEK_CUR);
-    if (original_offset < 0 || _lseeki64(fd, 0, SEEK_SET) < 0)
+    RestoreFdOffset restore(fd);
+    if (!restore.ready())
     {
         return result;
     }
@@ -426,7 +479,6 @@ DescriptorReadResult read_descriptor_bounded(std::int32_t fd)
         const int amount = _read(fd, buffer.data(), static_cast<unsigned int>(requested));
         if (amount < 0)
         {
-            static_cast<void>(_lseeki64(fd, original_offset, SEEK_SET));
             return result;
         }
 #else
@@ -443,7 +495,7 @@ DescriptorReadResult read_descriptor_bounded(std::int32_t fd)
         if (amount == 0)
         {
 #if defined(_WIN32)
-            if (_lseeki64(fd, original_offset, SEEK_SET) < 0)
+            if (!restore.restore())
             {
                 return result;
             }
@@ -455,9 +507,6 @@ DescriptorReadResult read_descriptor_bounded(std::int32_t fd)
         offset += static_cast<std::uint64_t>(amount);
         if (offset > FLY_SCAN_MAX_PACKAGE_BYTES)
         {
-#if defined(_WIN32)
-            static_cast<void>(_lseeki64(fd, original_offset, SEEK_SET));
-#endif
             result.status = DescriptorReadStatus::TOO_LARGE;
             result.bytes.clear();
             return result;
@@ -895,6 +944,8 @@ std::shared_ptr<const CatalogData> reconcile_catalog(
         throw std::runtime_error("catalog generation exhausted");
     auto next = std::make_shared<CatalogData>();
     next->generation = current.generation + 1u;
+    next->sources = current.sources;
+    upsert_source(next->sources, source);
     next->entries.reserve(current.entries.size());
     for (const CatalogEntryData& existing : current.entries)
     {

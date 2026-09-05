@@ -1035,6 +1035,39 @@ void test_full_source_isolation_and_scope_immutability()
     fly_app_destroy(app);
 }
 
+void test_empty_full_scan_still_pins_source_scope()
+{
+    fly_app_t* app = make_app();
+    TempFile rom(make_nes(41u));
+    fly_scan_t* initial = begin_scan(app, 1u);
+    fly_scan_file candidate = make_scan_file("alpha.nes", "Alpha.nes", rom.fd(), 0u);
+    check(recorded_add(initial, candidate).outcome == FLY_SCAN_FILE_OUTCOME_INDEXED,
+          "initial row is indexed before empty replacement");
+    check(fly_scan_commit(initial, FLY_SCAN_COMPLETENESS_FULL) == FLY_RESULT_OK,
+          "initial source commit succeeds");
+
+    fly_scan_t* empty = begin_scan(app, 1u);
+    check(fly_scan_commit(empty, FLY_SCAN_COMPLETENESS_FULL) == FLY_RESULT_OK,
+          "empty full scan commits");
+    fly_catalog_snapshot_t* snapshot = snapshot_of(app);
+    check(snapshot_count(snapshot) == 0u, "empty full scan removes source rows");
+
+    fly_scan_config changed_scope =
+        make_scan_config(1u, FLY_SOURCE_SCOPE_USER_FILE);
+    fly_scan_t* forbidden = reinterpret_cast<fly_scan_t*>(static_cast<std::uintptr_t>(1u));
+    check(fly_scan_begin(app, &changed_scope, &forbidden) == FLY_RESULT_CONFLICT &&
+              forbidden == nullptr,
+          "source UUID scope remains pinned after all rows disappear");
+    fly_scan_t* same_scope = begin_scan(app, 1u, FLY_SOURCE_SCOPE_USER_DIRECTORY);
+    check(same_scope != nullptr, "same scope may begin after empty full scan");
+
+    fly_catalog_snapshot_release(snapshot);
+    fly_scan_abort(same_scope);
+    fly_scan_abort(empty);
+    fly_scan_abort(initial);
+    fly_app_destroy(app);
+}
+
 void test_zip_exact_identity_replacement_and_skip()
 {
     fly_app_t* app = make_app();
@@ -1265,6 +1298,7 @@ int main()
     test_descriptor_errors_limit_abort_conflict_and_lifetime();
     test_completeness_and_atomic_get();
     test_full_source_isolation_and_scope_immutability();
+    test_empty_full_scan_still_pins_source_scope();
     test_zip_exact_identity_replacement_and_skip();
     test_versioned_scan_structs_duplicate_and_display_validation();
     if (failures == 0)
