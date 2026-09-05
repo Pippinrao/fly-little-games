@@ -187,6 +187,13 @@ endfunction()
 
 flynes_enable_strict_warnings(flynes_app)
 
+add_library(flynes_product STATIC
+    src/product/game_center_state.cpp
+)
+target_include_directories(flynes_product PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(flynes_product PUBLIC cxx_std_17)
+set_target_properties(flynes_product PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+
 add_library(flynes_session_codec STATIC
     src/session/wire/sha256.cpp
     src/session/wire/session_codec.cpp
@@ -297,6 +304,11 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_app_contract_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_app_contract_test)
     add_test(NAME flynes_app_contract COMMAND flynes_app_contract_test)
+
+    add_executable(flynes_product_game_center_test tests/test_product_game_center.cpp)
+    target_link_libraries(flynes_product_game_center_test PRIVATE flynes_product)
+    flynes_enable_strict_warnings(flynes_product_game_center_test)
+    add_test(NAME flynes_product_game_center COMMAND flynes_product_game_center_test)
 
     add_executable(flynes_catalog_scan_test
         tests/test_catalog_scan.cpp
