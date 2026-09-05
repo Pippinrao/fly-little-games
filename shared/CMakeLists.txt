@@ -322,6 +322,11 @@ if(FLYNES_BUILD_TESTS)
     flynes_enable_strict_warnings(flynes_product_gamepad_hit_map_test)
     add_test(NAME flynes_product_gamepad_hit_map COMMAND flynes_product_gamepad_hit_map_test)
 
+    add_executable(flynes_product_pause_actions_test tests/test_product_pause_actions.cpp)
+    target_link_libraries(flynes_product_pause_actions_test PRIVATE flynes_product)
+    flynes_enable_strict_warnings(flynes_product_pause_actions_test)
+    add_test(NAME flynes_product_pause_actions COMMAND flynes_product_pause_actions_test)
+
     add_executable(flynes_catalog_scan_test
         tests/test_catalog_scan.cpp
     )
