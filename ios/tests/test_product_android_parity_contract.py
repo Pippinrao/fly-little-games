@@ -69,16 +69,50 @@ def main() -> int:
             "runtime bridge must expose saveCheckpoint")
     require("fly_runtime_save_checkpoint" in runtime_bridge,
             "runtime bridge must call fly_runtime_save_checkpoint")
+    compact_bridge = runtime_bridge.replace(" ", "").replace("\n", "")
+    require("NSData*)saveCheckpoint" in compact_bridge,
+            "saveCheckpoint must return NSData, not discard the checkpoint blob")
+    save_at = runtime_bridge.rfind("- (NSData *)saveCheckpoint")
+    if save_at < 0:
+        save_at = runtime_bridge.find("saveCheckpoint")
+    require(save_at >= 0, "runtime bridge must define saveCheckpoint")
+    save_body = runtime_bridge[save_at:save_at + 2200]
+    require("dataWithBytes" in save_body or "dataWithBytesNoCopy" in save_body,
+            "saveCheckpoint must keep the blob as NSData")
+    require("loadCheckpoint" in runtime_bridge,
+            "runtime bridge must expose loadCheckpoint")
+    require("fly_runtime_load_checkpoint" in runtime_bridge,
+            "loadCheckpoint must wrap fly_runtime_load_checkpoint")
+    persist_src = runtime_bridge + "\n" + run
+    require("autosave.nst" in persist_src,
+            "pause autosave must persist as per-ROM autosave.nst")
+    require("saves/" in persist_src or "saves" in persist_src,
+            "autosave.nst must live in a per-ROM saves directory")
+    require("canonicalId" in persist_src,
+            "per-ROM autosave directory must use Run's canonicalId")
+    require("NSDataWritingAtomic" in persist_src or "atomically:YES" in persist_src,
+            "autosave.nst must be written atomically")
     open_pause_at = run.find("- (void)openPauseDrawer")
     require(open_pause_at >= 0, "run surface must implement openPauseDrawer")
-    open_pause_body = run[open_pause_at:open_pause_at + 1400]
+    open_pause_body = run[open_pause_at:open_pause_at + 1800]
     require("saveCheckpoint" in open_pause_body,
             "openPauseDrawer must auto-checkpoint via saveCheckpoint")
+    require("autosave.nst" in open_pause_body or "persistAutosave" in open_pause_body
+            or "writeAutosave" in open_pause_body,
+            "openPauseDrawer must persist the checkpoint blob, not drop it")
+    view_load_at = run.find("- (void)viewDidLoad")
+    require(view_load_at >= 0, "run surface must implement viewDidLoad")
+    view_will_at = run.find("- (void)viewWillAppear")
+    view_load_body = run[view_load_at:view_will_at if view_will_at > view_load_at else view_load_at + 1600]
+    require("loadCheckpoint" in view_load_body or "restoreAutosave" in view_load_body,
+            "next run must loadCheckpoint from autosave.nst before stepping")
     strings = read("ios/app/en.lproj/Localizable.strings")
     require("pause.checkpoint_failed" in strings,
             "pause checkpoint failure must be localized")
     require("pause_checkpoint_failed" in run or "pause.checkpoint_failed" in run,
             "openPauseDrawer must surface pause checkpoint failure")
+    require("play_save" not in run.lower() and "Save/Load" not in run,
+            "run HUD must not include Save/Load")
 
     settings = read("ios/app/SettingsView.swift")
     for key in SECTION_KEYS:

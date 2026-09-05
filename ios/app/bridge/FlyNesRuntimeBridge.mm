@@ -97,7 +97,7 @@
     return YES;
 }
 
-- (BOOL)saveCheckpoint:(NSError **)error
+- (NSData *)saveCheckpoint:(NSError **)error
 {
     if (runtime_ == nullptr)
     {
@@ -107,7 +107,7 @@
                                          code:FLY_RESULT_INVALID_STATE
                                      userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
         }
-        return NO;
+        return nil;
     }
     size_t written = 0;
     size_t needed = 0;
@@ -123,19 +123,47 @@
                                          code:failure
                                      userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
         }
-        return NO;
+        return nil;
     }
     std::vector<uint8_t> bytes(needed);
     written = 0;
     const fly_result status = fly_runtime_save_checkpoint(
         runtime_, bytes.data(), bytes.size(), &written, &needed);
+    if (status != FLY_RESULT_OK || written == 0)
+    {
+        if (error != nullptr)
+        {
+            *error = [NSError errorWithDomain:@"com.flynes.runtime"
+                                         code:status != FLY_RESULT_OK ? status
+                                                                      : FLY_RESULT_INTERNAL_ERROR
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
+        }
+        return nil;
+    }
+    return [NSData dataWithBytes:bytes.data() length:written];
+}
+
+- (BOOL)loadCheckpoint:(NSData *)blob error:(NSError **)error
+{
+    if (runtime_ == nullptr || blob.length == 0)
+    {
+        if (error != nullptr)
+        {
+            *error = [NSError errorWithDomain:@"com.flynes.runtime"
+                                         code:FLY_RESULT_INVALID_ARGUMENT
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_load_checkpoint failed"}];
+        }
+        return NO;
+    }
+    const fly_result status = fly_runtime_load_checkpoint(
+        runtime_, static_cast<const uint8_t *>(blob.bytes), static_cast<size_t>(blob.length));
     if (status != FLY_RESULT_OK)
     {
         if (error != nullptr)
         {
             *error = [NSError errorWithDomain:@"com.flynes.runtime"
                                          code:status
-                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_save_checkpoint failed"}];
+                                     userInfo:@{NSLocalizedDescriptionKey : @"fly_runtime_load_checkpoint failed"}];
         }
         return NO;
     }

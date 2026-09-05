@@ -13,7 +13,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)loadRom:(NSData *)rom error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)stepFrameWithButtons:(uint32_t)buttons
                        error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)saveCheckpoint:(NSError * _Nullable * _Nullable)error;
+- (nullable NSData *)saveCheckpoint:(NSError * _Nullable * _Nullable)error;
+- (BOOL)loadCheckpoint:(NSData *)blob error:(NSError * _Nullable * _Nullable)error;
 - (nullable NSData *)copyLatestRgb565Frame;
 - (void)destroyRuntime;
 

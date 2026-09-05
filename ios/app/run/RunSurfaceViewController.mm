@@ -52,6 +52,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     BOOL paused_;
     BOOL drawerOpen_;
     BOOL checkpointFailed_;
+    BOOL autosaveRestored_;
 }
 
 - (void)viewDidLoad
@@ -62,6 +63,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     paused_ = NO;
     drawerOpen_ = NO;
     checkpointFailed_ = NO;
+    autosaveRestored_ = NO;
 
     metalHost_ = [[UIView alloc] initWithFrame:self.view.bounds];
     metalHost_.translatesAutoresizingMaskIntoConstraints = NO;
@@ -115,6 +117,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 
     runtime_ = [[FlyNesRuntimeBridge alloc] init];
     [runtime_ createRuntime:nil];
+    [self restoreAutosave];
     [self reloadProductSettings];
 }
 
@@ -148,10 +151,66 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     overlay_.layoutUtf8 = FlyNesAppBridge.sharedInstance.controlLayoutGet;
 }
 
+- (NSURL *)autosaveURL
+{
+    if (self.canonicalId.length == 0)
+        return nil;
+    NSString *safe = [[self.canonicalId stringByReplacingOccurrencesOfString:@"/" withString:@"_"]
+        stringByReplacingOccurrencesOfString:@":"
+                                  withString:@"_"];
+    safe = [safe stringByReplacingOccurrencesOfString:@"\\" withString:@"_"];
+    if (safe.length == 0)
+        return nil;
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSURL *documents =
+        [files URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    if (documents.path == nil)
+        return nil;
+    return [[[documents URLByAppendingPathComponent:@"saves"] URLByAppendingPathComponent:safe]
+        URLByAppendingPathComponent:@"autosave.nst"];
+}
+
+- (BOOL)persistAutosave:(NSData *)blob
+{
+    if (blob.length == 0)
+        return NO;
+    NSURL *url = [self autosaveURL];
+    if (url == nil)
+        return NO;
+    NSError *error = nil;
+    NSURL *directory = url.URLByDeletingLastPathComponent;
+    if (![NSFileManager.defaultManager createDirectoryAtURL:directory
+                                withIntermediateDirectories:YES
+                                                 attributes:nil
+                                                      error:&error])
+        return NO;
+    return [blob writeToURL:url options:NSDataWritingAtomic error:&error];
+}
+
+- (void)restoreAutosave
+{
+    NSDictionary<NSString *, id> *snapshot = FlyNesAppBridge.sharedInstance.settingsGet;
+    NSNumber *enabled = snapshot[@"autosave_enabled"];
+    if (enabled != nil && enabled.unsignedIntValue == 0)
+        return;
+    NSURL *url = [self autosaveURL];
+    if (url == nil)
+        return;
+    NSData *blob = [NSData dataWithContentsOfURL:url];
+    if (blob.length == 0)
+        return;
+    [runtime_ loadCheckpoint:blob error:nil];
+}
+
 - (void)applyOverlayButtons:(uint32_t)buttons
 {
     if (paused_ || drawerOpen_)
         return;
+    if (!autosaveRestored_)
+    {
+        [self restoreAutosave];
+        autosaveRestored_ = YES;
+    }
     [runtime_ stepFrameWithButtons:buttons error:nil];
 }
 
@@ -164,7 +223,8 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     overlay_.hidden = YES;
     pauseButton_.hidden = YES;
     [runtime_ stepFrameWithButtons:0 error:nil];
-    checkpointFailed_ = ![runtime_ saveCheckpoint:nil];
+    NSData *blob = [runtime_ saveCheckpoint:nil];
+    checkpointFailed_ = blob == nil || ![self persistAutosave:blob];
 
     pauseLayer_ = [[UIView alloc] initWithFrame:self.view.bounds];
     pauseLayer_.translatesAutoresizingMaskIntoConstraints = NO;
