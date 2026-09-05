@@ -11,8 +11,18 @@ _Static_assert(sizeof(fly_platform_capabilities) == 16u, "fly capabilities ABI c
 _Static_assert(FLY_PLATFORM_CAPABILITIES_V1_SIZE == 16u, "fly capabilities V1 changed");
 _Static_assert(sizeof(fly_app_config) == 40u, "fly app config ABI changed");
 _Static_assert(FLY_APP_CONFIG_V1_SIZE == 40u, "fly app config V1 changed");
-_Static_assert(sizeof(fly_catalog_entry) == 64u, "fly catalog entry ABI changed");
-_Static_assert(FLY_CATALOG_ENTRY_V1_SIZE == 64u, "fly catalog entry V1 changed");
+_Static_assert(sizeof(fly_catalog_entry) == 256u, "fly catalog entry ABI changed");
+_Static_assert(FLY_CATALOG_ENTRY_V1_SIZE == 256u, "fly catalog entry V1 changed");
+_Static_assert(offsetof(fly_catalog_entry, source_uuid) == 8u,
+               "fly catalog source UUID moved");
+_Static_assert(offsetof(fly_catalog_entry, source_relative_path_utf8) == 240u,
+               "fly catalog relative path pointer moved");
+_Static_assert(sizeof(fly_scan_config) == 28u, "fly scan config ABI changed");
+_Static_assert(FLY_SCAN_CONFIG_V1_SIZE == 28u, "fly scan config V1 changed");
+_Static_assert(sizeof(fly_scan_file) == 88u, "fly scan file ABI changed");
+_Static_assert(FLY_SCAN_FILE_V1_SIZE == 88u, "fly scan file V1 changed");
+_Static_assert(sizeof(fly_scan_file_result) == 24u, "fly scan file result ABI changed");
+_Static_assert(FLY_SCAN_FILE_RESULT_V1_SIZE == 24u, "fly scan file result V1 changed");
 
 _Static_assert(sizeof(nes_config) == 20u, "nes_config ABI changed");
 _Static_assert(_Alignof(nes_config) == 4u, "nes_config alignment changed");
@@ -54,6 +64,12 @@ int flynes_ios_abi_layout_is_current(void)
 {
     fly_result (*const app_create)(const fly_app_config*, fly_app_t**) = &fly_app_create;
     void (*const app_destroy)(fly_app_t*) = &fly_app_destroy;
+    fly_result (*const scan_begin)(fly_app_t*, const fly_scan_config*, fly_scan_t**) =
+        &fly_scan_begin;
+    fly_result (*const scan_add)(fly_scan_t*, const fly_scan_file*, fly_scan_file_result*) =
+        &fly_scan_add_file;
+    fly_result (*const scan_commit)(fly_scan_t*, uint32_t) = &fly_scan_commit;
+    void (*const scan_abort)(fly_scan_t*) = &fly_scan_abort;
     nes_t* (*const core_create)(const nes_config*) = &nes_create;
     void (*const core_destroy)(nes_t*) = &nes_destroy;
     int (*const load_rom)(nes_t*, const uint8_t*, size_t, nes_rom_info*) = &nes_load_rom;
@@ -64,6 +80,10 @@ int flynes_ios_abi_layout_is_current(void)
     int (*const load_state)(nes_t*, const uint8_t*, size_t) = &nes_load_state;
     (void)app_create;
     (void)app_destroy;
+    (void)scan_begin;
+    (void)scan_add;
+    (void)scan_commit;
+    (void)scan_abort;
     (void)core_create;
     (void)core_destroy;
     (void)load_rom;

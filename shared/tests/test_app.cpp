@@ -60,6 +60,8 @@ static_assert(FLY_RESULT_OUT_OF_RANGE == -4, "FLY_RESULT_OUT_OF_RANGE ABI value 
 static_assert(FLY_RESULT_BUFFER_TOO_SMALL == -5, "FLY_RESULT_BUFFER_TOO_SMALL ABI value changed");
 static_assert(FLY_RESULT_OUT_OF_MEMORY == -6, "FLY_RESULT_OUT_OF_MEMORY ABI value changed");
 static_assert(FLY_RESULT_INTERNAL_ERROR == -7, "FLY_RESULT_INTERNAL_ERROR ABI value changed");
+static_assert(FLY_RESULT_INVALID_STATE == -8, "FLY_RESULT_INVALID_STATE ABI value changed");
+static_assert(FLY_RESULT_CONFLICT == -9, "FLY_RESULT_CONFLICT ABI value changed");
 static_assert(FLY_PLATFORM_CAPABILITIES_VERSION_1 == 1,
               "capabilities version value changed");
 static_assert(FLY_APP_CONFIG_VERSION_1 == 1, "config version value changed");
@@ -100,29 +102,112 @@ static_assert(FLY_APP_CONFIG_V1_SIZE == sizeof(fly_app_config),
 static_assert(offsetof(fly_catalog_entry, struct_size) == 0, "entry prefix changed");
 static_assert(offsetof(fly_catalog_entry, version) == sizeof(std::uint32_t),
               "entry version offset changed");
-static_assert(offsetof(fly_catalog_entry, entry_id) == 2 * sizeof(std::uint32_t),
-              "entry identifier offset changed");
-static_assert(offsetof(fly_catalog_entry, content_size) ==
-                  2 * sizeof(std::uint32_t) + sizeof(std::uint64_t),
-              "entry content-size offset changed");
-static_assert(offsetof(fly_catalog_entry, flags) == 24, "entry flags offset changed");
-static_assert(offsetof(fly_catalog_entry, reserved) == 28, "entry reserved offset changed");
-static_assert(offsetof(fly_catalog_entry, display_name_utf8) == 32,
+static_assert(offsetof(fly_catalog_entry, source_uuid) == 2 * sizeof(std::uint32_t),
+              "entry source UUID offset changed");
+static_assert(offsetof(fly_catalog_entry, payload_size) ==
+                  2 * sizeof(std::uint32_t) + 16,
+              "entry payload-size offset changed");
+static_assert(offsetof(fly_catalog_entry, physical_size) ==
+                  offsetof(fly_catalog_entry, payload_size) + sizeof(std::uint64_t),
+              "entry physical-size offset changed");
+static_assert(offsetof(fly_catalog_entry, expected_bytes) ==
+                  offsetof(fly_catalog_entry, physical_size) + sizeof(std::uint64_t),
+              "entry expected-bytes offset changed");
+static_assert(offsetof(fly_catalog_entry, prg_bytes) ==
+                  offsetof(fly_catalog_entry, expected_bytes) + sizeof(std::uint64_t),
+              "entry PRG-bytes offset changed");
+static_assert(offsetof(fly_catalog_entry, chr_bytes) ==
+                  offsetof(fly_catalog_entry, prg_bytes) + sizeof(std::uint64_t),
+              "entry CHR-bytes offset changed");
+static_assert(offsetof(fly_catalog_entry, mapper) ==
+                  offsetof(fly_catalog_entry, chr_bytes) + sizeof(std::uint64_t),
+              "entry mapper offset changed");
+static_assert(offsetof(fly_catalog_entry, submapper) ==
+                  offsetof(fly_catalog_entry, mapper) + sizeof(std::int32_t),
+              "entry submapper offset changed");
+static_assert(offsetof(fly_catalog_entry, disk_sides) ==
+                  offsetof(fly_catalog_entry, submapper) + sizeof(std::int32_t),
+              "entry disk-sides offset changed");
+static_assert(offsetof(fly_catalog_entry, payload_sha1) ==
+                  offsetof(fly_catalog_entry, disk_sides) + sizeof(std::uint32_t),
+              "entry payload SHA-1 offset changed");
+static_assert(offsetof(fly_catalog_entry, payload_sha256) ==
+                  offsetof(fly_catalog_entry, payload_sha1) + 20,
+              "entry payload SHA-256 offset changed");
+static_assert(offsetof(fly_catalog_entry, physical_sha256) ==
+                  offsetof(fly_catalog_entry, payload_sha256) + 32,
+              "entry physical SHA-256 offset changed");
+static_assert(offsetof(fly_catalog_entry, payload_crc32) ==
+                  offsetof(fly_catalog_entry, physical_sha256) + 32,
+              "entry payload CRC-32 offset changed");
+static_assert(offsetof(fly_catalog_entry, source_scope) ==
+                  offsetof(fly_catalog_entry, payload_crc32) + 4,
+              "entry source-scope offset changed");
+static_assert(offsetof(fly_catalog_entry, package_format) ==
+                  offsetof(fly_catalog_entry, source_scope) + sizeof(std::uint32_t),
+              "entry package-format offset changed");
+static_assert(offsetof(fly_catalog_entry, rom_format) ==
+                  offsetof(fly_catalog_entry, package_format) + sizeof(std::uint32_t),
+              "entry ROM-format offset changed");
+static_assert(offsetof(fly_catalog_entry, compatibility_state) ==
+                  offsetof(fly_catalog_entry, rom_format) + sizeof(std::uint32_t),
+              "entry compatibility-state offset changed");
+static_assert(offsetof(fly_catalog_entry, compatibility_reason) ==
+                  offsetof(fly_catalog_entry, compatibility_state) + sizeof(std::uint32_t),
+              "entry compatibility-reason offset changed");
+static_assert(offsetof(fly_catalog_entry, freshness) ==
+                  offsetof(fly_catalog_entry, compatibility_reason) + sizeof(std::uint32_t),
+              "entry freshness offset changed");
+static_assert(offsetof(fly_catalog_entry, flags) ==
+                  offsetof(fly_catalog_entry, freshness) + sizeof(std::uint32_t),
+              "entry flags offset changed");
+static_assert(offsetof(fly_catalog_entry, canonical_id_utf8) ==
+                  offsetof(fly_catalog_entry, flags) + sizeof(std::uint32_t),
+              "entry canonical-id pointer offset changed");
+static_assert(offsetof(fly_catalog_entry, canonical_id_capacity) ==
+                  offsetof(fly_catalog_entry, canonical_id_utf8) + sizeof(char*),
+              "entry canonical-id capacity offset changed");
+static_assert(offsetof(fly_catalog_entry, canonical_id_required) ==
+                  offsetof(fly_catalog_entry, canonical_id_capacity) + sizeof(std::uint32_t),
+              "entry canonical-id required-size offset changed");
+static_assert(offsetof(fly_catalog_entry, variant_id_utf8) ==
+                  offsetof(fly_catalog_entry, canonical_id_required) + sizeof(std::uint32_t),
+              "entry variant-id pointer offset changed");
+static_assert(offsetof(fly_catalog_entry, variant_id_capacity) ==
+                  offsetof(fly_catalog_entry, variant_id_utf8) + sizeof(char*),
+              "entry variant-id capacity offset changed");
+static_assert(offsetof(fly_catalog_entry, variant_id_required) ==
+                  offsetof(fly_catalog_entry, variant_id_capacity) + sizeof(std::uint32_t),
+              "entry variant-id required-size offset changed");
+static_assert(offsetof(fly_catalog_entry, display_name_utf8) ==
+                  offsetof(fly_catalog_entry, variant_id_required) + sizeof(std::uint32_t),
               "entry display-name pointer offset changed");
-static_assert(offsetof(fly_catalog_entry, display_name_capacity) == 32 + sizeof(char*),
+static_assert(offsetof(fly_catalog_entry, display_name_capacity) ==
+                  offsetof(fly_catalog_entry, display_name_utf8) + sizeof(char*),
               "entry display-name capacity offset changed");
-static_assert(offsetof(fly_catalog_entry, display_name_required) == 36 + sizeof(char*),
+static_assert(offsetof(fly_catalog_entry, display_name_required) ==
+                  offsetof(fly_catalog_entry, display_name_capacity) + sizeof(std::uint32_t),
               "entry display-name required-size offset changed");
-static_assert(offsetof(fly_catalog_entry, source_uri_utf8) == 40 + sizeof(char*),
-              "entry source-URI pointer offset changed");
-static_assert(offsetof(fly_catalog_entry, source_uri_capacity) == 40 + 2 * sizeof(char*),
-              "entry source-URI capacity offset changed");
-static_assert(offsetof(fly_catalog_entry, source_uri_required) == 44 + 2 * sizeof(char*),
-              "entry source-URI required-size offset changed");
-static_assert(sizeof(fly_catalog_entry) == 48 + 2 * sizeof(char*),
-              "catalog entry v1 layout changed");
+static_assert(offsetof(fly_catalog_entry, source_relative_path_utf8) ==
+                  offsetof(fly_catalog_entry, display_name_required) + sizeof(std::uint32_t),
+              "entry relative-path pointer offset changed");
+static_assert(offsetof(fly_catalog_entry, source_relative_path_capacity) ==
+                  offsetof(fly_catalog_entry, source_relative_path_utf8) + sizeof(char*),
+              "entry relative-path capacity offset changed");
+static_assert(offsetof(fly_catalog_entry, source_relative_path_required) ==
+                  offsetof(fly_catalog_entry, source_relative_path_capacity) +
+                      sizeof(std::uint32_t),
+              "entry relative-path required-size offset changed");
 static_assert(FLY_CATALOG_ENTRY_V1_SIZE == sizeof(fly_catalog_entry),
               "catalog entry v1 prefix size changed");
+static_assert(offsetof(fly_scan_config, source_uuid) == 2 * sizeof(std::uint32_t),
+              "scan config UUID offset changed");
+static_assert(FLY_SCAN_CONFIG_V1_SIZE == sizeof(fly_scan_config),
+              "scan config v1 prefix size changed");
+static_assert(FLY_SCAN_FILE_V1_SIZE == sizeof(fly_scan_file),
+              "scan file v1 prefix size changed");
+static_assert(FLY_SCAN_FILE_RESULT_V1_SIZE == sizeof(fly_scan_file_result),
+              "scan file result v1 prefix size changed");
 
 int main()
 {
@@ -342,25 +427,37 @@ int main()
           "count query succeeds");
     check(count == 0, "new app snapshot is empty");
 
+    char canonical_id[8];
+    char variant_id[8];
     char display_name[8];
-    char source_uri[8];
-    std::memset(display_name, 0x31, sizeof(display_name));
-    std::memset(source_uri, 0x32, sizeof(source_uri));
+    char relative_path[8];
+    std::memset(canonical_id, 0x30, sizeof(canonical_id));
+    std::memset(variant_id, 0x31, sizeof(variant_id));
+    std::memset(display_name, 0x32, sizeof(display_name));
+    std::memset(relative_path, 0x33, sizeof(relative_path));
 
     fly_catalog_entry entry;
     std::memset(&entry, 0xA5, sizeof(entry));
     entry.struct_size = FLY_CATALOG_ENTRY_V1_SIZE;
     entry.version = FLY_CATALOG_ENTRY_VERSION_1;
+    entry.canonical_id_utf8 = canonical_id;
+    entry.canonical_id_capacity = static_cast<std::uint32_t>(sizeof(canonical_id));
+    entry.variant_id_utf8 = variant_id;
+    entry.variant_id_capacity = static_cast<std::uint32_t>(sizeof(variant_id));
     entry.display_name_utf8 = display_name;
     entry.display_name_capacity = static_cast<std::uint32_t>(sizeof(display_name));
-    entry.source_uri_utf8 = source_uri;
-    entry.source_uri_capacity = static_cast<std::uint32_t>(sizeof(source_uri));
+    entry.source_relative_path_utf8 = relative_path;
+    entry.source_relative_path_capacity = static_cast<std::uint32_t>(sizeof(relative_path));
 
     const fly_catalog_entry entry_before = entry;
+    char canonical_id_before[sizeof(canonical_id)];
+    char variant_id_before[sizeof(variant_id)];
     char display_name_before[sizeof(display_name)];
-    char source_uri_before[sizeof(source_uri)];
+    char relative_path_before[sizeof(relative_path)];
+    std::memcpy(canonical_id_before, canonical_id, sizeof(canonical_id));
+    std::memcpy(variant_id_before, variant_id, sizeof(variant_id));
     std::memcpy(display_name_before, display_name, sizeof(display_name));
-    std::memcpy(source_uri_before, source_uri, sizeof(source_uri));
+    std::memcpy(relative_path_before, relative_path, sizeof(relative_path));
 
     fly_catalog_entry short_entry = entry;
     short_entry.struct_size = FLY_CATALOG_ENTRY_V1_SIZE - 1u;
@@ -383,10 +480,14 @@ int main()
           "get on an empty snapshot returns out of range");
     check(std::memcmp(&entry, &entry_before, sizeof(entry)) == 0,
           "out-of-range get does not write the entry");
+    check(std::memcmp(canonical_id, canonical_id_before, sizeof(canonical_id)) == 0,
+          "out-of-range get does not write the canonical-id buffer");
+    check(std::memcmp(variant_id, variant_id_before, sizeof(variant_id)) == 0,
+          "out-of-range get does not write the variant-id buffer");
     check(std::memcmp(display_name, display_name_before, sizeof(display_name)) == 0,
           "out-of-range get does not write the display-name buffer");
-    check(std::memcmp(source_uri, source_uri_before, sizeof(source_uri)) == 0,
-          "out-of-range get does not write the source-URI buffer");
+    check(std::memcmp(relative_path, relative_path_before, sizeof(relative_path)) == 0,
+          "out-of-range get does not write the relative-path buffer");
     check(fly_catalog_snapshot_get(nullptr, 0, &entry) == FLY_RESULT_INVALID_ARGUMENT,
           "get rejects a null snapshot");
     check(fly_catalog_snapshot_get(snapshot, 0, nullptr) == FLY_RESULT_INVALID_ARGUMENT,

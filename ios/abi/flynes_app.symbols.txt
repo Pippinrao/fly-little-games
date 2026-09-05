@@ -5,3 +5,7 @@ fly_catalog_snapshot_count
 fly_catalog_snapshot_generation
 fly_catalog_snapshot_get
 fly_catalog_snapshot_release
+fly_scan_abort
+fly_scan_add_file
+fly_scan_begin
+fly_scan_commit
