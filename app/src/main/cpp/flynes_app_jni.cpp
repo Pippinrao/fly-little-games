@@ -319,8 +319,8 @@ Java_com_flynes_emu_app_FlyNesApp_nativeSettingsApply(
     jfloat floatValues[5];
     env->GetIntArrayRegion(ints, 0, 14, intValues);
     env->GetFloatArrayRegion(floats, 0, 5, floatValues);
-    const std::string localeText = copy_bytes(env, locale);
-    const std::string lastText = copy_bytes(env, lastPlayed);
+    std::string localeText = copy_bytes(env, locale);
+    std::string lastText = copy_bytes(env, lastPlayed);
     fly_settings_snapshot snapshot{};
     snapshot.struct_size = FLY_SETTINGS_SNAPSHOT_V1_SIZE;
     snapshot.version = FLY_SETTINGS_SNAPSHOT_VERSION_1;
