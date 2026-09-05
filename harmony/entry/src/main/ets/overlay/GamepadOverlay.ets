@@ -267,6 +267,17 @@ export struct GamepadOverlay {
   private knobX: number = 0;
   private knobY: number = 0;
 
+  private overlayOpacity(): number {
+    const fields = this.layoutUtf8.split('|');
+    if (fields.length >= 2) {
+      const parsed = Number(fields[1]);
+      if (parsed >= 0.4 && parsed <= 1) {
+        return parsed;
+      }
+    }
+    return LAYOUT_OPACITY;
+  }
+
   build() {
     Canvas(this.canvasContext)
       .width('100%')
@@ -542,7 +553,7 @@ export struct GamepadOverlay {
     if (target === undefined) {
       return;
     }
-    ctx.fillStyle = `rgba(244, 239, 230, ${Math.max(0.88, LAYOUT_OPACITY)})`;
+    ctx.fillStyle = `rgba(244, 239, 230, ${Math.max(0.88, this.overlayOpacity())})`;
     ctx.fillRect(target.centerX - target.width / 2, target.centerY - target.height / 2, target.width, target.height);
   }
 
@@ -585,7 +596,7 @@ export struct GamepadOverlay {
     const left = target.centerX - width / 2;
     const top = target.centerY - height / 2;
     ctx.fillStyle = this.fillColor(pressed);
-    ctx.strokeStyle = name === 'A' ? `rgba(255, 107, 94, ${LAYOUT_OPACITY})` : this.strokeColor(false);
+    ctx.strokeStyle = name === 'A' ? `rgba(255, 107, 94, ${this.overlayOpacity()})` : this.strokeColor(false);
     ctx.lineWidth = (name === 'A' ? 3 : 2) * this.density;
     ctx.beginPath();
     if (target.shape === 'CIRCLE') {
@@ -596,7 +607,7 @@ export struct GamepadOverlay {
     }
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = pressed ? 'rgba(18, 19, 22, 1)' : `rgba(255, 255, 255, ${LAYOUT_OPACITY})`;
+    ctx.fillStyle = pressed ? 'rgba(18, 19, 22, 1)' : `rgba(255, 255, 255, ${this.overlayOpacity()})`;
     ctx.font = `${Math.round((target.shape === 'PILL' ? 11 : 22) * this.density)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -622,15 +633,15 @@ export struct GamepadOverlay {
 
   private fillColor(pressed: boolean): string {
     if (pressed) {
-      return `rgba(244, 239, 230, ${Math.max(0.88, LAYOUT_OPACITY)})`;
+      return `rgba(244, 239, 230, ${Math.max(0.88, this.overlayOpacity())})`;
     }
-    return `rgba(37, 40, 47, ${LAYOUT_OPACITY})`;
+    return `rgba(37, 40, 47, ${this.overlayOpacity()})`;
   }
 
   private strokeColor(owned: boolean): string {
     if (owned) {
-      return `rgba(255, 107, 94, ${Math.max(0.88, LAYOUT_OPACITY)})`;
+      return `rgba(255, 107, 94, ${Math.max(0.88, this.overlayOpacity())})`;
     }
-    return `rgba(190, 184, 174, ${LAYOUT_OPACITY})`;
+    return `rgba(190, 184, 174, ${this.overlayOpacity()})`;
   }
 }

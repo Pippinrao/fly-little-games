@@ -16,13 +16,17 @@ struct GameCenter {
   @State private visibleRows: GameCenterRow[] = [];
 
   aboutToAppear(): void {
-    this.allRows = this.catalog.loadRows();
+    this.ensureApp();
+    this.reloadRows();
     this.readCompactPolicy();
     this.applyFilter();
   }
 
   onPageShow(): void {
+    this.ensureApp();
+    this.reloadRows();
     this.readCompactPolicy();
+    this.applyFilter();
   }
 
   build() {
@@ -242,6 +246,24 @@ struct GameCenter {
     }
     .layoutWeight(1)
     .height('100%')
+  }
+
+  private ensureApp(): void {
+    const host = this.getUIContext().getHostContext();
+    if (host === undefined) {
+      return;
+    }
+    const context = host as common.UIAbilityContext;
+    try {
+      nativeProduct.appOpen(context.filesDir, context.cacheDir);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'appOpen failed';
+      console.error(`FlyNES appOpen failed: ${detail}`);
+    }
+  }
+
+  private reloadRows(): void {
+    this.allRows = this.catalog.loadRows();
   }
 
   private readCompactPolicy(): void {

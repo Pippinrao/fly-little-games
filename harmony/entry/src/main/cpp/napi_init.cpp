@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
@@ -128,6 +129,14 @@ struct ScanDeleter final
     void operator()(fly_scan_t* scan) const noexcept
     {
         fly_scan_abort(scan);
+    }
+};
+
+struct SnapshotDeleter final
+{
+    void operator()(fly_catalog_snapshot_t* snapshot) const noexcept
+    {
+        fly_catalog_snapshot_release(snapshot);
     }
 };
 
@@ -1499,6 +1508,109 @@ napi_value ScanAbort(napi_env env, napi_callback_info info)
     }
 }
 
+std::string basename_utf8(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos)
+    {
+        return path;
+    }
+    return path.substr(slash + 1u);
+}
+
+flynes::harmony::GameCenterRow row_from_catalog_entry(fly_app_t& app, const fly_catalog_entry& entry)
+{
+    flynes::harmony::GameCenterRow row;
+    row.canonical_id = entry.canonical_id_utf8 == nullptr ? std::string{} : entry.canonical_id_utf8;
+    const std::string display =
+        entry.display_name_utf8 == nullptr ? std::string{} : entry.display_name_utf8;
+    const std::string relative = entry.source_relative_path_utf8 == nullptr
+                                     ? std::string{}
+                                     : entry.source_relative_path_utf8;
+    row.original_filename = !display.empty() ? display : basename_utf8(relative);
+    row.title_en = !display.empty() ? display : row.original_filename;
+    row.title_zh_hans = {};
+    row.builtin = entry.source_scope == FLY_SOURCE_SCOPE_BUILTIN;
+
+    fly_catalog_user_state user{};
+    user.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE;
+    user.version = FLY_CATALOG_USER_STATE_VERSION_1;
+    require_fly(fly_catalog_user_state_get(&app, row.canonical_id.data(),
+                                           static_cast<std::uint32_t>(row.canonical_id.size()),
+                                           &user),
+                "fly_catalog_user_state_get");
+    row.favorite = user.favorite != 0;
+    if (user.last_played_sequence > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+    {
+        row.last_played_sequence = std::numeric_limits<std::int64_t>::max();
+    }
+    else
+    {
+        row.last_played_sequence = static_cast<std::int64_t>(user.last_played_sequence);
+    }
+    return row;
+}
+
+napi_value CatalogSnapshot(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        (void)info;
+        fly_app_t& app = require_app();
+        fly_catalog_snapshot_t* raw_snapshot = nullptr;
+        require_fly(fly_catalog_snapshot(&app, &raw_snapshot), "fly_catalog_snapshot");
+        if (raw_snapshot == nullptr)
+        {
+            throw FlyCallError("fly_catalog_snapshot invariant", FLY_RESULT_INTERNAL_ERROR);
+        }
+        std::unique_ptr<fly_catalog_snapshot_t, SnapshotDeleter> snapshot(raw_snapshot);
+
+        std::uint64_t count = 0;
+        require_fly(fly_catalog_snapshot_count(snapshot.get(), &count),
+                    "fly_catalog_snapshot_count");
+
+        napi_value result = nullptr;
+        require_napi(napi_create_array_with_length(env, static_cast<std::size_t>(count), &result),
+                     "create catalogSnapshot");
+        for (std::uint64_t index = 0; index < count; ++index)
+        {
+            std::array<char, FLY_CANONICAL_ID_MAX_UTF8_BYTES + 1u> canonical{};
+            std::array<char, FLY_CANONICAL_ID_MAX_UTF8_BYTES + 1u> variant{};
+            std::array<char, FLY_SCAN_DISPLAY_NAME_MAX_UTF8_BYTES + 1u> display{};
+            std::array<char, FLY_SCAN_RELATIVE_PATH_MAX_UTF8_BYTES + 1u> relative{};
+            fly_catalog_entry entry{};
+            entry.struct_size = FLY_CATALOG_ENTRY_V1_SIZE;
+            entry.version = FLY_CATALOG_ENTRY_VERSION_1;
+            entry.canonical_id_utf8 = canonical.data();
+            entry.canonical_id_capacity = static_cast<std::uint32_t>(canonical.size());
+            entry.variant_id_utf8 = variant.data();
+            entry.variant_id_capacity = static_cast<std::uint32_t>(variant.size());
+            entry.display_name_utf8 = display.data();
+            entry.display_name_capacity = static_cast<std::uint32_t>(display.size());
+            entry.source_relative_path_utf8 = relative.data();
+            entry.source_relative_path_capacity = static_cast<std::uint32_t>(relative.size());
+            require_fly(fly_catalog_snapshot_get(snapshot.get(), index, &entry),
+                        "fly_catalog_snapshot_get");
+            require_napi(napi_set_element(env, result, static_cast<std::uint32_t>(index),
+                                          make_game_center_row(env, row_from_catalog_entry(app, entry))),
+                         "set catalogSnapshot row");
+        }
+        return result;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "catalogSnapshot failed: unknown native error", false);
+    }
+}
+
 napi_value CatalogSmoke(napi_env env, napi_callback_info info)
 {
     try
@@ -1543,6 +1655,8 @@ napi_value Init(napi_env env, napi_value exports)
     {
         const napi_property_descriptor descriptors[] = {
             {"catalogSmoke", nullptr, CatalogSmoke, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"catalogSnapshot", nullptr, CatalogSnapshot, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
             {"gameCenterFilter", nullptr, GameCenterFilter, nullptr, nullptr, nullptr, napi_default,
              nullptr},
             {"controlLayoutRecommended", nullptr, ControlLayoutRecommended, nullptr, nullptr, nullptr,

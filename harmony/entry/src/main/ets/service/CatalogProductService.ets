@@ -1,4 +1,4 @@
-import { GameCenterRow } from 'libentry.so';
+import nativeProduct, { GameCenterRow } from 'libentry.so';
 
 /** Catalog projection for Game Center. Builtin From Below is always present. */
 export class CatalogProductService {
@@ -12,7 +12,25 @@ export class CatalogProductService {
       lastPlayedSequence: 0,
       originalFilename: 'from_below.nes'
     };
-    return [builtin];
+    let snapshot: GameCenterRow[] = [];
+    try {
+      snapshot = nativeProduct.catalogSnapshot();
+    } catch (error) {
+      snapshot = [];
+    }
+    const rows: GameCenterRow[] = [];
+    let hasBuiltin = false;
+    for (let index = 0; index < snapshot.length; index++) {
+      const row = snapshot[index];
+      rows.push(row);
+      if (row.canonicalId === 'builtin') {
+        hasBuiltin = true;
+      }
+    }
+    if (!hasBuiltin) {
+      rows.unshift(builtin);
+    }
+    return rows;
   }
 
   /** Matches Android HomeHeaderLayoutPolicy.compact (fontScale >= 1.8 or en-XA). */

@@ -33,4 +33,12 @@ src = Path("harmony/entry/src/main/ets/platform/HarmonySourceMap.ets").read_text
 assert "FLYCAT" not in src
 assert "uuid" in src.lower() or "UUID" in src
 
+catalog = Path("harmony/entry/src/main/ets/service/CatalogProductService.ets").read_text(encoding="utf-8")
+dts = Path("harmony/entry/src/main/cpp/types/libentry/Index.d.ts").read_text(encoding="utf-8")
+assert "catalogSnapshot" in catalog or "catalogRows" in catalog
+snapshot_export = "catalogSnapshot" if "catalogSnapshot" in catalog else "catalogRows"
+assert snapshot_export in dts
+assert "return [builtin]" not in catalog
+assert "From Below" in catalog
+
 print("flynes_harmony_product_contract: PASS")

@@ -78,6 +78,7 @@ export interface ScanFileResultDto {
 }
 
 export const catalogSmoke: (dataRoot: string, cacheRoot: string) => CatalogSmokeResult;
+export const catalogSnapshot: () => GameCenterRow[];
 export const gameCenterFilter: (rows: GameCenterRow[], category: string, query: string) => GameCenterRow[];
 export const controlLayoutRecommended: () => string;
 export const controlLayoutDecodeOrRecommended: (value: string) => string;
