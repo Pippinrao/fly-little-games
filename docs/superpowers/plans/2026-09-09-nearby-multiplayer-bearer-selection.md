@@ -74,7 +74,7 @@ Validation contract:
 - No matches returns NoCommonPlan. Do not guess fallback, mutate authority/seat, prefer inviter, or trigger radio/system UI.
 - Summary support hashes may differ between devices; exact certified plan equality is what matters, so do not require whole summaries equal.
 
-- [ ] Write behavioral tests before implementation. Register the CTest target `flynes_pair_capability`. Start with valid empty summaries and assert no fabricated plan:
+- [x] Write behavioral tests before implementation. Register the CTest target `flynes_pair_capability`. Start with valid empty summaries and assert no fabricated plan:
 ```cpp
 std::array<std::uint8_t, 512> a{};
 a[1] = 1; a[8] = 1; a[32] = 1; a[64] = 1;
@@ -85,12 +85,12 @@ check(select_pair_plan(a.data(), a.size(), b.data(), b.size(), out)
 check(std::all_of(out.begin(), out.end(), [](auto x) { return x == 0; }),
       "failure clears selection");
 ```
-- [ ] Run the new target and record RED caused by missing capability implementation (compile/link missing symbol accepted for the first new API).
-- [ ] Implement explicit bounded byte validation and the deterministic intersection above. At most8x8 comparisons; no heap allocation or reinterpret_cast to wire structs.
-- [ ] Expand tests:0/8/9 plans,511/513 bytes,null data, every reserved region,invalid platform/version/role/rank/codec/endpoint/zero hashes/zero cert ID, duplicate/descending entries, unused entry bytes, disjoint plans, differing contract hash, differing support database hashes, same hashes with differing entry fields, priority/tie-breakers, swapped inputs with matching global roles, repeatability, output clearing.
-- [ ] Verify independent literal hash oracle using existing domain_hash on one selected48-byte entry; derive the expected hex separately with Python hashlib in a command, never use the same C++ hash helper as the oracle.
-- [ ] Run new target under strict warning settings, full shared CTest and existing session codec/registry regression checks.
-- [ ] Commit only these four code/build files after review.
+- [x] Run the new target and record RED caused by missing capability implementation (compile/link missing symbol accepted for the first new API).
+- [x] Implement explicit bounded byte validation and the deterministic intersection above. At most8x8 comparisons; no heap allocation or reinterpret_cast to wire structs.
+- [x] Expand tests:0/8/9 plans,511/513 bytes,null data, every reserved region,invalid platform/version/role/rank/codec/endpoint/zero hashes/zero cert ID, duplicate/descending entries, unused entry bytes, disjoint plans, differing contract hash, differing support database hashes, same hashes with differing entry fields, priority/tie-breakers, swapped inputs with matching global roles, repeatability, output clearing.
+- [x] Verify independent literal hash oracle using existing domain_hash on one selected48-byte entry; derive the expected hex separately with Python hashlib in a command, never use the same C++ hash helper as the oracle.
+- [x] Run new target under strict warning settings, full shared CTest and existing session codec/registry regression checks.
+- [x] Commit only these four code/build files after review.
 
 ## Task 3: Reviews and execution record
 
@@ -98,10 +98,10 @@ check(std::all_of(out.begin(), out.end(), [](auto x) { return x == 0; }),
 - Create: docs/superpowers/plans/2026-09-09-nearby-multiplayer-progress.md
 - Update this plan's checkboxes.
 
-- [ ] Independently inspect implementation against exact offsets, ordering, failure behavior and non-goals.
-- [ ] After spec compliance passes, independently inspect quality/security/test coverage; fix findings and rerun affected checks.
-- [ ] Record baseline and final counts, git commits, no-device limitation, and actual remaining work. Document cross-task message delivery only if the app reports success.
-- [ ] Preserve this implementation branch/worktree for further work; do not merge main or mutate the other worktree.
+- [x] Independently inspect implementation against exact offsets, ordering, failure behavior and non-goals.
+- [x] After spec compliance passes, independently inspect quality/security/test coverage; fix findings and rerun affected checks.
+- [x] Record baseline and final counts, git commits, no-device limitation, and actual remaining work. Document cross-task message delivery only if the app reports success.
+- [x] Preserve this implementation branch/worktree for further work; do not merge main or mutate the other worktree.
 
 ## Next implementation order
 
