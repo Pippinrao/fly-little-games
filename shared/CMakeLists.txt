@@ -201,6 +201,7 @@ target_link_libraries(flynes_app PUBLIC flynes_product)
 add_library(flynes_session_codec STATIC
     src/session/wire/sha256.cpp
     src/session/wire/session_codec.cpp
+    src/session/wire/pair_capability.cpp
 )
 target_include_directories(flynes_session_codec PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
@@ -698,6 +699,13 @@ if(FLYNES_BUILD_TESTS)
         FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
     )
     add_test(NAME flynes_session_codec COMMAND flynes_session_codec_test)
+
+    add_executable(flynes_pair_capability_test tests/test_pair_capability.cpp)
+    target_link_libraries(flynes_pair_capability_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_pair_capability_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_capability_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_capability_test)
+    add_test(NAME flynes_pair_capability COMMAND flynes_pair_capability_test)
 
     add_executable(flynes_session_codec_loopback_test
         tests/test_session_codec_loopback.cpp
