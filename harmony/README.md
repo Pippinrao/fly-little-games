@@ -50,6 +50,23 @@ in this tree. An unsigned HAP proves compilation, linking, and packaging only;
 emulator or real-device execution requires a separately provisioned debug
 signature.
 
+The completion work has one stage-aware test entry point. It writes revision,
+target, dirty-tree state, and each command log into a distinct evidence directory:
+
+```powershell
+.\tools\quality\run_harmony_completion_gate.ps1 -Stage Host `
+  -CMakeExe $CMake -CTestExe $CTest
+.\tools\quality\run_harmony_completion_gate.ps1 -Stage HarmonyEmulator `
+  -NodeExe $Node -HvigorScript "$env:DEVECO_STUDIO_HOME\tools\hvigor\bin\hvigorw.js" `
+  -DevEcoSdkHome $env:DEVECO_SDK_HOME `
+  -HdcExe "$env:DEVECO_SDK_HOME\default\openharmony\toolchains\hdc.exe"
+.\tools\quality\run_harmony_completion_gate.ps1 -Stage AndroidEmulator
+```
+
+`HarmonyDevice` and `AndroidDevice` require an explicit target serial. Their
+logs remain separate from emulator evidence and do not certify physical timing
+by themselves.
+
 ## Private host contract test
 
 The host-only tests exercise `catalog_smoke.cpp`, `runtime_smoke.cpp`, and
