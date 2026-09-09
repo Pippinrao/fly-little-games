@@ -33,7 +33,9 @@ enum fly_result_code
     FLY_RESULT_OUT_OF_MEMORY = -6,
     FLY_RESULT_INTERNAL_ERROR = -7,
     FLY_RESULT_INVALID_STATE = -8,
-    FLY_RESULT_CONFLICT = -9
+    FLY_RESULT_CONFLICT = -9,
+    FLY_RESULT_NOT_FOUND = -10,
+    FLY_RESULT_FORBIDDEN = -11
 };
 
 #define FLY_PLATFORM_CAPABILITIES_VERSION_1 UINT32_C(1)
@@ -564,6 +566,17 @@ FLYNES_API fly_result fly_source_status_count(const fly_app_t* app, uint64_t* co
 FLYNES_API fly_result fly_source_status_get(const fly_app_t* app,
                                             uint64_t index,
                                             fly_source_status* status_out);
+
+/*
+ * Removes one source-registry row and every catalog entry that belongs to it.
+ * Builtin sources return FLY_RESULT_FORBIDDEN. Unknown UUID/scope pairs return
+ * FLY_RESULT_NOT_FOUND. User-state rows are retained so favorites and recents
+ * for surviving games remain intact. Successful removal publishes a new
+ * generation through FLYCAT01.
+ */
+FLYNES_API fly_result fly_source_remove(fly_app_t* app,
+                                        const uint8_t source_uuid[16],
+                                        uint32_t source_scope);
 
 FLYNES_API fly_result fly_settings_get(const fly_app_t* app, fly_settings_snapshot* snapshot_out);
 

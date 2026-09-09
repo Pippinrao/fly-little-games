@@ -46,6 +46,12 @@ public final class NativeCatalogProjectorTest {
 
         assertEquals("builtin", state.builtinSourceId());
         assertEquals(RomSource.Type.BUILTIN, state.sources().get("builtin").source().type());
+        CatalogPackage builtinPkg = state.sources().get("builtin")
+                .packages().values().iterator().next();
+        assertEquals("From Below", builtinPkg.physicalPackage().variants().get(0)
+                .canonicalGame().englishTitle());
+        assertEquals("来自下方", builtinPkg.physicalPackage().variants().get(0)
+                .canonicalGame().zhHansTitle());
         assertEquals("content://tree/roms",
                 state.sources().values().stream()
                         .filter(item -> item.source().type() == RomSource.Type.SAF_TREE)
@@ -58,6 +64,26 @@ public final class NativeCatalogProjectorTest {
         assertEquals(RomFormat.INES, treePkg.physicalPackage().variants().get(0).romFormat());
         assertTrue(state.userStates().get("canonical-a").favorite());
         assertEquals(1, state.lastPlayedSequence());
+    }
+
+    @Test
+    public void favoriteRevisionDefinesProjectedCatalogRevisionBeforeAnyGameIsPlayed() {
+        Map<String, String> backing = new LinkedHashMap<>();
+        AndroidUuidSafMap map = new AndroidUuidSafMap(backing::get, backing::put, backing::remove);
+        byte[] builtin = map.builtinUuid();
+        NativeCatalogEntry builtinEntry = entry(builtin, FlyCatalogCommands.SOURCE_SCOPE_BUILTIN,
+                "builtin:from-below", "from_below.nes", 1);
+
+        CatalogState state = NativeCatalogProjector.project(
+                List.of(builtinEntry),
+                List.of(new NativeSourceStatus(builtin, FlyCatalogCommands.SOURCE_SCOPE_BUILTIN,
+                        FlyCatalogCommands.SCAN_FULL, 1)),
+                Map.of("builtin:from-below", new CanonicalUserState(true, 3, 0, 0)),
+                0, map, new AndroidPackageLocatorMap());
+
+        assertEquals(3, state.revision());
+        assertEquals(0, state.lastPlayedSequence());
+        assertTrue(state.userStates().get("builtin:from-below").favorite());
     }
 
     private static NativeCatalogEntry entry(

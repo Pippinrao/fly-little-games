@@ -73,8 +73,12 @@ public final class NativeCatalogProjector {
         for (SourceBuilder builder : builders.values()) {
             projected.put(builder.source.id(), builder.build());
         }
+        long revision = Math.max(0L, lastPlayedSequence);
+        for (CanonicalUserState user : users.values()) {
+            revision = Math.max(revision, user.favoriteUpdatedRevision());
+        }
         return new CatalogState(
-                CatalogState.CURRENT_SCHEMA, Math.max(0L, lastPlayedSequence),
+                CatalogState.CURRENT_SCHEMA, revision,
                 builtin.id(), projected, users, lastPlayedSequence);
     }
 
@@ -95,8 +99,11 @@ public final class NativeCatalogProjector {
         String physical = hex(entry.physicalSha256());
         String crc = hex(entry.payloadCrc32());
         RomHashes hashes = new RomHashes(sha1, sha256, physical, crc);
-        CanonicalGame game = new CanonicalGame(entry.canonicalId(), entry.displayName(), "",
-                Collections.emptyList());
+        CanonicalGame game = source.type() == RomSource.Type.BUILTIN
+                ? new CanonicalGame(entry.canonicalId(), "From Below", "来自下方",
+                        Collections.emptyList())
+                : new CanonicalGame(entry.canonicalId(), entry.displayName(), "",
+                        Collections.emptyList());
         RomFormat romFormat = romFormat(entry.romFormat());
         CompatibilityDecision compatibility = compatibility(romFormat, entry.compatibilityState(),
                 entry.compatibilityReason());

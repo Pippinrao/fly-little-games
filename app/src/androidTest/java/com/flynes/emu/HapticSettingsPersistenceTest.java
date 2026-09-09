@@ -18,6 +18,7 @@ import androidx.test.espresso.contrib.RecyclerViewActions;
 import com.flynes.emu.input.HapticLevel;
 import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.SettingsRepository;
+import com.flynes.emu.settings.SettingsAccess;
 import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 
 import org.junit.Test;
@@ -27,19 +28,25 @@ import org.junit.runner.RunWith;
 public final class HapticSettingsPersistenceTest {
     @Test
     public void hapticLevelAndDistinctABPersistAcrossRecreation() {
-        ApplicationProvider.getApplicationContext()
-                .getSharedPreferences(SettingsActivity.PREFS, 0).edit().clear().commit();
+        assertEquals(true, SettingsAccess.repository(
+                ApplicationProvider.getApplicationContext()).save(AppSettings.defaults()));
         try (ActivityScenario<SettingsActivity> scenario =
                      ActivityScenario.launch(SettingsActivity.class)) {
+            final String[] labels = new String[3];
+            scenario.onActivity(activity -> {
+                labels[0] = activity.getString(R.string.haptic_level);
+                labels[1] = activity.getString(R.string.haptic_off);
+                labels[2] = activity.getString(R.string.distinct_ab_haptics);
+            });
             onView(withId(R.id.settings_controls_master)).perform(click());
             onView(allOf(withId(androidx.preference.R.id.recycler_view), isDisplayed())).perform(
-                    RecyclerViewActions.scrollTo(hasDescendant(withText(R.string.haptic_level))));
-            onView(withText(R.string.haptic_level)).perform(click());
-            onView(withText(R.string.haptic_off)).perform(click());
+                    RecyclerViewActions.scrollTo(hasDescendant(withText(labels[0]))));
+            onView(withText(labels[0])).perform(click());
+            onView(withText(labels[1])).perform(click());
             onView(allOf(withId(androidx.preference.R.id.recycler_view), isDisplayed())).perform(
                     RecyclerViewActions.scrollTo(hasDescendant(
-                            withText(R.string.distinct_ab_haptics))));
-            onView(withText(R.string.distinct_ab_haptics)).perform(click());
+                            withText(labels[2]))));
+            onView(withText(labels[2])).perform(click());
             scenario.recreate();
         }
         AppSettings settings = new SettingsRepository(new SharedPreferencesSettingsStore(
