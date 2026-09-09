@@ -621,7 +621,15 @@ export struct GamepadOverlay {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = pressed ? 'rgba(18, 19, 22, 1)' : `rgba(255, 255, 255, ${this.overlayOpacity()})`;
-    ctx.font = `${Math.round((target.shape === 'PILL' ? 11 : 22) * this.density)}px sans-serif`;
+    // Android GamepadView draws labels with fontPx = (PILL?11:22) * density, giving a
+    // glyph ~22% of the button size. On OHOS the canvas font value does not follow the
+    // same pipeline as geometry: measured on the emulator, the rendered glyph equals
+    // fontValue / density, so the font value must be button-relative AND multiplied by
+    // density again. fontValue = button * ratio * density => glyph ≈ button * ratio * 0.72.
+    const labelPx = target.shape === 'PILL'
+      ? Math.max(28, Math.round(height * 0.42 * this.density))
+      : Math.max(28, Math.round(Math.min(width, height) * 0.30 * this.density));
+    ctx.font = `bold ${labelPx}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, target.centerX, target.centerY);

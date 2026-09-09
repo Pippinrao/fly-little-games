@@ -1,12 +1,19 @@
 import { common } from '@kit.AbilityKit';
 import { display, router, window } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import nativePlay from 'libentry.so';
+import { vibrator } from '@kit.SensorServiceKit';
+import { batteryInfo, BusinessError, thermal } from '@kit.BasicServicesKit';
+import nativePlay, { PlayRuntimeStatusDto, RenderStatusDto } from 'libentry.so';
 import { GamepadOverlay } from '../overlay/GamepadOverlay';
-import { PlayService } from '../service/PlayService';
+import { PlayService, rememberRomOpenError, RomLaunchLocator } from '../service/PlayService';
+import { CoverStore } from '../service/CoverStore';
+import { parsePauseTitle } from './PauseParams';
+import { computeViewport, ViewportSize } from './ViewportGeometry';
 
 const DIRECTION_FIXED_JOYSTICK = 1;
 const DEFAULT_DEAD_ZONE = 0.18;
+// Frame indices sampled for cover capture (matches Android 2/4/6/8s at 60fps).
+const COVER_SAMPLE_OFFSETS: number[] = [120, 240, 360, 480];
 
 @Entry
 @Component
@@ -15,7 +22,9 @@ struct RunGame {
   private timerId: number = -1;
   private started: boolean = false;
   @State private canonicalId: string = '';
+  private readonly locator: RomLaunchLocator = new RomLaunchLocator();
   @State private frame: image.PixelMap | undefined = undefined;
+  @State private pixelFallback: boolean = false;
   @State private density: number = 3;
   @State private insetL: number = 0;
   @State private insetR: number = 0;
@@ -26,16 +35,51 @@ struct RunGame {
   @State private overlayMounted: boolean = true;
   @State private paused: boolean = false;
   @State private drawerOpen: boolean = false;
+  @State private gameTitle: string = 'Game paused';
   @State private pressedBits: number = 0;
   @State private checkpointFailed: boolean = false;
   @State private status: string = '';
   @State private directionMode: number = DIRECTION_FIXED_JOYSTICK;
   @State private deadZone: number = DEFAULT_DEAD_ZONE;
+  // Settings-driven behavior (Android parity: MainActivity + GamepadView).
+  @State private aspectMode: number = 1;
+  @State private audioEnabled: boolean = true;
+  @State private autosaveEnabled: boolean = true;
+  @State private hapticLevel: number = 2;
+  @State private distinctAbHaptics: boolean = true;
+  @State private frameAspect: number = 256 / 240;
+  @State private viewportW: number = 0;
+  @State private viewportH: number = 0;
+  private hapticLastMs: number = 0;
+  private coverStore: CoverStore | undefined = undefined;
+  private coverGameId: string = '';
+  private coverSample: number = 0;
+  private coverBusy: boolean = false;
+  private coverStored: boolean = false;
+  private renderEvidenceFrames: number = 0;
+  private resumeAfterSettings: boolean = false;
+  private protectionObservationFailed: boolean = false;
 
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, Object>;
-    if (params !== undefined && params['canonicalId'] !== undefined) {
-      this.canonicalId = params['canonicalId'] as string;
+    this.gameTitle = parsePauseTitle(params, 'Game paused');
+    if (params !== undefined) {
+      if (params['canonicalId'] !== undefined) {
+        this.canonicalId = params['canonicalId'] as string;
+        this.locator.canonicalId = this.canonicalId;
+      }
+      if (params['sourceUuidHex'] !== undefined) {
+        this.locator.sourceUuidHex = params['sourceUuidHex'] as string;
+      }
+      if (params['sourceRelativePath'] !== undefined) {
+        this.locator.sourceRelativePath = params['sourceRelativePath'] as string;
+      }
+      if (params['packageFormat'] !== undefined) {
+        this.locator.packageFormat = Number.parseInt(params['packageFormat'] as string, 10);
+      }
+      if (params['zipEntryName'] !== undefined) {
+        this.locator.zipEntryName = params['zipEntryName'] as string;
+      }
     }
     this.pauseIds = nativePlay.pauseCommands();
     this.readDisplayMetrics();
@@ -55,13 +99,20 @@ struct RunGame {
 
   onPageShow(): void {
     this.loadPersistedLayout();
+    if (this.resumeAfterSettings) {
+      this.resumeAfterSettings = false;
+      this.resumePlay();
+      return;
+    }
     if (this.started && !this.paused) {
+      nativePlay.renderSetPaused(false);
       this.startLoop();
     }
   }
 
   onPageHide(): void {
     this.stopLoop();
+    nativePlay.renderSetPaused(true);
   }
 
   aboutToDisappear(): void {
@@ -74,22 +125,41 @@ struct RunGame {
 
   build() {
     Stack() {
-      if (this.frame === undefined) {
-        Column() {
-          Text(this.status.length > 0 ? this.status : 'Starting')
+      if (this.pixelFallback && this.frame !== undefined) {
+        Image(this.frame)
+          .width(this.viewportW > 0 ? this.viewportW : '100%')
+          .height(this.viewportH > 0 ? this.viewportH : '100%')
+          .objectFit(ImageFit.Fill)
+          .backgroundColor('#000000')
+          .alt($r('app.string.play_screen_alt'))
+      } else {
+        XComponent({
+          id: 'flynes-render-surface',
+          type: XComponentType.SURFACE,
+          libraryname: 'entry'
+        })
+          .id('flynes-render-surface')
+          .width(this.viewportW > 0 ? this.viewportW : '100%')
+          .height(this.viewportH > 0 ? this.viewportH : '100%')
+          .backgroundColor('#000000')
+      }
+
+      if (!this.started && this.status.length > 0) {
+        Column({ space: 16 }) {
+          Text(this.status)
             .fontColor('#A8B0BD')
+            .fontSize(18)
+          Button($r('app.string.game_center_title'))
+            .height(48)
+            .fontSize(16)
+            .onClick(() => {
+              router.back();
+            })
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .backgroundColor('#000000')
-      } else {
-        Image(this.frame)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Contain)
-          .backgroundColor('#000000')
-          .alt($r('app.string.play_screen_alt'))
       }
 
       if (!this.drawerOpen && this.overlayMounted) {
@@ -122,6 +192,7 @@ struct RunGame {
             .backgroundColor('#B81B1D22')
             .border({ width: 2, color: '#FF6B5E' })
             .borderRadius(24)
+            .accessibilityText($r('app.string.open_pause'))
             .margin({
               top: 16 + this.getUIContext().px2vp(this.insetT),
               right: 16 + this.getUIContext().px2vp(this.insetR)
@@ -151,16 +222,17 @@ struct RunGame {
         .width('100%')
         .height('100%')
         .backgroundColor('#8A000000')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180 }))
         .onClick(() => {
           this.resumePlay();
         })
       Column({ space: 12 }) {
         Text($r('app.string.pause_eyebrow'))
-          .fontSize(12)
+          .fontSize(14)
           .fontColor('#FF6B5E')
           .fontWeight(FontWeight.Bold)
           .width('100%')
-        Text($r('app.string.pause_title'))
+        Text(this.gameTitle)
           .fontSize(28)
           .fontColor('#F4EFE6')
           .fontWeight(FontWeight.Bold)
@@ -174,8 +246,8 @@ struct RunGame {
         ForEach(this.pauseIds, (id: string) => {
           Button(this.pauseLabel(id))
             .width('100%')
-            .height(id === 'resume' ? 52 : 48)
-            .fontSize(15)
+            .height(id === 'resume' ? 56 : 48)
+            .fontSize(16)
             .fontColor(id === 'resume' ? '#121316' : '#F4EFE6')
             .backgroundColor(id === 'resume' ? '#FF6B5E' : '#25282F')
             .borderRadius(14)
@@ -194,6 +266,7 @@ struct RunGame {
       })
       .justifyContent(FlexAlign.Center)
       .backgroundColor('#1B1D22')
+      .transition(TransitionEffect.translate({ x: 320 }).animation({ duration: 220, curve: Curve.EaseOut }))
       .onClick(() => {
       })
     }
@@ -203,12 +276,32 @@ struct RunGame {
 
   private async start(context: common.UIAbilityContext): Promise<void> {
     try {
-      await this.play.open(context, this.canonicalId);
+      await this.play.open(context, this.locator, this.autosaveEnabled);
       this.started = true;
       this.status = '';
+      this.markPlayedOnce();
       this.startLoop();
     } catch (error) {
       this.status = error instanceof Error ? error.message : 'Failed to start play session';
+      rememberRomOpenError(this.status);
+      router.back();
+    }
+  }
+
+  /** Records the play for Game Center Recent ordering (Android parity). */
+  private markPlayedOnce(): void {
+    if (this.coverGameId.length > 0) {
+      return;
+    }
+    this.coverGameId = this.locator.canonicalId;
+    if (this.coverGameId.length === 0) {
+      return;
+    }
+    try {
+      nativePlay.catalogMarkPlayed(this.coverGameId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'markPlayed failed';
+      console.error(`FlyNES catalogMarkPlayed failed: ${detail}`);
     }
   }
 
@@ -230,20 +323,90 @@ struct RunGame {
 
   private tick(): void {
     try {
-      const stepped = this.play.stepFrame();
-      const next = this.play.createFrame(stepped.rgb565);
-      const old = this.frame;
-      this.frame = next;
-      old?.release();
+      if (this.renderEvidenceFrames % 120 === 0) {
+        this.updatePlatformProtection();
+      }
+      const renderStatus: RenderStatusDto = nativePlay.renderStatus();
+      const playStatus: PlayRuntimeStatusDto = nativePlay.playRuntimeStatus();
+      this.renderEvidenceFrames += 1;
+      if (this.renderEvidenceFrames % 120 === 0) {
+        console.info(`FlyNES render evidence ${JSON.stringify(renderStatus)}`);
+        console.info(`FlyNES runtime evidence ${JSON.stringify(playStatus)}`);
+      }
+      const needsPixelFallback: boolean = renderStatus.fallbackActive && !renderStatus.nativeReady;
+      this.pixelFallback = needsPixelFallback;
+      const coverDue: boolean = this.coverSample < COVER_SAMPLE_OFFSETS.length &&
+        playStatus.sourceFrames >= COVER_SAMPLE_OFFSETS[this.coverSample];
+      if (needsPixelFallback || coverDue) {
+        const stepped = this.play.stepFrame();
+        this.considerCover(stepped.frameIndex, stepped.rgb565);
+        if (!needsPixelFallback) {
+          return;
+        }
+        const next = this.play.createFrame(stepped.rgb565);
+        const old = this.frame;
+        this.frame = next;
+        old?.release();
+      } else if (this.frame !== undefined) {
+        this.frame.release();
+        this.frame = undefined;
+      }
     } catch (error) {
       this.stopLoop();
       this.status = error instanceof Error ? error.message : 'Frame step failed';
     }
   }
+  /** Mirrors Android CoverCaptureCoordinator: samples frames at 2/4/6/8s. */
+  private considerCover(frameIndex: number, rgb565: ArrayBuffer): void {
+    if (this.coverSample >= COVER_SAMPLE_OFFSETS.length) {
+      return;
+    }
+    if (frameIndex < COVER_SAMPLE_OFFSETS[this.coverSample]) {
+      return;
+    }
+    this.coverSample += 1;
+    if (this.coverGameId.length === 0 || this.coverBusy) {
+      return;
+    }
+    this.coverBusy = true;
+    const snapshot = rgb565.slice(0);
+    this.ensureCoverStore();
+    const store = this.coverStore;
+    if (store === undefined) {
+      this.coverBusy = false;
+      return;
+    }
+    store.storeFromRgb565(this.coverGameId, snapshot).then((stored: boolean) => {
+      this.coverBusy = false;
+      if (stored) {
+        this.coverStored = true;
+        console.info(`FlyNES cover stored for ${this.coverGameId}`);
+      }
+    }).catch((error: Object) => {
+      this.coverBusy = false;
+      const detail = error instanceof Error ? error.message : 'cover capture failed';
+      console.error(`FlyNES cover capture failed: ${detail}`);
+    });
+  }
+
+  private ensureCoverStore(): void {
+    if (this.coverStore !== undefined) {
+      return;
+    }
+    const host = this.getUIContext().getHostContext();
+    if (host === undefined) {
+      return;
+    }
+    this.coverStore = new CoverStore((host as common.UIAbilityContext).filesDir);
+  }
 
   private handleOverlayButtons(bits: number): void {
+    const rising = bits & ~this.pressedBits;
     this.pressedBits = bits;
     this.play.setButtons(bits);
+    if (rising !== 0) {
+      this.fireHaptic(rising);
+    }
   }
 
   private openPause(): void {
@@ -255,12 +418,17 @@ struct RunGame {
       this.pressedBits = 0;
       this.stopLoop();
       this.play.pauseOutput();
+      nativePlay.renderSetPaused(true);
+      console.info(`FlyNES pause evidence ${JSON.stringify(nativePlay.playRuntimeStatus())}`);
       this.checkpointFailed = false;
-      try {
-        this.play.saveCheckpoint();
-      } catch (error) {
-        this.checkpointFailed = true;
-        this.status = error instanceof Error ? error.message : 'checkpoint failed';
+      // Settings parity: general.autosave=0 skips writing the resume checkpoint.
+      if (this.autosaveEnabled) {
+        try {
+          this.play.saveCheckpoint();
+        } catch (error) {
+          this.checkpointFailed = true;
+          this.status = error instanceof Error ? error.message : 'checkpoint failed';
+        }
       }
     }
     this.paused = true;
@@ -275,6 +443,8 @@ struct RunGame {
     this.paused = false;
     this.checkpointFailed = false;
     this.play.resumeOutput();
+    nativePlay.renderSetPaused(false);
+    console.info(`FlyNES resume evidence ${JSON.stringify(nativePlay.playRuntimeStatus())}`);
     this.startLoop();
   }
 
@@ -287,6 +457,7 @@ struct RunGame {
       this.drawerOpen = false;
       this.stopLoop();
       this.play.close();
+      nativePlay.renderSetPaused(true);
       this.started = false;
       void router.replaceUrl({ url: 'pages/GameCenter' });
       return;
@@ -294,6 +465,7 @@ struct RunGame {
     if (id === 'settings') {
       this.drawerOpen = false;
       this.paused = true;
+      this.resumeAfterSettings = true;
       void router.pushUrl({ url: 'pages/Settings' });
     }
   }
@@ -318,12 +490,87 @@ struct RunGame {
       const settings = nativePlay.settingsGet();
       this.directionMode = Math.max(0, Math.min(2, settings.directionMode - 1));
       this.deadZone = settings.deadZone;
+      this.aspectMode = settings.aspectMode;
+      this.audioEnabled = settings.audioEnabled === 1;
+      this.autosaveEnabled = settings.autosaveEnabled === 1;
+      this.hapticLevel = Math.max(1, Math.min(4, settings.hapticLevel));
+      this.distinctAbHaptics = settings.distinctAbHaptics === 1;
+      const refresh: number = settings.videoQualityPreset === 4 ? settings.customRefreshPolicy : 3;
+      const temporal: number = settings.videoQualityPreset === 4 ? settings.customTemporalMode : 1;
+      const spatial: number = settings.videoQualityPreset === 1 ? 1 :
+        settings.videoQualityPreset === 2 || settings.videoQualityPreset === 3 ? 2 :
+          settings.customSpatialMode;
+      const post: number = settings.videoQualityPreset === 4 ? settings.customPostEffect : 1;
+      nativePlay.renderConfigure(refresh, temporal, spatial, post,
+        settings.adaptiveProtection === 1);
+      this.updatePlatformProtection();
+      console.info(`FlyNES configured evidence ${JSON.stringify({
+        refresh: refresh,
+        temporal: temporal,
+        spatial: spatial,
+        post: post,
+        adaptiveProtection: settings.adaptiveProtection === 1
+      })}`);
+      this.play.setAudioMuted(!this.audioEnabled);
     } catch (error) {
       this.layoutUtf8 = nativePlay.controlLayoutRecommended();
       const detail = error instanceof Error ? error.message : 'layout get failed';
       console.error(`FlyNES layout load failed: ${detail}`);
     }
+    this.updateViewport();
     this.remountOverlay();
+  }
+
+  private updatePlatformProtection(): void {
+    try {
+      const thermalLimited: boolean = thermal.getLevel() >= thermal.ThermalLevel.HOT;
+      const lowBattery: boolean = batteryInfo.batterySOC >= 0 && batteryInfo.batterySOC <= 15;
+      nativePlay.renderSetProtection(thermalLimited, lowBattery, true);
+      this.protectionObservationFailed = false;
+    } catch (error) {
+      nativePlay.renderSetProtection(false, false, false);
+      if (!this.protectionObservationFailed) {
+        const detail = error instanceof Error ? error.message : 'platform protection query failed';
+        console.error(`FlyNES protection observation failed: ${detail}`);
+        this.protectionObservationFailed = true;
+      }
+    }
+  }
+
+  /**
+   * Android GamepadView parity: control presses fire HapticController.feedback.
+   * Level OFF(1) suppresses; B gets a distinct double-pulse cadence when enabled.
+   * Level maps to preset intensity like HapticPattern (LIGHT 72/STANDARD 140/STRONG 220).
+   */
+  private fireHaptic(bits: number): void {
+    if (this.hapticLevel === 1) {
+      return;
+    }
+    const intensity: number = [0, 0, 40, 70, 100][this.hapticLevel];
+    const isB = (bits & 0x02) !== 0;
+    // Throttle: direction pads stream repeated bits every frame.
+    const now = Date.now();
+    if (now - this.hapticLastMs < 40) {
+      return;
+    }
+    this.hapticLastMs = now;
+    const count = isB && this.distinctAbHaptics ? 2 : 1;
+    const effect: vibrator.VibratePreset = {
+      type: 'preset',
+      effectId: 'haptic.clock.timer',
+      count: count,
+      intensity: intensity
+    };
+    try {
+      vibrator.startVibration(effect, { usage: 'touch' }, (error: BusinessError) => {
+        if (error && error.code !== 0) {
+          console.error(`FlyNES haptic failed: ${error.code}`);
+        }
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'haptic failed';
+      console.error(`FlyNES haptic failed: ${detail}`);
+    }
   }
 
   private remountOverlay(): void {
@@ -344,6 +591,29 @@ struct RunGame {
     }
   }
 
+  /**
+   * Android ViewportLayout.compute parity: 4:3 letterboxed to safe area,
+   * square-pixels uses native 256:240, integer scale snaps to whole multiples.
+   */
+  private updateViewport(): void {
+    try {
+      const info = display.getDefaultDisplaySync();
+      const safeWidthPx = Math.max(1, info.width - Math.max(0, this.insetL)
+        - Math.max(0, this.insetR));
+      const safeHeightPx = Math.max(1, info.height - Math.max(0, this.insetT)
+        - Math.max(0, this.insetB));
+      const viewport: ViewportSize = computeViewport(safeWidthPx, safeHeightPx,
+        this.aspectMode, 256, 240);
+      this.viewportW = this.getUIContext().px2vp(viewport.width);
+      this.viewportH = this.getUIContext().px2vp(viewport.height);
+    } catch (error) {
+      this.viewportW = 0;
+      this.viewportH = 0;
+      const detail = error instanceof Error ? error.message : 'viewport failed';
+      console.error(`FlyNES viewport failed: ${detail}`);
+    }
+  }
+
   private requestLandscape(context: common.UIAbilityContext): void {
     window.getLastWindow(context).then((win: window.Window) => {
       try {
@@ -358,6 +628,7 @@ struct RunGame {
         this.insetR = avoid.rightRect.width;
         this.insetT = avoid.topRect.height;
         this.insetB = avoid.bottomRect.height;
+        this.updateViewport();
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'avoid area failed';
         console.error(`FlyNES insets failed: ${detail}`);

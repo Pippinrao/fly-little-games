@@ -15,6 +15,9 @@ struct GameCenterRow final
     bool favorite = false;
     std::int64_t last_played_sequence = 0;
     std::string original_filename;
+    std::string source_uuid_hex;
+    std::string source_relative_path;
+    int package_format = 0;
 };
 
 struct HitMapControlDto final

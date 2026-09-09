@@ -74,7 +74,7 @@ std::string read_text_file(std::string_view relative_path)
     return buffer.str();
 }
 
-void test_public_surface_does_not_export_play_load_checkpoint()
+void test_checkpoint_bridge_exports_save_and_load_for_per_rom_autosave()
 {
     const std::string index_dts = read_text_file(
         "../entry/src/main/cpp/types/libentry/Index.d.ts");
@@ -82,10 +82,26 @@ void test_public_surface_does_not_export_play_load_checkpoint()
 
     expect(!index_dts.empty(), "Index.d.ts is readable from host test cwd");
     expect(!napi_init.empty(), "napi_init.cpp is readable from host test cwd");
-    expect(index_dts.find("playLoadCheckpoint") == std::string::npos,
-           "Index.d.ts must not export playLoadCheckpoint");
-    expect(napi_init.find("\"playLoadCheckpoint\"") == std::string::npos,
-           "napi_init.cpp must not register playLoadCheckpoint");
+    expect(index_dts.find("playSaveCheckpoint") != std::string::npos,
+           "Index.d.ts must export playSaveCheckpoint");
+    expect(index_dts.find("playLoadCheckpoint") != std::string::npos,
+           "Index.d.ts must export playLoadCheckpoint");
+    expect(napi_init.find("\"playSaveCheckpoint\"") != std::string::npos,
+           "napi_init.cpp must register playSaveCheckpoint");
+    expect(napi_init.find("\"playLoadCheckpoint\"") != std::string::npos,
+           "napi_init.cpp must register playLoadCheckpoint");
+}
+
+void test_display_protection_bridge_accepts_platform_observations()
+{
+    const std::string index_dts = read_text_file(
+        "../entry/src/main/cpp/types/libentry/Index.d.ts");
+    const std::string napi_init = read_text_file("../entry/src/main/cpp/napi_init.cpp");
+
+    expect(index_dts.find("renderSetProtection") != std::string::npos,
+           "Index.d.ts must export renderSetProtection");
+    expect(napi_init.find("\"renderSetProtection\"") != std::string::npos,
+           "napi_init.cpp must register renderSetProtection");
 }
 
 void test_hit_map_carries_dpad_and_control_geometry_without_pause()
@@ -122,7 +138,8 @@ int main()
     test_filter_zh_query_selects_contra();
     test_pause_commands_are_exactly_three_snake_ids();
     test_decode_or_recommended_v1_joy_equals_recommended_encode();
-    test_public_surface_does_not_export_play_load_checkpoint();
+    test_checkpoint_bridge_exports_save_and_load_for_per_rom_autosave();
+    test_display_protection_bridge_accepts_platform_observations();
     test_hit_map_carries_dpad_and_control_geometry_without_pause();
 
     if (failures != 0)

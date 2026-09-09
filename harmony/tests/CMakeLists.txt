@@ -138,6 +138,137 @@ add_test(NAME flynes_harmony_product_bridge COMMAND flynes_harmony_product_bridg
 set_tests_properties(flynes_harmony_product_bridge PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
 
+add_executable(flynes_harmony_scan_job_queue_test
+    scan_job_queue_test.cpp
+    ../entry/src/main/cpp/scan_job_queue.cpp
+)
+target_include_directories(flynes_harmony_scan_job_queue_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_scan_job_queue_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_scan_job_queue_test PROPERTIES CXX_EXTENSIONS NO)
+if(MSVC)
+    target_compile_options(flynes_harmony_scan_job_queue_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_scan_job_queue_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_scan_job_queue COMMAND flynes_harmony_scan_job_queue_test)
+
+add_executable(flynes_harmony_scan_job_executor_test
+    scan_job_executor_test.cpp
+    ../entry/src/main/cpp/scan_job_queue.cpp
+    ../entry/src/main/cpp/scan_job_executor.cpp
+)
+target_include_directories(flynes_harmony_scan_job_executor_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_scan_job_executor_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_scan_job_executor_test PROPERTIES CXX_EXTENSIONS NO)
+target_compile_definitions(flynes_harmony_scan_job_executor_test PRIVATE
+    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../core/tests/fixtures/from_below.nes"
+)
+target_link_libraries(flynes_harmony_scan_job_executor_test PRIVATE flynes_app)
+if(MSVC)
+    target_compile_options(flynes_harmony_scan_job_executor_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_scan_job_executor_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_scan_job_executor COMMAND flynes_harmony_scan_job_executor_test)
+
+add_executable(flynes_harmony_render_mailbox_test
+    render_mailbox_test.cpp
+    ../entry/src/main/cpp/render_mailbox.cpp
+)
+target_include_directories(flynes_harmony_render_mailbox_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_render_mailbox_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_render_mailbox_test PROPERTIES CXX_EXTENSIONS NO)
+if(MSVC)
+    target_compile_options(flynes_harmony_render_mailbox_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_render_mailbox_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_render_mailbox COMMAND flynes_harmony_render_mailbox_test)
+
+add_executable(flynes_harmony_display_policy_test
+    display_policy_test.cpp
+    ../entry/src/main/cpp/display_policy.cpp
+)
+target_include_directories(flynes_harmony_display_policy_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_display_policy_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_display_policy_test PROPERTIES CXX_EXTENSIONS NO)
+if(MSVC)
+    target_compile_options(flynes_harmony_display_policy_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_display_policy_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_display_policy COMMAND flynes_harmony_display_policy_test)
+
+add_executable(flynes_harmony_native_play_support_test
+    native_play_support_test.cpp
+    ../entry/src/main/cpp/native_play_support.cpp
+)
+target_include_directories(flynes_harmony_native_play_support_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_native_play_support_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_native_play_support_test PROPERTIES CXX_EXTENSIONS NO)
+if(MSVC)
+    target_compile_options(flynes_harmony_native_play_support_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_native_play_support_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_native_play_support COMMAND flynes_harmony_native_play_support_test)
+
+add_executable(flynes_harmony_motion_frame_scheduler_test
+    motion_frame_scheduler_test.cpp
+    ../entry/src/main/cpp/motion_frame_scheduler.cpp
+)
+target_include_directories(flynes_harmony_motion_frame_scheduler_test PRIVATE
+    ../entry/src/main/cpp
+)
+target_compile_features(flynes_harmony_motion_frame_scheduler_test PRIVATE cxx_std_17)
+set_target_properties(flynes_harmony_motion_frame_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+if(MSVC)
+    target_compile_options(flynes_harmony_motion_frame_scheduler_test PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(flynes_harmony_motion_frame_scheduler_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+    )
+endif()
+add_test(NAME flynes_harmony_motion_frame_scheduler COMMAND flynes_harmony_motion_frame_scheduler_test)
+
 add_executable(flynes_harmony_nearby_adapter_test
     nearby_adapter_test.cpp
     ../nearby/nearby_adapter.cpp
