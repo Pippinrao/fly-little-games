@@ -131,3 +131,13 @@
 "settings.refresh" = "屏幕刷新率";
 "settings.temporal" = "时域模式";
 "settings.temporal_native" = "原生帧";
+"library.continue" = "继续游戏";
+"library.search.empty" = "没有匹配的游戏";
+"library.source.add_hint" = "在游戏源中添加你的游戏文件夹。";
+"library.game_count" = "%ld 个游戏 · 滑动浏览";
+"control.UP" = "上";
+"control.DOWN" = "下";
+"control.LEFT" = "左";
+"control.RIGHT" = "右";
+"run.video_unavailable" = "画面已停止";
+"run.video_unavailable.detail" = "游戏画面无法继续显示。请返回游戏中心，重新打开游戏。";

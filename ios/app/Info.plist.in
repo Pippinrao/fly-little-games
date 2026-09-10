@@ -32,14 +32,13 @@
     <dict/>
     <key>UIRequiredDeviceCapabilities</key>
     <array>
-        <string>arm64</string>
+        @FLYNES_REQUIRED_CPU@
         <string>metal</string>
     </array>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
-        <string>UIInterfaceOrientationPortrait</string>
     </array>
     <key>CFBundleLocalizations</key>
     <array>

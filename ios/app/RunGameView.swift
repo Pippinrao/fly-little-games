@@ -75,7 +75,7 @@ struct RunGameContainer: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { if romData == nil && !loading { loadROM() } }
-        .sheet(isPresented: $showSettings, onDismiss: {
+        .fullScreenCover(isPresented: $showSettings, onDismiss: {
             overlayReloadGeneration += 1
         }) {
             SettingsView()

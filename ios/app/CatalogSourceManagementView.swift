@@ -60,58 +60,74 @@ struct CatalogSourceManagementView: View {
     @State private var pickDirectory = false
     @State private var reauthorizeSource: CatalogSource?
 
+    var onClose: (() -> Void)? = nil
+
     var body: some View {
-        List {
-            if model.busy {
-                HStack { ProgressView(); Text("library.source.working") }
-            }
-            if let error = model.error {
-                Section { Text(error).foregroundStyle(.red) }
-            }
-            Section {
-                Button { openPicker(directory: true) } label: {
-                    Label("library.source.add_folder", systemImage: "folder.badge.plus")
-                }
-                Button { openPicker(directory: false) } label: {
-                    Label("library.source.add_files", systemImage: "doc.badge.plus")
-                }
-                Text("library.source.formats").font(.footnote).foregroundStyle(.secondary)
-            }
-            Section("library.source.imported") {
-                if model.sources.isEmpty { Text("library.source.none").foregroundStyle(.secondary) }
-                ForEach(model.sources) { source in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label(source.name, systemImage: source.directory ? "folder" : "doc")
-                            .font(.headline)
-                        if !source.error.isEmpty {
-                            Text(source.error).font(.footnote).foregroundStyle(.red)
-                            Text("library.source.reauthorize_hint").font(.footnote).foregroundStyle(.secondary)
-                        }
-                        HStack {
-                            Button("library.source.rescan") {
-                                model.perform { try CatalogSourceService.sharedInstance().rescan(uuid: source.id) }
-                            }
-                            Button("library.source.reauthorize") {
-                                reauthorizeSource = source
-                                pickDirectory = source.directory
-                                showImporter = true
-                            }
-                            Spacer()
-                            Button(role: .destructive) {
-                                model.perform { try CatalogSourceService.sharedInstance().remove(uuid: source.id) }
-                            } label: { Label("library.source.remove", systemImage: "trash") }
-                        }
-                        .buttonStyle(.borderless)
+        GeometryReader { geometry in
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("library.sources").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    ScrollView {
+                        Text("library.source.formats").foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("library.source.remove_hint").font(.footnote).foregroundColor(.secondary)
+                            .padding(.top, 12)
                     }
-                    .padding(.vertical, 6)
+                    Button { openPicker(directory: true) } label: {
+                        Label("library.source.add_folder", systemImage: "folder.badge.plus")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.borderedProminent).accessibilityIdentifier("add_source")
+                    Button { openPicker(directory: false) } label: {
+                        Label("library.source.add_files", systemImage: "doc.badge.plus")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.bordered).accessibilityIdentifier("add_source_files")
                 }
-            }
-            Section {
-                Text("library.source.remove_hint").font(.footnote).foregroundStyle(.secondary)
+                .padding(20)
+                .frame(width: max(0, (geometry.size.width - 8) * 0.34))
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("library.source.imported").font(.headline).accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        if let close = onClose {
+                            Button(action: close) { Image(systemName: "xmark").frame(width: 48, height: 48) }
+                                .accessibilityLabel(Text("common.done"))
+                                .accessibilityIdentifier("close_sources")
+                        }
+                    }.frame(minHeight: 48)
+                    if model.busy { HStack { ProgressView(); Text("library.source.working") } }
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            if let error = model.error { Text(error).foregroundColor(.red).padding(.vertical, 8) }
+                            if model.sources.isEmpty { Text("library.source.none").foregroundColor(.secondary) }
+                            ForEach(model.sources) { source in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Label(source.name, systemImage: source.directory ? "folder" : "doc").font(.headline)
+                                    if !source.error.isEmpty {
+                                        Text(source.error).font(.footnote).foregroundColor(.red)
+                                        Text("library.source.reauthorize_hint").font(.footnote).foregroundColor(.secondary)
+                                    }
+                                    HStack {
+                                        Button("library.source.rescan") {
+                                            model.perform { try CatalogSourceService.sharedInstance().rescan(uuid: source.id) }
+                                        }
+                                        Button("library.source.reauthorize") {
+                                            reauthorizeSource = source; pickDirectory = source.directory; showImporter = true
+                                        }
+                                        Spacer()
+                                        Button(role: .destructive) {
+                                            model.perform { try CatalogSourceService.sharedInstance().remove(uuid: source.id) }
+                                        } label: { Label("library.source.remove", systemImage: "trash") }
+                                    }.buttonStyle(.borderless)
+                                }.padding(12)
+                                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.accessibilityIdentifier("source_list")
+                }
             }
         }
         .disabled(model.busy)
-        .navigationTitle("library.sources")
         .onAppear { model.initialize() }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: pickDirectory ? [.folder] : [.data, .archive],

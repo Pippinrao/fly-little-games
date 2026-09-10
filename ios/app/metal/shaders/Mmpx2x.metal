@@ -38,7 +38,11 @@ float luma(float4 color) {
 float4 src(texture2d<float> tex, float2 textureSize, float2 pixel) {
     constexpr sampler nearest_sampler(address::clamp_to_edge, filter::nearest);
     float2 clampedPixel = clamp(pixel, float2(0.0), textureSize - float2(1.0));
-    return tex.sample(nearest_sampler, (clampedPixel + float2(0.5)) / textureSize);
+    float4 color = tex.sample(nearest_sampler, (clampedPixel + float2(0.5)) / textureSize);
+    // The upload uses RGBA8 for Simulator support; recover the original
+    // normalized RGB565 channels before equality and luma comparisons.
+    color.rgb = round(color.rgb * float3(31., 63., 31.)) / float3(31., 63., 31.);
+    return color;
 }
 
 vertex FlyNesVertexOut flynes_mmpx_vs(uint vid [[vertex_id]]) {
@@ -48,7 +52,7 @@ vertex FlyNesVertexOut flynes_mmpx_vs(uint vid [[vertex_id]]) {
     };
     FlyNesVertexOut out;
     out.position = float4(positions[vid], 0.0, 1.0);
-    out.texcoord = (positions[vid] + float2(1.0)) * 0.5;
+    out.texcoord = float2((positions[vid].x + 1.0) * 0.5, (1.0 - positions[vid].y) * 0.5);
     return out;
 }
 

@@ -232,21 +232,16 @@ def main() -> int:
     require(gc_at >= 0, "app bridge must implement gameCenterFilteredGamesForCategory")
     scan_at = bridge.find("scanBorrowedFd", gc_at)
     gc_body = bridge[gc_at:scan_at if scan_at > gc_at else gc_at + 3500]
-    require("From Below" in gc_body,
-            "Game Center must inject builtin From Below when the snapshot omits it")
-    require("from_below.nes" in gc_body,
-            "injected From Below row must use from_below.nes")
-    require('"builtin"' in gc_body or "@\"builtin\"" in gc_body,
-            "injected From Below row must use canonicalId builtin")
-    inject_at = gc_body.find("From Below")
-    filtered_at = gc_body.find("filtered(")
-    require(inject_at >= 0 and filtered_at >= 0 and inject_at < filtered_at,
-            "Game Center must inject builtin From Below before GameCenterState::filtered")
-    require("FLY_COMPATIBILITY_PLAYABLE" in gc_body
-            or "compatibilityState" in gc_body and "@(1)" in gc_body
-            or "compatibilityState" in gc_body and "PLAYABLE" in gc_body,
-            "injected From Below row must be playable (compatibilityState == 1)")
-
+    source_service = read("ios/app/platform/CatalogSourceService.mm")
+    source_model = read("ios/app/CatalogSourceManagementView.swift")
+    require("prepareBuiltin" in source_model and "prepareBuiltin" in source_service,
+            "Game Center must prepare the real bundled catalog source")
+    require("scanURL:builtinURL_ uuid:BuiltinUUID scope:1" in source_service,
+            "builtin must use the same validated scanner as external sources")
+    require("library.source.builtin_missing" in source_service,
+            "missing builtin must report failure, not inject a fake playable row")
+    require("From Below" not in gc_body and "from_below.nes" not in gc_body,
+            "filtered snapshots must not fabricate builtin playable entries")
     cmake = read("ios/app/CMakeLists.txt")
     require("flynes_product" in cmake, "product CMake must link flynes_product")
     require("ControlLayoutEditorView.swift" in cmake,
@@ -288,11 +283,10 @@ def main() -> int:
 
     run_swift = read("ios/app/RunGameView.swift")
     detail = read("ios/app/CatalogGameDetailView.swift")
-    require("library.rom_open_failed" in detail,
-            "Game Center detail must explain when Launch is refused")
-    require("from_below" in detail.lower() or "from-below" in detail.lower()
-            or "builtin" in detail.lower(),
-            "detail Play must branch on builtin mapping, not launch every id")
+    require("library.source.game_unsupported" in detail and "library.source.game_stale" in detail,
+            "selected detail must explain compatibility and freshness launch refusal")
+    require("compatibilityState != 1" in detail and "freshness != 1" in detail and ".disabled" in detail,
+            "Play must require a fresh compatible variant for builtins and imports")
     review_errors = []
 
     def review_require(condition: bool, message: str) -> None:

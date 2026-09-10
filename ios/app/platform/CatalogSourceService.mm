@@ -1,3 +1,4 @@
+#import "AppLocalization.h"
 #import "CatalogSourceService.h"
 #import "FlyNesBookmarkStore.h"
 #import "FlyNesAppBridge.h"
@@ -8,7 +9,7 @@
 static NSString *const SourceMetadataKey = @"flynes.source_metadata_v1";
 static NSString *const BuiltinUUID = @"6FC22AA9-81CC-4CBB-A5F3-018A480B0001";
 static NSError *SourceError(NSString *key) {
-    return [NSError errorWithDomain:@"com.flynes.sources" code:1 userInfo:@{NSLocalizedDescriptionKey:NSLocalizedString(key, nil)}];
+    return [NSError errorWithDomain:@"com.flynes.sources" code:1 userInfo:@{NSLocalizedDescriptionKey:FlyNesLocalizedString(key)}];
 }
 static NSData *UUIDBytes(NSString *value) {
     NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:value];
@@ -155,7 +156,7 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
         if (url) success = [self scanURL:url uuid:uuid scope:[source[@"scope"] unsignedIntValue] error:&failure];
         else [bridge_ scanFileRecords:@[] sourceUUID:UUIDBytes(uuid) sourceScope:[source[@"scope"] unsignedIntValue] incomplete:YES error:nil];
     } @finally { if (access) [bookmarks_ stopAccessing:url]; }
-    source[@"error"] = success ? @"" : (failure.localizedDescription ?: NSLocalizedString(@"library.source.reauthorize_required", nil));
+    source[@"error"] = success ? @"" : (failure.localizedDescription ?: FlyNesLocalizedString(@"library.source.reauthorize_required"));
     [self persist];
     if (!success && error) *error = failure ?: SourceError(@"library.source.reauthorize_required");
     return success;

@@ -1,53 +1,61 @@
 import SwiftUI
 
 struct CatalogGameDetailView: View {
-    let game: CatalogGame
+    let game: CatalogGame?
+    var largeText = false
     @ObservedObject private var sources = CatalogSourceModel.shared
-    @State private var favorite = false
-    @State private var compatibility: UInt32 = 0
-    @State private var freshness: UInt32 = 0
 
     var body: some View {
-        List {
-            Section {
-                Text(game.displayName)
-                    .font(.title2)
+        VStack(alignment: .leading, spacing: 8) {
+            if !largeText {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8).fill(Color(uiColor: .tertiarySystemFill))
+                    Text(game?.displayName ?? "FlyNES")
+                        .font(.headline).multilineTextAlignment(.center).padding(16)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityHidden(true)
+            } else { Spacer(minLength: 0) }
+            HStack(spacing: 4) {
+                if let game = game {
+                    Text(game.displayName).font(.title3.bold()).lineLimit(largeText ? 2 : 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityAddTraits(.isHeader)
+                } else {
+                    Text("library.no_games").font(.headline).frame(maxWidth: .infinity, alignment: .leading)
+                }
                 Button {
-                    let newValue = !favorite
+                    guard let game = game else { return }
                     sources.perform {
-                        try FlyNesAppBridge.sharedInstance().setFavorite(newValue, canonicalID: game.canonicalId)
+                        try FlyNesAppBridge.sharedInstance().setFavorite(game.favorite == 0, canonicalID: game.id)
                     }
                 } label: {
-                    Label(favorite ? "library.favorite.remove" : "library.favorite.add",
-                          systemImage: favorite ? "star.fill" : "star")
+                    Image(systemName: game?.favorite == 1 ? "star.fill" : "star")
+                        .frame(width: 48, height: 48)
                 }
-                .disabled(sources.busy)
+                .accessibilityLabel(Text(game?.favorite == 1 ? "library.favorite.remove" : "library.favorite.add"))
+                .accessibilityIdentifier("favorite_toggle")
+                .disabled(game == nil || sources.busy)
             }
-            Section {
-                NavigationLink(value: LibraryRoute.run(game.canonicalId)) {
-                    Label("library.play", systemImage: "play.fill")
+            if !largeText, let game = game {
+                if game.compatibilityState != 1 {
+                    Text("library.source.game_unsupported").font(.footnote).foregroundColor(.secondary).lineLimit(2)
+                } else if game.freshness != 1 {
+                    Text("library.source.game_stale").font(.footnote).foregroundColor(.secondary).lineLimit(2)
+                } else if game.sourceScope == 1 {
+                    Text("game_center.builtin").font(.footnote).foregroundColor(.secondary)
                 }
-                .disabled(compatibility != 1 || freshness != 1 || sources.busy)
-                if compatibility != 1 {
-                    Text("library.source.game_unsupported").font(.footnote).foregroundStyle(.secondary)
-                } else if freshness != 1 {
-                    Text("library.source.game_stale").font(.footnote).foregroundStyle(.secondary)
-                }
-                NavigationLink("library.sources") { CatalogSourceManagementView() }
             }
-            if let error = sources.error { Section { Text(error).foregroundStyle(.red) } }
+            NavigationLink(value: LibraryRoute.run(game?.id ?? "")) {
+                Label((game?.lastPlayedSequence ?? 0) > 0 ? "library.continue" : "library.play",
+                      systemImage: "play.fill")
+                    .frame(maxWidth: .infinity, minHeight: largeText ? 88 : 56)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("launch_selected")
+            .disabled(game == nil || game?.compatibilityState != 1 || game?.freshness != 1 || sources.busy)
         }
-        .navigationTitle("library.detail")
-        .onAppear(perform: refresh)
-        .onReceive(sources.$generation) { _ in refresh() }
-    }
-
-    private func refresh() {
-        let row = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(forCategory: "ALL", query: "").first {
-            ($0["canonicalId"] as? String) == game.canonicalId
-        }
-        favorite = (row?["favorite"] as? NSNumber)?.boolValue ?? false
-        compatibility = (row?["compatibilityState"] as? NSNumber)?.uint32Value ?? 0
-        freshness = (row?["freshness"] as? NSNumber)?.uint32Value ?? 0
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 }

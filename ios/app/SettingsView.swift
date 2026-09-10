@@ -138,7 +138,17 @@ struct SettingsView: View {
         Button("settings.haptic_preview", action: previewHaptics)
             .disabled(number("haptic_level") == 1)
         Button("control_layout.recommended") {
-            do { try FlyNesAppBridge.sharedInstance().controlLayoutApply(ControlLayoutDraft.recommended) }
+            do {
+                let bridge = FlyNesAppBridge.sharedInstance()
+                // Android controls.reset restores the whole controls section;
+                // the editor's Reset button still changes only its layout draft.
+                try bridge.applySettings(["layout_preset": UInt32(1), "direction_mode": UInt32(2),
+                    "button_scale": 1.0, "vertical_offset": 0.0, "control_opacity": 0.78,
+                    "joystick_scale": 1.0, "dead_zone": 0.18, "haptic_level": UInt32(2),
+                    "distinct_ab_haptics": UInt32(1)])
+                try bridge.controlLayoutApply(ControlLayoutDraft.recommended)
+                load()
+            }
             catch { failure = error.localizedDescription }
         }
     }
@@ -196,10 +206,11 @@ struct SettingsView: View {
         let level = number("haptic_level")
         guard level > 1 else { return }
         let distinct = number("distinct_ab_haptics") != 0
+        let intensity: CGFloat = level == 2 ? 0.4 : level == 4 ? 1.0 : 0.7
         let style: UIImpactFeedbackGenerator.FeedbackStyle = level == 2 ? .light : level == 4 ? .heavy : .medium
-        UIImpactFeedbackGenerator(style: distinct ? .rigid : style).impactOccurred()
+        UIImpactFeedbackGenerator(style: distinct ? .rigid : style).impactOccurred(intensity: intensity)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
-            UIImpactFeedbackGenerator(style: distinct ? .soft : style).impactOccurred()
+            UIImpactFeedbackGenerator(style: distinct ? .soft : style).impactOccurred(intensity: intensity)
         }
     }
 }

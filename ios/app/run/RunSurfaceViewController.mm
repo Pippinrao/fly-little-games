@@ -6,6 +6,7 @@
 #import "FlyNesMetalRenderer.h"
 #import "FlyNesDisplayLinkPacer.h"
 #import "FlyNesAudioPlayer.h"
+#import "AppLocalization.h"
 #import <AVFoundation/AVFoundation.h>
 
 #import <Metal/Metal.h>
@@ -13,6 +14,7 @@
 
 #include "flynes/product/pause_actions.hpp"
 #include "PlaybackClock.hpp"
+#include "FrameInputLatch.hpp"
 
 namespace {
 
@@ -37,13 +39,13 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     switch (command)
     {
     case PauseCommand::Resume:
-        return @"Resume";
+        return FlyNesLocalizedString(@"pause.resume");
     case PauseCommand::GameCenter:
-        return @"Game Center";
+        return FlyNesLocalizedString(@"pause.game_center");
     case PauseCommand::Settings:
-        return @"Settings";
+        return FlyNesLocalizedString(@"pause.settings");
     }
-    return @"Resume";
+    return FlyNesLocalizedString(@"pause.resume");
 }
 
 } // namespace
@@ -60,6 +62,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     CAMetalLayer *metalLayer_;
     flynes::ios::PlaybackClock clock_;
     uint32_t buttons_;
+    flynes::ios::FrameInputLatch input_;
     BOOL visible_;
     BOOL foreground_;
     BOOL running_;
@@ -68,6 +71,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     BOOL drawerOpen_;
     BOOL checkpointFailed_;
     BOOL romReady_;
+    BOOL videoFailureShown_;
 }
 
 - (void)viewDidLoad
@@ -96,7 +100,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 
     overlay_ = [[GamepadOverlayView alloc] initWithFrame:self.view.bounds];
     overlay_.translatesAutoresizingMaskIntoConstraints = NO;
-    __weak typeof(self) weakSelf = self;
+    __weak __typeof__(self) weakSelf = self;
     pacer_.onTick = ^(CFTimeInterval timestamp, CFTimeInterval presentedTime) {
         (void)presentedTime;
         [weakSelf displayTick:timestamp];
@@ -107,6 +111,12 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
           return;
       [strong applyOverlayButtons:buttons];
     };
+    overlay_.buttonsReleased = ^(uint32_t buttons, NSTimeInterval downTime, NSTimeInterval upTime) {
+        RunSurfaceViewController *strong = weakSelf;
+        if (strong && strong->running_) strong->input_.release(buttons,downTime,upTime);
+    };
+    overlay_.buttonsCancelled = ^{ RunSurfaceViewController *strong = weakSelf;
+        if (strong) strong->input_.clear(); };
     [self.view addSubview:overlay_];
 
     pauseButton_ = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -119,7 +129,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     pauseButton_.layer.borderWidth = 2.0;
     pauseButton_.layer.borderColor = [UIColor colorWithRed:1.0 green:0.42 blue:0.37 alpha:1.0].CGColor;
     pauseButton_.accessibilityIdentifier = @"OPEN_PAUSE";
-    pauseButton_.accessibilityLabel = @"Pause";
+    pauseButton_.accessibilityLabel = FlyNesLocalizedString(@"run.pause");
     [pauseButton_ addTarget:self action:@selector(openPauseDrawer) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:pauseButton_];
 
@@ -148,9 +158,10 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     NSError *romError = nil;
     if (rom.length > 0)
         romReady_ = [runtime_ loadRom:rom error:&romError];
-    if (romReady_)
+    if (romReady_) {
+        [FlyNesAppBridge.sharedInstance markPlayedCanonicalID:self.canonicalId error:nil];
         [self restoreAutosave];
-    else
+    } else
         [self surfaceRomOpenFailure];
     [self reloadProductSettings];
     NSNotificationCenter *notifications = NSNotificationCenter.defaultCenter;
@@ -176,6 +187,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 {
     [super viewDidAppear:animated];
     visible_ = YES;
+    [self drawFrame];
     foreground_ = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
     [self updatePlayback];
 }
@@ -202,11 +214,11 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     metalLayer_.frame = metalHost_.bounds;
-    CGFloat scale = self.view.window.screen.scale ?: UIScreen.mainScreen.scale;
+    CGFloat scale = self.view.window.screen.scale > 0 ? self.view.window.screen.scale : UIScreen.mainScreen.scale;
     metalLayer_.contentsScale = scale;
     metalLayer_.drawableSize = CGSizeMake(metalHost_.bounds.size.width * scale, metalHost_.bounds.size.height * scale);
     [CATransaction commit];
-    [renderer_ draw];
+    [self drawFrame];
 }
 
 - (void)reloadProductSettings
@@ -220,6 +232,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
         overlay_.joystickMode = static_cast<FlyNesJoystickMode>(direction.unsignedIntValue);
     if (haptic != nil)
         overlay_.hapticLevel = haptic.unsignedIntValue;
+    overlay_.distinctAbHaptics = [snapshot[@"distinct_ab_haptics"] boolValue];
     if (dead != nil)
         overlay_.deadZone = dead.floatValue;
     NSNumber *opacity = snapshot[@"control_opacity"];
@@ -311,16 +324,17 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 
 - (void)surfaceRomOpenFailure
 {
-    NSString *message = NSLocalizedString(@"library.rom_open_failed", nil);
+    NSString *message = FlyNesLocalizedString(@"library.rom_open_failed");
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:nil
                                             message:message
                                      preferredStyle:UIAlertControllerStyleAlert];
     alert.view.accessibilityIdentifier = @"library_rom_open_failed";
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:NSLocalizedString(@"pause.game_center", nil)
+    __weak __typeof__(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:FlyNesLocalizedString(@"pause.game_center")
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction *_Nonnull action) {
+                                              (void)action;
                                               RunSurfaceViewController *strong = weakSelf;
                                               if (strong == nil || strong.onPauseCommand == nil)
                                                   return;
@@ -334,6 +348,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 - (void)applyOverlayButtons:(uint32_t)buttons
 {
     buttons_ = running_ ? buttons : 0;
+    input_.update(buttons_);
 }
 
 - (void)openPauseDrawer
@@ -374,7 +389,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     {
         UILabel *failure = [[UILabel alloc] init];
         failure.translatesAutoresizingMaskIntoConstraints = NO;
-        failure.text = NSLocalizedString(@"pause.checkpoint_failed", nil);
+        failure.text = FlyNesLocalizedString(@"pause.checkpoint_failed");
         failure.accessibilityIdentifier = @"pause_checkpoint_failed";
         failure.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightRegular];
         failure.textColor = [UIColor colorWithRed:1.0 green:0.42 blue:0.37 alpha:1.0];
@@ -472,13 +487,13 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     BOOL produced = NO;
     while (clock_.frameDue()) {
         NSError *error = nil;
-        if (![runtime_ stepFrameWithButtons:buttons_ error:&error]) {
+        if (![runtime_ stepFrameWithButtons:input_.sample(NSProcessInfo.processInfo.systemUptime) error:&error]) {
             paused_ = YES;
             [self stopPlayback];
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Emulation paused"
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:FlyNesLocalizedString(@"run.emulation_paused")
                 message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
-            __weak typeof(self) weakSelf = self;
-            [alert addAction:[UIAlertAction actionWithTitle:NSLocalizedString(@"pause.game_center", nil)
+            __weak __typeof__(self) weakSelf = self;
+            [alert addAction:[UIAlertAction actionWithTitle:FlyNesLocalizedString(@"pause.game_center")
                 style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
                     (void)action;
                     RunSurfaceViewController *strong = weakSelf;
@@ -497,9 +512,29 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
         NSData *pixels = [runtime_ copyLatestRgb565Frame];
         if (pixels.length) [renderer_ uploadRgb565:pixels width:256 height:240];
     }
-    [renderer_ draw];
+    [self drawFrame];
 }
 
+- (void)drawFrame
+{
+    [renderer_ draw];
+    if (!renderer_.permanentFailure || videoFailureShown_) return;
+    paused_ = YES;
+    [self stopPlayback];
+    if (!visible_ || self.presentedViewController) return;
+    videoFailureShown_ = YES;
+    [self saveAutosaveIfEnabled];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:FlyNesLocalizedString(@"run.video_unavailable")
+        message:FlyNesLocalizedString(@"run.video_unavailable.detail") preferredStyle:UIAlertControllerStyleAlert];
+    __weak __typeof__(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:FlyNesLocalizedString(@"pause.game_center")
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            RunSurfaceViewController *strong = weakSelf;
+            if (strong.onPauseCommand) strong.onPauseCommand(@"game_center");
+        }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
 - (BOOL)isPlaybackAllowed
 {
     return visible_ && foreground_ && romReady_ && !paused_ && !drawerOpen_
@@ -511,7 +546,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     if (![self isPlaybackAllowed]) { [self stopPlayback]; return; }
     if (!running_) {
         [overlay_ releaseAllButtons];
-        buttons_ = 0;
+        buttons_ = 0; input_.clear();
         clock_.reset();
         running_ = YES;
         [pacer_ attachToView:metalHost_];
@@ -529,7 +564,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     running_ = NO;
     [pacer_ invalidate];
     clock_.reset();
-    buttons_ = 0;
+    buttons_ = 0; input_.clear();
     [overlay_ releaseAllButtons];
     [runtime_ clearInput];
     [runtime_ discardAudio];
@@ -553,7 +588,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     if (restored) {
         NSData *pixels = [runtime_ copyLatestRgb565Frame];
         if (pixels.length) [renderer_ uploadRgb565:pixels width:256 height:240];
-        [renderer_ draw];
+        [self drawFrame];
     }
     [self updatePlayback];
     return restored;
@@ -587,7 +622,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 {
     // AVAudioSession notifications can arrive off the UI thread.
     NSDictionary *info = notification.userInfo;
-    __weak typeof(self) weakSelf = self;
+    __weak __typeof__(self) weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         RunSurfaceViewController *strong = weakSelf;
         if (!strong) return;
@@ -596,7 +631,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
             strong->audioInterrupted_ = YES;
             [strong->audio_ pause];
             [strong->overlay_ releaseAllButtons];
-            strong->buttons_ = 0;
+            strong->buttons_ = 0; strong->input_.clear();
             [strong->runtime_ clearInput];
             [strong updatePlayback];
         } else {
@@ -612,7 +647,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
 - (void)audioRouteChanged:(NSNotification *)notification
 {
     const NSUInteger reason = [notification.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue];
-    __weak typeof(self) weakSelf = self;
+    __weak __typeof__(self) weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         RunSurfaceViewController *strong = weakSelf;
         if (!strong) return;

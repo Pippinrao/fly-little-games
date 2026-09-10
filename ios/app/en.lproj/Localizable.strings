@@ -131,3 +131,13 @@
 "settings.refresh" = "Display refresh rate";
 "settings.temporal" = "Temporal mode";
 "settings.temporal_native" = "Native frames";
+"library.continue" = "Continue";
+"library.search.empty" = "No matching games";
+"library.source.add_hint" = "Add your game folders in Sources.";
+"library.game_count" = "%ld games · Swipe to browse";
+"control.UP" = "Up";
+"control.DOWN" = "Down";
+"control.LEFT" = "Left";
+"control.RIGHT" = "Right";
+"run.video_unavailable" = "Video stopped";
+"run.video_unavailable.detail" = "The game display could not continue. Return to Game Center and open the game again.";

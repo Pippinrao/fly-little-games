@@ -1,3 +1,4 @@
+#import "AppLocalization.h"
 #import "FlyNesBookmarkStore.h"
 #import <TargetConditionals.h>
 
@@ -98,7 +99,7 @@ static NSString *const kBookmarkMapKey = @"flynes.source_uuid_bookmarks_v1";
     if (url == nil)
         return nil;
     if (stale) {
-        if (error) *error = [NSError errorWithDomain:@"com.flynes.bookmark" code:1 userInfo:@{NSLocalizedDescriptionKey:NSLocalizedString(@"library.source.reauthorize_required", nil)}];
+        if (error) *error = [NSError errorWithDomain:@"com.flynes.bookmark" code:1 userInfo:@{NSLocalizedDescriptionKey:FlyNesLocalizedString(@"library.source.reauthorize_required")}];
         return nil;
     }
     const BOOL accessing = [url startAccessingSecurityScopedResource];
@@ -112,7 +113,7 @@ static NSString *const kBookmarkMapKey = @"flynes.source_uuid_bookmarks_v1";
     if (didStartAccess) *didStartAccess = NO;
     NSData *bookmark = [self bookmarkForUUID:uuid];
     if (bookmark.length == 0) {
-        if (error) *error = [NSError errorWithDomain:@"com.flynes.bookmark" code:1 userInfo:@{NSLocalizedDescriptionKey:NSLocalizedString(@"library.source.reauthorize_required", nil)}];
+        if (error) *error = [NSError errorWithDomain:@"com.flynes.bookmark" code:1 userInfo:@{NSLocalizedDescriptionKey:FlyNesLocalizedString(@"library.source.reauthorize_required")}];
         return nil;
     }
     BOOL stale = NO;

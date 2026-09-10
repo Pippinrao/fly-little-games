@@ -8,9 +8,6 @@ endif()
 if(NOT CMAKE_GENERATOR STREQUAL "Xcode")
     message(FATAL_ERROR "iOS product evidence requires the Xcode generator")
 endif()
-if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
-    message(FATAL_ERROR "iOS product supports exactly one architecture: arm64")
-endif()
 if(NOT IS_ABSOLUTE "${CMAKE_OSX_SYSROOT}" OR NOT IS_DIRECTORY "${CMAKE_OSX_SYSROOT}")
     message(FATAL_ERROR "CMAKE_OSX_SYSROOT must be an absolute selected Apple SDK path")
 endif()
@@ -23,11 +20,19 @@ if(NOT FLYNES_IOS_SDK_DIRECTORY MATCHES "^iPhone(OS|Simulator)[0-9.]+\\.sdk$")
 endif()
 if(FLYNES_IOS_SDK_DIRECTORY MATCHES "^iPhoneSimulator")
     set(FLYNES_IOS_IS_SIMULATOR TRUE)
+    if(NOT CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|x86_64)$")
+        message(FATAL_ERROR "Select one simulator architecture: arm64 or x86_64")
+    endif()
+    set(FLYNES_REQUIRED_CPU "")
 else()
     set(FLYNES_IOS_IS_SIMULATOR FALSE)
+    if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+        message(FATAL_ERROR "iPhone device builds require arm64")
+    endif()
+    set(FLYNES_REQUIRED_CPU "<string>arm64</string>")
 endif()
 
-set(CMAKE_OSX_DEPLOYMENT_TARGET "17.0" CACHE STRING "Minimum supported iOS" FORCE)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "16.4" CACHE STRING "Minimum supported iOS")
 set(CMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH "NO")
 
 set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -48,6 +53,7 @@ set(FLYNES_PRODUCT_SWIFT
     SettingsView.swift
     ControlLayoutEditorView.swift
     RunGameView.swift
+    platform/ControlLayoutDraft.swift
     diagnostics/DiagnosticExport.swift
 )
 set(FLYNES_PRODUCT_OBJCXX
@@ -55,6 +61,10 @@ set(FLYNES_PRODUCT_OBJCXX
     bridge/FlyNesRuntimeBridge.mm
     platform/FlyNesBookmarkStore.mm
     platform/CatalogScanCoordinator.mm
+    platform/CatalogSourceService.mm
+    platform/AppLocalization.mm
+    platform/RomPackage.cpp
+    audio/FlyNesAudioPlayer.mm
     run/RunSurfaceViewController.mm
     run/GamepadOverlayView.mm
     metal/FlyNesMetalRenderer.mm
@@ -90,11 +100,11 @@ add_executable(FlyNES MACOSX_BUNDLE
 )
 set_source_files_properties(
     en.lproj/Localizable.strings
-    PROPERTIES MACOSX_PACKAGE_LOCATION "en.lproj"
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
 )
 set_source_files_properties(
     zh-Hans.lproj/Localizable.strings
-    PROPERTIES MACOSX_PACKAGE_LOCATION "zh-Hans.lproj"
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
 )
 set_source_files_properties(
     "${FLYNES_IOS_ROM_FIXTURE}"
@@ -104,12 +114,35 @@ set_source_files_properties(
 set_source_files_properties(${FLYNES_PRODUCT_SWIFT} PROPERTIES
     XCODE_EXPLICIT_FILE_TYPE sourcecode.swift
 )
+
+set(_metal_objects)
+file(GLOB FLYNES_LICENSE_RESOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/licenses/*.txt")
+set_source_files_properties(${FLYNES_LICENSE_RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+target_sources(FlyNES PRIVATE ${FLYNES_LICENSE_RESOURCES})
+foreach(_shader IN LISTS FLYNES_PRODUCT_METAL)
+    get_filename_component(_shader_name "${_shader}" NAME_WE)
+    set(_air "${CMAKE_CURRENT_BINARY_DIR}/metal/${_shader_name}.air")
+    add_custom_command(OUTPUT "${_air}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/metal"
+        COMMAND xcrun --sdk "${CMAKE_OSX_SYSROOT}" metal -c
+            "${CMAKE_CURRENT_SOURCE_DIR}/${_shader}" -o "${_air}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_shader}" VERBATIM)
+    list(APPEND _metal_objects "${_air}")
+endforeach()
+set(_metallib "${CMAKE_CURRENT_BINARY_DIR}/default.metallib")
+add_custom_command(OUTPUT "${_metallib}"
+    COMMAND xcrun --sdk "${CMAKE_OSX_SYSROOT}" metallib ${_metal_objects} -o "${_metallib}"
+    DEPENDS ${_metal_objects} VERBATIM)
+set_source_files_properties("${_metallib}" PROPERTIES GENERATED YES MACOSX_PACKAGE_LOCATION Resources)
+target_sources(FlyNES PRIVATE "${_metallib}")
 target_include_directories(FlyNES PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/bridge"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform"
     "${CMAKE_CURRENT_SOURCE_DIR}/run"
     "${CMAKE_CURRENT_SOURCE_DIR}/metal"
+    "${CMAKE_CURRENT_SOURCE_DIR}/audio"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src"
 )
 target_compile_features(FlyNES PRIVATE cxx_std_17)
 target_compile_options(FlyNES PRIVATE
@@ -117,6 +150,7 @@ target_compile_options(FlyNES PRIVATE
     $<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wextra>
     $<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Werror>
     $<$<COMPILE_LANGUAGE:C,CXX>:-Wpedantic>
+    $<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wno-gnu-conditional-omitted-operand>
     $<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-fvisibility-inlines-hidden>
 )
 target_link_libraries(FlyNES PRIVATE
@@ -131,6 +165,7 @@ target_link_libraries(FlyNES PRIVATE
     "-framework MetalKit"
     "-framework QuartzCore"
     "-framework CoreHaptics"
+    "-framework AVFoundation"
 )
 target_link_options(FlyNES PRIVATE
     "-Wl,-dead_strip"
@@ -154,7 +189,7 @@ set_target_properties(FlyNES PROPERTIES
     XCODE_ATTRIBUTE_SWIFT_OBJC_INTERFACE_HEADER_NAME "FlyNES-Swift.h"
     XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS ""
     XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING YES
-    XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "17.0"
+    XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}"
     XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.flynes.app"
     XCODE_ATTRIBUTE_SUPPORTED_DEVICE_FAMILIES "1"
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1"
@@ -176,4 +211,41 @@ else()
         XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
     )
+endif()
+
+option(FLYNES_IOS_BUILD_XCTESTS "Build simulator integration tests" OFF)
+if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
+    get_filename_component(_sdk_parent "${CMAKE_OSX_SYSROOT}" DIRECTORY)
+    get_filename_component(_platform_developer "${_sdk_parent}" DIRECTORY)
+    set(XCTest_LIBRARY "${_platform_developer}/Library/Frameworks/XCTest.framework" CACHE FILEPATH "" FORCE)
+    set(XCTest_INCLUDE_DIR "${XCTest_LIBRARY}/Headers" CACHE PATH "" FORCE)
+    find_package(XCTest REQUIRED)
+    set_target_properties(FlyNES PROPERTIES ENABLE_EXPORTS YES CXX_VISIBILITY_PRESET default)
+    xctest_add_bundle(FlyNESRuntimeTests FlyNES ../tests/PlaybackRuntimeBridgeTests.mm ../tests/GamepadOverlayTests.mm ../tests/PlaybackAudioPlayerTests.mm)
+    target_include_directories(FlyNESRuntimeTests PRIVATE bridge run "../../shared/include" "../../core/include")
+    target_link_libraries(FlyNESRuntimeTests PRIVATE flynes_runtime "-framework UIKit" "-framework AVFoundation" "-framework CoreGraphics")
+    target_compile_features(FlyNESRuntimeTests PRIVATE cxx_std_17)
+    set_target_properties(FlyNESRuntimeTests PROPERTIES
+        XCODE_GENERATE_SCHEME YES
+        XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+        XCODE_ATTRIBUTE_GENERATE_INFOPLIST_FILE YES
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.flynes.runtime-tests"
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED YES
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
+        XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@loader_path/Frameworks @executable_path/Frameworks ${_platform_developer}/Library/Frameworks")
+    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm)
+    add_dependencies(FlyNESUITests FlyNES)
+    target_link_libraries(FlyNESUITests PRIVATE "${XCTest_LIBRARY}" "-framework Foundation" "-framework UIKit")
+    set_target_properties(FlyNESUITests PROPERTIES
+        BUNDLE TRUE
+        XCODE_PRODUCT_TYPE "com.apple.product-type.bundle.ui-testing"
+        XCODE_GENERATE_SCHEME YES
+        XCODE_ATTRIBUTE_TEST_TARGET_NAME FlyNES
+        XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+        XCODE_ATTRIBUTE_GENERATE_INFOPLIST_FILE YES
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.flynes.ui-tests"
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED YES
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "")
 endif()
