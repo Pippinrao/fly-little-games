@@ -1,0 +1,4467 @@
+{
+  "hash_domain_strings": [
+    "flynes-canonical-input-component-chunk-v1",
+    "flynes-canonical-input-component-manifest-v1",
+    "flynes-channel-bind-proof-hash-v1",
+    "flynes-channel-bind-proof-v1",
+    "flynes-channel-resume-summary-v1",
+    "flynes-dual-run-fence-v1",
+    "flynes-end-closure-manifest-v1",
+    "flynes-end-commit-certificate-hash-v1",
+    "flynes-end-commit-decision-v1",
+    "flynes-end-package-v1",
+    "flynes-epoch-input-close-certificate-v1",
+    "flynes-identity-key-id-v1",
+    "flynes-identity-verifier-ref-v1",
+    "flynes-initial-bind-v1",
+    "flynes-input-bundle-v1",
+    "flynes-input-range-authorization-v1",
+    "flynes-input-root-base-v1",
+    "flynes-input-root-step-v1",
+    "flynes-input-sequence-ledger-v1",
+    "flynes-input-sequence-reservation-component-v1",
+    "flynes-input-sequence-reservation-v1",
+    "flynes-input-sequence-reserve-ack-v1",
+    "flynes-input-sequence-reserve-finalized-v1",
+    "flynes-input-sequence-reserve-grant-v1",
+    "flynes-input-sequence-reserve-req-v1",
+    "flynes-offline-release-certificate-hash-v1",
+    "flynes-offline-save-manifest-v1",
+    "flynes-opaque-recovery-failure-evidence-v1",
+    "flynes-open-input-reservation-set-v1",
+    "flynes-pair-transcript-object-v1",
+    "flynes-pair-transcript-v1",
+    "flynes-preprepare-terminal-evidence-v1",
+    "flynes-prime-authorization-v1",
+    "flynes-published-save-index-v1",
+    "flynes-quarantine-manifest-v1",
+    "flynes-quarantine-retained-blob-v1",
+    "flynes-reconnect-deadline-record-v1",
+    "flynes-rejected-reconnect-deadline-record-v1",
+    "flynes-save-commit-certificate-hash-v1",
+    "flynes-save-commit-decision-v1",
+    "flynes-save-publication-certificate-hash-v1",
+    "flynes-session-schema-registry-v1",
+    "flynes-session-signing-key-binding-hash-v1",
+    "flynes-sram-journal-component-v1",
+    "flynes-suspend-intent-v1",
+    "flynes-tail-component-v1",
+    "flynes-terminal-recovery-evidence-v1",
+    "flynes-user-save-payload-v1"
+  ],
+  "illegal_kinds": [
+    "0x0000"
+  ],
+  "kinds": [
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "canonical_runtime_bytes",
+          "note": "uncompressed wrapper over nes_save_state",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0001",
+      "layout": "opaque_leaf",
+      "max_decode_length": 8388608,
+      "name": "RUNTIME_CHECKPOINT_V1",
+      "notes": "HARD leaf. Session-agnostic; no lineage/network/compression fields.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "runtime_checkpoint_hash",
+          "kinds": [
+            "0x0001"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "runtime_checkpoint_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0002",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "SESSION_CHECKPOINT_V1",
+      "notes": "HARD manifest envelope binding a runtime checkpoint. Tags not privately assigned.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "canonical_sram_bytes",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0003",
+      "layout": "opaque_leaf",
+      "max_decode_length": 1048576,
+      "name": "SRAM_BLOB_V1",
+      "notes": "HARD leaf. Canonical SRAM image, max 1 MiB.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entry_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "0..2048",
+          "endian": "network",
+          "name": "entries",
+          "wire_type": "canonical_tail_entry[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-tail-component-v1",
+      "hash_preimage": "SHA256(0x03 || UTF8(\"flynes-tail-component-v1\") || exact_component_bytes)",
+      "kind": "0x0004",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 524288,
+      "name": "CANONICAL_INPUT_COMPONENT_V1",
+      "notes": "Empty component is exactly u32be(0). Hash uses prefix 0x03 || UTF8(domain) || exact_bytes. Max 512 KiB / 2048 frames.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "1..8",
+          "field": "chunk_object_hash",
+          "kinds": [
+            "0x0006"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "total_component_length",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "canonical_component_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "chunk_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[4]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entries",
+          "wire_type": "chunk_entry[1..8]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-canonical-input-component-manifest-v1",
+      "hash_preimage": "SHA256(\"flynes-canonical-input-component-manifest-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0005",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 65536,
+      "name": "CANONICAL_INPUT_COMPONENT_MANIFEST_V1",
+      "notes": "Header 56 bytes; each entry 48 bytes: offset u64be || length u32be || reserved_zero[4] || chunk_object_hash[32]. chunk_count=ceil(total/65536). Empty tail still has one length=4 chunk.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "chunk_bytes",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-canonical-input-component-chunk-v1",
+      "hash_preimage": "SHA256(\"flynes-canonical-input-component-chunk-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0006",
+      "layout": "opaque_leaf",
+      "max_decode_length": 65536,
+      "name": "CANONICAL_INPUT_COMPONENT_CHUNK_V1",
+      "notes": "HARD leaf. Parent total still 512 KiB.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entry_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entries",
+          "note": "frame_index u64be || offset u32be || length u32be || bytes[length]",
+          "wire_type": "journal_entry[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-sram-journal-component-v1",
+      "hash_preimage": "SHA256(0x04 || UTF8(\"flynes-sram-journal-component-v1\") || canonical_journal_component_bytes)",
+      "kind": "0x0007",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 1048576,
+      "name": "SRAM_JOURNAL_COMPONENT_V1",
+      "notes": "Empty journal is u32be(0). Hash uses prefix 0x04 || UTF8(domain) || exact_bytes.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..n",
+          "field": "reservation",
+          "kinds": [
+            "0x0203"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reservations",
+          "note": "u32be(144)||InputSequenceReservationV1||reservation_hash32",
+          "wire_type": "reservation_record[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-input-sequence-reservation-component-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-reservation-component-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0008",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 524288,
+      "name": "INPUT_RESERVATION_COMPONENT_V1",
+      "notes": "Count=0 is exactly 4 bytes. Prime/terminal/sample require non-empty.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "prime_bytes",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0009",
+      "layout": "opaque_leaf",
+      "max_decode_length": 524288,
+      "name": "EPOCH_PRIME_COMPONENT_V1",
+      "notes": "HARD leaf. Expanded HELD_PRIME / PORT_CLEAR_PRIME samples.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "payload_bytes",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x000a",
+      "layout": "opaque_leaf",
+      "max_decode_length": 65536,
+      "name": "TRANSITION_OPERATION_PAYLOAD_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "rgba8888",
+          "note": "256x240x4",
+          "wire_type": "u8[245760]"
+        }
+      ],
+      "fixed_length": 245760,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x000b",
+      "layout": "fixed",
+      "max_decode_length": 245760,
+      "name": "TRANSITION_RGBA8888_FRAME_V1",
+      "notes": "HARD leaf. Exact 256*240*4 bytes.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "SAVE_HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "payload_bytes",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-user-save-payload-v1",
+      "hash_preimage": "SHA256(\"flynes-user-save-payload-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x000c",
+      "layout": "opaque_leaf",
+      "max_decode_length": 12582912,
+      "name": "USER_SAVE_PAYLOAD_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [],
+      "closure_role": "OPAQUE",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "raw",
+          "wire_type": "u8[0..4096]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-rejected-reconnect-deadline-record-v1",
+      "hash_preimage": "SHA256(\"flynes-rejected-reconnect-deadline-record-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x000d",
+      "layout": "opaque_leaf",
+      "max_decode_length": 4096,
+      "name": "REJECTED_DEADLINE_RAW_V1",
+      "notes": "0-byte object is present corrupt, not MISSING.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [],
+      "closure_role": "OPAQUE",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "n/a",
+          "name": "prefix_or_full",
+          "wire_type": "u8[]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-quarantine-retained-blob-v1",
+      "hash_preimage": "SHA256(\"flynes-quarantine-retained-blob-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x000e",
+      "layout": "opaque_leaf",
+      "max_decode_length": 1048576,
+      "name": "QUARANTINE_RETAINED_BLOB_V1",
+      "notes": "Never parsed as claimed kind. OPAQUE/HARD retained leaf.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": null
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "session_checkpoint_hash",
+          "kinds": [
+            "0x0002"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "sram_blob_hash",
+          "kinds": [
+            "0x0003"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "frame_cursor",
+          "wire_type": "FrameCursorV1"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_checkpoint_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sram_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sram_blob_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0101",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "RECOVERY_POINT_V1",
+      "notes": "HARD manifest. Tags not privately assigned.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "anchor_recovery_point_hash",
+          "kinds": [
+            "0x0101"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "tail_component_manifest_hash",
+          "kinds": [
+            "0x0005"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "sram_journal_component_hash",
+          "kinds": [
+            "0x0007"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "anchor_recovery_point_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "tail_component_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sram_journal_component_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0102",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "AUTHORITY_RECOVERY_HEAD_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "anchor_recovery_point_hash",
+          "kinds": [
+            "0x0101"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "tail_component_manifest_hash",
+          "kinds": [
+            "0x0005"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "derived_sram_blob_hash",
+          "kinds": [
+            "0x0003"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "anchor_recovery_point_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "tail_component_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "derived_sram_blob_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0103",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "REPLAYABLE_PROOF_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "session_config",
+          "kinds": [
+            "0x0105"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "authority_recovery_head",
+          "kinds": [
+            "0x0102"
+          ]
+        },
+        {
+          "cardinality": "0..4",
+          "field": "open_sets",
+          "kinds": [
+            "0x0112"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "published_save_index",
+          "kinds": [
+            "0x0110"
+          ]
+        },
+        {
+          "cardinality": "0..4",
+          "field": "active_suspend_intent_hash",
+          "kinds": [
+            "0x0210"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "pending_transaction_wal_hash",
+          "kinds": [
+            "0x0204"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "reconnect_recovery_wal_hash",
+          "kinds": [
+            "0x0204"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "finalization_repair_wal_hash",
+          "kinds": [
+            "0x0204"
+          ]
+        },
+        {
+          "cardinality": "0..2",
+          "field": "released_recovery_tombstone_hash",
+          "kinds": [
+            "0x0204"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "terminal_coordination_evidence_hash",
+          "kinds": [
+            "0x0206",
+            "0x0207"
+          ]
+        },
+        {
+          "cardinality": "0..2",
+          "field": "transition_package",
+          "kinds": [
+            "0x0107"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "replayable_proof",
+          "kinds": [
+            "0x0103"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "dual_run_fence",
+          "kinds": [
+            "0x0201"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0104",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "ACTIVE_SESSION_MANIFEST_V1",
+      "notes": "HARD manifest. Unknown critical TLV tag rejects. Tags not privately assigned.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_2",
+          "field": "session_signing_key_binding",
+          "kinds": [
+            "0x0212"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "pair_transcript",
+          "kinds": [
+            "0x0213"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0105",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "SESSION_CONFIG_MANIFEST_V1",
+      "notes": "Two 0x0212 bindings ordered initiator then responder.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "recovery_point",
+          "kinds": [
+            "0x0101"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0106",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "BARRIER_RECOVERY_REF_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "kind",
+          "note": "BARRIER or SWITCH",
+          "wire_type": "u8"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0107",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "TRANSITION_PACKAGE_V1",
+      "notes": "Manifest max 64 KiB; uncompressed components total max 12 MiB. Unknown critical tag rejects.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "offline_progress_point",
+          "kinds": [
+            "0x0109"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "offline_save",
+          "kinds": [
+            "0x0111"
+          ]
+        },
+        {
+          "cardinality": "0..1_set",
+          "field": "ended_save_closure",
+          "kinds": [
+            "0x010d",
+            "0x0303",
+            "0x0304",
+            "0x0305",
+            "0x0306",
+            "0x0307",
+            "0x0308",
+            "0x010f"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "published_save_index",
+          "kinds": [
+            "0x0110"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0108",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "SOURCE_PROGRESS_REF_V1",
+      "notes": "GENESIS has no origin child; ACTIVE_OPP none extra; OFFLINE_SAVE exactly 0x0111; ENDED_MULTIPLAYER_SAVE membership vs final-direct exclusive.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "runtime_checkpoint",
+          "kinds": [
+            "0x0001"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "sram_blob",
+          "kinds": [
+            "0x0003"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0109",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "OFFLINE_PROGRESS_POINT_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "source_progress_ref",
+          "kinds": [
+            "0x0108"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "session_config",
+          "kinds": [
+            "0x0105"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "recovery_point",
+          "kinds": [
+            "0x0101"
+          ]
+        },
+        {
+          "cardinality": "0..2",
+          "field": "dual_run_fence",
+          "kinds": [
+            "0x0201"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x010a",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "SESSION_START_PACKAGE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "offline_progress_point",
+          "kinds": [
+            "0x0109"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "sram_blob",
+          "kinds": [
+            "0x0003"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "offline_save_manifest",
+          "kinds": [
+            "0x0111"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "source",
+          "kinds": [
+            "0x0102",
+            "0x0103",
+            "0x0208"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x010b",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "FORK_HANDOFF_PACKAGE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "source",
+          "kinds": [
+            "0x0101",
+            "0x0102",
+            "0x0103",
+            "0x0208"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "input_component_manifest",
+          "kinds": [
+            "0x0005"
+          ]
+        },
+        {
+          "cardinality": "0..16",
+          "field": "wal",
+          "kinds": [
+            "0x0204"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x010c",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "RECOVERY_PACKAGE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "SAVE_HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x010d",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "USER_SAVE_ORIGIN_MANIFEST_V1",
+      "notes": "SAVE_HARD. Binds SaveCommitCertificate/Decision/Publication closure plus authority IdentityVerifierRef.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..n",
+          "field": "retained_blob",
+          "kinds": [
+            "0x000e"
+          ]
+        }
+      ],
+      "closure_role": "OPAQUE",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entries",
+          "note": "fixed 116-byte entries",
+          "wire_type": "quarantine_entry[0..512]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-quarantine-manifest-v1",
+      "hash_preimage": "SHA256(\"flynes-quarantine-manifest-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x010e",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 65536,
+      "name": "QUARANTINE_MANIFEST_V1",
+      "notes": "Empty is u32be(0). Children are OPAQUE raw leaves. Never dispatched as claimed kind.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "END_HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_package_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_commit_decision_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_commit_certificate_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_identity_verifier_ref",
+          "wire_type": "IdentityVerifierRefV1[112]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entry_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entries",
+          "note": "object_kind u16be || reserved_zero u16 || object_hash[32]",
+          "wire_type": "closure_entry[0..32]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-end-closure-manifest-v1",
+      "hash_preimage": "SHA256(\"flynes-end-closure-manifest-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x010f",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 1372,
+      "name": "END_CLOSURE_MANIFEST_V1",
+      "notes": "Prefix 220 bytes + 36*n, n=0..32, max 1372. Direct-ref list of END_HARD and SOFT_SAVE_ROOT. n=0/32 structurally valid but not a real three-root set.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..1024",
+          "field": "origin_manifest_hash",
+          "kinds": [
+            "0x010d"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "lineage_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_high_water",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entry_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[4]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entries",
+          "note": "save_revision u64be || origin_manifest_hash[32]",
+          "wire_type": "index_entry[0..1024]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-published-save-index-v1",
+      "hash_preimage": "SHA256(\"flynes-published-save-index-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0110",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 41040,
+      "name": "PUBLISHED_SAVE_INDEX_V1",
+      "notes": "Header 80 + 40*n, max 41040. Body HARD; entries SOFT_SAVE_ROOT. n=0 and n=1024 legal.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "offline_progress_point_hash",
+          "kinds": [
+            "0x0109"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "runtime_checkpoint_hash",
+          "kinds": [
+            "0x0001"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "sram_blob_hash",
+          "kinds": [
+            "0x0003"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "user_save_payload_hash",
+          "kinds": [
+            "0x000c"
+          ]
+        }
+      ],
+      "closure_role": "OFFLINE_SAVE_HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "flynes-offline-save-manifest-v1",
+      "hash_preimage": "SHA256(\"flynes-offline-save-manifest-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0111",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "OFFLINE_SAVE_MANIFEST_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "current_ledger_hash",
+          "kinds": [
+            "0x0202"
+          ]
+        },
+        {
+          "cardinality": "per_entry_1",
+          "field": "reservation",
+          "kinds": [
+            "0x0203"
+          ]
+        },
+        {
+          "cardinality": "per_entry_1",
+          "field": "component",
+          "kinds": [
+            "0x0008"
+          ]
+        },
+        {
+          "cardinality": "per_entry_1",
+          "field": "grant",
+          "kinds": [
+            "0x020a"
+          ]
+        },
+        {
+          "cardinality": "per_entry_0or1",
+          "field": "ack",
+          "kinds": [
+            "0x020b"
+          ]
+        },
+        {
+          "cardinality": "per_entry_0or1",
+          "field": "finalized",
+          "kinds": [
+            "0x020c"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "state": {
+          "ACKED": 2,
+          "OPEN": 3,
+          "PENDING": 1
+        },
+        "use_scope": {
+          "ACTIVE_INPUT": 1,
+          "TRANSITION_PRIME": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "seat_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "current_ledger_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entry_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_3",
+          "wire_type": "u8[4]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "entries",
+          "note": "fixed 184-byte entries",
+          "wire_type": "open_entry[0..8]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-open-input-reservation-set-v1",
+      "hash_preimage": "SHA256(\"flynes-open-input-reservation-set-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0112",
+      "layout": "fixed_header_plus_entries",
+      "max_decode_length": 1576,
+      "name": "OPEN_INPUT_RESERVATION_SET_V1",
+      "notes": "Header 104 + 184*count, max 1576. PENDING no ack/finalized; ACKED ack only; OPEN both.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "safe_recovery_point_hash",
+          "kinds": [
+            "0x0101"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "activation_kind": {
+          "AUTO_BARRIER": 4,
+          "INITIAL": 1,
+          "NONE": 0,
+          "RESYNC": 3,
+          "RUN_RESUME": 2
+        },
+        "pair_role": {
+          "INITIATOR": 1,
+          "RESPONDER": 2
+        },
+        "state": {
+          "ARMED": 2,
+          "QUIESCED": 1
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "lineage_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "run_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "fence_owner_pair_role",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "state",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "activation_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[5]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "activation_decision_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "safe_cursor",
+          "wire_type": "FrameCursorV1[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "safe_recovery_point_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "safe_input_root",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_config_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 232,
+      "hash_domain": "flynes-dual-run-fence-v1",
+      "hash_preimage": "SHA256(\"flynes-dual-run-fence-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0201",
+      "layout": "fixed",
+      "max_decode_length": 232,
+      "name": "DUAL_RUN_FENCE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "current_owner_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "current_seat_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_through",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "ledger_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "last_reservation_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 120,
+      "hash_domain": "flynes-input-sequence-ledger-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-ledger-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0202",
+      "layout": "fixed",
+      "max_decode_length": 120,
+      "name": "INPUT_SEQUENCE_LEDGER_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {
+        "kind": {
+          "AUTHORITY_CLEAR": 4,
+          "NORMAL_BLOCK": 1,
+          "PRIME": 2,
+          "TERMINAL": 3
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "seat_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "owner_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "ledger_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "first",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "last",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "prev_reserved",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "request_nonce",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 144,
+      "hash_domain": "flynes-input-sequence-reservation-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-reservation-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0203",
+      "layout": "fixed",
+      "max_decode_length": 144,
+      "name": "INPUT_SEQUENCE_RESERVATION_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..3",
+          "field": "RECOVERY_LANDMARK",
+          "kinds": [
+            "0x0204"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "relation": {
+          "COORDINATION_EVIDENCE": 16,
+          "EPOCH_INPUT_CLOSE": 18,
+          "EPOCH_PRIME": 6,
+          "FORK_HANDOFF": 11,
+          "INPUT_RANGE_AUTHORIZATION": 19,
+          "OFFLINE_RELEASE": 9,
+          "OPAQUE_EVIDENCE": 12,
+          "OPERATION_PAYLOAD": 13,
+          "PRE_SAFE": 1,
+          "PRIME_AUTHORIZATION": 17,
+          "RECOVERY_HEAD": 3,
+          "RECOVERY_LANDMARK": 20,
+          "RECOVERY_POINT": 4,
+          "RUN_FENCE": 14,
+          "SAVE_ORIGIN": 10,
+          "SESSION_CONFIG": 15,
+          "SESSION_START_PACKAGE": 7,
+          "SOURCE_PROGRESS_REF": 8,
+          "TAIL_COMPONENT": 5,
+          "TRANSITION_PACKAGE": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "dependency_count",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "dependencies",
+          "note": "relation u16be || object_kind u16be || object_hash[32]",
+          "wire_type": "wal_dependency[0..32]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0204",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "SESSION_WAL_RECORD_V1",
+      "notes": "Unknown critical tag rejects. Relation 20 may typed-reference earlier 0x0204 (max 3, earlier phase only).",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "last_committed_reconnect_counter",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reconnect_high_water",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "last_authenticated_activity_ns",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reconnect_deadline_ns",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "continuous_clock_generation_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_config_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 144,
+      "hash_domain": "flynes-reconnect-deadline-record-v1",
+      "hash_preimage": "SHA256(\"flynes-reconnect-deadline-record-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0205",
+      "layout": "fixed",
+      "max_decode_length": 144,
+      "name": "RECONNECT_DEADLINE_RECORD_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "active_manifest_hash",
+          "kinds": [
+            "0x0104"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "source",
+          "kinds": [
+            "0x0102",
+            "0x0103",
+            "0x0208"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "pending",
+          "kinds": [
+            "0x0204"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "deadline_valid",
+          "kinds": [
+            "0x0205"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "deadline_corrupt_bounded",
+          "kinds": [
+            "0x000d"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "deadline_record_status": {
+          "CORRUPT_BOUNDED": 3,
+          "CORRUPT_OVERSIZE": 4,
+          "MISSING": 2,
+          "VALID": 1
+        },
+        "source_evidence_kind": {
+          "AUTHORITY_HEAD": 1,
+          "OPAQUE_FAILURE": 3,
+          "REPLAYABLE_PROOF": 2
+        },
+        "terminal_kind": {
+          "CLOCK_GENERATION_CHANGED": 2,
+          "DEADLINE_ELAPSED": 1,
+          "DEADLINE_RECORD_CORRUPT": 4,
+          "DEADLINE_RECORD_MISSING": 3
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "active_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "deadline_record_evidence_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "stored_clock_generation_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "observed_clock_generation_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "observed_now_ns_or_raw_length",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "source_progress_evidence_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_id_or_zero",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_record_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "terminal_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "deadline_record_status",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "source_evidence_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_phase",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[3]"
+        }
+      ],
+      "fixed_length": 272,
+      "hash_domain": "flynes-preprepare-terminal-evidence-v1",
+      "hash_preimage": "SHA256(\"flynes-preprepare-terminal-evidence-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0206",
+      "layout": "fixed",
+      "max_decode_length": 272,
+      "name": "PREPREPARE_TERMINAL_EVIDENCE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "frozen_active_manifest_hash",
+          "kinds": [
+            "0x0104"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "source",
+          "kinds": [
+            "0x0102",
+            "0x0103",
+            "0x0208"
+          ]
+        },
+        {
+          "cardinality": "0..4",
+          "field": "wal_records",
+          "kinds": [
+            "0x0204"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "recovery_work_kind": {
+          "MANDATORY_MODE_SWITCH": 2,
+          "NONE": 0,
+          "PREACTIVE_CONVERGENCE": 4,
+          "RUN_RESUME": 1,
+          "STAY_PAUSED": 3
+        },
+        "source_evidence_kind": {
+          "AUTHORITY_HEAD": 1,
+          "OPAQUE_FAILURE": 3,
+          "REPLAYABLE_PROOF": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "frozen_active_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "attempt_reconnect_counter",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "attempt_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "channel_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reconnect_transcript_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "both_prepared_record_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "recovery_work_decision_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "last_phase_record_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "source_progress_evidence_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_id_or_zero",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_record_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "terminal_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "recovery_work_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "last_phase",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "activation_bound",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "source_evidence_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_transition_phase",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "missing_record_mask",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "corrupt_record_mask",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        }
+      ],
+      "fixed_length": 344,
+      "hash_domain": "flynes-terminal-recovery-evidence-v1",
+      "hash_preimage": "SHA256(\"flynes-terminal-recovery-evidence-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0207",
+      "layout": "fixed",
+      "max_decode_length": 344,
+      "name": "TERMINAL_RECOVERY_EVIDENCE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "active_manifest_hash",
+          "kinds": [
+            "0x0104"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "quarantine_manifest_hash",
+          "kinds": [
+            "0x010e"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "failure_kind": {
+          "CONTENT_UNAVAILABLE": 4,
+          "CONTROL_RECORD_CORRUPT": 8,
+          "CONTROL_RECORD_MISSING": 7,
+          "HASH_MISMATCH": 2,
+          "PENDING_TRANSITION_UNRESOLVED": 6,
+          "SEMANTIC_INVALID": 3,
+          "SOURCE_MISSING": 1,
+          "STORAGE_UNREADABLE": 5
+        },
+        "local_role": {
+          "AUTHORITY": 1,
+          "PEER": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "active_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "expected_source_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "quarantine_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "observed_failure_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "local_role",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "failure_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[14]"
+        }
+      ],
+      "fixed_length": 192,
+      "hash_domain": "flynes-opaque-recovery-failure-evidence-v1",
+      "hash_preimage": "SHA256(\"flynes-opaque-recovery-failure-evidence-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0208",
+      "layout": "fixed",
+      "max_decode_length": 192,
+      "name": "OPAQUE_RECOVERY_FAILURE_EVIDENCE_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "identity_public_key_x963",
+          "wire_type": "u8[65]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        }
+      ],
+      "fixed_length": 112,
+      "hash_domain": "flynes-identity-verifier-ref-v1",
+      "hash_preimage": "SHA256(\"flynes-identity-verifier-ref-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0209",
+      "layout": "fixed",
+      "max_decode_length": 112,
+      "name": "IDENTITY_VERIFIER_REF_V1",
+      "notes": "Public key starts 0x04, on P-256. key_id=SHA256(\"flynes-identity-key-id-v1\" || u32be(65) || exact_x963).",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "request_hash",
+          "kinds": [
+            "0x020d"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "before_ledger_hash",
+          "kinds": [
+            "0x0202"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "after_ledger_hash",
+          "kinds": [
+            "0x0202"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "request_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "before_ledger_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "after_ledger_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reservation",
+          "wire_type": "InputSequenceReservationV1[144]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reservation_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reservation_component_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 312,
+      "hash_domain": "flynes-input-sequence-reserve-grant-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-reserve-grant-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x020a",
+      "layout": "fixed",
+      "max_decode_length": 312,
+      "name": "INPUT_RESERVATION_GRANT_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "owner_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "request_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "grant_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "after_ledger_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reservation_component_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 192,
+      "hash_domain": "flynes-input-sequence-reserve-ack-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-reserve-ack-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x020b",
+      "layout": "fixed",
+      "max_decode_length": 192,
+      "name": "INPUT_RESERVATION_ACK_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "owner_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "request_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "grant_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "replica_ack_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "after_ledger_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reservation_component_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 248,
+      "hash_domain": "flynes-input-sequence-reserve-finalized-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-reserve-finalized-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x020c",
+      "layout": "fixed",
+      "max_decode_length": 248,
+      "name": "INPUT_RESERVATION_FINALIZED_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..1",
+          "field": "authorization_prime",
+          "kinds": [
+            "0x020e"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "authorization_range",
+          "kinds": [
+            "0x0211"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "kind": {
+          "AUTHORITY_CLEAR": 4,
+          "NORMAL_BLOCK": 1,
+          "PRIME": 2,
+          "TERMINAL": 3
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "seat_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "owner_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "requested_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_3",
+          "wire_type": "u8[4]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "request_nonce",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "before_ledger_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authorization_hash_or_zero",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 184,
+      "hash_domain": "flynes-input-sequence-reserve-req-v1",
+      "hash_preimage": "SHA256(\"flynes-input-sequence-reserve-req-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x020d",
+      "layout": "fixed",
+      "max_decode_length": 184,
+      "name": "INPUT_RESERVATION_REQUEST_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "base_recovery_point_hash",
+          "kinds": [
+            "0x0101"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "target_session_config_hash",
+          "kinds": [
+            "0x0105"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "epoch_input_close_hash",
+          "kinds": [
+            "0x020f"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "authorization_kind": {
+          "AUTO_BARRIER": 2,
+          "MODE_SWITCH": 4,
+          "RUN_RESUME": 3,
+          "SESSION_START": 1
+        },
+        "clear_reason": {
+          "NONE": 0,
+          "PAUSE": 2,
+          "PEER_DISCONNECT": 3,
+          "SEAT_REASSIGN": 4,
+          "STOP": 1
+        },
+        "prime_source_kind": {
+          "HELD_PRIME": 1,
+          "PORT_CLEAR": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authorization_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "prime_source_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "clear_reason",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "input_delay_frames",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "logical_seat",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[3]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "transaction_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "base_recovery_point_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "epoch_input_close_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "target_session_config_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "base_cursor",
+          "wire_type": "FrameCursorV1[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "target_timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "target_seat_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "target_owner_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "requested_count",
+          "wire_type": "u32be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "full_mask",
+          "wire_type": "u32be"
+        }
+      ],
+      "fixed_length": 240,
+      "hash_domain": "flynes-prime-authorization-v1",
+      "hash_preimage": "SHA256(\"flynes-prime-authorization-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x020e",
+      "layout": "fixed",
+      "max_decode_length": 240,
+      "name": "PRIME_AUTHORIZATION_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "final_ledger_hash",
+          "kinds": [
+            "0x0202"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "close_kind": {
+          "AUTO_BARRIER": 1,
+          "MODE_SWITCH": 3,
+          "RUN_RESUME": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "body",
+          "wire_type": "EpochInputCloseBodyV1[168]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "initiator_signature",
+          "wire_type": "u8[64]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "responder_signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 296,
+      "hash_domain": "flynes-epoch-input-close-certificate-v1",
+      "hash_preimage": "SHA256(\"flynes-epoch-input-close-certificate-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x020f",
+      "layout": "fixed",
+      "max_decode_length": 296,
+      "name": "EPOCH_INPUT_CLOSE_CERTIFICATE_V1",
+      "notes": "Body is version u16be || reserved_zero[6] || transaction_id[16] || session_id[16] || branch_id[16] || authority_term u64be || logical_seat u8 || close_kind u8 || reserved_zero[6] || old_timeline_epoch u64be || old_seat_revision u64be || old_open_reservation_set_hash[32] || final_ledger_hash[32] || prior_reserved_through u64be || closed_entry_count u32be || reserved_zero[4].",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "reservation_component_hash",
+          "kinds": [
+            "0x0008"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pretag",
+          "wire_type": "u8[176]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 240,
+      "hash_domain": "flynes-suspend-intent-v1",
+      "hash_preimage": "SHA256(\"flynes-suspend-intent-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0210",
+      "layout": "fixed",
+      "max_decode_length": 240,
+      "name": "SUSPEND_INTENT_V1",
+      "notes": "Pretag: version u16be || reserved_zero[6] || session_id[16] || branch_id[16] || authority_term u64be || timeline_epoch u64be || seat_revision u64be || logical_seat u8 || reserved_zero[7] || owner_key_id[32] || first_target u64be || max_count u32be || terminal_full_mask u32be || first_input_sequence u64be || reservation_component_hash[32] || nonce[16]. Signature digest domain flynes-suspend-intent-signature-v1.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "reservation_component_hash",
+          "kinds": [
+            "0x0008"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "before_ledger_hash",
+          "kinds": [
+            "0x0202"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "source_suspend_intent_hash",
+          "kinds": [
+            "0x0210"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {
+        "authorization_kind": {
+          "AUTHORITY_CLEAR": 3,
+          "DIRECT_TERMINAL": 1,
+          "SUSPEND_DERIVED_TERMINAL": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pretag",
+          "wire_type": "u8[272]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 336,
+      "hash_domain": "flynes-input-range-authorization-v1",
+      "hash_preimage": "SHA256(\"flynes-input-range-authorization-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0211",
+      "layout": "fixed",
+      "max_decode_length": 336,
+      "name": "INPUT_RANGE_AUTHORIZATION_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pretag",
+          "wire_type": "u8[248]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 312,
+      "hash_domain": "flynes-session-signing-key-binding-hash-v1",
+      "hash_preimage": "SHA256(\"flynes-session-signing-key-binding-hash-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0212",
+      "layout": "fixed",
+      "max_decode_length": 312,
+      "name": "SESSION_SIGNING_KEY_BINDING_V1",
+      "notes": "Pretag embeds IdentityVerifierRefV1; no child objects. Signature digest domain flynes-session-signing-key-binding-v1.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {
+        "entry_mode": {
+          "BLE_SAS": 1,
+          "QR": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "preimage",
+          "wire_type": "PairTranscriptPreimageV1[752]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "initiator_signature",
+          "wire_type": "u8[64]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "responder_signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 880,
+      "hash_domain": "flynes-pair-transcript-object-v1",
+      "hash_preimage": "SHA256(\"flynes-pair-transcript-object-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0213",
+      "layout": "fixed",
+      "max_decode_length": 880,
+      "name": "PAIR_TRANSCRIPT_V1",
+      "notes": "pair_transcript_hash uses flynes-pair-transcript-v1 over the 752-byte preimage only. Object hash covers all 880 bytes. BLE/QR/Wi-Fi/friends not implemented in M1.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "session_start_package",
+          "kinds": [
+            "0x010a"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "source_progress_ref",
+          "kinds": [
+            "0x0108"
+          ]
+        }
+      ],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "body",
+          "wire_type": "OfflineReleaseCertificateBodyV1[248]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 312,
+      "hash_domain": "flynes-offline-release-certificate-hash-v1",
+      "hash_preimage": "SHA256(\"flynes-offline-release-certificate-hash-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0301",
+      "layout": "fixed",
+      "max_decode_length": 312,
+      "name": "OFFLINE_RELEASE_CERTIFICATE_V1",
+      "notes": "Signature digest domain flynes-offline-release-certificate-v1 over the 248-byte body.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [],
+      "fixed_length": null,
+      "hash_domain": "",
+      "hash_preimage": "spec_did_not_freeze_named_domain; store uses expected_hash of exact bytes",
+      "kind": "0x0302",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "FORK_COMMIT_DECISION_V1",
+      "notes": "HARD decision. Tags not privately assigned.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "SAVE_HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "body",
+          "wire_type": "SaveCommitCertificateBodyV1[328]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 392,
+      "hash_domain": "flynes-save-commit-certificate-hash-v1",
+      "hash_preimage": "SHA256(\"flynes-save-commit-certificate-hash-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0303",
+      "layout": "fixed",
+      "max_decode_length": 392,
+      "name": "SAVE_COMMIT_CERTIFICATE_V1",
+      "notes": "Signature digest domain flynes-save-commit-certificate-v1.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "SAVE_HARD",
+      "enums": {
+        "enclosing_kind": {
+          "END": 2,
+          "ZERO_STEP": 1
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_decision_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "enclosing_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "enclosing_prepare_or_package_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_cursor",
+          "wire_type": "FrameCursorV1[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "user_save_payload_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_commit_certificate_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_high_water_after",
+          "wire_type": "u64be"
+        }
+      ],
+      "fixed_length": 208,
+      "hash_domain": "flynes-save-commit-decision-v1",
+      "hash_preimage": "SHA256(\"flynes-save-commit-decision-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0304",
+      "layout": "fixed",
+      "max_decode_length": 208,
+      "name": "SAVE_COMMIT_DECISION_V1",
+      "notes": "",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "SAVE_HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "body",
+          "wire_type": "SavePublicationCertificateBodyV1[336]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 400,
+      "hash_domain": "flynes-save-publication-certificate-hash-v1",
+      "hash_preimage": "SHA256(\"flynes-save-publication-certificate-hash-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0305",
+      "layout": "fixed",
+      "max_decode_length": 400,
+      "name": "SAVE_PUBLICATION_CERTIFICATE_V1",
+      "notes": "Signature digest domain flynes-save-publication-certificate-v1.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "exactly_1",
+          "field": "active_manifest_hash",
+          "kinds": [
+            "0x0104"
+          ]
+        },
+        {
+          "cardinality": "exactly_1",
+          "field": "recovery_evidence_hash",
+          "kinds": [
+            "0x0102",
+            "0x0208"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "runtime_checkpoint_hash",
+          "kinds": [
+            "0x0001"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "sram_blob_hash",
+          "kinds": [
+            "0x0003"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "final_save_certificate_hash",
+          "kinds": [
+            "0x0303"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "coordination_evidence_hash",
+          "kinds": [
+            "0x0206",
+            "0x0207"
+          ]
+        }
+      ],
+      "closure_role": "END",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "schema_version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "field_count",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "tlv",
+          "wire_type": "tag_length_value[23]"
+        }
+      ],
+      "fixed_length": null,
+      "hash_domain": "flynes-end-package-v1",
+      "hash_preimage": "SHA256(\"flynes-end-package-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0306",
+      "layout": "strict_critical_tlv",
+      "max_decode_length": 65536,
+      "name": "END_PACKAGE_V1",
+      "notes": "u16be(1)||u16be(23) then tags 1..23 strictly increasing as u16be(tag)||u32be(length)||value. Unknown/duplicate/out-of-order/trailing rejects. Not a closure entry.",
+      "reserved_zero_required": true,
+      "tlv_tags": [
+        {
+          "name": "transaction_id",
+          "tag": 1,
+          "wire_type": "u8[16]"
+        },
+        {
+          "name": "coordination_mode",
+          "tag": 2,
+          "wire_type": "u8"
+        },
+        {
+          "name": "session_id",
+          "tag": 3,
+          "wire_type": "u8[16]"
+        },
+        {
+          "name": "lineage_id",
+          "tag": 4,
+          "wire_type": "u8[16]"
+        },
+        {
+          "name": "branch_id",
+          "tag": 5,
+          "wire_type": "u8[16]"
+        },
+        {
+          "name": "authority_term",
+          "tag": 6,
+          "wire_type": "u64be"
+        },
+        {
+          "name": "timeline_epoch",
+          "tag": 7,
+          "wire_type": "u64be"
+        },
+        {
+          "name": "final_progress_evidence_cursor",
+          "tag": 8,
+          "wire_type": "EvidenceCursorV1[8|64]"
+        },
+        {
+          "name": "active_manifest_hash",
+          "tag": 9,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "recovery_evidence_hash",
+          "tag": 10,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "runtime_checkpoint_hash",
+          "tag": 11,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "state_digest",
+          "tag": 12,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "sram_revision",
+          "tag": 13,
+          "wire_type": "u64be"
+        },
+        {
+          "name": "sram_blob_hash",
+          "tag": 14,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "save_policy",
+          "tag": 15,
+          "wire_type": "u8"
+        },
+        {
+          "name": "save_revision_or_zero",
+          "tag": 16,
+          "wire_type": "u64be"
+        },
+        {
+          "name": "final_save_hash_or_zero",
+          "tag": 17,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "final_save_certificate_hash_or_zero",
+          "tag": 18,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "end_reason",
+          "tag": 19,
+          "wire_type": "u16be"
+        },
+        {
+          "name": "sram_high_water",
+          "tag": 20,
+          "wire_type": "u64be"
+        },
+        {
+          "name": "save_high_water",
+          "tag": 21,
+          "wire_type": "u64be"
+        },
+        {
+          "name": "coordination_evidence_hash_or_zero",
+          "tag": 22,
+          "wire_type": "bytes32"
+        },
+        {
+          "name": "authority_key_id",
+          "tag": 23,
+          "wire_type": "bytes32"
+        }
+      ],
+      "unassigned_kind_illegal": true,
+      "unknown_critical_tag": "reject",
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..1",
+          "field": "save_commit_decision_hash",
+          "kinds": [
+            "0x0304"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "save_publication_certificate_hash",
+          "kinds": [
+            "0x0305"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "save_origin_manifest_hash",
+          "kinds": [
+            "0x010d"
+          ]
+        }
+      ],
+      "closure_role": "END",
+      "enums": {
+        "coordination_mode": {
+          "AUTHORITY_AFTER_PREPARE_GAP": 2,
+          "AUTHORITY_AFTER_TERMINAL_RECOVERY": 3,
+          "CONNECTED": 1
+        },
+        "save_policy": {
+          "DISCARD": 2,
+          "RECOVERY_ONLY": 3,
+          "SAVE": 1
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_decision_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_package_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_commit_certificate_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "lineage_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_key_id",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "ownership_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_writer_generation_before",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_writer_generation_after",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sram_high_water_after",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_high_water_after",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "active_manifest_before_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_commit_decision_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_publication_certificate_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_origin_manifest_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "coordination_mode",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "save_policy",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "end_reason",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[4]"
+        }
+      ],
+      "fixed_length": 360,
+      "hash_domain": "flynes-end-commit-decision-v1",
+      "hash_preimage": "SHA256(\"flynes-end-commit-decision-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0307",
+      "layout": "fixed",
+      "max_decode_length": 360,
+      "name": "END_COMMIT_DECISION_V1",
+      "notes": "END root; not a closure entry.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [
+        {
+          "cardinality": "0..1",
+          "field": "save_commit_decision_hash",
+          "kinds": [
+            "0x0304"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "save_publication_certificate_hash",
+          "kinds": [
+            "0x0305"
+          ]
+        },
+        {
+          "cardinality": "0..1",
+          "field": "save_origin_manifest_hash",
+          "kinds": [
+            "0x010d"
+          ]
+        }
+      ],
+      "closure_role": "END",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "body",
+          "wire_type": "EndCommitCertificateBodyV1[328]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 392,
+      "hash_domain": "flynes-end-commit-certificate-hash-v1",
+      "hash_preimage": "SHA256(\"flynes-end-commit-certificate-hash-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0308",
+      "layout": "fixed",
+      "max_decode_length": 392,
+      "name": "END_COMMIT_CERTIFICATE_V1",
+      "notes": "END root; not a closure entry. Signature digest domain flynes-end-commit-certificate-v1.",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    }
+  ],
+  "messages": [
+    {
+      "endian": "network",
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "kind",
+          "note": "GENESIS=0 FRAME=1",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "index",
+          "wire_type": "u64be"
+        }
+      ],
+      "fixed_length": 16,
+      "hash_domain": "",
+      "name": "FrameCursorV1",
+      "notes": "GENESIS index must be 0. Unknown kind rejects."
+    },
+    {
+      "endian": "network",
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "kind",
+          "note": "NONE=0 PRESENT=1",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "present_only",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "present_only",
+          "endian": "network",
+          "name": "frame_cursor",
+          "wire_type": "FrameCursorV1[16]"
+        },
+        {
+          "cardinality": "present_only",
+          "endian": "network",
+          "name": "evidence_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_lengths": {
+        "NONE": 8,
+        "PRESENT": 64
+      },
+      "hash_domain": "",
+      "name": "EvidenceCursorV1",
+      "notes": "NONE has no trailing epoch/cursor/hash."
+    },
+    {
+      "endian": "network",
+      "enums": {
+        "buttons": {
+          "A": 1,
+          "B": 2,
+          "DOWN": 32,
+          "LEFT": 64,
+          "RIGHT": 128,
+          "SELECT": 4,
+          "START": 8,
+          "UP": 16
+        },
+        "clear_reason": {
+          "NONE": 0,
+          "PAUSE": 2,
+          "PEER_DISCONNECT": 3,
+          "SEAT_REASSIGN": 4,
+          "STOP": 1
+        },
+        "source_kind": {
+          "HELD_PRIME": 2,
+          "HELD_SAMPLE": 7,
+          "NEUTRAL_UNASSIGNED": 4,
+          "PORT_CLEAR": 3,
+          "PREDICTED": 5,
+          "REAL_SAMPLE": 1,
+          "TERMINAL_HOLD": 6
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "timeline_epoch",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "seat_revision",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "mode_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "frame_index",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "batch_sequence",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "predicted_port_mask",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "ports",
+          "note": "source_kind u8 + clear_reason u8 + reserved_zero u16 + buttons u32be + input_sequence u64be",
+          "wire_type": "port_slot[4]"
+        }
+      ],
+      "fixed_length": 154,
+      "hash_domain": "flynes-input-bundle-v1",
+      "hash_preimage": "SHA256(0x10 || UTF8(\"flynes-input-bundle-v1\") || u32be(len) || bundle_bytes)",
+      "name": "CanonicalInputBundleV1",
+      "notes": "UP+DOWN and LEFT+RIGHT normalized to clear both bits before hash."
+    },
+    {
+      "endian": "network",
+      "enums": {
+        "binding_kind": {
+          "INITIAL": 1,
+          "NEW_BEARER_RECONNECT": 3,
+          "SAME_PATH_RECONNECT": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "binding_kind",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[7]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pair_transcript_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reconnect_transcript_hash_or_zero",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reconnect_counter",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "channel_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "bind_nonce",
+          "wire_type": "u8[16]"
+        }
+      ],
+      "fixed_length": 136,
+      "hash_domain": "",
+      "name": "ChannelBindV1",
+      "notes": "INITIAL: reconnect hash/counter=0; bind_nonce=SHA256(\"flynes-initial-bind-v1\" || pair_transcript_hash)[0..15]. Not an ObjectKind."
+    },
+    {
+      "endian": "network",
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "body",
+          "wire_type": "ChannelBindProofBodyV1[216]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "tag",
+          "wire_type": "u8[32]"
+        }
+      ],
+      "fixed_length": 248,
+      "hash_domain": "flynes-channel-bind-proof-hash-v1",
+      "name": "ChannelBindProofV1",
+      "notes": "Not an ObjectKind. QUIC mapping only; no BLE/QR/Wi-Fi."
+    },
+    {
+      "endian": "network",
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "branch_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "authority_term",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "attempt_reconnect_counter",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "attempt_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "channel_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sender_role",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "receiver_role",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "transition_present",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[5]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "local_active_manifest_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "local_transition_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "local_WAL_phase_hash",
+          "wire_type": "bytes32"
+        }
+      ],
+      "fixed_length": 176,
+      "hash_domain": "flynes-channel-resume-summary-v1",
+      "name": "ChannelResumeSummaryV1",
+      "notes": "Not an ObjectKind. 176-byte exact-size wire message."
+    }
+  ],
+  "quic_channels": [
+    {
+      "form": "reliable_stream",
+      "id": 1,
+      "name": "Control"
+    },
+    {
+      "form": "datagram",
+      "id": 2,
+      "name": "Input"
+    },
+    {
+      "form": "reliable_stream",
+      "id": 3,
+      "name": "StateCommit"
+    },
+    {
+      "form": "reliable_stream",
+      "id": 4,
+      "name": "Bulk"
+    },
+    {
+      "form": "reliable_stream",
+      "id": 5,
+      "name": "ROM"
+    },
+    {
+      "form": "datagram",
+      "id": 6,
+      "name": "Video"
+    },
+    {
+      "form": "datagram",
+      "id": 7,
+      "name": "Audio"
+    }
+  ],
+  "schema_id": "flynes_session_v1",
+  "unassigned_illegal": true,
+  "unknown_critical_tlv": "reject",
+  "unknown_optional_tlv": "skip",
+  "wire_endian": "network",
+  "wire_integer_endian": "big"
+}

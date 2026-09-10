@@ -41,8 +41,9 @@ public final class StableIds {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             for (String part : parts) {
-                byte[] encoded = DomainValidation.requireNonBlank(part, "ID input")
-                        .getBytes(StandardCharsets.UTF_8);
+                String checked = DomainValidation.requireNonBlank(part, "ID input");
+                requireValidUnicode(checked);
+                byte[] encoded = checked.getBytes(StandardCharsets.UTF_8);
                 digest.update(ByteBuffer.allocate(4).putInt(encoded.length).array());
                 digest.update(encoded);
             }
@@ -53,6 +54,22 @@ public final class StableIds {
             return hex.toString();
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is required", impossible);
+        }
+    }
+
+    private static void requireValidUnicode(String value) {
+        // Java's UTF-8 encoder replaces unpaired surrogates, which would create ID collisions.
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (Character.isHighSurrogate(current)) {
+                if (index + 1 >= value.length()
+                        || !Character.isLowSurrogate(value.charAt(index + 1))) {
+                    throw new IllegalArgumentException("ID input must be valid Unicode");
+                }
+                index++;
+            } else if (Character.isLowSurrogate(current)) {
+                throw new IllegalArgumentException("ID input must be valid Unicode");
+            }
         }
     }
 }

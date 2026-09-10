@@ -8,7 +8,11 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
-/** Ergonomic, immutable landscape hit map. Visual size and touch target are intentionally separate. */
+/**
+ * Ergonomic, immutable landscape hit map. Visual size and touch target are intentionally separate.
+ * Verified Java port of {@code shared/src/product/gamepad_hit_map.cpp}; keep literals here until an
+ * optional JNI hit-map swap.
+ */
 public final class GamepadHitMap {
     public enum Control { NONE, UP, DOWN, LEFT, RIGHT, B, A, SELECT, START, PAUSE }
     public enum Shape { CIRCLE, ROUNDED_SQUARE, PILL }

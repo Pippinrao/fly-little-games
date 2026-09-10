@@ -35,7 +35,7 @@ public final class SettingsFragment extends PreferenceFragmentCompat {
         getPreferenceManager().setSharedPreferencesName(SettingsRepository.PREFERENCES_NAME);
         String selectedRoot = getArguments() == null ? rootKey : getArguments().getString(ARG_ROOT, rootKey);
         setPreferencesFromResource(R.xml.preferences, selectedRoot);
-        repository = new SettingsRepository(new SharedPreferencesSettingsStore(requireContext()));
+        repository = SettingsAccess.repository(requireContext());
 
         ListPreference language = findPreference(SettingsKeys.LOCALE_TAG);
         if (language != null) {

@@ -36,8 +36,8 @@ import com.flynes.emu.save.SaveRecord;
 import com.flynes.emu.save.SaveRepository;
 import com.flynes.emu.save.LegacySaveMigrator;
 import com.flynes.emu.settings.AppSettings;
+import com.flynes.emu.settings.SettingsAccess;
 import com.flynes.emu.settings.SettingsRepository;
-import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 import com.flynes.emu.session.EmulationSession;
 import com.flynes.emu.session.SessionResult;
 import com.flynes.emu.session.SessionState;
@@ -212,7 +212,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         saves = new SaveRepository(this);
-        settings = new SettingsRepository(new SharedPreferencesSettingsStore(this));
+        settings = SettingsAccess.repository(this);
         appSettings = settings.load();
         Log.i(TAG, "legacy autosave migration=" + LegacySaveMigrator.migrate(this, saves));
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

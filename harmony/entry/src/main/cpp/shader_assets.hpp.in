@@ -1,0 +1,12 @@
+#pragma once
+
+namespace flynes::harmony::shader_assets {
+
+inline constexpr char kMmpx[] = R"FLYNES_SHADER(@FLYNES_MMPX_SHADER@)FLYNES_SHADER";
+inline constexpr char kScaleFx0[] = R"FLYNES_SHADER(@FLYNES_SCALEFX_0@)FLYNES_SHADER";
+inline constexpr char kScaleFx1[] = R"FLYNES_SHADER(@FLYNES_SCALEFX_1@)FLYNES_SHADER";
+inline constexpr char kScaleFx2[] = R"FLYNES_SHADER(@FLYNES_SCALEFX_2@)FLYNES_SHADER";
+inline constexpr char kScaleFx3[] = R"FLYNES_SHADER(@FLYNES_SCALEFX_3@)FLYNES_SHADER";
+inline constexpr char kScaleFx4[] = R"FLYNES_SHADER(@FLYNES_SCALEFX_4@)FLYNES_SHADER";
+
+} // namespace flynes::harmony::shader_assets

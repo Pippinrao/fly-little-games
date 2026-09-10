@@ -1,0 +1,11 @@
+{
+  "src": [
+    "pages/GameCenter",
+    "pages/RunGame",
+    "pages/Sources",
+    "pages/Settings",
+    "pages/ControlLayout",
+    "pages/Licenses",
+    "pages/Index"
+  ]
+}

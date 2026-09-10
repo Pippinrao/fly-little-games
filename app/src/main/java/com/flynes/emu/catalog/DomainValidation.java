@@ -24,12 +24,26 @@ public final class DomainValidation {
         }
         for (int offset = 0; offset < value.length();) {
             int codePoint = value.codePointAt(offset);
-            if (!Character.isWhitespace(codePoint) && !Character.isSpaceChar(codePoint)) {
+            if (!isFrozenBlankCodePoint(codePoint)) {
                 return false;
             }
             offset += Character.charCount(codePoint);
         }
         return true;
+    }
+
+    private static boolean isFrozenBlankCodePoint(int codePoint) {
+        // Keep persisted IDs stable across Android ICU and host-JDK Unicode table updates.
+        return (codePoint >= 0x0009 && codePoint <= 0x000D)
+                || (codePoint >= 0x001C && codePoint <= 0x0020)
+                || codePoint == 0x00A0
+                || codePoint == 0x1680
+                || (codePoint >= 0x2000 && codePoint <= 0x200A)
+                || codePoint == 0x2028
+                || codePoint == 0x2029
+                || codePoint == 0x202F
+                || codePoint == 0x205F
+                || codePoint == 0x3000;
     }
 
     public static <T> T requireNonNull(T value, String name) {

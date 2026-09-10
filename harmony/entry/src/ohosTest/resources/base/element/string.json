@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_test_desc",
+      "value": "FlyNES entry Hypium tests"
+    },
+    {
+      "name": "TestAbility_desc",
+      "value": "Hypium test ability"
+    },
+    {
+      "name": "TestAbility_label",
+      "value": "FlyNES tests"
+    }
+  ]
+}

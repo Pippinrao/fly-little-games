@@ -2,6 +2,7 @@ package com.flynes.emu;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import com.flynes.emu.catalog.android.AndroidCatalogRuntime;
 import com.flynes.emu.launch.ExactRomLoader;
@@ -13,6 +14,7 @@ import java.util.concurrent.Executors;
 
 /** The only Android UI entry into exact catalog launch. */
 public final class AndroidGameLaunchService {
+    private static final String TAG = "FlyNesLaunch";
     public interface Callback { void onComplete(LaunchResult result); }
 
     private final AndroidCatalogRuntime runtime;
@@ -48,6 +50,9 @@ public final class AndroidGameLaunchService {
                         }
                     });
             LaunchResult result = coordinator.launch(variantId);
+            if (!result.sessionCommitted()) {
+                Log.e(TAG, "launch failed: code=" + result.code() + ", message=" + result.message());
+            }
             main.post(() -> callback.onComplete(result));
         });
     }

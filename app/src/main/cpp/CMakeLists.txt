@@ -9,8 +9,15 @@ find_package(games-frame-pacing REQUIRED CONFIG)
 # Reuse the core's static library targets (nes_abi -> nestopia).
 add_subdirectory(${NES_CORE_DIR} ${CMAKE_BINARY_DIR}/core)
 
+if(NOT FLYNES_SHARED_DIR)
+    message(FATAL_ERROR "FLYNES_SHARED_DIR is required to link flynes_app")
+endif()
+set(FLYNES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(${FLYNES_SHARED_DIR} ${CMAKE_BINARY_DIR}/flynes_shared)
+
 add_library(nescore SHARED
     nes_jni.cpp
+    flynes_app_jni.cpp
     video/baseline_pipeline.cpp
     video/egl_presenter.cpp
     video/framebuffer_target.cpp
@@ -25,7 +32,10 @@ add_library(nescore SHARED
     video/spatial_pipeline.cpp
     video/video_presenter_jni.cpp)
 target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
-target_link_libraries(nescore nes_abi nestopia video_algorithms)
+target_link_libraries(nescore nes_abi nestopia video_algorithms flynes_app)
+if(TARGET flynes_runtime)
+    target_link_libraries(nescore flynes_runtime)
+endif()
 
 # Safety net: zlib is required by NstZlib.cpp (compressed save states).
 # It propagates PUBLIC through nestopia -> nes_abi, but link it explicitly

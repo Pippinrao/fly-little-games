@@ -1,0 +1,356 @@
+{
+  "cases": [
+    {
+      "domain": "flynes-identity-verifier-ref-v1",
+      "enum_offset": null,
+      "kind": "0x0209",
+      "length": 112,
+      "name": "identity_verifier_ref_v1",
+      "reserved_offset": 2,
+      "sha256": "926840d81c995417a16a19c5ab53cc86fa20c1b1557cc4a083ee9c843ce71ea6"
+    },
+    {
+      "domain": "flynes-input-sequence-ledger-v1",
+      "enum_offset": null,
+      "kind": "0x0202",
+      "length": 120,
+      "name": "input_sequence_ledger_v1",
+      "reserved_offset": 2,
+      "sha256": "de5d993d36ab385e4d96a34a769fdfdb3b0ae55dc7eb4f5f2720ad99a3a179af"
+    },
+    {
+      "domain": "flynes-input-sequence-reservation-v1",
+      "enum_offset": 25,
+      "kind": "0x0203",
+      "length": 144,
+      "name": "input_sequence_reservation_v1",
+      "reserved_offset": 2,
+      "sha256": "3b4a9044816f2d0868dfee607626819e0f2f89f8516ec1ac7dc5bf49f378b95c"
+    },
+    {
+      "domain": "flynes-reconnect-deadline-record-v1",
+      "enum_offset": null,
+      "kind": "0x0205",
+      "length": 144,
+      "name": "reconnect_deadline_record_v1",
+      "reserved_offset": 2,
+      "sha256": "0c726d016385ed27ac097fbd44f8eb17a7691034b20cdf9c0602cd831f51cd1c"
+    },
+    {
+      "domain": "flynes-dual-run-fence-v1",
+      "enum_offset": 81,
+      "kind": "0x0201",
+      "length": 232,
+      "name": "dual_run_fence_v1",
+      "reserved_offset": 2,
+      "sha256": "42ab315aeea7d9061c05aeb0c85d66cb3042970c8a10235a548df20b3acbe127"
+    },
+    {
+      "domain": "flynes-input-sequence-reserve-req-v1",
+      "enum_offset": 25,
+      "kind": "0x020d",
+      "length": 184,
+      "name": "input_reservation_request_v1",
+      "reserved_offset": 2,
+      "sha256": "a1f46f015ccc941839b3b6de309fff81b0c7a78f6b94d86cb3b57042e1e5c9ed"
+    },
+    {
+      "domain": "flynes-input-sequence-reserve-grant-v1",
+      "enum_offset": null,
+      "kind": "0x020a",
+      "length": 312,
+      "name": "input_reservation_grant_v1",
+      "reserved_offset": 2,
+      "sha256": "b6f7bdc407b566062d12d591e272739644c76750fd4bdc6782fb5b4f16d50a82"
+    },
+    {
+      "domain": "flynes-input-sequence-reserve-ack-v1",
+      "enum_offset": null,
+      "kind": "0x020b",
+      "length": 192,
+      "name": "input_reservation_ack_v1",
+      "reserved_offset": 2,
+      "sha256": "f8a57cf246c44dd04d944af6564e36ff2e7001db3f2e121ce160ba0605282f31"
+    },
+    {
+      "domain": "flynes-input-sequence-reserve-finalized-v1",
+      "enum_offset": null,
+      "kind": "0x020c",
+      "length": 248,
+      "name": "input_reservation_finalized_v1",
+      "reserved_offset": 2,
+      "sha256": "0e0ac3183062587702fd5c831b58d8adfc0cb79d83d5d1056e3a9a6f57d2b3c5"
+    },
+    {
+      "domain": "flynes-prime-authorization-v1",
+      "enum_offset": 8,
+      "kind": "0x020e",
+      "length": 240,
+      "name": "prime_authorization_v1",
+      "reserved_offset": 2,
+      "sha256": "95a8150baccd76f2ca4cfd286f9cc723db4e4a11eca6e525a54f9157543a8c2f"
+    },
+    {
+      "domain": "flynes-epoch-input-close-certificate-v1",
+      "enum_offset": 65,
+      "kind": "0x020f",
+      "length": 296,
+      "name": "epoch_input_close_certificate_v1",
+      "reserved_offset": 2,
+      "sha256": "9f943656b563fcf5c1b9d5c3cd715071a9cba810cb67995743f4bacbf16bb947"
+    },
+    {
+      "domain": "flynes-suspend-intent-v1",
+      "enum_offset": null,
+      "kind": "0x0210",
+      "length": 240,
+      "name": "suspend_intent_v1",
+      "reserved_offset": 2,
+      "sha256": "11c1edf68a85bade4b8a830eb53d46223e264c2aeddc40f1ee5ac89ab2188d55"
+    },
+    {
+      "domain": "flynes-input-range-authorization-v1",
+      "enum_offset": 8,
+      "kind": "0x0211",
+      "length": 336,
+      "name": "input_range_authorization_v1",
+      "reserved_offset": 2,
+      "sha256": "6cb5fe6e7d75d6d321675e746b64a7285888f1399a5f849b7e5469860650fc83"
+    },
+    {
+      "domain": "flynes-session-signing-key-binding-hash-v1",
+      "enum_offset": 56,
+      "kind": "0x0212",
+      "length": 312,
+      "name": "session_signing_key_binding_v1",
+      "reserved_offset": 2,
+      "sha256": "13ba5294d82ac43bcc95f8fcd63a7f2840974d3dbd0f3b9e06d37ac225b3ca3b"
+    },
+    {
+      "domain": "flynes-pair-transcript-object-v1",
+      "enum_offset": 8,
+      "kind": "0x0213",
+      "length": 880,
+      "name": "pair_transcript_v1",
+      "reserved_offset": 2,
+      "sha256": "c64ad141edb769b9b3faf6510843ea28a1172f26785343d4e083bfd81412e2c1"
+    },
+    {
+      "domain": "flynes-opaque-recovery-failure-evidence-v1",
+      "enum_offset": 176,
+      "kind": "0x0208",
+      "length": 192,
+      "name": "opaque_recovery_failure_evidence_v1",
+      "reserved_offset": 2,
+      "sha256": "5e983fbea439800e41b2b80a7150cf539c2048b139c30d6d26ab615fb71e2f7d"
+    },
+    {
+      "domain": "flynes-preprepare-terminal-evidence-v1",
+      "enum_offset": 264,
+      "kind": "0x0206",
+      "length": 272,
+      "name": "preprepare_terminal_evidence_v1",
+      "reserved_offset": 2,
+      "sha256": "465ba7c54cda7f204fb6a35d5c373944cf570197218b120f34e3cc7a11a73e30"
+    },
+    {
+      "domain": "flynes-terminal-recovery-evidence-v1",
+      "enum_offset": 328,
+      "kind": "0x0207",
+      "length": 344,
+      "name": "terminal_recovery_evidence_v1",
+      "reserved_offset": 2,
+      "sha256": "96ae92ab8773ad44b6bfb26ba32bfb23a4e4916042b6fa9a7f0a354b7870a7d8"
+    },
+    {
+      "domain": "flynes-save-commit-decision-v1",
+      "enum_offset": 24,
+      "kind": "0x0304",
+      "length": 208,
+      "name": "save_commit_decision_v1",
+      "reserved_offset": 2,
+      "sha256": "681c7a8959b0d37d55b0305d50089def566627390ab9d254d4d6775ff428fb4b"
+    },
+    {
+      "domain": "flynes-end-commit-certificate-hash-v1",
+      "enum_offset": null,
+      "kind": "0x0308",
+      "length": 392,
+      "name": "end_commit_certificate_v1",
+      "reserved_offset": 2,
+      "sha256": "7a7f11416909bb50bba97076ab4c616f92140bb3281cfc18d19cea1e66430688"
+    },
+    {
+      "domain": "flynes-end-commit-decision-v1",
+      "enum_offset": 352,
+      "kind": "0x0307",
+      "length": 360,
+      "name": "end_commit_decision_v1",
+      "reserved_offset": 2,
+      "sha256": "bd66441b344a15977ff5b33cd0f862218d20b61c982bb91c2f827769bbd17770"
+    },
+    {
+      "domain": "flynes-save-commit-certificate-hash-v1",
+      "enum_offset": null,
+      "kind": "0x0303",
+      "length": 392,
+      "name": "save_commit_certificate_v1",
+      "reserved_offset": 2,
+      "sha256": "9b643dd6f5f08595fa0867b6843b0b9f6863ffacbe7dbddf29b73ca67e02fd15"
+    },
+    {
+      "domain": "flynes-save-publication-certificate-hash-v1",
+      "enum_offset": 296,
+      "kind": "0x0305",
+      "length": 400,
+      "name": "save_publication_certificate_v1",
+      "reserved_offset": 2,
+      "sha256": "94589f9f07f4920922002e1ffa476ab820d4c63021cf27bcbc7bf2822818a041"
+    },
+    {
+      "domain": "flynes-offline-release-certificate-hash-v1",
+      "enum_offset": null,
+      "kind": "0x0301",
+      "length": 312,
+      "name": "offline_release_certificate_v1",
+      "reserved_offset": 2,
+      "sha256": "9c32c9df3196b4837d94901b08d4c7fb4e5af88424a13c3c63de157233e81986"
+    },
+    {
+      "domain": "flynes-end-closure-manifest-v1",
+      "enum_offset": null,
+      "kind": "0x010f",
+      "length": 220,
+      "name": "end_closure_manifest_v1",
+      "reserved_offset": 2,
+      "sha256": "cadc45eb601a1a249d33a5812085c6551be4a25987c40c5fe63bfb030f724e68"
+    },
+    {
+      "domain": "flynes-end-closure-manifest-v1",
+      "enum_offset": null,
+      "kind": "0x010f",
+      "length": 1372,
+      "name": "end_closure_manifest_v1_n32",
+      "reserved_offset": 2,
+      "sha256": "489c044851572e5d2f9e814a80502c423c866bfc384e50e3f6f47ac725aea9a5"
+    },
+    {
+      "domain": "flynes-published-save-index-v1",
+      "enum_offset": null,
+      "kind": "0x0110",
+      "length": 80,
+      "name": "published_save_index_v1",
+      "reserved_offset": 2,
+      "sha256": "c6b1376542753aa690b4d535d9a3a6dd0fd511e0e2e6d35f0a37488eacf8d955"
+    },
+    {
+      "domain": "flynes-published-save-index-v1",
+      "enum_offset": null,
+      "kind": "0x0110",
+      "length": 41040,
+      "name": "published_save_index_v1_n1024",
+      "reserved_offset": 2,
+      "sha256": "6ceedbb2ff1dca62129203af44466c6830b463a2d0ffc3d9c45d223f43183f88"
+    },
+    {
+      "domain": "flynes-open-input-reservation-set-v1",
+      "enum_offset": null,
+      "kind": "0x0112",
+      "length": 104,
+      "name": "open_input_reservation_set_v1",
+      "reserved_offset": 2,
+      "sha256": "f09cc0d06769f9a20152946a9aa64a69a0399c29ac5e878e384568707a2eedf7"
+    },
+    {
+      "domain": "flynes-open-input-reservation-set-v1",
+      "enum_offset": null,
+      "kind": "0x0112",
+      "length": 1576,
+      "name": "open_input_reservation_set_v1_n8",
+      "reserved_offset": 2,
+      "sha256": "0d9224659689a6e08dc216b0d10d7d00e213265f70ab3ab6272ba37c0baa5ac8"
+    },
+    {
+      "domain": "",
+      "enum_offset": null,
+      "kind": "0x000b",
+      "length": 245760,
+      "name": "transition_rgba8888_frame_v1",
+      "reserved_offset": null,
+      "sha256": "9eb8fa54d87a9b9775dd55c07b3d164453884695bd1ed83fe2f63259ee9e6afc"
+    },
+    {
+      "domain": "",
+      "enum_offset": 0,
+      "length": 16,
+      "message": "FrameCursorV1",
+      "name": "frame_cursor_genesis",
+      "reserved_offset": 1,
+      "sha256": "374708fff7719dd5979ec875d56cd2286f6d3cf7ec317a3b25632aab28ec37bb"
+    },
+    {
+      "domain": "",
+      "enum_offset": 0,
+      "length": 16,
+      "message": "FrameCursorV1",
+      "name": "frame_cursor_frame0",
+      "reserved_offset": 1,
+      "sha256": "4cbbd8ca5215b8d161aec181a74b694f4e24b001d5b081dc0030ed797a8973e0"
+    },
+    {
+      "domain": "",
+      "enum_offset": 0,
+      "length": 8,
+      "message": "EvidenceCursorV1",
+      "name": "evidence_cursor_none",
+      "reserved_offset": 1,
+      "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+    },
+    {
+      "domain": "",
+      "enum_offset": 0,
+      "length": 64,
+      "message": "EvidenceCursorV1",
+      "name": "evidence_cursor_present",
+      "reserved_offset": 1,
+      "sha256": "19757981fab4ea7068c04cad5713e1ea7c9b10c92be5986468497b2ad67f5b97"
+    },
+    {
+      "domain": "prefixed10-flynes-input-bundle-v1",
+      "enum_offset": 90,
+      "length": 154,
+      "message": "CanonicalInputBundleV1",
+      "name": "canonical_input_bundle_v1",
+      "reserved_offset": 83,
+      "sha256": "9ea6ea37ed06be08e789223e7cadd0e35b964879a5891b320dc59cda188a1aaa"
+    },
+    {
+      "domain": "",
+      "enum_offset": 8,
+      "length": 136,
+      "message": "ChannelBindV1",
+      "name": "channel_bind_v1_initial",
+      "reserved_offset": 2,
+      "sha256": "bee3713420382d02b653e7d8386b621d9f76d7560ff42a1b0516bf420f5b0dff"
+    },
+    {
+      "domain": "flynes-channel-resume-summary-v1",
+      "enum_offset": 88,
+      "length": 176,
+      "message": "ChannelResumeSummaryV1",
+      "name": "channel_resume_summary_v1",
+      "reserved_offset": 2,
+      "sha256": "64a2940075f056073bdb9b785f25db01fb36b8991509700e309b085231c874d0"
+    },
+    {
+      "domain": "flynes-end-package-v1",
+      "enum_offset": null,
+      "kind": "0x0306",
+      "length": 11,
+      "name": "end_package_unknown_critical",
+      "negative_only": true,
+      "reserved_offset": null,
+      "sha256": "b804d5018ccb5f370d6fae39c5100552947f956a9b4c6dd534f68cb8b01e9a9b"
+    }
+  ]
+}

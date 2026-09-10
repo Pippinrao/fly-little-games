@@ -72,7 +72,7 @@ public final class DisplaySettingsFragment extends Fragment {
     }
 
     @Override public void onViewCreated(@NonNull View view, @Nullable Bundle state) {
-        repository = new SettingsRepository(new SharedPreferencesSettingsStore(requireContext()));
+        repository = SettingsAccess.repository(requireContext());
         customControls = view.findViewById(R.id.video_custom_controls);
         presetButtons[0] = view.findViewById(R.id.video_preset_power);
         presetButtons[1] = view.findViewById(R.id.video_preset_balanced);

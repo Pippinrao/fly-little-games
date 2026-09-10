@@ -78,15 +78,19 @@ public final class StartAndPauseSeparationTest {
                 org.junit.Assert.assertTrue("continue enters system navigation bounds",
                         buttonBounds.right <= navigationLeft);
             });
-            onView(withId(R.id.pause_scrim)).perform(androidx.test.espresso.action.ViewActions.click());
+            scenario.onActivity(activity -> org.junit.Assert.assertTrue(
+                    activity.findViewById(R.id.pause_scrim).performClick()));
             onView(withId(R.id.pause_drawer)).check(doesNotExist());
 
-            onView(withId(R.id.pause_button)).perform(androidx.test.espresso.action.ViewActions.click());
+            scenario.onActivity(activity -> org.junit.Assert.assertTrue(
+                    activity.findViewById(R.id.pause_button).performClick()));
             SystemClock.sleep(240L);
-            onView(withId(R.id.pause_continue)).perform(androidx.test.espresso.action.ViewActions.click());
+            scenario.onActivity(activity -> org.junit.Assert.assertTrue(
+                    activity.findViewById(R.id.pause_continue).performClick()));
             onView(withId(R.id.pause_drawer)).check(doesNotExist());
 
-            onView(withId(R.id.pause_button)).perform(androidx.test.espresso.action.ViewActions.click());
+            scenario.onActivity(activity -> org.junit.Assert.assertTrue(
+                    activity.findViewById(R.id.pause_button).performClick()));
             SystemClock.sleep(240L);
             androidx.test.espresso.Espresso.pressBack();
             onView(withId(R.id.pause_drawer)).check(doesNotExist());

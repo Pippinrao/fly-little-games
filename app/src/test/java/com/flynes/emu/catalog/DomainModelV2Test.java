@@ -30,6 +30,17 @@ public final class DomainModelV2Test {
         assertThrows(IllegalArgumentException.class,
                 () -> new RomHashes(sha1(bytes("rom")), "not-a-hash",
                         sha256(bytes("package")), "00000000"));
+
+        String fullwidthDigits = "０".repeat(64);
+        String arabicDigits = "٠".repeat(64);
+        assertEquals("payload SHA-256 must be hexadecimal",
+                assertThrows(IllegalArgumentException.class,
+                        () -> RomHashes.normalizedSha256(
+                                fullwidthDigits, "payload SHA-256")).getMessage());
+        assertEquals("payload SHA-256 must be hexadecimal",
+                assertThrows(IllegalArgumentException.class,
+                        () -> RomHashes.normalizedSha256(
+                                arabicDigits, "payload SHA-256")).getMessage());
     }
 
     @Test
@@ -47,6 +58,48 @@ public final class DomainModelV2Test {
         assertNotEquals(rawVariant, zipVariant);
         assertEquals("game:" + sha256(bytes("payload")),
                 StableIds.provisionalGameId(sha256(bytes("payload"))));
+    }
+
+    @Test
+    public void stableIdsRejectUnpairedUtf16ButPreserveValidUnicodeAndNul() {
+        for (String invalid : List.of("\uD800", "\uDC00", "\uD800normal")) {
+            IllegalArgumentException error = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> StableIds.packageId(invalid, "document"));
+            assertEquals("ID input must be valid Unicode", error.getMessage());
+        }
+
+        assertTrue(StableIds.packageId("🎮", "document").matches("pkg:[0-9A-F]{64}"));
+        assertNotEquals(
+                StableIds.packageId("a\0b", "document"),
+                StableIds.packageId("ab", "document"));
+    }
+
+    @Test
+    public void stableIdBlankSetIsFrozenAcrossJavaUnicodeVersions() {
+        int[] blankCodePoints = {
+                0x0009, 0x000A, 0x000B, 0x000C, 0x000D,
+                0x001C, 0x001D, 0x001E, 0x001F, 0x0020, 0x00A0, 0x1680,
+                0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005,
+                0x2006, 0x2007, 0x2008, 0x2009, 0x200A,
+                0x2028, 0x2029, 0x202F, 0x205F, 0x3000};
+        StringBuilder allBlank = new StringBuilder();
+        for (int codePoint : blankCodePoints) {
+            allBlank.appendCodePoint(codePoint);
+        }
+        assertTrue(DomainValidation.isBlank(allBlank.toString()));
+        assertFalse(DomainValidation.isBlank("\u180E"));
+        assertFalse(DomainValidation.isBlank("\u0085"));
+        assertFalse(DomainValidation.isBlank("\u200B"));
+        assertFalse(DomainValidation.isBlank("\uFEFF"));
+    }
+
+    @Test
+    public void variantHashValidationPrecedesBlankIdInputValidation() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> StableIds.variantId("", StableIds.RAW_LOCATOR, "Z".repeat(64)));
+        assertEquals("payload SHA-256 must be hexadecimal", error.getMessage());
     }
 
     @Test

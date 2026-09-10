@@ -1,0 +1,560 @@
+{
+  "string": [
+    {
+      "name": "game_center_title",
+      "value": "游戏中心"
+    },
+    {
+      "name": "game_center_recent",
+      "value": "最近"
+    },
+    {
+      "name": "game_center_favorites",
+      "value": "收藏"
+    },
+    {
+      "name": "game_center_all",
+      "value": "全部"
+    },
+    {
+      "name": "game_center_builtin",
+      "value": "内置"
+    },
+    {
+      "name": "game_center_launch",
+      "value": "开始游戏"
+    },
+    {
+      "name": "game_center_sources",
+      "value": "游戏来源"
+    },
+    {
+      "name": "game_center_settings",
+      "value": "设置"
+    },
+    {
+      "name": "game_center_search",
+      "value": "搜索游戏…"
+    },
+    {
+      "name": "game_center_empty_category",
+      "value": "此分类中没有游戏"
+    },
+    {
+      "name": "game_center_empty_search",
+      "value": "没有匹配的游戏"
+    },
+    {
+      "name": "game_center_no_external_sources",
+      "value": "内置游戏已就绪 · 添加目录即可浏览自己的游戏"
+    },
+    {
+      "name": "game_center_no_external_sources_compact",
+      "value": "内置游戏已就绪 · 可添加目录"
+    },
+    {
+      "name": "game_center_rom_open_failed",
+      "value": "无法打开该游戏。"
+    },
+    {
+      "name": "game_center_continue",
+      "value": "继续游戏"
+    },
+    {
+      "name": "game_center_add_favorite",
+      "value": "加入收藏"
+    },
+    {
+      "name": "game_center_remove_favorite",
+      "value": "取消收藏"
+    },
+    {
+      "name": "pause_eyebrow",
+      "value": "游戏已暂停"
+    },
+    {
+      "name": "pause_title",
+      "value": "游戏暂停"
+    },
+    {
+      "name": "pause_resume",
+      "value": "继续"
+    },
+    {
+      "name": "pause_game_center",
+      "value": "游戏中心"
+    },
+    {
+      "name": "pause_settings",
+      "value": "设置"
+    },
+    {
+      "name": "pause_checkpoint_failed",
+      "value": "进度未能保存"
+    },
+    {
+      "name": "settings_display",
+      "value": "显示"
+    },
+    {
+      "name": "settings_controls",
+      "value": "操控"
+    },
+    {
+      "name": "settings_audio",
+      "value": "音频"
+    },
+    {
+      "name": "settings_game_language",
+      "value": "游戏与语言"
+    },
+    {
+      "name": "settings_about",
+      "value": "关于"
+    },
+    {
+      "name": "settings_aspect",
+      "value": "画面比例"
+    },
+    {
+      "name": "settings_aspect_4_3",
+      "value": "4:3"
+    },
+    {
+      "name": "settings_aspect_square",
+      "value": "方形像素"
+    },
+    {
+      "name": "settings_aspect_integer",
+      "value": "整数倍缩放"
+    },
+    {
+      "name": "settings_video_quality",
+      "value": "画质"
+    },
+    {
+      "name": "settings_video_power_saver",
+      "value": "省电"
+    },
+    {
+      "name": "settings_video_balanced",
+      "value": "均衡"
+    },
+    {
+      "name": "settings_video_extreme_locked",
+      "value": "极致（锁定 — 需要设备证据）"
+    },
+    {
+      "name": "settings_video_custom",
+      "value": "自定义"
+    },
+    {
+      "name": "settings_adaptive_protection",
+      "value": "自适应保护"
+    },
+    {
+      "name": "direction_control",
+      "value": "方向操控"
+    },
+    {
+      "name": "direction_joystick",
+      "value": "跟随摇杆"
+    },
+    {
+      "name": "direction_fixed_joystick",
+      "value": "固定摇杆"
+    },
+    {
+      "name": "direction_dpad",
+      "value": "十字键"
+    },
+    {
+      "name": "haptic_level",
+      "value": "振动强度"
+    },
+    {
+      "name": "haptic_off",
+      "value": "关"
+    },
+    {
+      "name": "haptic_light",
+      "value": "轻"
+    },
+    {
+      "name": "haptic_standard",
+      "value": "标准"
+    },
+    {
+      "name": "haptic_strong",
+      "value": "强"
+    },
+    {
+      "name": "distinct_ab_haptics",
+      "value": "A/B 使用不同振动反馈"
+    },
+    {
+      "name": "reset_controls",
+      "value": "重置操控"
+    },
+    {
+      "name": "audio_enabled",
+      "value": "游戏音频"
+    },
+    {
+      "name": "audio_focus",
+      "value": "音频焦点"
+    },
+    {
+      "name": "audio_focus_pause",
+      "value": "暂停"
+    },
+    {
+      "name": "audio_focus_duck",
+      "value": "降低音量"
+    },
+    {
+      "name": "audio_focus_ignore",
+      "value": "忽略"
+    },
+    {
+      "name": "app_language",
+      "value": "应用语言"
+    },
+    {
+      "name": "language_system",
+      "value": "跟随系统"
+    },
+    {
+      "name": "language_en",
+      "value": "English"
+    },
+    {
+      "name": "language_zh",
+      "value": "简体中文"
+    },
+    {
+      "name": "autosave",
+      "value": "自动存档"
+    },
+    {
+      "name": "manage_sources",
+      "value": "游戏来源"
+    },
+    {
+      "name": "about_app",
+      "value": "FlyNES"
+    },
+    {
+      "name": "licenses_summary",
+      "value": "内置《来自下方》为 MIT 许可。详见 rawfile LICENSE-from-below.txt。"
+    },
+    {
+      "name": "control_layout_title",
+      "value": "操控布局"
+    },
+    {
+      "name": "control_layout_hint",
+      "value": "点选控件后拖动或缩放。"
+    },
+    {
+      "name": "control_layout_scale",
+      "value": "选中控件大小"
+    },
+    {
+      "name": "control_layout_opacity_label",
+      "value": "控件透明度"
+    },
+    {
+      "name": "control_layout_recommended",
+      "value": "恢复推荐默认"
+    },
+    {
+      "name": "control_layout_save",
+      "value": "保存布局"
+    },
+    {
+      "name": "control_layout_discard",
+      "value": "放弃"
+    },
+    {
+      "name": "control_layout_undo",
+      "value": "撤销"
+    },
+    {
+      "name": "control_layout_test",
+      "value": "试玩操控"
+    },
+    {
+      "name": "control_layout_warning_small",
+      "value": "部分控件过小。"
+    },
+    {
+      "name": "control_layout_warning_overlap",
+      "value": "部分控件重叠。"
+    },
+    {
+      "name": "control_layout_warning_gesture",
+      "value": "有控件进入系统手势区域。"
+    },
+    {
+      "name": "control_layout_warning_center",
+      "value": "有控件遮挡中央游戏区域。"
+    },
+    {
+      "name": "control_layout_warning_save",
+      "value": "当前布局有人体工学警告。仍要保存吗？"
+    },
+    {
+      "name": "control_layout_keep_editing",
+      "value": "继续编辑"
+    },
+    {
+      "name": "sources_add_folder",
+      "value": "添加目录"
+    },
+    {
+      "name": "sources_add_games",
+      "value": "添加游戏"
+    },
+    {
+      "name": "sources_debug_sideload",
+      "value": "调试侧载"
+    },
+    {
+      "name": "sources_debug_cleanup",
+      "value": "清理调试文件"
+    },
+    {
+      "name": "sources_empty",
+      "value": "还没有来源。请用「添加游戏」选择 .nes 或 .zip 文件。"
+    },
+    {
+      "name": "sources_stale",
+      "value": "此来源需要重新授权。"
+    },
+    {
+      "name": "sources_reauth",
+      "value": "重新授权"
+    },
+    {
+      "name": "sources_rescan",
+      "value": "重新扫描"
+    },
+    {
+      "name": "sources_cancel_scan",
+      "value": "取消扫描"
+    },
+    {
+      "name": "sources_games",
+      "value": "个游戏"
+    },
+    {
+      "name": "game_center_external_ready",
+      "value": "外部游戏库已就绪"
+    },
+    {
+      "name": "remove_source",
+      "value": "移除"
+    },
+    {
+      "name": "remove_source_title",
+      "value": "移除此来源？"
+    },
+    {
+      "name": "remove_source_message",
+      "value": "不会修改该目录及其 ROM 文件。"
+    },
+    {
+      "name": "remove",
+      "value": "移除"
+    },
+    {
+      "name": "cancel",
+      "value": "取消"
+    },
+    {
+      "name": "permission_file_access_persist",
+      "value": "保留你选择的游戏目录访问权限"
+    },
+    {
+      "name": "permission_internet",
+      "value": "从开发主机下载用于测试的游戏文件"
+    },
+    {
+      "name": "settings",
+      "value": "设置"
+    },
+    {
+      "name": "display_quality_title",
+      "value": "画质与功耗"
+    },
+    {
+      "name": "display_quality_subtitle",
+      "value": "选择整套画质档位，或逐项自定义。FlyNES 会分别上报请求档位、实际生效模式与证据。"
+    },
+    {
+      "name": "settings_video_power_summary",
+      "value": "60 Hz · 原生帧 · 最近邻像素"
+    },
+    {
+      "name": "settings_video_balanced_summary",
+      "value": "60 Hz · 原生帧 · 锐利缩放"
+    },
+    {
+      "name": "settings_video_extreme_summary",
+      "value": "需要设备实验室精确认证"
+    },
+    {
+      "name": "settings_video_custom_summary",
+      "value": "自选刷新率、时间与空间处理"
+    },
+    {
+      "name": "video_custom_axes",
+      "value": "自定义管线"
+    },
+    {
+      "name": "video_custom_refresh",
+      "value": "刷新率"
+    },
+    {
+      "name": "video_custom_temporal",
+      "value": "时间处理"
+    },
+    {
+      "name": "video_custom_spatial",
+      "value": "空间缩放"
+    },
+    {
+      "name": "video_custom_post",
+      "value": "后处理"
+    },
+    {
+      "name": "video_refresh_follow",
+      "value": "跟随系统"
+    },
+    {
+      "name": "video_refresh_60",
+      "value": "60 Hz"
+    },
+    {
+      "name": "video_refresh_90",
+      "value": "90 Hz"
+    },
+    {
+      "name": "video_refresh_120",
+      "value": "120 Hz（需要真机认证）"
+    },
+    {
+      "name": "video_temporal_native",
+      "value": "原生帧"
+    },
+    {
+      "name": "video_temporal_motion",
+      "value": "运动补偿插帧"
+    },
+    {
+      "name": "video_spatial_nearest",
+      "value": "最近邻"
+    },
+    {
+      "name": "video_spatial_sharp",
+      "value": "锐利双线性"
+    },
+    {
+      "name": "video_spatial_mmpx",
+      "value": "MMPX"
+    },
+    {
+      "name": "video_spatial_scalefx",
+      "value": "ScaleFX"
+    },
+    {
+      "name": "video_post_none",
+      "value": "无"
+    },
+    {
+      "name": "video_post_crt",
+      "value": "CRT"
+    },
+    {
+      "name": "video_extreme_locked_title",
+      "value": "极致档在本设备未获认证"
+    },
+    {
+      "name": "video_extreme_locked_message",
+      "value": "当前构建没有针对本机机型、驱动、显示模式与算法组合的设备实验室证书。均衡档仍然完全可用。"
+    },
+    {
+      "name": "ok",
+      "value": "好的"
+    },
+    {
+      "name": "control_layout_summary",
+      "value": "在安全的游戏预览上移动并缩放按键。"
+    },
+    {
+      "name": "reset_controls_summary",
+      "value": "恢复安全的按键大小、位置、透明度与反馈。"
+    },
+    {
+      "name": "license_information",
+      "value": "开源许可"
+    },
+    {
+      "name": "license_copy_link",
+      "value": "复制来源链接"
+    },
+    {
+      "name": "license_link_copied",
+      "value": "来源链接已复制"
+    },
+    {
+      "name": "license_source_unconfigured",
+      "value": "未配置来源链接"
+    },
+    {
+      "name": "license_load_failed",
+      "value": "无法加载该许可文本。"
+    },
+    {
+      "name": "license_retry",
+      "value": "重试"
+    },
+    {
+      "name": "close_search",
+      "value": "关闭搜索"
+    },
+    {
+      "name": "open_pause",
+      "value": "暂停游戏"
+    },
+    {
+      "name": "game_ready",
+      "value": "可以开始游戏"
+    },
+    {
+      "name": "haptic_preview",
+      "value": "预览 A / B 振动"
+    },
+    {
+      "name": "haptic_preview_summary",
+      "value": "先播放一次 A，再播放差异化的 B 节奏。"
+    },
+    {
+      "name": "aspect_mode",
+      "value": "画面比例"
+    },
+    {
+      "name": "project_source",
+      "value": "FlyNES 项目源码"
+    },
+    {
+      "name": "project_source_unconfigured",
+      "value": "此 Alpha 版本尚未配置公开源码链接。"
+    },
+    {
+      "name": "permission_vibrate",
+      "value": "按键反馈震动"
+    }
+  ]
+}

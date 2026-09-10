@@ -20,6 +20,7 @@ android {
             cmake {
                 cppFlags '-std=c++17 -fvisibility=hidden'
                 arguments '-DNES_CORE_DIR=' + project.rootDir.getAbsolutePath() + '/core',
+                        '-DFLYNES_SHARED_DIR=' + project.rootDir.getAbsolutePath() + '/shared',
                         '-DANDROID_STL=c++_shared'
             }
         }
@@ -50,6 +51,10 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        test.resources.srcDir rootProject.file('shared/tests/fixtures')
     }
 }
 

@@ -2,8 +2,6 @@ package com.flynes.emu.catalog;
 
 import com.flynes.emu.data.RomIdentity;
 
-import java.util.Locale;
-
 /** Hashes of an exact ROM payload and of the physical package that contains it. */
 public record RomHashes(
         String payloadSha1,
@@ -32,10 +30,22 @@ public record RomHashes(
             throw new IllegalArgumentException(name + " must be " + length + " hex characters");
         }
         for (int i = 0; i < value.length(); i++) {
-            if (Character.digit(value.charAt(i), 16) < 0) {
+            // Character.digit accepts non-ASCII Unicode digits; persisted hashes do not.
+            char character = value.charAt(i);
+            boolean decimal = character >= '0' && character <= '9';
+            boolean lower = character >= 'a' && character <= 'f';
+            boolean upper = character >= 'A' && character <= 'F';
+            if (!decimal && !lower && !upper) {
                 throw new IllegalArgumentException(name + " must be hexadecimal");
             }
         }
-        return value.toUpperCase(Locale.ROOT);
+        StringBuilder normalized = new StringBuilder(length);
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            normalized.append(character >= 'a' && character <= 'f'
+                    ? (char) (character - ('a' - 'A'))
+                    : character);
+        }
+        return normalized.toString();
     }
 }

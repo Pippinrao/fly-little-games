@@ -22,8 +22,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.CodingErrorAction;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -33,21 +31,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.zip.CRC32;
 
 /** Deterministic, provider-neutral scanner for raw and full multi-entry ZIP packages. */
 public final class RomPackageScanner {
-    private static final int ZIP_LOCAL_0 = 'P';
-    private static final int ZIP_LOCAL_1 = 'K';
-    private static final byte[] GAME_BOY_LOGO = new byte[]{
-            (byte) 0xCE, (byte) 0xED, 0x66, 0x66, (byte) 0xCC, 0x0D, 0x00, 0x0B,
-            0x03, 0x73, 0x00, (byte) 0x83, 0x00, 0x0C, 0x00, 0x0D,
-            0x00, 0x08, 0x11, 0x1F, (byte) 0x88, (byte) 0x89, 0x00, 0x0E,
-            (byte) 0xDC, (byte) 0xCC, 0x6E, (byte) 0xE6, (byte) 0xDD, (byte) 0xDD,
-            (byte) 0xD9, (byte) 0x99, (byte) 0xBB, (byte) 0xBB, 0x67, 0x63,
-            0x6E, 0x0E, (byte) 0xEC, (byte) 0xCC, (byte) 0xDD, (byte) 0xDC,
-            (byte) 0x99, (byte) 0x9F, (byte) 0xBB, (byte) 0xB9, 0x33, 0x3E};
-
     private final ScanLimits limits;
     private final CanonicalIdResolver canonicalIds;
 
@@ -144,8 +130,8 @@ public final class RomPackageScanner {
             return;
         }
 
-        String physicalSha256 = digest("SHA-256", physicalBytes);
-        if (isZipMagic(physicalBytes)) {
+        String physicalSha256 = RomContentHasher.sha256(physicalBytes);
+        if (UnsupportedPayloadClassifier.hasZipSignature(physicalBytes)) {
             scanZip(source, envelope, physicalBytes, physicalSha256, collector);
         } else {
             scanRaw(source, envelope, physicalBytes, physicalSha256, collector);
@@ -183,7 +169,7 @@ public final class RomPackageScanner {
         }
         RomPayloadParser.Parsed parsed = RomPayloadParser.parse(payload);
         if (parsed == null) {
-            EntryOutcome.Reason reason = unsupportedReason(payload);
+            EntryOutcome.Reason reason = UnsupportedPayloadClassifier.classify(payload);
             collector.entryOutcomes.add(new EntryOutcome(
                     envelope.packageId(), entryId,
                     EntryOutcome.Status.SKIPPED, reason));
@@ -196,7 +182,7 @@ public final class RomPackageScanner {
             return;
         }
 
-        RomHashes hashes = hashes(payload, physicalSha256);
+        RomHashes hashes = RomContentHasher.hashes(payload, physicalSha256);
         RomVariant variant;
         try {
             variant = variant(
@@ -338,10 +324,10 @@ public final class RomPackageScanner {
                 staged.entryOutcomes.add(new EntryOutcome(
                         envelope.packageId(), entryId,
                         EntryOutcome.Status.SKIPPED,
-                        unsupportedReason(payload)));
+                        UnsupportedPayloadClassifier.classify(payload)));
                 continue;
             }
-            RomHashes hashes = hashes(payload, physicalSha256);
+            RomHashes hashes = RomContentHasher.hashes(payload, physicalSha256);
             try {
                 variants.add(variant(
                         envelope,
@@ -601,80 +587,6 @@ public final class RomPackageScanner {
             }
         }
         return true;
-    }
-
-    private static EntryOutcome.Reason unsupportedReason(byte[] payload) {
-        if (isZipMagic(payload)) {
-            return EntryOutcome.Reason.NESTED_ARCHIVE;
-        }
-        if (payload.length >= 2 && payload[0] == 'M' && payload[1] == 'Z') {
-            return EntryOutcome.Reason.EXECUTABLE;
-        }
-        if (isGameBoy(payload)) {
-            return EntryOutcome.Reason.GAME_BOY;
-        }
-        return isText(payload)
-                ? EntryOutcome.Reason.SIDECAR : EntryOutcome.Reason.UNKNOWN_FORMAT;
-    }
-
-    private static boolean isZipMagic(byte[] bytes) {
-        return bytes.length >= 4
-                && (bytes[0] & 0xFF) == ZIP_LOCAL_0
-                && (bytes[1] & 0xFF) == ZIP_LOCAL_1
-                && ((bytes[2] == 3 && bytes[3] == 4)
-                || (bytes[2] == 5 && bytes[3] == 6)
-                || (bytes[2] == 7 && bytes[3] == 8));
-    }
-
-    private static boolean isGameBoy(byte[] payload) {
-        if (payload.length < 0x104 + GAME_BOY_LOGO.length) {
-            return false;
-        }
-        for (int index = 0; index < GAME_BOY_LOGO.length; index++) {
-            if (payload[0x104 + index] != GAME_BOY_LOGO[index]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isText(byte[] payload) {
-        if (payload.length == 0) {
-            return true;
-        }
-        int inspected = Math.min(payload.length, 4096);
-        for (int index = 0; index < inspected; index++) {
-            int value = payload[index] & 0xFF;
-            if (value == 0) {
-                return false;
-            }
-            if (value < 0x20 && value != '\n' && value != '\r' && value != '\t') {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static RomHashes hashes(byte[] payload, String physicalSha256) {
-        CRC32 crc32 = new CRC32();
-        crc32.update(payload);
-        return new RomHashes(
-                digest("SHA-1", payload),
-                digest("SHA-256", payload),
-                physicalSha256,
-                String.format(Locale.ROOT, "%08X", crc32.getValue()));
-    }
-
-    private static String digest(String algorithm, byte[] bytes) {
-        try {
-            StringBuilder hex = new StringBuilder();
-            for (byte value : MessageDigest.getInstance(algorithm).digest(bytes)) {
-                hex.append(String.format(Locale.ROOT, "%02X", value & 0xFF));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(algorithm + " is required", impossible);
-        }
     }
 
     private static String titleFromPath(String value) {

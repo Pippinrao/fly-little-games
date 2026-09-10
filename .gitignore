@@ -7,6 +7,8 @@
 *.so
 *.o
 *.obj
+__pycache__/
+*.pyc
 
 # Android / Gradle
 .gradle/

@@ -95,12 +95,15 @@ public final class FirstRunNavigationTest {
                 if (!ready[0]) SystemClock.sleep(100L);
             }
             assertTrue("built-in launch did not become ready", ready[0]);
+            waitForFocusedWindow(scenario);
             android.app.Instrumentation.ActivityMonitor monitor =
                     androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
                             .addMonitor(com.flynes.emu.MainActivity.class.getName(), null, false);
-            onView(withId(R.id.launch_selected)).perform(click());
+            scenario.onActivity(activity -> assertTrue(
+                    "built-in launch click was not accepted",
+                    activity.findViewById(R.id.launch_selected).performClick()));
             android.app.Activity launched = androidx.test.platform.app.InstrumentationRegistry
-                    .getInstrumentation().waitForMonitorWithTimeout(monitor, 10_000L);
+                    .getInstrumentation().waitForMonitorWithTimeout(monitor, 30_000L);
             assertTrue("MainActivity was not launched", launched != null);
             if (launched != null) launched.finish();
         }

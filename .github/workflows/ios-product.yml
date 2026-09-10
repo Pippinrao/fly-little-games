@@ -1,0 +1,105 @@
+name: ios-product
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ios-product-unsigned-ipa:
+    name: iOS product unsigned IPA (device archive)
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      EVIDENCE_DIR: artifacts/ios-product
+      BUNDLE_ID: com.flynes.app
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Verify fixed Apple toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          test "$(uname -m)" = "arm64"
+          xcodebuild -version | tee "$EVIDENCE_DIR/xcode-version.txt"
+          grep -Fx "Xcode 26.6" "$EVIDENCE_DIR/xcode-version.txt"
+          grep -Fx "Build version 17F113" "$EVIDENCE_DIR/xcode-version.txt"
+          python3 ios/tests/test_stage1_contract.py | tee "$EVIDENCE_DIR/host-stage1.txt"
+          python3 ios/tests/test_product_catalog_contract.py | tee "$EVIDENCE_DIR/host-catalog.txt"
+          python3 ios/tests/test_product_shell_contract.py | tee "$EVIDENCE_DIR/host-shell.txt"
+          python3 ios/tests/test_product_metal_contract.py | tee "$EVIDENCE_DIR/host-metal.txt"
+          python3 ios/tests/test_product_ipa_contract.py | tee "$EVIDENCE_DIR/host-ipa.txt"
+
+      - name: Resolve iPhoneOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "26.5"
+          device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          printf 'iphoneos=%s\n' "$device_sdk" | tee "$EVIDENCE_DIR/sdk-paths.txt"
+          printf 'DEVICE_SDK=%s\n' "$device_sdk" >> "$GITHUB_ENV"
+
+      - name: Configure and statically link the product
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S ios/app -B build/ios-product-device -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$DEVICE_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+          cmake --build build/ios-product-device --config Release \
+            --target FlyNES -- CODE_SIGNING_ALLOWED=NO
+          fly_archive="$(find build/ios-product-device -name libflynes_app.a -type f -print -quit)"
+          runtime_archive="$(find build/ios-product-device -name libflynes_runtime.a -type f -print -quit)"
+          nes_archive="$(find build/ios-product-device -name libnes_abi.a -type f -print -quit)"
+          test -n "$fly_archive" && test -n "$runtime_archive" && test -n "$nes_archive"
+          test "$(xcrun lipo -archs "$fly_archive")" = "arm64"
+          printf 'static flynes_app=%s\nstatic flynes_runtime=%s\nstatic nes_abi=%s\n' \
+            "$fly_archive" "$runtime_archive" "$nes_archive" \
+            | tee "$EVIDENCE_DIR/static-archives.txt"
+
+      - name: Package unsigned IPA without extra entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find build/ios-product-device -type d -name FlyNES.app -print -quit)"
+          test -n "$app"
+          test -f "$app/FlyNES"
+          test ! -f "$app/embedded.mobileprovision"
+          test "$(find "$app" -name '*.appex' -o -name '*.appex' | wc -l | tr -d ' ')" = "0"
+          test "$(find "$app" -name '*.entitlements' | wc -l | tr -d ' ')" = "0"
+          if codesign -d --entitlements :- "$app" > "$EVIDENCE_DIR/entitlements.xml" 2> "$EVIDENCE_DIR/codesign.txt"; then
+            echo 'unsigned product app unexpectedly had entitlements' >&2
+            exit 1
+          fi
+          grep -E 'code object is not signed at all|not signed' "$EVIDENCE_DIR/codesign.txt"
+          xcrun otool -L "$app/FlyNES" | tee "$EVIDENCE_DIR/otool.txt"
+          grep -F 'libflynes_app.a' build/ios-product-device/FlyNES-LinkMap.txt \
+            > "$EVIDENCE_DIR/link-flynes-app.txt"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$app" Payload/FlyNES.app
+          test "$(find Payload -name '*.appex' | wc -l | tr -d ' ')" = "0"
+          zip -qr "$EVIDENCE_DIR/FlyNES-unsigned.ipa" Payload
+          shasum -a 256 "$EVIDENCE_DIR/FlyNES-unsigned.ipa" \
+            | tee "$EVIDENCE_DIR/FlyNES-unsigned.ipa.sha256"
+
+      - name: Upload unsigned IPA and hashes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-product-unsigned-ipa
+          path: |
+            artifacts/ios-product/FlyNES-unsigned.ipa
+            artifacts/ios-product/FlyNES-unsigned.ipa.sha256
+            artifacts/ios-product/host-ipa.txt
+            artifacts/ios-product/host-metal.txt
+            artifacts/ios-product/host-shell.txt
+            artifacts/ios-product/static-archives.txt
+            artifacts/ios-product/codesign.txt
+          if-no-files-found: error
+          retention-days: 14
