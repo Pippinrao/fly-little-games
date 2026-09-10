@@ -89,7 +89,7 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
         if (![self validateURL:root directory:directory error:&failure]) return;
         NSMutableArray *records = [NSMutableArray array];
         if (directory) {
-            NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:root includingPropertiesForKeys:@[NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL *failed, NSError *problem) { failure = problem; return YES; }];
+            NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:root includingPropertiesForKeys:@[NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL *, NSError *problem) { failure = problem; return YES; }];
             if (!enumerator) { failure = SourceError(@"library.source.scan_failed"); return; }
             for (NSURL *file in enumerator) {
                 NSNumber *symlink = nil, *regular = nil;
