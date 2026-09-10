@@ -1,6 +1,6 @@
 # Nearby Multiplayer Implementation Progress
 
-Updated: 2026-09-09. Branch: `codex/nearby-multiplayer`.
+Updated: 2026-09-10. Branch: `codex/nearby-multiplayer`.
 Worktree: `E:/workspace/codes/games/fly-little-games/.worktrees/nearby-multiplayer`.
 
 ## Baseline and ownership
@@ -15,7 +15,7 @@ Worktree: `E:/workspace/codes/games/fly-little-games/.worktrees/nearby-multiplay
 - Full shared baseline: 37/37 CTests passed, 16.10 seconds. Existing Nestopia narrowing/boolean warnings appeared during compilation.
 - Runtime already supports local four-port stepping/checkpoints; session create/tick/snapshot exists but events/network processing are stubs. Do not treat the earlier M1 “frozen” label as full wire/schema or session qualification.
 
-## Current slice
+## Initial capability slice
 
 Canonical PairCapabilitySummaryV1 validation and deterministic exact certified plan intersection is implemented in shared/session/wire/pair_capability.hpp/.cpp, following the adjacent bearer-selection plan. It validates the exact 512-byte summary and sorted 48-byte entries, selects only identical plans by the designed priority, and clears output on failure. Parsing a capability is not authentication or proof of certification. Real radio operations require the authenticated plan lock and local certified profile gates.
 
@@ -29,6 +29,30 @@ Validation evidence:
 - A test run started while a full rebuild still held catalog_scan.exe and could not launch that process. The subsequent completed-build run and parent rerun both passed 38/38; no assertion regression was found. A leftover LastTestsFailed.log from that intermediate run is not the final result.
 - Independent specification and code-quality reviews both passed without findings. The quality reviewer independently ran 38/38 host CTests, rebuilt the strict-warning capability target and reran its test successfully.
 
+## Continued implementation: initial plan locking
+
+Commit `e1ea62d` adds the internal noncopyable `InitialPlanLock` reducer and its test target. This is trusted-evidence state control, **not an authenticated decoder or a radio backend**. It independently selects the exact common plan, orders PLAN/ACK/FINAL persistence and generation-fenced sends, and emits at most one pending effect. Creator and noncreator paths are separate. Designated system-prompt allowance must be durably consumed before its bearer action. Creator credentials must resolve to exact bytes that are persisted before the corresponding publish command; a hash alone does not satisfy storage success.
+
+Evidence: behavioral RED→GREEN for initialization, exact creator credentials and noncopyable ownership; role/creator/confirmation combinations and every command failure exercised. Independent specification review passed. Independent quality review's C++17 transitive compilation requirement was corrected and re-reviewed. Parent completed the full host build then ran 39/39 tests successfully (16.58s). Android API26/arm64 and Harmony arm64 reducer libraries compiled; Harmony's SDK emits an unused `--gcc-toolchain` warning. Existing Harmony host adapter regression and iOS schema-contract Python check passed. These do not establish iOS native compilation or phone-to-phone interoperability.
+
+Commit `b58851c` connects that reducer to each actual opaque session handle through the private `session_initial_plan.hpp` seam. The original route-defined pairing start and local GATT generation are latched once; late capability verification cannot extend the 60-second deadline. Expiry, backwards active clock, cancellation, stale completions and failed storage revoke pending effects permanently for that initial attempt. Historical durable flags remain diagnostic, never permission to act after failure. Public C ABI struct layouts and raw/event/command/snapshot stubs remain unchanged. Callers must serialize access, tick before callbacks/dispatch, retain handles until callbacks drain, and deduplicate/revalidate commands.
+
+Integration evidence: behavioral RED then focused GREEN; parent independently ran reducer/session/integration tests 3/3 and Harmony host adapter regression 1/1; actual session libraries cross-compiled for Android/Harmony arm64. Independent spec and quality reviews passed after adding exact credential identity assertions to the integration test.
+
+## PCM contention fix and final continuation verification
+
+Commit `5e86fcf` removes PCM pull's blocking wait on the core mutex. A failed single try-lock uses the existing silence fallback without touching protected PCM state; a successful acquisition retains normal sample and sequence behavior. The regression includes the real implementation and emulator dependency, holds the actual mutex on an owner thread and calls the public API on a callback thread. The old code failed safely after 1.56s; the fix preserved the queued nonzero samples and cursors and passed the subsequent partial-drain checks. This test is not a latency benchmark. API layout, mute policy, canonical producer sequence and normal partial-output semantics did not change.
+
+Final parent verification after all three code changes:
+
+- Normal full Windows Release build succeeded; then **41/41 CTests passed**, 16.43s. Test execution started only after the build completed.
+- Android NDK27/API26/arm64 and Harmony SDK/arm64: actual `flynes_runtime` and `flynes_session` static libraries compiled with the existing real core dependencies. Outputs are under `.artifacts/nearby-runtime-android-arm64` and `.artifacts/nearby-runtime-harmony-arm64`.
+- Existing Harmony host nearby adapter regression passed after session linking; iOS schema-contract check passed. No iOS native SDK build is claimed.
+- All three bounded tasks passed independent specification and code-quality review. Review-driven fixes added correct C++17 propagation and exact credential integration assertions; PCM API wording clarifies zero-valued fallback samples.
+- Approved spec remains unchanged: normalized Git blob `c88683050f52cb72773917bb6c97573bdddae8af`. No app/catalog or platform product source was modified. The pre-existing untracked device-audit document was preserved and excluded from commits.
+
+The worktree remains on `codex/nearby-multiplayer`; no merge, push, device security change or installed app replacement was performed. This continuation implements tested internal state control and a runtime fix, **not playable phone-to-phone multiplayer**.
+
 ## Cross-task handoff
 
 The approved design §30 is the single handoff contract. An app message to thread `01a06cd1-ea44-73d3-a497-a0308724fa55` was attempted on 2026-09-09. The tool returned “no longer available through dynamic tools”; delivery is **not confirmed**. No repeated messages were sent. Integration currently relies on the inspected committed tree and this documented ownership boundary.
@@ -37,7 +61,7 @@ This slice owns pair_capability.hpp/.cpp, test_pair_capability.cpp and its share
 
 ## Device gate
 
-`adb devices -l` returned no attached device. `hdc` and `xcodebuild` are not on this Windows host's PATH. No phone radio, pairing, TLS/QUIC, H.264 or device latency result is claimed.
+At the original implementation check, `adb devices -l` returned no attached device and `hdc`/`xcodebuild` were not on PATH. A subsequent independently produced `docs/acceptance/2026-09-09-nearby-device-audit.md` records an Android 16/API36 native component test pass and a Harmony native executable denied by device policy (exit 126). That file is preserved as found, not rewritten by this implementation. Neither result qualifies a physical bearer or phone-to-phone session. No pairing, TLS/QUIC, H.264 or device latency result is claimed.
 
 | Platform/authority direction | Bearer + one-confirmation + QUIC evidence |
 |---|---|
@@ -55,7 +79,15 @@ For each actual run record both device models/OS versions, selected certified pl
 
 ## Known integration work before real netplay
 
-- Audit the existing runtime's PCM pull: it currently uses the same blocking mutex as frame execution. The approved nonblocking real-time audio requirement still needs implementation/verification.
+### Continuation audit (2026-09-10)
+
+The public session C API is consumed by the shared C/C++ ABI tests and Harmony's host-only nearby adapter. The latter submits payload-free events and maps only NONE commands; Android/iOS nearby files are local DTO declarations. These do not provide an authenticated transport path. The next implementation uses a session-owned private C++ seam, preserving public C struct sizes and rejecting unimplemented raw receive calls. Internal local command IDs are not network transition IDs. The current 64-bit public transition placeholder remains unused; a later versioned integration must preserve the full 128-bit wire value.
+
+Execution plan: `2026-09-10-nearby-plan-lock.md`. Durable storage acknowledgements and current connection-generation send acknowledgement will be separate effects; none may be inferred from a physical GATT ACK. Adapter effects must be executed once per command ID, not once per poll.
+
+Fresh continuation preflight: ADB and the SDK's full-path HDC both currently list no targets. Harmony cross-configuration is now available at `.artifacts/nearby-harmony-arm64`: use `D:/soft/DevEco Studio/sdk/default/openharmony/native/build-tools/cmake/bin/cmake.exe` with the adjacent SDK Ninja and `native/build/cmake/ohos.toolchain.cmake`. The Android CMake 3.22 distribution lacks `Platform/OHOS` and initially failed to find the existing sysroot zlib header; the SDK CMake includes that platform module and configuration succeeds without bypassing sysroot checks. This is configuration evidence only until the new targets are built. A Windows Harmony adapter regression build is configured separately at `.artifacts/nearby-harmony-host`.
+
+- PCM's blocking core-lock wait is fixed, but V1 silence metadata (sequence/time zero) alone cannot distinguish fallback from legitimate first-block content. Explicit source/status accounting, shared PublishedAudioBlock staging, local playout/correction and device A/V verification remain required before media qualification; do not treat the current pull API as a qualified canonical network audio stream.
 - The existing session ABI command transition ID is a uint64 field while the designed network transition ID is128 bits. Audit and version the internal/public boundary before wiring commands; do not truncate wire IDs.
 - Existing generic fixed-object codec checks do not establish full semantic/child-graph/signature validity. Expand the single schema/codegen/golden gate before using any of those objects as authenticated executable recovery evidence.
-- After the selection slice: authenticated plan lock and confirmation budget, session reducer, physical Connectivity/QUIC experiments, then media/input/recovery/downgrade. M0a/M5 remains a release gate.
+- Initial plan-lock/prompt policy and session-owned deadline control now exist. Still implement authenticated message decoding and exact-byte storage/executors before connecting these trusted-evidence methods to a real transport. Then physical Connectivity/QUIC experiments and media/input/recovery/downgrade remain; M0a/M5 is still an unpassed release gate. Public receive/event/command/snapshot paths remain explicitly unimplemented, not a working nearby UI.
