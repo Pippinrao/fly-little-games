@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, time::Duration};
 
+pub mod ffi;
 mod probe;
 pub mod tls;
 pub use probe::{run_client, run_client_deadline, start_server, start_server_sessions};

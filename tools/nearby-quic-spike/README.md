@@ -135,3 +135,97 @@ during the retry-error poll. It failed against the original arbitration and
 passes after awaiting the pinned completion future. Separate checks cover
 both-ready branches, invalid completion, the outer deadline, and actual QUIC
 exchanges followed by wrong final close codes/reasons.
+
+## Isolated Harmony foreground runner
+
+This source template builds a separate `com.flynes.nearbyprobe` version 1 app,
+API 12 compatible / API 20 target, arm64 only. It requests INTERNET only. It
+does not contain the game core, ROMs, product bridge, lobby, or frame data.
+The installed `com.flynes.emu` app is a different bundle and is not replaced.
+
+From the repository root in PowerShell:
+
+```powershell
+& tools/nearby-quic-spike/build-mobile.ps1 -Platform all
+& tools/nearby-quic-spike/stage-harmony.ps1
+$env:DEVECO_STUDIO_HOME = 'D:/soft/DevEco Studio'
+$env:DEVECO_SDK_HOME = "$env:DEVECO_STUDIO_HOME/sdk"
+$env:NODE_HOME = "$env:DEVECO_STUDIO_HOME/tools/node"
+Push-Location .artifacts/nearby-quic-harmony-app
+try {
+  & "$env:NODE_HOME/node.exe" "$env:DEVECO_STUDIO_HOME/tools/ohpm/bin/pm-cli.js" install --all
+  & "$env:NODE_HOME/node.exe" "$env:DEVECO_STUDIO_HOME/tools/hvigor/bin/hvigorw.js" assembleHap -pproduct=default -pmodule=entry@default -pbuildMode=debug --no-daemon
+} finally { Pop-Location }
+```
+
+`build-mobile.ps1` accepts `-DevEcoHome`, `-AndroidNdk`, `-Platform`, and
+`-Release`; it restores compiler environment variables even when dot sourced
+or a build fails. It builds both the CLI executable and actual Rust staticlib.
+The default debug archive is `.artifacts/nearby-quic-ohos/aarch64-unknown-linux-ohos/debug/libnearby_quic_spike.a`.
+For release staging, pass the corresponding release archive with `-Archive`.
+No global Cargo/SDK configuration is modified.
+
+`stage-harmony.ps1` copies only this template and the selected actual OHOS
+archive/header into ignored `.artifacts/nearby-quic-harmony-app`; it refuses
+an existing destination to preserve later local signing. `-Destination`
+allows a fresh staging directory. Build only the staged project. Its CMake
+fails when the archive/header are missing and links `libnearbyprobe.so` with
+`--no-undefined` and `--exclude-libs,ALL`.
+
+The unsigned package is
+`.artifacts/nearby-quic-harmony-app/entry/build/default/outputs/default/entry-default-unsigned.hap`.
+Unsigned build success does not make that HAP installable. Open the staged
+project in DevEco Studio, select Project Structure > Project > Signing Configs,
+choose the `default` product and automatic signing, and sign in with the
+device owner's Huawei developer account. Select the attached test device as
+required by DevEco. Keep generated signing configuration/certificates in the
+ignored staging project; never copy them into this tracked template. Build
+again after signing; use the resulting `entry-default-signed.hap`.
+
+Install and run only after the owner has configured this new bundle's signing:
+
+```powershell
+hdc -t <Harmony-device-id> install .artifacts/nearby-quic-harmony-app/entry/build/default/outputs/default/entry-default-signed.hap
+hdc -t <Harmony-device-id> shell aa start -b com.flynes.nearbyprobe -a EntryAbility --ps bind '<Harmony-LAN-IP>:0' --ps peer '<Android-LAN-IP>:45555' --ps pin '<full-182-character-SPKI-hex-from-READY>' --pb runProbe true
+hdc -t <Harmony-device-id> shell hilog -T NearbyQuicProbe
+```
+
+Start the Android probe CLI listener first (`server <Android-LAN-IP>:45555`)
+and feed its current READY SPKI into the explicit Want promptly: its entire
+listener lifetime is bounded to 20 seconds. A new listener has a new pin.
+Keep both apps foreground and phones on the same LAN. The page can also run
+from entered fields. Without an explicit boolean `runProbe=true` plus three
+string parameters, launch does not connect. Each explicit Want is consumed
+once across page remounts. A new Ability launch invalidates pending old requests.
+Malformed explicit Wants and Wants received while busy visibly report failure;
+busy requests do not change the active inputs or queue a second probe.
+Logs tagged `NearbyQuicProbe` contain the public result and exporter SHA-256
+digest, never raw exporter bytes or private keys. Compare the actual server
+and client VERIFIED digests; then repeat with another valid listener's SPKI
+to verify the pin-mismatch error. Neither a build nor a loopback test proves
+the two physical phones communicated.
+
+The C ABI in `include/nearby_quic_spike.h` validates lengths, UTF-8, numeric
+local addresses, pin and output capacity before runtime/socket creation.
+The caller supplies valid immutable inputs and a disjoint writable buffer
+of at least 1024 bytes; success is never truncated and nothing borrowed
+escapes. Its statuses distinguish invalid arguments, output, transport, and
+caught Rust panic. The fixed network deadline is 20 seconds. The NAPI wrapper
+copies bounded strings on the JS thread and executes that blocking ABI on
+one native async worker; only completion resolves/rejects the Promise.
+
+Runner checks:
+
+```powershell
+python -m unittest discover -s tools/nearby-quic-spike/tests -p test_harmony_runner.py
+node --test tools/nearby-quic-spike/tests/launch_gate.mjs
+cargo test --locked --manifest-path tools/nearby-quic-spike/Cargo.toml --test ffi
+```
+
+FFI tests first failed for the missing export, then passed real UDP success
+with server/client digest equality and real wrong-pin rejection, plus invalid
+UTF-8/pin/address/NULL/capacity cases. Template contract tests first failed
+for missing runner sources. Actual Hvigor compilation/package creation also
+checks the NAPI implementation and ArkTS SDK types. SDK LLVM 15 inspection
+must use `llvm-nm --no-llvm-bc --defined-only` on Rust 1.96 static archives:
+the embedded newer LLVM bitcode is irrelevant to the successful native link.

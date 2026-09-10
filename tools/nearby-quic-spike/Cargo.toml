@@ -6,6 +6,9 @@ publish = false
 
 [workspace]
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 bytes = "=1.12.1"
 quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
