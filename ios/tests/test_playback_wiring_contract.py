@@ -11,4 +11,9 @@ for token in ("FlyNesDisplayLinkPacer", "FlyNesMetalRenderer", "FlyNesAudioPlaye
     assert token in surface, f"run surface missing {token}"
 callback = surface.split("- (void)applyOverlayButtons:", 1)[1].split("- (void)openPauseDrawer", 1)[0]
 assert "stepFrame" not in callback, "input callback must not advance the runtime"
+audio = (ROOT / "ios/app/audio/FlyNesAudioPlayer.mm").read_text(encoding="utf-8")
+assert "AVAudioSessionCategoryOptionDuckOthers" not in audio, "duck policy must not lower other apps"
+for token in ("playbackAudioFocus", "player_.volume", "secondaryAudioShouldBeSilencedHint",
+              "otherAudioPlaying", "AVAudioSessionSilenceSecondaryAudioHintNotification"):
+    assert token in audio, f"audio focus integration missing {token}"
 print("iOS playback wiring contract: PASS (source only)")

@@ -1,6 +1,7 @@
 #import "FlyNesAudioPlayer.h"
 #import <AVFoundation/AVFoundation.h>
 #include "PlaybackAudioQueue.hpp"
+#include "PlaybackAudioFocus.hpp"
 
 @implementation FlyNesAudioPlayer {
     AVAudioEngine *engine_;
@@ -21,6 +22,8 @@
         [engine_ connect:player_ to:engine_.mainMixerNode format:format_];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(configurationChanged:)
             name:AVAudioEngineConfigurationChangeNotification object:engine_];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(secondaryAudioHintChanged:)
+            name:AVAudioSessionSilenceSecondaryAudioHintNotification object:nil];
     }
     return self;
 }
@@ -32,16 +35,21 @@
 - (BOOL)start:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Audio player is main-thread owned");
     if (!self.enabled) return YES;
-    if (active_ && engine_.running) return YES;
+    if (active_ && engine_.running) {
+        [self updateGameVolume];
+        return YES;
+    }
     AVAudioSession *session = AVAudioSession.sharedInstance;
-    AVAudioSessionCategoryOptions options = self.focusPolicy == 3
-        ? AVAudioSessionCategoryOptionMixWithOthers
-        : (self.focusPolicy == 2 ? AVAudioSessionCategoryOptionDuckOthers : 0);
+    // DUCK lowers this game's gain, not the volume of other audio sessions.
+    const auto focus = flynes::ios::playbackAudioFocus(static_cast<unsigned>(self.focusPolicy),
+        session.secondaryAudioShouldBeSilencedHint, session.otherAudioPlaying);
+    AVAudioSessionCategoryOptions options = focus.mixWithOthers ? AVAudioSessionCategoryOptionMixWithOthers : 0;
     if (![session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault
                      options:options error:error]) return NO;
     [session setPreferredSampleRate:48000 error:nil];
     [session setPreferredIOBufferDuration:0.01 error:nil];
     if (![session setActive:YES error:error]) return NO;
+    [self updateGameVolume];
     [engine_ prepare];
     active_ = [engine_ startAndReturnError:error];
     if (!active_) [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
@@ -71,11 +79,15 @@
     const BOOL restart = active_;
     [self pause];
     _focusPolicy = policy;
+    [self updateGameVolume];
     if (restart) [self start:nil];
 }
 - (void)enqueuePCM:(NSData *)samples {
     NSAssert(NSThread.isMainThread, @"Audio player is main-thread owned");
     if (!active_ || !self.enabled || samples.length == 0 || samples.length % sizeof(int16_t)) return;
+    // The hint covers nonmixable sessions. Polling also catches mixable audio,
+    // which may start/stop without a silence-secondary-audio notification.
+    [self updateGameVolume];
     const auto count = static_cast<AVAudioFrameCount>(samples.length / sizeof(int16_t));
     if (count > 4096 || !queue_.reserve()) return; // bounded latency if output stalls
     AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format_ frameCapacity:count];
@@ -105,6 +117,23 @@
         const BOOL restart = strong->active_;
         [strong pause];
         if (restart) [strong start:nil];
+    });
+}
+- (void)updateGameVolume {
+    NSAssert(NSThread.isMainThread, @"Audio focus is main-thread owned");
+    [self updateGameVolumeWithSecondaryHint:AVAudioSession.sharedInstance.secondaryAudioShouldBeSilencedHint];
+}
+- (void)updateGameVolumeWithSecondaryHint:(BOOL)hint {
+    const auto focus = flynes::ios::playbackAudioFocus(static_cast<unsigned>(self.focusPolicy), hint,
+        AVAudioSession.sharedInstance.otherAudioPlaying);
+    player_.volume = focus.gameVolume;
+}
+- (void)secondaryAudioHintChanged:(NSNotification *)notification {
+    const BOOL begin = [notification.userInfo[AVAudioSessionSilenceSecondaryAudioHintTypeKey] unsignedIntegerValue]
+        == AVAudioSessionSilenceSecondaryAudioHintTypeBegin;
+    __weak FlyNesAudioPlayer *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf updateGameVolumeWithSecondaryHint:begin];
     });
 }
 @end
