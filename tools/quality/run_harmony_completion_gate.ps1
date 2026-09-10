@@ -109,16 +109,44 @@ if ($Stage -eq 'Host') {
         Invoke-GateStep -Name 'harmony-test-build' -WorkingDirectory $harmonyRoot `
             -Executable $NodeExe -Arguments @($HvigorScript, 'assembleHap', '-p',
                 'product=default', '-p', 'module=entry@ohosTest', '-p', 'buildMode=debug') | Out-Null
-        $mainHap = Join-Path $harmonyRoot `
+        $signedMainHap = Join-Path $harmonyRoot `
+            'entry\build\default\outputs\default\entry-default-signed.hap'
+        $unsignedMainHap = Join-Path $harmonyRoot `
             'entry\build\default\outputs\default\entry-default-unsigned.hap'
-        $testHap = Join-Path $harmonyRoot `
+        $signedTestHap = Join-Path $harmonyRoot `
+            'entry\build\default\outputs\ohosTest\entry-ohosTest-signed.hap'
+        $unsignedTestHap = Join-Path $harmonyRoot `
             'entry\build\default\outputs\ohosTest\entry-ohosTest-unsigned.hap'
-        Invoke-GateStep -Name 'harmony-app-install' -WorkingDirectory $repoRoot `
+        if ($Stage -eq 'HarmonyDevice' -and
+            (-not (Test-Path -LiteralPath $signedMainHap) -or
+             -not (Test-Path -LiteralPath $signedTestHap))) {
+            throw 'HarmonyDevice requires signed application and test HAP packages.'
+        }
+        $mainHap = if ($Stage -eq 'HarmonyDevice') { $signedMainHap } else { $unsignedMainHap }
+        $testHap = if ($Stage -eq 'HarmonyDevice') { $signedTestHap } else { $unsignedTestHap }
+        $metadata.harmonyAppPackage = $mainHap
+        $metadata.harmonyAppSha256 = (Get-FileHash -LiteralPath $mainHap -Algorithm SHA256).Hash
+        $metadata.harmonyTestPackage = $testHap
+        $metadata.harmonyTestSha256 = (Get-FileHash -LiteralPath $testHap -Algorithm SHA256).Hash
+        if (Test-Path -LiteralPath $signedMainHap) {
+            $metadata.harmonySignedAppPackage = $signedMainHap
+            $metadata.harmonySignedAppSha256 =
+                (Get-FileHash -LiteralPath $signedMainHap -Algorithm SHA256).Hash
+        }
+        $appInstallLog = Invoke-GateStep -Name 'harmony-app-install' -WorkingDirectory $repoRoot `
             -Executable $HdcExe -Arguments (Get-HdcArguments -CommandArguments `
-                @('install', '-r', $mainHap)) | Out-Null
-        Invoke-GateStep -Name 'harmony-test-install' -WorkingDirectory $repoRoot `
+                @('install', '-r', $mainHap))
+        if (-not (Select-String -LiteralPath $appInstallLog `
+                -Pattern 'install bundle successfully' -Quiet)) {
+            throw "Harmony app installation was not accepted; see $appInstallLog"
+        }
+        $testInstallLog = Invoke-GateStep -Name 'harmony-test-install' -WorkingDirectory $repoRoot `
             -Executable $HdcExe -Arguments (Get-HdcArguments -CommandArguments `
-                @('install', '-r', $testHap)) | Out-Null
+                @('install', '-r', $testHap))
+        if (-not (Select-String -LiteralPath $testInstallLog `
+                -Pattern 'install bundle successfully' -Quiet)) {
+            throw "Harmony test installation was not accepted; see $testInstallLog"
+        }
         $hypiumLog = Invoke-GateStep -Name 'harmony-hypium' -WorkingDirectory $repoRoot `
             -Executable $HdcExe -Arguments (Get-HdcArguments -CommandArguments `
                 @('shell', 'aa', 'test', '-b', 'com.flynes.emu', '-m', 'entry_test',
@@ -142,6 +170,9 @@ if ($Stage -eq 'Host') {
         Invoke-GateStep -Name 'android-unit-and-package' -WorkingDirectory $repoRoot `
             -Executable (Join-Path $repoRoot 'gradlew.bat') `
             -Arguments @(':app:testDebugUnitTest', ':app:assembleDebug', '--console=plain') | Out-Null
+        $androidApk = Join-Path $repoRoot 'app\build\outputs\apk\debug\app-debug.apk'
+        $metadata.androidAppPackage = $androidApk
+        $metadata.androidAppSha256 = (Get-FileHash -LiteralPath $androidApk -Algorithm SHA256).Hash
         Invoke-GateStep -Name 'android-instrumentation' -WorkingDirectory $repoRoot `
             -Executable (Join-Path $repoRoot 'gradlew.bat') `
             -Arguments @(':app:connectedDebugAndroidTest', '--console=plain') | Out-Null

@@ -9,7 +9,7 @@ the later revision changes only the Android pause-flow instrumentation interacti
 | Stage | Result | Evidence |
 | --- | --- | --- |
 | Host | PASS, CTest 12/12 | `out/evidence/completion-host-postcommit/` |
-| HarmonyOS Phone emulator | PASS, Hypium 20/20 | `out/evidence/completion-harmony-emulator-postcommit/` |
+| HarmonyOS Phone emulator | PASS, install verified and Hypium 20/20 | `out/evidence/completion-harmony-emulator-install-verified-final/` |
 | Android API 35 emulator | PASS, instrumentation 99/99 plus unit/package | `out/evidence/completion-android-emulator-es31-final/` |
 
 The qualifying Android run used a cold-started host-GPU AVD with OpenGL ES 3.1
@@ -17,6 +17,21 @@ The qualifying Android run used a cold-started host-GPU AVD with OpenGL ES 3.1
 back-to-back run found a stale system pointer-down and a later HardwareRenderer finalizer timeout;
 the pause test now calls the real view click handlers on the Activity UI thread. A diagnostic
 SwiftShader run exposed only ES 3.0 and was discarded rather than counted as a Motion pass.
+
+The HarmonyOS emulator retains its unsigned development installation so the scan fixture does not
+clear app data. The device gate requires signed application and test HAPs and rejects a missing
+signed artifact. HDC installation is accepted only when its output confirms successful bundle
+installation because HDC can return exit code zero for a rejected signature.
+
+## Package binding
+
+- HarmonyOS signed debug HAP: `entry-default-signed.hap`, SHA-256
+  `5F1C9C4BCBCB8743F91B242D024B5CCA64647C94836F03D9DD2C9EE9E76B90D6`. `hap-sign-tool
+  verify-app` found signing block version 3, verified all four native libraries and the SHA-256
+  digest, and identified a debug profile.
+- Android debug APK: `app-debug.apk`, SHA-256
+  `5841A63EADEE5BFAA7506AF1B3674107836DBDA1FB0B864DC64E999A71B663C1`. `apksigner verify
+  --print-certs` verified the V2 Android debug signature.
 
 ## Measured HarmonyOS emulator behavior
 
