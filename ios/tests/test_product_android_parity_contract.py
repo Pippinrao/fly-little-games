@@ -205,7 +205,8 @@ def main() -> int:
     require("FlyNesAppBridge" in settings,
             "settings must bind through FlyNesAppBridge")
 
-    editor = read("ios/app/ControlLayoutEditorView.swift")
+    editor = (read("ios/app/ControlLayoutEditorView.swift")
+              + "\n" + read("ios/app/platform/ControlLayoutDraft.swift"))
     require("FlyNesAppBridge" in editor,
             "layout editor must write shared persist via FlyNesAppBridge")
     require("controlLayoutApply" in editor or "fly_control_layout_apply" in editor,
