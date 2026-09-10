@@ -20,7 +20,7 @@ struct SettingsView: View {
                         }
                         .foregroundStyle(section == key ? Color.accentColor : Color.primary)
                     }.accessibilityIdentifier(key)
-                }.frame(width: 200)
+                }.frame(width: 240)
                 Form {
                     if snapshot.isEmpty {
                         Text("settings.load_failed")
@@ -67,12 +67,16 @@ struct SettingsView: View {
             Text("settings.aspect_square").tag(UInt32(2))
             Text("settings.aspect_integer").tag(UInt32(3))
         }
-        Picker("settings.video_quality", selection: integer("video_quality_preset")) {
-            Text("settings.video_power_saver").tag(UInt32(1))
-            Text("settings.video_balanced").tag(UInt32(2))
-            if preset == 3 { Text("settings.video_extreme_unavailable").tag(UInt32(3)).disabled(true) }
-            Text("settings.video_custom").tag(UInt32(4))
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+            presetCard(1, "settings.video_power_saver", "settings.video_power_summary")
+            presetCard(2, "settings.video_balanced", "settings.video_balanced_summary")
+            presetCard(3, "settings.video_extreme_unavailable", "settings.video_extreme_summary")
+            presetCard(4, "settings.video_custom", "settings.video_custom_summary")
         }.accessibilityIdentifier("settings_video_quality")
+        if preset == 4 {
+            LabeledContent("settings.refresh", value: "60 Hz")
+            LabeledContent("settings.temporal") { Text("settings.temporal_native") }
+        }
         Picker("settings.spatial", selection: spatialSelection) {
             Text("settings.spatial_nearest").tag(UInt32(1))
             Text("settings.spatial_sharp").tag(UInt32(2))
@@ -85,6 +89,25 @@ struct SettingsView: View {
         }.disabled(preset != 4)
         Text("settings.video_extreme_locked").font(.caption).foregroundStyle(.secondary)
         Toggle("settings.adaptive_protection", isOn: boolean("adaptive_protection"))
+    }
+    private func presetCard(_ value: UInt32, _ title: String, _ subtitle: String) -> some View {
+        Button { persist(["video_quality_preset": value]) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top) {
+                    Image(systemName: value == 3 ? "lock.fill" : preset == value ? "checkmark.circle.fill" : "circle")
+                    Text(LocalizedStringKey(title)).font(.subheadline.weight(.semibold))
+                }
+                Text(LocalizedStringKey(subtitle)).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+            .padding(10)
+            .background(preset == value ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(preset == value ? Color.accentColor : Color.clear))
+        }
+        .buttonStyle(.plain)
+        .disabled(value == 3)
+        .accessibilityIdentifier("video_preset_\(value)")
     }
     @ViewBuilder private var controlsSection: some View {
         Picker("settings.direction", selection: integer("direction_mode")) {

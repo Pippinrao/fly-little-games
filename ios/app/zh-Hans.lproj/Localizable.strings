@@ -117,3 +117,17 @@
 "library.source.changed" = "文件内容已变化";
 "library.source.partial" = "部分文件无法读取，请检查来源权限并重新扫描。";
 "run.emulation_paused" = "模拟已暂停";
+"control_layout.try" = "试用控件";
+"control_layout.undo" = "撤销";
+"control_layout.warning_small" = "部分控件较小，可能不便点击。";
+"control_layout.warning_center" = "部分控件遮挡了游戏画面中央。";
+"control_layout.warning_gesture" = "部分控件靠近系统手势区域。";
+"control_layout.warning_save" = "此布局可能不便操作，仍要保存吗？";
+"control_layout.keep_editing" = "继续编辑";
+"settings.video_power_summary" = "原生帧率 · 最近邻像素";
+"settings.video_balanced_summary" = "原生帧率 · 锐利像素";
+"settings.video_extreme_summary" = "需要经过验证的 120 Hz 支持";
+"settings.video_custom_summary" = "自选空间滤镜和 CRT 效果";
+"settings.refresh" = "屏幕刷新率";
+"settings.temporal" = "时域模式";
+"settings.temporal_native" = "原生帧";

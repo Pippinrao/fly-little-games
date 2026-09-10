@@ -16,7 +16,16 @@ import CoreGraphics
   precondition(stick.width == 128, "Joystick uses 128 point hit-map size")
   let corrupt = ControlLayoutDraft(encoded: expected.replacingOccurrences(of: "0.9400", with: "nan"))
   precondition(corrupt.encoded == expected, "Non-finite wire values must fall back to recommended")
-  print("PASS: layout wire, draft isolation, safe geometry, joystick geometry, corrupt input")
+  var warningLayout = layout
+  warningLayout.elements[1].scale = 0.5
+  warningLayout.elements[1].x = 0.5
+  warningLayout.elements[1].y = 0.98
+  precondition(warningLayout.warningKeys.contains("control_layout.warning_small"), "Small target warning must match Android")
+  precondition(warningLayout.warningKeys.contains("control_layout.warning_center"), "Central screen warning must match Android")
+  precondition(warningLayout.warningKeys.contains("control_layout.warning_gesture"), "System gesture zone warning must match Android")
+  warningLayout.elements[2] = .init(name: "B", x: 0.5, y: 0.98, scale: 1)
+  precondition(warningLayout.warningKeys.contains("control_layout.overlap"), "Nearby controls must warn before save")
+  print("PASS: Android layout warnings, layout wire, draft isolation, safe geometry, joystick geometry, corrupt input")
  }
 }
 

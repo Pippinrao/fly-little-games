@@ -117,3 +117,17 @@
 "library.source.changed" = "File content changed";
 "library.source.partial" = "Some files could not be read. Check source access and rescan.";
 "run.emulation_paused" = "Emulation paused";
+"control_layout.try" = "Try controls";
+"control_layout.undo" = "Undo";
+"control_layout.warning_small" = "Some controls may be too small to tap comfortably.";
+"control_layout.warning_center" = "Some controls cover the central game area.";
+"control_layout.warning_gesture" = "Some controls are close to system gesture areas.";
+"control_layout.warning_save" = "This layout may be difficult to use. Save it anyway?";
+"control_layout.keep_editing" = "Keep editing";
+"settings.video_power_summary" = "Native frames · Nearest pixels";
+"settings.video_balanced_summary" = "Native frames · Sharp pixels";
+"settings.video_extreme_summary" = "Requires verified 120 Hz support";
+"settings.video_custom_summary" = "Choose spatial and CRT effects";
+"settings.refresh" = "Display refresh rate";
+"settings.temporal" = "Temporal mode";
+"settings.temporal_native" = "Native frames";

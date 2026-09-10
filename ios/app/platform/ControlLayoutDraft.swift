@@ -39,6 +39,26 @@ struct ControlLayoutDraft {
         }.joined()
     }
 
+    /// Android ControlLayoutWarnings thresholds, independent of preview scaling.
+    var warningKeys: [String] {
+        var result: [String] = []
+        if elements.contains(where: { $0.scale < 0.67 }) { result.append("control_layout.warning_small") }
+        let overlaps = elements.indices.contains { i in
+            elements.indices.contains { j in
+                guard j > i else { return false }
+                let a = elements[i], b = elements[j]
+                let radius = 0.055 * (a.scale + b.scale)
+                return pow(a.x - b.x, 2) + pow(a.y - b.y, 2) < radius * radius
+            }
+        }
+        if overlaps { result.append("control_layout.overlap") }
+        if elements.contains(where: { $0.x < 0.04 || $0.x > 0.96 || $0.y < 0.06 || $0.y > 0.94 }) {
+            result.append("control_layout.warning_gesture")
+        }
+        if elements.contains(where: { $0.x > 0.15 && $0.x < 0.85 }) { result.append("control_layout.warning_center") }
+        return result
+    }
+
     /// Same point-density 1 geometry as GamepadHitMap::from_layout used by iOS.
     func bounds(for element: Element, safe: CGRect, directionMode: UInt32) -> CGRect {
         let base: CGSize
