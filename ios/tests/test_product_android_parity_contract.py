@@ -107,11 +107,16 @@ def main() -> int:
     open_pause_at = run.find("- (void)openPauseDrawer")
     require(open_pause_at >= 0, "run surface must implement openPauseDrawer")
     open_pause_body = run[open_pause_at:open_pause_at + 1800]
-    require("saveCheckpoint" in open_pause_body,
-            "openPauseDrawer must auto-checkpoint via saveCheckpoint")
-    require("autosave.nst" in open_pause_body or "persistAutosave" in open_pause_body
-            or "writeAutosave" in open_pause_body,
-            "openPauseDrawer must persist the checkpoint blob, not drop it")
+    require("saveAutosaveIfEnabled" in open_pause_body,
+            "openPauseDrawer must use the autosave setting before checkpointing")
+    save_at = run.find("- (void)saveAutosaveIfEnabled")
+    require(save_at >= 0, "run surface must implement the autosave helper")
+    save_end = run.find("\n- (", save_at + 1)
+    save_body = run[save_at:save_end if save_end > save_at else len(run)]
+    require("autosave_enabled" in save_body and "return" in save_body,
+            "autosave helper must skip disabled autosave")
+    require("saveCheckpoint" in save_body and "persistAutosave" in save_body,
+            "enabled autosave must persist the checkpoint blob")
     view_load_at = run.find("- (void)viewDidLoad")
     require(view_load_at >= 0, "run surface must implement viewDidLoad")
     view_will_at = run.find("- (void)viewWillAppear")

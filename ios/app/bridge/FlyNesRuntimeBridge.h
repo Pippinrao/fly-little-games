@@ -9,6 +9,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface FlyNesRuntimeBridge : NSObject
 
+@property(nonatomic, readonly) uint32_t lastFrameSampleCount;
+- (NSData *)pullPCM;
+- (void)discardAudio;
+- (void)clearInput;
 - (BOOL)createRuntime:(NSError * _Nullable * _Nullable)error;
 - (BOOL)loadRom:(NSData *)rom error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)stepFrameWithButtons:(uint32_t)buttons
