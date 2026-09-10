@@ -1,4 +1,5 @@
 #include <flynes/flynes_session.h>
+#include "session_initial_plan.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -8,7 +9,98 @@
 struct fly_session_handle
 {
     std::uint64_t last_tick_ns = 0u;
+    bool has_tick = false;
+    std::uint64_t pair_generation = 0u;
+    std::uint64_t original_context_start_ns = 0u;
+    flynes::session::InitialPlanLock initial_plan;
 };
+
+namespace flynes::session {
+namespace {
+constexpr std::uint64_t pair_timeout_ns = UINT64_C(60000000000);
+
+bool reject(fly_session_t* session)
+{
+    if (session) session->initial_plan.invalidate();
+    return false;
+}
+
+bool active(const fly_session_t* session)
+{
+    return session && session->pair_generation != 0 && !session->initial_plan.failed();
+}
+
+bool require_active(fly_session_t* session)
+{
+    return active(session) || reject(session);
+}
+} // namespace
+
+bool start_initial_pair_attempt(fly_session_t* session, std::uint64_t generation,
+                                std::uint64_t original_context_start_ns)
+{
+    if (!session || !session->has_tick || session->pair_generation != 0 ||
+        session->initial_plan.failed() || generation == 0 ||
+        original_context_start_ns > session->last_tick_ns ||
+        session->last_tick_ns - original_context_start_ns >= pair_timeout_ns) return reject(session);
+    session->pair_generation = generation;
+    session->original_context_start_ns = original_context_start_ns;
+    return true;
+}
+
+bool begin_initial_verified_pair(fly_session_t* session, const VerifiedPairEvidence& evidence)
+{
+    if (!require_active(session)) return false;
+    if (evidence.generation != session->pair_generation) return reject(session);
+    return session->initial_plan.begin(evidence);
+}
+
+bool accept_initial_plan(fly_session_t* session, const VerifiedPlanEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_plan(evidence);
+}
+
+bool accept_initial_ack(fly_session_t* session, const VerifiedPlanEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_ack(evidence);
+}
+
+bool accept_initial_final(fly_session_t* session, const VerifiedPlanEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_final(evidence);
+}
+
+bool accept_initial_credentials(fly_session_t* session, const VerifiedCredentialEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_credentials(evidence);
+}
+
+std::optional<InitialPlanCommand> poll_initial_plan_command(fly_session_t* session)
+{
+    return active(session) ? session->initial_plan.poll() : std::nullopt;
+}
+
+bool complete_initial_plan_command(fly_session_t* session, std::uint64_t id,
+                                    std::uint64_t generation, bool success)
+{
+    return require_active(session) && session->initial_plan.complete(id, generation, success);
+}
+
+void invalidate_initial_pair_attempt(fly_session_t* session) noexcept
+{
+    if (session) session->initial_plan.invalidate();
+}
+
+std::optional<SessionInitialPlanSnapshot> initial_plan_snapshot(const fly_session_t* session)
+{
+    if (!session) return std::nullopt;
+    const auto& plan = session->initial_plan;
+    return SessionInitialPlanSnapshot{session->pair_generation != 0, active(session),
+        plan.failed(), plan.not_supported(), plan.locked(), plan.mutually_locked(),
+        plan.prompt_consumed(), session->pair_generation, session->original_context_start_ns,
+        plan.selected_plan()};
+}
+} // namespace flynes::session
 
 namespace {
 
@@ -189,7 +281,20 @@ extern "C" fly_result fly_session_tick(fly_session_t* session, uint64_t now_ns)
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    if (session->has_tick && now_ns < session->last_tick_ns)
+    {
+        if (flynes::session::active(session)) session->initial_plan.invalidate();
+        return FLY_RESULT_INVALID_STATE;
+    }
     session->last_tick_ns = now_ns;
+    session->has_tick = true;
+    // Start already checked ordering; subtract only after the monotonic check.
+    if (flynes::session::active(session) &&
+        now_ns - session->original_context_start_ns >= flynes::session::pair_timeout_ns)
+    {
+        session->initial_plan.invalidate();
+        return FLY_RESULT_INVALID_STATE;
+    }
     return FLY_RESULT_OK;
 }
 
