@@ -67,6 +67,17 @@ int main(int argc, char **argv) { @autoreleasepool { try {
         if (!opened) NSLog(@"resolve error: %@; row: %@", error, row);
         check(opened != nil && ([opened isEqual:rom] || [opened isEqual:changed]), "exact canonical ROM resolves");
     }
+    check([fm setAttributes:@{NSFilePosixPermissions:@0000} ofItemAtPath:second.path error:&error], "make one child unreadable");
+    error = nil;
+    check(![service rescanUUID:uuid error:&error] && error != nil, "inaccessible child surfaces partial-scan failure");
+    rows = bridge.catalogSnapshotGames;
+    check(rows.count == 2, "partial child scan preserves both catalog entries");
+    for (NSDictionary *row in rows) {
+        uint32_t expected = [row[@"relativePath"] isEqual:@"first.nes"] ? 1 : 2;
+        check([row[@"freshness"] unsignedIntValue] == expected, "readable scanned child stays fresh while inaccessible child becomes stale");
+    }
+    check([fm setAttributes:@{NSFilePosixPermissions:@0644} ofItemAtPath:second.path error:&error], "restore child permissions");
+    check([service rescanUUID:uuid error:&error], "rescan after restoring permissions");
     NSString *firstID = nil;
     for (NSDictionary *row in rows) if ([row[@"relativePath"] isEqual:@"first.nes"]) firstID = row[@"canonicalId"];
     [changed writeToURL:first atomically:YES];

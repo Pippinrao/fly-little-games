@@ -111,7 +111,8 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
     if (!success || failure) {
         // A failed root access never supplies an empty complete transaction.
         // Mark old rows stale while preserving them for reauthorization.
-        if (!success) [bridge_ scanFileRecords:@[] sourceUUID:UUIDBytes(uuid) sourceScope:scope incomplete:YES error:nil];
+        if (!success && ![failure.userInfo[@"scanCommitted"] boolValue])
+            [bridge_ scanFileRecords:@[] sourceUUID:UUIDBytes(uuid) sourceScope:scope incomplete:YES error:nil];
         if (error) *error = failure ?: SourceError(@"library.source.scan_failed");
         return NO;
     }
