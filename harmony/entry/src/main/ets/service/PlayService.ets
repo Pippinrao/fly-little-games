@@ -1,4 +1,4 @@
-import nativePlay from 'libentry.so';
+import nativePlay, { PlayStepResult } from 'libentry.so';
 import { image } from '@kit.ImageKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -94,7 +94,7 @@ export class PlayService {
     }
   }
 
-  stepFrame() {
+  stepFrame(): PlayStepResult {
     return nativePlay.playStep();
   }
 

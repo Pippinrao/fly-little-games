@@ -208,7 +208,7 @@ struct Sources {
       const row = new SourceRow();
       row.uuidHex = uuidHex;
       row.persistableUri = this.sourceMap.get(uuidHex);
-      const status = this.statusFor(statuses, uuidHex);
+      const status: SourceStatusDto | undefined = this.statusFor(statuses, uuidHex);
       row.stale = status !== undefined && status.freshness === FRESHNESS_STALE;
       row.lost = false;
       row.sourceScope = status !== undefined ? status.sourceScope : SOURCE_SCOPE_USER_DIRECTORY;

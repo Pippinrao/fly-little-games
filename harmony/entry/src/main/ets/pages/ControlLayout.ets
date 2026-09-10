@@ -421,7 +421,7 @@ struct ControlLayout {
     const context = host as common.UIAbilityContext;
     try {
       nativeApp.appOpen(context.filesDir, context.cacheDir);
-      const applied = nativeApp.controlLayoutApply(this.encode());
+      const applied: string = nativeApp.controlLayoutApply(this.encode());
       this.applyEncoded(applied);
       this.status = '';
       router.back();
@@ -431,7 +431,7 @@ struct ControlLayout {
   }
 
   private applyEncoded(encoded: string): void {
-    const decoded = nativeApp.controlLayoutDecodeOrRecommended(encoded);
+    const decoded: string = nativeApp.controlLayoutDecodeOrRecommended(encoded);
     const parsed = ControlLayout.parseWire(decoded);
     this.layoutOpacity = parsed.opacity;
     this.elements = parsed.elements;

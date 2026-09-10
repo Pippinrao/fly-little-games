@@ -454,7 +454,7 @@ struct Settings {
   }
 
   private presetIndex(): number {
-    const preset = this.snapshot.videoQualityPreset;
+    const preset: number = this.snapshot.videoQualityPreset;
     if (preset === 1) return 0;
     if (preset === 2) return 1;
     if (preset === VIDEO_EXTREME) return 2;

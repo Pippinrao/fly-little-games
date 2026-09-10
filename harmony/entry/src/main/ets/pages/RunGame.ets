@@ -3,7 +3,7 @@ import { display, router, window } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { batteryInfo, BusinessError, thermal } from '@kit.BasicServicesKit';
-import nativePlay, { PlayRuntimeStatusDto, RenderStatusDto } from 'libentry.so';
+import nativePlay, { PlayRuntimeStatusDto, PlayStepResult, RenderStatusDto, SettingsDto } from 'libentry.so';
 import { GamepadOverlay } from '../overlay/GamepadOverlay';
 import { PlayService, rememberRomOpenError, RomLaunchLocator } from '../service/PlayService';
 import { CoverStore } from '../service/CoverStore';
@@ -342,7 +342,7 @@ struct RunGame {
       const coverDue: boolean = this.coverSample < COVER_SAMPLE_OFFSETS.length &&
         playStatus.sourceFrames >= COVER_SAMPLE_OFFSETS[this.coverSample];
       if (needsPixelFallback || coverDue) {
-        const stepped = this.play.stepFrame();
+        const stepped: PlayStepResult = this.play.stepFrame();
         this.considerCover(stepped.frameIndex, stepped.rgb565);
         if (!needsPixelFallback) {
           return;
@@ -491,7 +491,7 @@ struct RunGame {
   private loadPersistedLayout(): void {
     try {
       this.layoutUtf8 = nativePlay.controlLayoutGet();
-      const settings = nativePlay.settingsGet();
+      const settings: SettingsDto = nativePlay.settingsGet();
       this.directionMode = Math.max(0, Math.min(2, settings.directionMode - 1));
       this.deadZone = settings.deadZone;
       this.aspectMode = settings.aspectMode;

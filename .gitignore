@@ -29,6 +29,9 @@ cmake_install.cmake
 .agent-teams/
 /local-data/
 /.worktrees/
+/out/
+/dist/
+/harmony/.hvigor/
 
 # OS
 .DS_Store
