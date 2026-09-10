@@ -95,6 +95,9 @@ failed/deadline probes exit nonzero and print `ERROR` on stderr.
   reads and validates the server response through FIN before sending an
   explicit completion close. Server waits for that exact close before
   reporting success, avoiding a premature close that discards final bytes.
+  Reliable completion has priority over auxiliary DATAGRAM retries. If a
+  retry observes closure between polls, the same completion future is resolved
+  under the existing whole-probe deadline; invalid close codes/reasons fail.
 
 ## Library and checks
 
@@ -126,3 +129,9 @@ transport/address tests failed after successful compilation. Implementation
 made those tests pass. The positive two-process CLI test separately failed
 with empty READY output against the CLI stub before the CLI was implemented.
 Loopback and build results alone are not real phone or M0a completion evidence.
+
+A completion/retry race regression deterministically makes completion ready
+during the retry-error poll. It failed against the original arbitration and
+passes after awaiting the pinned completion future. Separate checks cover
+both-ready branches, invalid completion, the outer deadline, and actual QUIC
+exchanges followed by wrong final close codes/reasons.

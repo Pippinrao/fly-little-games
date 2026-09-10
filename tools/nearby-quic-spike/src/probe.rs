@@ -219,6 +219,22 @@ fn report(connection: &Connection, digest: [u8; 32]) -> Result<Report> {
     })
 }
 
+async fn finish_with_retries<T>(
+    complete: impl std::future::Future<Output = Result<T>>,
+    retries: impl std::future::Future<Output = Result<()>>,
+) -> Result<T> {
+    tokio::pin!(complete);
+    tokio::select! {
+        biased;
+        result = &mut complete => result,
+        // Auxiliary DATAGRAM delivery may observe the close between polling these
+        // branches. Resolve the same authoritative stream/close validation future,
+        // including its error, even in that race. Callers retain the whole-probe
+        // timeout around this helper; exhausted retries cannot make it unbounded.
+        _ = retries => complete.await,
+    }
+}
+
 async fn client_exchange(connection: &Connection) -> Result<Report> {
     let digest = digest(connection, CONTEXT)?;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -231,10 +247,11 @@ async fn client_exchange(connection: &Connection) -> Result<Report> {
         read_fin(&mut recv, SERVER_DONE, &digest).await?;
         report(connection, digest)
     };
-    tokio::select! {
-        result = complete => result,
-        error = repeat_datagram(connection, CLIENT_DATAGRAM, &digest) => { error?; unreachable!() },
-    }
+    finish_with_retries(
+        complete,
+        repeat_datagram(connection, CLIENT_DATAGRAM, &digest),
+    )
+    .await
 }
 
 async fn server_exchange(connection: &Connection) -> Result<Report> {
@@ -258,8 +275,123 @@ async fn server_exchange(connection: &Connection) -> Result<Report> {
             other => Err(format!("client did not acknowledge final validation: {other}").into()),
         }
     };
-    tokio::select! {
-        result = complete => result,
-        error = repeat_datagram(connection, SERVER_DATAGRAM, &digest) => { error?; unreachable!() },
+    finish_with_retries(
+        complete,
+        repeat_datagram(connection, SERVER_DATAGRAM, &digest),
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        cell::Cell,
+        future::{poll_fn, ready},
+        task::Poll,
+    };
+
+    #[tokio::test]
+    async fn completion_is_resolved_when_retry_failure_makes_it_ready_during_select() {
+        // Deterministic scheduler regression, not a simulated TLS handshake. Whichever
+        // branch select polls first, retries makes completion ready only during its poll.
+        // This also catches a biased-select-only fix: completion may have polled Pending.
+        let closed = Cell::new(false);
+        let complete = poll_fn(|_| {
+            if closed.get() {
+                Poll::Ready(Ok(7))
+            } else {
+                Poll::Pending
+            }
+        });
+        let retries = async {
+            closed.set(true);
+            Err("auxiliary send observed connection close".into())
+        };
+        assert_eq!(finish_with_retries(complete, retries).await.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn completion_wins_when_both_branches_are_ready() {
+        assert_eq!(
+            finish_with_retries(ready(Ok(7)), ready(Err("auxiliary closed".into())))
+                .await
+                .unwrap(),
+            7
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_completion_still_fails_after_auxiliary_failure() {
+        let closed = Cell::new(false);
+        let complete = poll_fn(|_| {
+            if closed.get() {
+                Poll::Ready(Err::<(), _>("invalid final close".into()))
+            } else {
+                Poll::Pending
+            }
+        });
+        let retries = async {
+            closed.set(true);
+            Err("auxiliary send observed connection close".into())
+        };
+        assert_eq!(
+            finish_with_retries(complete, retries)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "invalid final close"
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_completion_remains_bounded_by_outer_deadline() {
+        let result = timeout(
+            Duration::from_millis(30),
+            finish_with_retries(
+                std::future::pending::<Result<()>>(),
+                ready(Err("retry budget exhausted".into())),
+            ),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "the still-pending authoritative completion must hit the outer deadline"
+        );
+    }
+
+    #[tokio::test]
+    async fn real_quic_rejects_wrong_final_close_code_or_reason_after_valid_exchange() {
+        for (code, reason) in [
+            (1u32, VERIFIED_CLOSE),
+            (0u32, b"unvalidated-close".as_slice()),
+        ] {
+            let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
+            let server = start_server_sessions(bind, 1, Duration::from_secs(2))
+                .await
+                .unwrap();
+            let (crypto, _) = tls::client_config(&server.spki).unwrap();
+            let mut endpoint = Endpoint::client(bind).unwrap();
+            endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
+                QuicClientConfig::try_from(crypto).unwrap(),
+            )));
+            let connection = endpoint
+                .connect(server.address, "probe.invalid")
+                .unwrap()
+                .await
+                .unwrap();
+            let report = timeout(Duration::from_secs(2), client_exchange(&connection))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(report.stream_verified && report.datagram_verified);
+            connection.close(code.into(), reason);
+            let error = server.handle.await.unwrap().unwrap_err().to_string();
+            assert!(
+                error.contains("client did not acknowledge final validation"),
+                "{error}"
+            );
+            endpoint.close(1u32.into(), b"test-ended");
+        }
     }
 }
