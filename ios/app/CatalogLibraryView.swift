@@ -31,6 +31,7 @@ struct CatalogLibraryView: View {
     @State private var filter: LibraryFilter = .all
     @State private var searchText = ""
     @State private var path = NavigationPath()
+    @ObservedObject private var sources = CatalogSourceModel.shared
 
     init(snapshot: CatalogSnapshot = CatalogSnapshot(generation: 0, games: [])) {
         _snapshot = State(initialValue: snapshot)
@@ -40,11 +41,17 @@ struct CatalogLibraryView: View {
         NavigationStack(path: $path) {
             Group {
                 if visibleGames.isEmpty {
-                    ContentUnavailableView(
-                        "library.no_games",
-                        systemImage: "square.stack",
-                        description: Text("library.no_games.detail")
-                    )
+                    VStack(spacing: 12) {
+                        Image(systemName: "square.stack").font(.largeTitle)
+                        Text("library.no_games").font(.headline)
+                        Text("library.no_games.detail").foregroundStyle(.secondary)
+                        if let error = sources.error {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
+                        NavigationLink("library.sources") { CatalogSourceManagementView() }
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(visibleGames) { game in
                         NavigationLink(value: LibraryRoute.detail(game)) {
@@ -67,7 +74,7 @@ struct CatalogLibraryView: View {
                     .frame(maxWidth: 520)
                     .frame(minHeight: 44)
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
                     NavigationLink {
                         CatalogSourceManagementView()
                     } label: {
@@ -88,11 +95,20 @@ struct CatalogLibraryView: View {
                     RunGameContainer(canonicalId: canonicalId, path: $path)
                 }
             }
-            .onAppear(perform: reloadSnapshot)
-            .onChange(of: filter) { _, _ in
+            .onAppear {
+                sources.initialize()
                 reloadSnapshot()
             }
-            .onChange(of: searchText) { _, _ in
+            .onReceive(sources.$generation) { _ in reloadSnapshot() }
+            .overlay(alignment: .bottom) {
+                if sources.busy {
+                    ProgressView("library.source.working").padding().background(.regularMaterial, in: Capsule())
+                }
+            }
+            .onChange(of: filter) { _ in
+                reloadSnapshot()
+            }
+            .onChange(of: searchText) { _ in
                 reloadSnapshot()
             }
         }
