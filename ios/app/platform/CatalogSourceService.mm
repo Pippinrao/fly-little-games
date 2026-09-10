@@ -182,10 +182,7 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
     [bookmarks_ removeBookmarkForUUID:[[NSUUID alloc] initWithUUIDString:uuid]];
     [self persist]; return YES;
 } }
-- (NSData *)romDataForCanonicalID:(NSString *)canonicalID error:(NSError **)error { @synchronized(self) {
-    NSDictionary *selected = nil;
-    for (NSDictionary *row in bridge_.catalogSnapshotGames) if ([row[@"canonicalId"] isEqual:canonicalID]) { selected = row; break; }
-    if (!selected) { if (error) *error = SourceError(@"library.source.game_missing"); return nil; }
+- (NSData *)romDataForRow:(NSDictionary *)selected error:(NSError **)error {
     if ([selected[@"compatibilityState"] unsignedIntValue] != 1) { if (error) *error = SourceError(@"library.source.game_unsupported"); return nil; }
     if ([selected[@"freshness"] unsignedIntValue] != 1) { if (error) *error = SourceError(@"library.source.game_stale"); return nil; }
     NSString *uuid = selected[@"sourceUUID"];
@@ -235,5 +232,23 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
         if (!result && error) *error = failure ?: coordinationError ?: SourceError(@"library.rom_open_failed");
         return result;
     } @finally { if (access) [bookmarks_ stopAccessing:root]; }
+}
+- (NSData *)romDataForCanonicalID:(NSString *)canonicalID error:(NSError **)error { @synchronized(self) {
+    NSDictionary *fallback = nil;
+    NSError *failure = nil;
+    // A canonical game can have several independently authorized source variants.
+    // Only fresh playable variants are candidates, and each must pass its own hashes.
+    for (NSDictionary *row in bridge_.catalogSnapshotGames) {
+        if (![row[@"canonicalId"] isEqual:canonicalID]) continue;
+        if (!fallback) fallback = row;
+        if ([row[@"freshness"] unsignedIntValue] != 1 || [row[@"compatibilityState"] unsignedIntValue] != 1) continue;
+        NSError *candidateError = nil;
+        NSData *data = [self romDataForRow:row error:&candidateError];
+        if (data) return data;
+        failure = candidateError;
+    }
+    if (!failure && fallback) [self romDataForRow:fallback error:&failure];
+    if (error) *error = failure ?: SourceError(@"library.source.game_missing");
+    return nil;
 } }
 @end

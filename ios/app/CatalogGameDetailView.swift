@@ -43,7 +43,7 @@ struct CatalogGameDetailView: View {
     }
 
     private func refresh() {
-        let row = FlyNesAppBridge.sharedInstance().catalogSnapshotGames().first {
+        let row = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(forCategory: "ALL", query: "").first {
             ($0["canonicalId"] as? String) == game.canonicalId
         }
         favorite = (row?["favorite"] as? NSNumber)?.boolValue ?? false
