@@ -12,22 +12,21 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <sstream>
 #include <thread>
 #include <utility>
 
 namespace flynes::harmony {
 namespace {
 
-constexpr char kVertexShader[] = R"(
-#version 300 es
+constexpr char kVertexShader[] = R"(#version 300 es
 layout(location=0) in vec2 aPosition;
 layout(location=1) in vec2 aTexCoord;
 out vec2 vTexCoord;
 void main() { gl_Position=vec4(aPosition,0.0,1.0); vTexCoord=aTexCoord; }
 )";
 
-constexpr char kNearestShader[] = R"(
-#version 300 es
+constexpr char kNearestShader[] = R"(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
 in vec2 vTexCoord;
@@ -35,8 +34,7 @@ out vec4 fragColor;
 void main() { fragColor=texture(uTexture,vTexCoord); }
 )";
 
-constexpr char kSharpShader[] = R"(
-#version 300 es
+constexpr char kSharpShader[] = R"(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
 uniform vec2 uTextureSize;
@@ -50,8 +48,7 @@ void main() {
 }
 )";
 
-constexpr char kCrtShader[] = R"(
-#version 300 es
+constexpr char kCrtShader[] = R"(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
 uniform vec2 uOutputSize;
@@ -74,9 +71,14 @@ constexpr GLfloat kQuad[] = {
      1.0F,  1.0F, 1.0F, 0.0F,
 };
 
-GLuint compile_shader(GLenum type, const char* source)
+GLuint compile_shader(GLenum type, const char* source, std::string* error)
 {
     const GLuint shader = glCreateShader(type);
+    if (shader == 0)
+    {
+        if (error != nullptr) *error = "glCreateShader returned zero";
+        return 0;
+    }
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
     GLint ok = GL_FALSE;
@@ -85,14 +87,22 @@ GLuint compile_shader(GLenum type, const char* source)
     {
         return shader;
     }
+    char log[2048]{};
+    glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+    if (error != nullptr)
+    {
+        *error = type == GL_VERTEX_SHADER ? "vertex shader: " : "fragment shader: ";
+        error->append(log[0] == '\0' ? "compile failed without driver log" : log);
+    }
     glDeleteShader(shader);
     return 0;
 }
 
-GLuint link_program(const char* fragment)
+GLuint link_program(const char* fragment, std::string* error)
 {
-    const GLuint vertex = compile_shader(GL_VERTEX_SHADER, kVertexShader);
-    const GLuint pixel = compile_shader(GL_FRAGMENT_SHADER, fragment);
+    const GLuint vertex = compile_shader(GL_VERTEX_SHADER, kVertexShader, error);
+    const GLuint pixel = vertex == 0 ? 0
+        : compile_shader(GL_FRAGMENT_SHADER, fragment, error);
     if (vertex == 0 || pixel == 0)
     {
         if (vertex != 0) glDeleteShader(vertex);
@@ -111,8 +121,31 @@ GLuint link_program(const char* fragment)
     {
         return program;
     }
+    char log[2048]{};
+    glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+    if (error != nullptr)
+    {
+        *error = "shader link: ";
+        error->append(log[0] == '\0' ? "failed without driver log" : log);
+    }
     glDeleteProgram(program);
     return 0;
+}
+
+std::string gl_failure(const char* operation, GLenum error)
+{
+    std::ostringstream detail;
+    detail << operation << " failed: GL error 0x" << std::hex
+           << static_cast<unsigned int>(error);
+    return detail.str();
+}
+
+std::string egl_failure(const char* operation, EGLint error)
+{
+    std::ostringstream detail;
+    detail << operation << " failed: EGL error 0x" << std::hex
+           << static_cast<unsigned int>(error);
+    return detail.str();
 }
 
 } // namespace
@@ -303,20 +336,23 @@ struct HarmonyRenderer::Impl final
         if (render_thread.joinable()) render_thread.join();
     }
 
-    bool request_vsync(OH_NativeVSync* vsync)
+    int request_vsync(OH_NativeVSync* vsync)
     {
         {
             std::lock_guard lock(mutex);
-            if (stop) return false;
+            if (stop) return -1;
             vsync_pending = true;
         }
-        if (OH_NativeVSync_RequestFrame(vsync, &Impl::vsync_callback, this) == 0)
+        int result = 0;
+        for (int attempt = 0; attempt < 4; ++attempt)
         {
-            return true;
+            result = OH_NativeVSync_RequestFrame(vsync, &Impl::vsync_callback, this);
+            if (result == 0) return 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         std::lock_guard lock(mutex);
         vsync_pending = false;
-        return false;
+        return result;
     }
 
     void render_loop(std::uint64_t owned_generation, void* owned_window)
@@ -326,6 +362,8 @@ struct HarmonyRenderer::Impl final
         EGLContext context = EGL_NO_CONTEXT;
         EGLSurface surface = EGL_NO_SURFACE;
         GLuint texture = 0;
+        GLuint quad_buffer = 0;
+        GLuint vertex_array = 0;
         GLuint program = 0;
         HarmonySpatialPipeline spatial_pipeline;
         flynes::video::MotionComputePipeline motion_pipeline;
@@ -333,6 +371,7 @@ struct HarmonyRenderer::Impl final
         OH_NativeVSync* vsync = nullptr;
         std::int32_t active_spatial = -1;
         std::int32_t active_post = -1;
+        std::string active_program_failure;
         std::uint64_t applied_display_config_version = 0;
         std::uint64_t presented_attempts = 0;
 
@@ -341,9 +380,11 @@ struct HarmonyRenderer::Impl final
             {
                 spatial_pipeline.destroy();
                 motion_pipeline.destroy();
-                eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
                 if (program != 0) glDeleteProgram(program);
+                if (vertex_array != 0) glDeleteVertexArrays(1, &vertex_array);
+                if (quad_buffer != 0) glDeleteBuffers(1, &quad_buffer);
                 if (texture != 0) glDeleteTextures(1, &texture);
+                eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
                 if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
                 if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context);
                 eglTerminate(display);
@@ -388,6 +429,11 @@ struct HarmonyRenderer::Impl final
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenBuffers(1, &quad_buffer);
+        glGenVertexArrays(1, &vertex_array);
+        glBindVertexArray(vertex_array);
+        glBindBuffer(GL_ARRAY_BUFFER, quad_buffer);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(kQuad), kQuad, GL_STATIC_DRAW);
         glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
         auto apply_display_request = [&] {
             std::int32_t refresh_policy = 1;
@@ -416,9 +462,10 @@ struct HarmonyRenderer::Impl final
         apply_display_request();
         const char name[] = "FlyNESHarmonyRenderer";
         vsync = OH_NativeVSync_Create(name, sizeof(name) - 1);
-        if (texture == 0 || vsync == nullptr)
+        if (texture == 0 || quad_buffer == 0 || vertex_array == 0 ||
+            glGetError() != GL_NO_ERROR || vsync == nullptr)
         {
-            set_failure("GPU texture or NativeVSync creation failed");
+            set_failure("GPU texture, vertex buffer, or NativeVSync creation failed");
             cleanup();
             return;
         }
@@ -429,9 +476,11 @@ struct HarmonyRenderer::Impl final
             runtime_status.fallback_reason.clear();
         }
 
-        if (!request_vsync(vsync))
+        const int initial_vsync_result = request_vsync(vsync);
+        if (initial_vsync_result != 0)
         {
-            set_failure("NativeVSync request failed");
+            set_failure("NativeVSync request failed: code " +
+                        std::to_string(initial_vsync_result));
             cleanup();
             return;
         }
@@ -590,6 +639,11 @@ struct HarmonyRenderer::Impl final
                             HarmonySpatialPipeline::Failure::FRAMEBUFFER
                             ? "advanced spatial framebuffer unsupported"
                             : "advanced spatial shader or draw failed";
+                        if (!spatial_pipeline.error().empty())
+                        {
+                            fallback_reason.append(": ");
+                            fallback_reason.append(spatial_pipeline.error());
+                        }
                     }
                 }
                 const std::int32_t program_key = wanted_post == 2 ? 100
@@ -599,7 +653,8 @@ struct HarmonyRenderer::Impl final
                     if (program != 0) glDeleteProgram(program);
                     const char* fragment = wanted_post == 2 ? kCrtShader
                         : (program_key == 2 ? kSharpShader : kNearestShader);
-                    program = link_program(fragment);
+                    active_program_failure.clear();
+                    program = link_program(fragment, &active_program_failure);
                     active_spatial = program_key;
                     active_post = wanted_post;
                 }
@@ -609,7 +664,9 @@ struct HarmonyRenderer::Impl final
                     runtime_status.fallback_active = !fallback_reason.empty();
                     runtime_status.fallback_reason = fallback_reason;
                 }
-                if (program != 0 && glGetError() == GL_NO_ERROR)
+                GLenum frame_error = glGetError();
+                std::string present_failure;
+                if (program != 0 && frame_error == GL_NO_ERROR)
                 {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     glViewport(0, 0, static_cast<GLsizei>(output_width),
@@ -637,14 +694,19 @@ struct HarmonyRenderer::Impl final
                         glUniform2f(output_size, static_cast<GLfloat>(output_width),
                                     static_cast<GLfloat>(output_height));
                     }
-                    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), kQuad);
-                    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), kQuad + 2);
+                    glBindBuffer(GL_ARRAY_BUFFER, quad_buffer);
+                    glBindVertexArray(vertex_array);
+                    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                                          reinterpret_cast<const void*>(0));
+                    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                                          reinterpret_cast<const void*>(2 * sizeof(GLfloat)));
                     glEnableVertexAttribArray(0);
                     glEnableVertexAttribArray(1);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                     glDisableVertexAttribArray(0);
                     glDisableVertexAttribArray(1);
-                    const bool draw_ok = glGetError() == GL_NO_ERROR;
+                    frame_error = glGetError();
+                    const bool draw_ok = frame_error == GL_NO_ERROR;
                     if (sample_gpu && draw_ok)
                     {
                         glFinish();
@@ -656,7 +718,27 @@ struct HarmonyRenderer::Impl final
                             runtime_status.gpu_time_max_ns, runtime_status.gpu_time_ns);
                         ++runtime_status.gpu_timing_samples;
                     }
-                    presented = draw_ok && eglSwapBuffers(display, surface) == EGL_TRUE;
+                    if (!draw_ok)
+                    {
+                        present_failure = gl_failure("GPU upload or draw", frame_error);
+                    }
+                    else if (eglSwapBuffers(display, surface) == EGL_TRUE)
+                    {
+                        presented = true;
+                    }
+                    else
+                    {
+                        present_failure = egl_failure("EGL swap", eglGetError());
+                    }
+                }
+                else if (program == 0)
+                {
+                    present_failure = active_program_failure.empty()
+                        ? "GPU shader program creation failed" : active_program_failure;
+                }
+                else
+                {
+                    present_failure = gl_failure("GPU upload or shader setup", frame_error);
                 }
                 if (motion_path)
                 {
@@ -670,11 +752,17 @@ struct HarmonyRenderer::Impl final
                 {
                     mailbox.complete(decision, presented);
                 }
-                if (!presented) set_failure("GPU upload, draw, or swap failed");
+                if (!presented) set_failure(present_failure.empty()
+                    ? "GPU present failed without an error code" : present_failure);
             }
-            if (!request_vsync(vsync))
+            const int vsync_result = request_vsync(vsync);
+            if (vsync_result != 0)
             {
-                set_failure("NativeVSync request failed");
+                if (vsync_result != -1)
+                {
+                    set_failure("NativeVSync request failed: code " +
+                                std::to_string(vsync_result));
+                }
                 break;
             }
         }

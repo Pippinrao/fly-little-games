@@ -278,6 +278,10 @@ struct RunGame {
     try {
       await this.play.open(context, this.locator, this.autosaveEnabled);
       this.started = true;
+      // onPageShow can run before the asynchronous ROM open completes. Clear
+      // any pause retained by an earlier surface only after this session owns
+      // a running core, so its first source frame can reach the GPU mailbox.
+      nativePlay.renderSetPaused(false);
       this.status = '';
       this.markPlayedOnce();
       this.startLoop();
