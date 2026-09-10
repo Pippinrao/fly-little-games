@@ -37,6 +37,14 @@ class RunnerContract(unittest.TestCase):
         self.assertIn('TextSelectableMode.SELECTABLE_FOCUSABLE', page)
         self.assertIn('transport experiment', page)
 
+    def test_every_want_invalidates_pending_request_before_parsing(self):
+        ability = (HARMONY / 'entry/src/main/ets/entryability/EntryAbility.ets').read_text()
+        self.assertIn('onCreate(want: Want): void { this.beginLaunch(want); }', ability)
+        self.assertIn('onNewWant(want: Want): void { this.beginLaunch(want); }', ability)
+        initialization = ability.split('private beginLaunch(want: Want): void {', 1)[1]
+        self.assertLess(initialization.index('probeLaunchGate.beginLaunch()'), initialization.index('this.acceptWant(want)'))
+        self.assertLess(initialization.index("AppStorage.setOrCreate('probeRequest', 0)"), initialization.index('this.acceptWant(want)'))
+
     def test_stage_refuses_existing_directory(self):
         with tempfile.TemporaryDirectory(prefix='nearby-stage-test-') as directory:
             result = subprocess.run(['pwsh', '-NoProfile', '-File', str(ROOT / 'stage-harmony.ps1'), '-Destination', directory], capture_output=True, text=True)

@@ -26,6 +26,17 @@ test('new ability launch invalidates pending old request', () => {
   const fresh = gate.request(true, true);
   assert.equal(gate.consume(fresh.id), true);
 });
+test('latest plain or invalid launch supersedes an earlier unconsumed request', () => {
+  for (const explicit of [false, true]) {
+    const gate = new ProbeLaunchGate();
+    const earlier = gate.request(true, true);
+    gate.beginLaunch();
+    const latest = gate.request(explicit, false);
+    assert.equal(latest.id, 0);
+    assert.equal(gate.consume(earlier.id), false);
+    assert.equal(gate.isRunning(), false);
+  }
+});
 test('busy explicit request visibly fails and never queues or cancels active worker', () => {
   const gate = new ProbeLaunchGate();
   assert.equal(gate.startManual(), true);

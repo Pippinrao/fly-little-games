@@ -24,14 +24,15 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
-  onCreate(want: Want): void {
+  private beginLaunch(want: Want): void {
     probeLaunchGate.beginLaunch();
     AppStorage.setOrCreate('probeRequest', 0);
     AppStorage.setOrCreate('probeRequestError', '');
     AppStorage.setOrCreate('probeBusy', probeLaunchGate.isRunning());
     this.acceptWant(want);
   }
-  onNewWant(want: Want): void { this.acceptWant(want); }
+  onCreate(want: Want): void { this.beginLaunch(want); }
+  onNewWant(want: Want): void { this.beginLaunch(want); }
   onWindowStageCreate(stage: window.WindowStage): void {
     try {
       stage.loadContent('pages/Index', (error) => {
