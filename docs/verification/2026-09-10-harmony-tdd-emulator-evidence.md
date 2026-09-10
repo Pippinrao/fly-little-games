@@ -1,18 +1,22 @@
 # HarmonyOS parity TDD emulator evidence — 2026-09-10
 
-Source revision at the start of the final gate: `88ddf5636c8149293a326f8f6699929e03f05502`
-(the gate metadata records the dirty implementation tree that is committed after verification).
+Final Android-tested implementation revision: `67161d798aefea26aae956f54faa5a36f5b49812`.
+Host and HarmonyOS post-commit gates ran at `8d2330fd217b61fbdc6f49a0f6b0658c0cb587b1`;
+the later revision changes only the Android pause-flow instrumentation interaction.
 
 ## Gate result
 
 | Stage | Result | Evidence |
 | --- | --- | --- |
-| Host | PASS, CTest 12/12 | `out/evidence/completion-host-final/` |
-| HarmonyOS Phone emulator | PASS, Hypium 20/20 | `out/evidence/completion-harmony-emulator-final/` |
-| Android API 35 emulator | PASS, instrumentation 99/99 plus unit/package | `out/evidence/completion-android-emulator-final/` |
+| Host | PASS, CTest 12/12 | `out/evidence/completion-host-postcommit/` |
+| HarmonyOS Phone emulator | PASS, Hypium 20/20 | `out/evidence/completion-harmony-emulator-postcommit/` |
+| Android API 35 emulator | PASS, instrumentation 99/99 plus unit/package | `out/evidence/completion-android-emulator-es31-final/` |
 
-The Android run completed as one full instrumentation invocation. No Launcher3 ANR or test
-isolation workaround was needed in the final run.
+The qualifying Android run used a cold-started host-GPU AVD with OpenGL ES 3.1
+(`ro.opengles.version=196609`) and completed as one full instrumentation invocation. A preceding
+back-to-back run found a stale system pointer-down and a later HardwareRenderer finalizer timeout;
+the pause test now calls the real view click handlers on the Activity UI thread. A diagnostic
+SwiftShader run exposed only ES 3.0 and was discarded rather than counted as a Motion pass.
 
 ## Measured HarmonyOS emulator behavior
 
