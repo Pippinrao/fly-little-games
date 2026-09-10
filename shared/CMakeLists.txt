@@ -281,6 +281,17 @@ if(FLYNES_BUILD_TESTS)
     flynes_enable_strict_warnings(flynes_runtime_test)
     add_test(NAME flynes_runtime COMMAND flynes_runtime_test)
 
+    find_package(Threads REQUIRED)
+    add_executable(flynes_runtime_pcm_contention_test tests/test_runtime_pcm_contention.cpp)
+    target_include_directories(flynes_runtime_pcm_contention_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(flynes_runtime_pcm_contention_test PRIVATE nes_abi Threads::Threads)
+    target_compile_features(flynes_runtime_pcm_contention_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_runtime_pcm_contention_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_runtime_pcm_contention_test)
+    add_test(NAME flynes_runtime_pcm_contention COMMAND flynes_runtime_pcm_contention_test)
+    set_tests_properties(flynes_runtime_pcm_contention PROPERTIES TIMEOUT 15)
+
     set(FLYNES_ANDROID_NDK_ROOT "" CACHE PATH
         "Android NDK root for the cross-sysroot policy regression test")
     set(FLYNES_ANDROID_POLICY_NINJA "" CACHE FILEPATH
