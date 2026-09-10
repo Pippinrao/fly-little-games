@@ -1,7 +1,19 @@
 # Nearby Multiplayer Implementation Progress
 
-Updated: 2026-09-10. Branch: `codex/nearby-multiplayer`.
+Updated: 2026-09-11. Branch: `codex/nearby-multiplayer`.
 Worktree: `E:/workspace/codes/games/fly-little-games/.worktrees/nearby-multiplayer`.
+
+## Latest: real transport experiment (2026-09-10)
+
+Earlier device-absence notes below are historical. Both Android and Harmony now appear in ADB/HDC; Android briefly went offline and recovered after a targeted reconnect. Both phones answered local-network ICMP, which is not gameplay evidence.
+
+`887852a` adds the standalone Quinn/rustls M0a candidate under `tools/nearby-quic-spike/`. Parent actually ran Android as QUIC listener and Windows as connector on the existing Wi-Fi: both directions' streams and DATAGRAM verified, exact public SPKI pin callback executed, matching exporter digests, both exits zero. A second valid-but-wrong SPKI failed during TLS on both ends, with no VERIFIED result. Windows-listener reverse-role experiment timed out and is not recorded as successful; no firewall/security change was made. Exact evidence and executable hash are in `docs/acceptance/2026-09-10-nearby-quic-spike.md`.
+
+`ca8c711` fixes an independently reviewed completion-versus-retry race. Parent and reviewers reran all 18 probe tests, and the spec/quality follow-ups passed. Existing unchanged shared build's 41 CTests also passed again (14.98s). Android and OHOS native probe builds/linking succeeded using their respective SDKs; this does not prove Harmony execution.
+
+`63dc22b` implements the isolated Harmony runner and actual native bridge; `b1a4487` fixes latest-Want precedence. Fresh parent verification passed 20 Rust tests, 6 Python tests, 5 actual TypeScript tests, fmt/clippy and both mobile builds. The actual unsigned HAP built. Updated Android binary was deployed to its owned temporary path and physically retested against Windows with matching exporter digests and zero exits. Evidence and hashes are recorded in the acceptance document.
+
+The owner reported automatic signing completed on 2026-09-11; rebuilding the isolated `.artifacts/nearby-quic-harmony-app` still reports no default-product signing configuration and produces no signed HAP. The owner was asked to verify that exact project rather than the product `harmony` directory. Preserve installed `com.flynes.emu` and use `com.flynes.nearbyprobe`. No phone-to-phone QUIC, production handshake, input, frame, PCM or playable multiplayer result is claimed. Approved design/schema are unchanged; unrelated product/signing edits in the worktree are preserved untouched. **Do not stop subsequent work merely because these component/probe tests pass.**
 
 ## Baseline and ownership
 
@@ -61,7 +73,7 @@ This slice owns pair_capability.hpp/.cpp, test_pair_capability.cpp and its share
 
 ## Device gate
 
-At the original implementation check, `adb devices -l` returned no attached device and `hdc`/`xcodebuild` were not on PATH. A subsequent independently produced `docs/acceptance/2026-09-09-nearby-device-audit.md` records an Android 16/API36 native component test pass and a Harmony native executable denied by device policy (exit 126). That file is preserved as found, not rewritten by this implementation. Neither result qualifies a physical bearer or phone-to-phone session. No pairing, TLS/QUIC, H.264 or device latency result is claimed.
+At the original implementation check, `adb devices -l` returned no attached device and `hdc`/`xcodebuild` were not on PATH. A subsequent independently produced `docs/acceptance/2026-09-09-nearby-device-audit.md` records an Android 16/API36 native component test pass and a Harmony native executable denied by device policy (exit 126). That file is preserved as found, not rewritten by this implementation. Neither historical result qualifies a physical bearer or phone-to-phone session. The newer Android↔Windows QUIC evidence is recorded above; pairing, H.264 and device latency qualification remain absent.
 
 | Platform/authority direction | Bearer + one-confirmation + QUIC evidence |
 |---|---|

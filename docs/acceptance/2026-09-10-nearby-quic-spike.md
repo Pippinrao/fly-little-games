@@ -39,6 +39,22 @@ Reverse-role experiment was **not successful**: Windows listener `192.168.3.18:6
 - Existing installed product bundle `com.flynes.emu` version 1000001 must not be overwritten. The independent `com.flynes.nearbyprobe` bundle was not found in a read-only query.
 - Supported execution path is a normally signed, isolated foreground HAP with N-API worker. Existing local signing files are not evidence that a new bundle is provisioned. No signing material has been inspected, copied into Git, or reused.
 
+## Follow-up — 2026-09-11
+
+`63dc22b` adds the real OHOS Rust static-library/C ABI, asynchronous N-API bridge, isolated foreground HAP template, and safe build/staging scripts. `b1a4487` fixes latest-Want precedence: new plain or malformed launches invalidate an older pending launch without cancelling an active worker. The independent specification follow-up passed. Code-quality review found no Critical/Important issues for disposable test-harness use; one uncorrected Minor is that dot-sourcing `build-mobile.ps1` leaves the caller's `$ErrorActionPreference` as `Stop`. Run in a separate PowerShell process until preference restoration is fixed. Review is not device or production acceptance.
+
+Fresh parent verification: 20 Rust tests, 6 Python runner/script tests, and 5 actual TypeScript launch-gate tests passed. Cargo fmt and strict clippy passed. Both exact locked Android and OHOS native builds succeeded. The staged unsigned HAP builds with the actual AArch64 library, not a mock. Its SHA-256 is `6d3e3c0e4c798e69cdcf3010fa7ed0941cf1ab6be23f5d6dfb98a5a0d4c80fa7`. Signing credentials are neither source nor evidence to publish.
+
+The updated Android executable was pushed only to the same owned temporary path. Host and device SHA-256 match: `6fc143e5d189713e75397b646297a3af5b49c0cb54ef5d2fc0f0dea9dca8f365`. Fresh Android-listener/Windows-client physical retest on `192.168.3.15:48517`:
+
+```text
+VERIFIED role=client stream=true datagram=true pin_checks=1 exporter_sha256=f0ef740f782c1b36ea26968fd24b9d4bdb396d97bf4a6a9a6448a3ae33073bd4
+VERIFIED role=server stream=true datagram=true pin_checks=0 exporter_sha256=f0ef740f782c1b36ea26968fd24b9d4bdb396d97bf4a6a9a6448a3ae33073bd4
+CLIENT_EXIT=0 SERVER_EXIT=0
+```
+
+The owner reported automatic signing completed, but the subsequent SDK build of `.artifacts/nearby-quic-harmony-app` still reported `No signingConfig found for product default`. There is no `entry-default-signed.hap` in that project's output. The owner was asked to verify the exact isolated project and save its signing settings. No product app, signing file, firewall or device security policy was changed by this work. Android and Harmony remain attached. Installation and physical phone-to-phone verification await a correctly signed isolated package; this is not a successful Harmony run.
+
 ## Not established
 
 No Android↔Harmony QUIC run yet; no iOS native run; no offline/routerless Wi-Fi group or single-confirmation qualification; no BLE/QR authentication, persistent friends, production ChannelBind, game input, picture/PCM sharing, latency qualification, reconnection, state recovery or mode switching. Do not convert these probe results into product support-matrix entries.

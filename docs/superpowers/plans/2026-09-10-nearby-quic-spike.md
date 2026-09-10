@@ -8,6 +8,10 @@
 
 **Tech stack:** Rust 1.96; pinned Quinn 0.11.11, rustls 0.23.43 (not the 0.24 development release), ring, rcgen 0.14.10, x509-parser 0.18.1; Cargo.lock; Windows and available Android/OHOS cross compilers.
 
+## Handoff status — 2026-09-11
+
+The original task checklists below are execution instructions, not up-to-date acceptance evidence. Task 1's candidate implementation/tests and spec/quality reviews are complete. Task 2's native cross-builds and Android↔Windows experiment are complete, but Android↔Harmony execution is pending. Task 3's FFI/NAPI, launch gate, safe staging and unsigned HAP are implemented and reviewed; matching signing and phone installation/run remain unverified. A Minor dot-source `$ErrorActionPreference` restoration defect remains. See the [current handoff](../../handoffs/2026-09-11-nearby-multiplayer-handoff.md) and [actual evidence](../../acceptance/2026-09-10-nearby-quic-spike.md). No product multiplayer UI or playable session is delivered by this spike.
+
 ## Evidence and bounds
 
 - Approved design §27 M0a and §28 require this before device-pair certification. Existing 41 CTests do not prove transport.
@@ -71,4 +75,5 @@ Do not stop at a green probe if further safe work is possible. Overall multiplay
 - [ ] Support explicit debug launch arguments `--ps bind ... --ps peer ... --ps pin ... --pb runProbe true` through EntryAbility Want, with type checks and one start per launch; malformed input must produce visible failure, not fallback. Log only probe results/public metadata, never private keys or raw exporter.
 - [ ] Use external Rust archive path CMake input and require it to exist. Build unsigned HAP with installed DevEco tools. Contract tests verify bundle isolation, INTERNET-only permission and asynchronous bridge; inspect real linked ELF and HAP entries.
 - [ ] Obtain matching debug signing through the supported DevEco project signing workflow. Existing `com.flynes.emu` app is version 1000001 and must not be replaced. No signature/profile/token material in Git; a new bundle's profile cannot be assumed from existing credentials. If signing requires interactive login or issuance, ask the user for that exact action with the ready project path.
+- [ ] Stage the source template and compiled native archive/header into a new ignored `.artifacts/nearby-quic-harmony-app/` project before opening DevEco. Signing changes belong to that ignored copy, not the tracked template. Refuse to overwrite an existing staging project so local signing configuration cannot be lost; subsequent native-library refreshes must not rewrite signing files.
 - [ ] Once signed, install only this distinct probe bundle and run Harmony client against Android server on the current local Wi-Fi. This proves encrypted device transport only; routerless group creation and product pairing remain separate acceptance items.
