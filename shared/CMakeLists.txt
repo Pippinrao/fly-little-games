@@ -213,6 +213,13 @@ set_target_properties(flynes_session_codec PROPERTIES
 )
 flynes_enable_strict_warnings(flynes_session_codec)
 
+add_library(flynes_initial_plan_lock STATIC src/session/initial_plan_lock.cpp)
+target_link_libraries(flynes_initial_plan_lock PUBLIC flynes_session_codec)
+target_include_directories(flynes_initial_plan_lock PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+target_compile_features(flynes_initial_plan_lock PUBLIC cxx_std_17)
+set_target_properties(flynes_initial_plan_lock PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+flynes_enable_strict_warnings(flynes_initial_plan_lock)
+
 add_library(flynes_session STATIC
     src/session/flynes_session.cpp
 )
@@ -706,6 +713,13 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_pair_capability_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_pair_capability_test)
     add_test(NAME flynes_pair_capability COMMAND flynes_pair_capability_test)
+
+    add_executable(flynes_initial_plan_lock_test tests/test_initial_plan_lock.cpp)
+    target_link_libraries(flynes_initial_plan_lock_test PRIVATE flynes_initial_plan_lock)
+    target_compile_features(flynes_initial_plan_lock_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_initial_plan_lock_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_initial_plan_lock_test)
+    add_test(NAME flynes_initial_plan_lock COMMAND flynes_initial_plan_lock_test)
 
     add_executable(flynes_session_codec_loopback_test
         tests/test_session_codec_loopback.cpp
