@@ -9,6 +9,7 @@ import {
 import { computeViewport } from '../../../main/ets/pages/ViewportGeometry';
 import {
   debugSideloadUrls,
+  encodeSideloadFileName,
   isDebugSideloadFixture,
   shouldDownloadSideloadFile
 } from '../../../main/ets/platform/DebugSideload';
@@ -58,6 +59,11 @@ export default function settingsHelpersTest() {
       expect(isDebugSideloadFixture('slow-2048-roms.zip')).assertTrue();
       expect(isDebugSideloadFixture('my-favorite-game.zip')).assertFalse();
       expect(isDebugSideloadFixture('flynes-tdd-slow-01.nes')).assertFalse();
+    });
+
+    it('encodes_chinese_sideload_names_as_utf8_uri_components', 0, () => {
+      expect(encodeSideloadFileName('魂斗罗.zip')).assertEqual(
+        '%E9%AD%82%E6%96%97%E7%BD%97.zip');
     });
   });
 }
