@@ -14,6 +14,9 @@ final class CatalogSourceModel: ObservableObject {
     @Published var sources: [CatalogSource] = []
     @Published var busy = false
     @Published var error: String?
+    /// Android keeps the Game Center visible and reports the launch in its status
+    /// line while the selected ROM is being resolved.
+    @Published var launching: String?
     @Published var generation = 0
     private let queue = DispatchQueue(label: "com.flynes.catalog.sources", qos: .userInitiated)
     private var initialized = false
@@ -50,6 +53,24 @@ final class CatalogSourceModel: ObservableObject {
         queue.async {
             let result = Result { try CatalogSourceService.sharedInstance().romData(canonicalID: canonicalID) }
             DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// Resolves the playable ROM before any navigation happens, so a failure leaves
+    /// the user in the Game Center with the Android launch-failure status instead of
+    /// a separate error screen. `onReady` runs only for a resolved ROM.
+    func launch(canonicalID: String, title: String, onReady: @escaping (Data) -> Void) {
+        guard launching == nil else { return }
+        error = nil
+        launching = title
+        prepareROM(canonicalID) { [weak self] result in
+            guard let self else { return }
+            self.launching = nil
+            switch result {
+            case .success(let data): onReady(data)
+            case .failure: self.error = FlyNesLocalizedString("library.launch_failed")
+            }
+            self.generation += 1
         }
     }
 }

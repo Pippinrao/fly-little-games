@@ -132,6 +132,8 @@
 "settings.temporal" = "时域模式";
 "settings.temporal_native" = "原生帧";
 "library.continue" = "继续游戏";
+"library.launching_game" = "正在启动 %@…";
+"library.launch_failed" = "无法启动所选游戏，请重新扫描它的来源。";
 "library.search.empty" = "没有匹配的游戏";
 "library.source.add_hint" = "在游戏源中添加你的游戏文件夹。";
 "library.game_count" = "%ld 个游戏 · 滑动浏览";

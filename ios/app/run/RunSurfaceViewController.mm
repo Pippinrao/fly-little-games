@@ -7,10 +7,17 @@
 #import "FlyNesDisplayLinkPacer.h"
 #import "FlyNesAudioPlayer.h"
 #import "AppLocalization.h"
+#import "CoverCapturePolicy.hpp"
+#import "FlyNesCoverStore.h"
+#import "GameCoverPolicy.hpp"
 #import <AVFoundation/AVFoundation.h>
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+
+#include <cmath>
+#include <memory>
+#include <string>
 
 #include "flynes/product/pause_actions.hpp"
 #include "PlaybackClock.hpp"
@@ -61,6 +68,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     FlyNesAudioPlayer *audio_;
     CAMetalLayer *metalLayer_;
     flynes::ios::PlaybackClock clock_;
+    flynes::ios::CoverCaptureSession coverSession_;
     uint32_t buttons_;
     flynes::ios::FrameInputLatch input_;
     BOOL visible_;
@@ -506,6 +514,8 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
         // Always drain the runtime PCM FIFO, including when sound is disabled.
         NSData *pcm = [runtime_ pullPCM];
         if (!audioInterrupted_) [audio_ enqueuePCM:pcm];
+        // Sample the produced native frame, including steps display presentation skips.
+        [self captureCoverFrame];
         produced = YES;
     }
     if (produced) {
@@ -513,6 +523,28 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
         if (pixels.length) [renderer_ uploadRgb565:pixels width:256 height:240];
     }
     [self drawFrame];
+}
+
+/// Android `CoverCaptureCoordinator`: sample the game-only native frame at
+/// 2/4/6/8 seconds, score it off the main thread, and persist the best improvement.
+/// The UI, control overlay, CRT output, and pause drawer are never sampled.
+- (void)captureCoverFrame
+{
+    if (self.canonicalId.length == 0) return;
+    uint64_t sequence = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    NSData *pixels = [runtime_ copyLatestRgb565FrameWithSequence:&sequence width:&width height:&height];
+    if (pixels.length == 0 || width == 0 || height == 0) return;
+    if (!coverSession_.note_frame(sequence)) return;
+    const std::string canonical(self.canonicalId.UTF8String ?: "");
+    FlyNesCoverStore *store = FlyNesCoverStore.sharedInstance;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        const double score = flynes::ios::game_cover_score(
+            static_cast<const uint8_t *>(pixels.bytes), pixels.length, width, height);
+        if (!coverSession_.consider(score)) return;
+        [store storeRgb565Frame:pixels canonicalId:@(canonical.c_str()) width:width height:height];
+    });
 }
 
 - (void)drawFrame
@@ -599,6 +631,8 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     NSAssert(NSThread.isMainThread, @"Playback reset is main-thread owned");
     [self stopPlayback];
     romReady_ = self.romData.length > 0 && [runtime_ loadRom:self.romData error:error];
+    // Android restarts the cover best-score gate per play session.
+    coverSession_ = flynes::ios::CoverCaptureSession{};
     [self updatePlayback];
     return romReady_;
 }

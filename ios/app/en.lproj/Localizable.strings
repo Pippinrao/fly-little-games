@@ -132,6 +132,8 @@
 "settings.temporal" = "Temporal mode";
 "settings.temporal_native" = "Native frames";
 "library.continue" = "Continue";
+"library.launching_game" = "Starting %@…";
+"library.launch_failed" = "Could not start the selected game. Try scanning its source again.";
 "library.search.empty" = "No matching games";
 "library.source.add_hint" = "Add your game folders in Sources.";
 "library.game_count" = "%ld games · Swipe to browse";

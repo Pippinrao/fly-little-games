@@ -1,7 +1,9 @@
 import SwiftUI
 
 enum LibraryRoute: Hashable {
-    case run(String)
+    /// The resolved ROM travels with the route, so reaching the run screen already
+    /// means the game could be opened.
+    case run(canonicalId: String, rom: Data)
 }
 
 enum LibraryFilter: String, CaseIterable, Identifiable {
@@ -32,6 +34,7 @@ struct CatalogLibraryView: View {
     @State private var settingsOpen = false
     @State private var path = NavigationPath()
     @ObservedObject private var sources = CatalogSourceModel.shared
+    @ObservedObject private var covers = GameCoverModel.shared
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.locale) private var locale
 
@@ -80,7 +83,9 @@ struct CatalogLibraryView: View {
                 } else {
                     GeometryReader { geometry in
                         HStack(spacing: 8) {
-                            CatalogGameDetailView(game: selectedGame, largeText: largeText)
+                            CatalogGameDetailView(game: selectedGame, largeText: largeText,
+                                                  cover: selectedGame.flatMap { covers.image(for: $0.id) },
+                                                  onLaunch: launch)
                                 .frame(width: max(0, (geometry.size.width - 8) * 0.3))
                             VStack(alignment: .leading, spacing: 4) {
                                 status.lineLimit(2).frame(minHeight: 32, alignment: .leading)
@@ -90,7 +95,8 @@ struct CatalogLibraryView: View {
                                         ForEach(snapshot.games) { game in
                                             Button { selectedID = game.id } label: {
                                                 CatalogGameRow(game: game, selected: selectedID == game.id,
-                                                               largeText: largeText)
+                                                               largeText: largeText,
+                                                               cover: covers.image(for: game.id))
                                             }
                                             .buttonStyle(.plain)
                                             .accessibilityIdentifier("game_card_" + game.id)
@@ -109,7 +115,7 @@ struct CatalogLibraryView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: LibraryRoute.self) { route in
                 switch route {
-                case .run(let id): RunGameContainer(canonicalId: id, path: $path)
+                case .run(let id, let rom): RunGameContainer(canonicalId: id, romData: rom, path: $path)
                 }
             }
             .fullScreenCover(isPresented: $settingsOpen) { SettingsView() }
@@ -161,6 +167,8 @@ struct CatalogLibraryView: View {
     @ViewBuilder private var status: some View {
         if sources.busy {
             HStack { ProgressView(); Text("library.source.working") }
+        } else if let launching = sources.launching {
+            HStack { ProgressView(); Text(String(format: FlyNesLocalizedString("library.launching_game"), launching)) }
         } else if let error = sources.error {
             Text(error).foregroundColor(.red)
         } else if snapshot.games.isEmpty {
@@ -180,20 +188,20 @@ struct CatalogLibraryView: View {
             .accessibilityLabel(Text(label)).accessibilityIdentifier(id)
     }
 
+    /// Android resolves and commits the selected game before leaving the Game
+    /// Center; a failure is reported in the status line with the grid still visible.
+    private func launch(_ game: CatalogGame) {
+        sources.launch(canonicalID: game.id, title: game.titlePrimary) { rom in
+            path.append(LibraryRoute.run(canonicalId: game.id, rom: rom))
+        }
+    }
+
     private func reloadSnapshot() {
         let rows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
             forCategory: LibraryFilter(rawValue: category)?.rawValue ?? "ALL", query: searchText)
-        let games = rows.compactMap { row -> CatalogGame? in
-            guard let id = row["canonicalId"] as? String,
-                  let name = row["displayName"] as? String else { return nil }
-            return CatalogGame(canonicalId: id, displayName: name,
-                compatibilityState: (row["compatibilityState"] as? NSNumber)?.uint32Value ?? 0,
-                freshness: (row["freshness"] as? NSNumber)?.uint32Value ?? 0,
-                sourceScope: (row["sourceScope"] as? NSNumber)?.uint32Value ?? 0,
-                favorite: (row["favorite"] as? NSNumber)?.uint32Value ?? 0,
-                lastPlayedSequence: (row["lastPlayedSequence"] as? NSNumber)?.uint64Value ?? 0)
-        }
+        let games = rows.compactMap { CatalogGameFactory.game(from: $0, localeIdentifier: locale.identifier) }
         snapshot = CatalogSnapshot(generation: snapshot.generation &+ 1, games: games)
         if !games.contains(where: { $0.id == selectedID }) { selectedID = games.first?.id ?? "" }
+        covers.preload(canonicalIds: games.map(\.id))
     }
 }

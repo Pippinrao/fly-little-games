@@ -34,6 +34,9 @@ endif()
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "16.4" CACHE STRING "Minimum supported iOS")
 set(CMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH "NO")
+# Empty = unsigned device archive (Sideloadly path). Set to an Apple development
+# team id to build an installable, signed arm64 bundle for a physical iPhone.
+set(FLYNES_IOS_SIGNING_TEAM "" CACHE STRING "Apple development team id for device signing")
 
 set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FLYNES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -48,6 +51,8 @@ set(FLYNES_PRODUCT_SWIFT
     CatalogLibraryView.swift
     CatalogGameRow.swift
     CatalogGame.swift
+    CatalogGameFactory.swift
+    CatalogCoverModel.swift
     CatalogGameDetailView.swift
     CatalogSourceManagementView.swift
     SettingsView.swift
@@ -63,6 +68,8 @@ set(FLYNES_PRODUCT_OBJCXX
     platform/CatalogScanCoordinator.mm
     platform/CatalogSourceService.mm
     platform/AppLocalization.mm
+    platform/CatalogPresentation.mm
+    platform/FlyNesCoverStore.mm
     platform/RomPackage.cpp
     audio/FlyNesAudioPlayer.mm
     run/RunSurfaceViewController.mm
@@ -165,6 +172,8 @@ target_link_libraries(FlyNES PRIVATE
     "-framework MetalKit"
     "-framework QuartzCore"
     "-framework CoreHaptics"
+    "-framework CoreGraphics"
+    "-framework ImageIO"
     "-framework AVFoundation"
 )
 target_link_options(FlyNES PRIVATE
@@ -204,7 +213,22 @@ if(FLYNES_IOS_IS_SIMULATOR)
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
     )
+elseif(FLYNES_IOS_SIGNING_TEAM)
+    # Physical-device qualification path. The team id is supplied by the operator
+    # on the command line; no credential is stored in this repository. Automatic
+    # signing lets Xcode mint a development profile for com.flynes.app, and the
+    # resulting bundle is reinstalled on the same iPhone by Xcode or devicectl.
+    message(STATUS "FlyNES device build signs for team ${FLYNES_IOS_SIGNING_TEAM}")
+    set_target_properties(FlyNES PROPERTIES
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED YES
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED YES
+        XCODE_ATTRIBUTE_CODE_SIGN_STYLE Automatic
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${FLYNES_IOS_SIGNING_TEAM}"
+        XCODE_ATTRIBUTE_PROVISIONING_PROFILE_SPECIFIER ""
+    )
 else()
+    # Unsigned device archive: a compile/link artifact for the Sideloadly path.
     target_link_options(FlyNES PRIVATE "-Wl,-no_adhoc_codesign")
     set_target_properties(FlyNES PROPERTIES
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
@@ -221,8 +245,14 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
     set(XCTest_INCLUDE_DIR "${XCTest_LIBRARY}/Headers" CACHE PATH "" FORCE)
     find_package(XCTest REQUIRED)
     set_target_properties(FlyNES PROPERTIES ENABLE_EXPORTS YES CXX_VISIBILITY_PRESET default)
-    xctest_add_bundle(FlyNESRuntimeTests FlyNES ../tests/PlaybackRuntimeBridgeTests.mm ../tests/GamepadOverlayTests.mm ../tests/PlaybackAudioPlayerTests.mm)
-    target_include_directories(FlyNESRuntimeTests PRIVATE bridge run "../../shared/include" "../../core/include")
+    xctest_add_bundle(FlyNESRuntimeTests FlyNES
+        ../tests/PlaybackRuntimeBridgeTests.mm
+        ../tests/GamepadOverlayTests.mm
+        ../tests/PlaybackAudioPlayerTests.mm
+        ../tests/CatalogTitleCoverTests.mm
+        ../tests/CatalogSourceImportTests.mm
+        ../tests/PlaybackSoakTests.mm)
+    target_include_directories(FlyNESRuntimeTests PRIVATE bridge run platform "../../shared/include" "../../core/include")
     target_link_libraries(FlyNESRuntimeTests PRIVATE flynes_runtime "-framework UIKit" "-framework AVFoundation" "-framework CoreGraphics")
     target_compile_features(FlyNESRuntimeTests PRIVATE cxx_std_17)
     set_target_properties(FlyNESRuntimeTests PROPERTIES

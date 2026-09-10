@@ -221,6 +221,12 @@
 
 - (NSData *)copyLatestRgb565Frame
 {
+    return [self copyLatestRgb565FrameWithSequence:nullptr width:nullptr height:nullptr];
+}
+
+- (NSData *)copyLatestRgb565FrameWithSequence:(uint64_t *)sequence
+                                        width:(uint32_t *)width
+                                       height:(uint32_t *)height{
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (runtime_ == nullptr)
         return nil;
@@ -232,6 +238,9 @@
         runtime_, pixels.data(), pixels.size(), &meta);
     if (status != FLY_RESULT_OK || meta.bytes_written != FLY_RUNTIME_RGB565_BYTES)
         return nil;
+    if (sequence != nullptr) *sequence = meta.frame_sequence;
+    if (width != nullptr) *width = meta.width;
+    if (height != nullptr) *height = meta.height;
     return [NSData dataWithBytes:pixels.data() length:pixels.size()];
 }
 

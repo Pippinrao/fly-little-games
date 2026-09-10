@@ -43,54 +43,28 @@ struct RunGameView: UIViewControllerRepresentable {
 }
 
 /// Pause drawer Resume / Game Center / Settings. Game Center pops to the library root.
+/// The ROM is already resolved by the Game Center before this screen is pushed, which
+/// is what keeps a launch failure inside the library instead of a separate error page.
 struct RunGameContainer: View {
     let canonicalId: String
+    let romData: Data
     @Binding var path: NavigationPath
     @State private var showSettings = false
     @State private var overlayReloadGeneration = 0
-    @State private var romData: Data?
-    @State private var loadError: String?
-    @State private var loading = false
 
     var body: some View {
-        Group {
-            if let romData = romData {
-                RunGameView(canonicalId: canonicalId, romData: romData,
-                            onPauseCommand: { command in
-                    if command == "game_center" { path = NavigationPath() }
-                    else if command == "settings" { showSettings = true }
-                }, overlayReloadGeneration: overlayReloadGeneration)
-                .ignoresSafeArea()
-            } else if let error = loadError {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle").font(.largeTitle)
-                    Text(error).multilineTextAlignment(.center)
-                    Button("library.source.retry", action: loadROM)
-                    Button("game_center.title") { path = NavigationPath() }
-                }.padding()
-            } else {
-                ProgressView("library.source.loading_game")
-            }
-        }
+        RunGameView(canonicalId: canonicalId, romData: romData,
+                    onPauseCommand: { command in
+            if command == "game_center" { path = NavigationPath() }
+            else if command == "settings" { showSettings = true }
+        }, overlayReloadGeneration: overlayReloadGeneration)
+        .ignoresSafeArea()
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear { if romData == nil && !loading { loadROM() } }
         .fullScreenCover(isPresented: $showSettings, onDismiss: {
             overlayReloadGeneration += 1
         }) {
             SettingsView()
-        }
-    }
-
-    private func loadROM() {
-        loading = true
-        loadError = nil
-        CatalogSourceModel.shared.prepareROM(canonicalId) { result in
-            loading = false
-            switch result {
-            case .success(let data): romData = data
-            case .failure(let error): loadError = error.localizedDescription
-            }
         }
     }
 }

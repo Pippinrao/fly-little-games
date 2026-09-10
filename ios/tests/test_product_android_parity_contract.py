@@ -225,9 +225,24 @@ def main() -> int:
             "iOS must call GameCenterState::filtered")
     require("items_for" in bridge or "filtered(" in bridge,
             "iOS must call GameCenterState::filtered / items_for")
-    require("title_en" in bridge and "title_zh_hans" in bridge
-            and "original_filename" in bridge,
-            "Game Center search must use title_en / title_zh_hans / original_filename")
+    # Android GameCenterItem carries title_en / title_zh_hans / original_filename and
+    # GameCenterState::filtered matches all three. The iOS bridge must populate the
+    # corresponding row keys from the presentation helper rather than passing a raw
+    # filename as a title.
+    item_body = bridge[bridge.find("game_center_item_from_row"):]
+    require("title_en" in item_body or "titleEn" in item_body,
+            "GameCenterItem must receive title_en")
+    require("title_zh_hans" in item_body or "titleZhHans" in item_body,
+            "GameCenterItem must receive title_zh_hans")
+    require("searchAliases" in item_body or "original_filename" in item_body
+            or "originalFilename" in item_body,
+            "GameCenterItem must receive filename aliases")
+    require("CatalogPresentation.h" in bridge,
+            "catalog rows must derive titles from FlyNesCatalogPresentation")
+    require("fieldsForFilename" in bridge and "trustedBuiltin" in bridge,
+            "catalog titles must come from the trusted-builtin aware helper")
+    require("titleZhHans" in bridge and "titleEn" in bridge and "searchAliases" in bridge,
+            "catalog rows must publish titleEn / titleZhHans / searchAliases")
     gc_at = bridge.rfind("gameCenterFilteredGamesForCategory")
     require(gc_at >= 0, "app bridge must implement gameCenterFilteredGamesForCategory")
     scan_at = bridge.find("scanBorrowedFd", gc_at)
@@ -308,8 +323,19 @@ def main() -> int:
     if gc_at >= 0:
         review_require("dismiss()" not in run_swift[gc_at:gc_at + 180],
                        "pause Game Center must not dismiss() a single NavigationLink")
-    review_require("LibraryRoute" in detail or "navigationDestination" in detail,
-                   "Play must push run as a path value, not a nested NavigationLink destination")
+    # Android resolves and commits the selection before leaving the Game Center, so a
+    # launch failure stays in the library. Play therefore hands the resolved ROM to the
+    # library, which owns the path value, instead of a self-contained NavigationLink.
+    review_require("LibraryRoute" in library and "navigationDestination" in library,
+                   "Play must push run as a path value owned by the Game Center")
+    review_require("onLaunch" in detail,
+                   "selected detail must hand Play to the Game Center launch resolver")
+    review_require("romData" in library and "romData" in run_swift,
+                   "the resolved ROM must travel with the run route")
+    review_require("library.launch_failed" in source_model or "launch_failed" in source_model,
+                   "a failed launch must report in the Game Center status line")
+    review_require("NavigationLink" not in detail,
+                   "Play must not navigate before the game is known to be openable")
 
     uses_named_space = "coordinateSpace" in editor and ".named" in editor
     uses_translation = "translation" in editor

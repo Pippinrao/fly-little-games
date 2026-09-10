@@ -1,0 +1,87 @@
+iOS simulator + device-build evidence, 2026-09-11 round 2
+Branch codex/ios-simulator-ready. Mac: MacBookPro14,1 macOS 13.0.1, Xcode 14.3.1
+(14E300c), iPhoneSimulator16.4 SDK, x86_64, simulator iPhone 14
+988243AC-5704-45B6-9151-FF3A9B7AFD35.
+
+Commands were run from /Users/apple/Developer/fly-little-games-ios after syncing
+ios/app, ios/scripts, ios/tests, ios/abi from the Windows worktree.
+
+BUILD
+  xcodebuild build: ** BUILD SUCCEEDED **  (config build/final-build.log)
+  Targets FlyNES, FlyNESRuntimeTests, FlyNESUITests.
+
+FlyNESRuntimeTests (build/final-runtime2.log) — XCTest on the real simulator
+  Executed 35 tests, with 0 failures (0 unexpected) in 185.938 seconds
+  ** TEST EXECUTE SUCCEEDED **
+  CatalogTitleCoverTests            10 passed
+    trusted builtin bilingual title / external filename is not a translation /
+    ZIP outer name outranks entry name / alias search / unclassified script /
+    cover offsets 120-240-360-480 / black+exposure rejection / improvement gate /
+    320x240 atomic persistence and nearest-neighbour pixels / malformed input refused
+  CatalogSourceImportTests           4 passed
+    directory import with a Chinese filename, a ZIP with a Chinese entry name and
+    an ignored .txt; both variants reopen by persisted source; favorite and recent
+    survive a restart; rescan and removal; ZIP outer/entry title split; duplicate
+    payloads share one canonical id and one card; unsupported/cancelled refused
+  GamepadOverlayTests               13 passed
+  PlaybackAudioPlayerTests           1 passed
+    real AVAudioEngine mixer output, not a nonempty PCM array
+  PlaybackRuntimeBridgeTests         5 passed
+  PlaybackSoakTests                  2 passed
+    sustained playback, no input at all: 36000 produced frames, 36000 observed
+    sequences, cover sampling exactly at 120/240/360/480, PCM always <= 4096
+    samples per frame, resident memory bounded
+      soak frames=36000 samples=36000 audio=28752653 peak_resident=171347968
+    (read from the run container: Documents/flynes-ios-soak.txt; ~163 MiB peak)
+    30 pause/checkpoint/discard-audio/restore cycles keep the catalog stable
+  NOTE: a tight XCTest frame loop needs its own @autoreleasepool; without one the
+  harness reports ~920 MB of growth that the runtime does not actually leak.
+
+FlyNESUITests (build/final-ui3.log) — XCUITest on the real simulator
+  Executed 5 tests, with 0 failures (0 unexpected) in 204.254 seconds
+  ** TEST EXECUTE SUCCEEDED **
+    testAndroidGameCenterSelectionStaysBesideGrid        9.7 s
+    testControlsResetRestoresDistinctButtons            10.3 s
+    testAndroidBilingualTitlesAndAutomaticCoverCapture  22.6 s
+      English UI: card shows "From Below" + "来自下方", never "from_below.nes"
+      Chinese UI: card shows "来自下方" + "From Below"
+      6 s of play creates a SHA-256-named 320x240 PNG under Library/Caches/covers/v1
+    testSettingsPersistAcrossRestartAndFollowInterfaceLanguage  20.3 s
+      audio setting persists across terminate+relaunch; language section in sync
+    testLibraryLaunchPauseSettingsResumeAndReturn      140.6 s
+      10 full pause -> settings -> done -> resume -> pause -> game center -> relaunch
+      cycles, then a process exit and cold start
+
+Windows host checks (all 9 iOS Python checks)
+  PASS test_playback_wiring_contract.py
+  PASS test_product_android_parity_contract.py
+  PASS test_product_catalog_contract.py  (now also locks covers/v1, SHA-256 names,
+       320x240, atomic rename, no-backup, presentation helper compiled in, device
+       signing opt-in, device scripts present)
+  PASS test_product_ipa_contract.py
+  PASS test_product_metal_contract.py
+  PASS test_product_shell_contract.py
+  PASS test_session_schema_contract.py
+  PASS test_simulator_result_validator.py
+  PASS test_stage1_contract.py
+
+DEVICE BUILD (arm64, unsigned — Sideloadly path)
+  bash ios/scripts/build_device.sh                exit 0
+  build/ios-device/Release-iphoneos/FlyNES.app
+  lipo -archs = arm64; no embedded.mobileprovision; both localizations and
+  default.metallib present
+  bash ios/scripts/package_device.sh              exit 0
+  build/ios-device/evidence/FlyNES-unsigned.ipa
+  sha256 a2e419c5b9b8746f7f1ca3bb65ce4f319b69f732c5ba1f909345466b5fb09ffb
+  MinimumOSVersion 16.4
+
+UNVERIFIED — do not claim these
+  * No iPhone 16 Pro Max was connected. No signed device install, no real-device
+    haptics, multi-touch, audio listening, Dynamic Island/safe-area observation.
+  * No true 30-minute wall-clock session on hardware; the soak above is an
+    accelerated maximum-speed runtime budget, and it does not establish thermal,
+    power, or refresh-rate behaviour.
+  * The system Files picker's own tap and cancel path: the logic behind it is
+    covered by CatalogSourceImportTests, the system UI is not.
+  * No high-refresh (120 Hz) qualification: the display clock is still fixed at 60
+    and FlyNesDisplayLinkPacer still records target timestamps.
