@@ -4,6 +4,7 @@
 // here; everything the picker hands to the app is exercised.
 #import <XCTest/XCTest.h>
 #import "../app/platform/CatalogSourceService.h"
+#import "../app/platform/FlyNesBookmarkStore.h"
 #import "../app/bridge/FlyNesAppBridge.h"
 #include <spawn.h>
 #include <sys/wait.h>
@@ -187,6 +188,94 @@ static int run_zip(NSString *workingDirectory, NSArray<NSString *> *arguments)
     XCTAssertEqualObjects(cards.firstObject[@"titleZhHans"], @"来往下方的冒险 (USA)");
 }
 
+- (void)assertRepeatedImportCanBeRemovedOnce:(BOOL)directory
+{
+    NSURL *file = [sources_ URLByAppendingPathComponent:@"repeat.nes"];
+    XCTAssertTrue([[self romFixture] writeToURL:file atomically:YES]);
+    NSURL *url = directory ? sources_ : file;
+    NSString *first = [service_ addURL:url directory:directory error:nil];
+    XCTAssertNotNil(first);
+    // Reopening the service ensures identity comes from persisted bookmarks.
+    service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:nil];
+    NSString *second = [service_ addURL:url directory:directory error:nil];
+    XCTAssertEqualObjects(first, second, @"selecting the same source again must refresh it");
+    XCTAssertEqual(service_.sources.count, 1u, @"duplicate imports must not require multiple removals");
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, 1u);
+    XCTAssertTrue([service_ removeUUID:first error:nil]);
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, 0u,
+                   @"one Remove must remove a repeatedly imported source's games");
+    bridge_ = [[FlyNesAppBridge alloc] init];
+    XCTAssertTrue([bridge_ createWithDataRoot:root_.path cacheRoot:root_.path error:nil]);
+    service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:nil];
+    XCTAssertEqual(service_.sources.count, 0u);
+    XCTAssertEqual([bridge_ catalogSnapshotGames].count, 0u);
+    XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:file.path], @"Remove must preserve original ROMs");
+}
+
+- (void)testRepeatedFileImportNeedsOnlyOneRemoval { [self assertRepeatedImportCanBeRemovedOnce:NO]; }
+- (void)testRepeatedFolderImportNeedsOnlyOneRemoval { [self assertRepeatedImportCanBeRemovedOnce:YES]; }
+
+- (void)assertLegacyDuplicateRemovalWithMissingIndex:(BOOL)missingIndex
+{
+    NSURL *file = [sources_ URLByAppendingPathComponent:@"legacy.nes"];
+    XCTAssertTrue([[self romFixture] writeToURL:file atomically:YES]);
+    NSString *first = [service_ addURL:file directory:NO error:nil];
+    XCTAssertNotNil(first);
+    // Reproduce the persisted shape from older builds without using addURL's
+    // current duplicate policy: two UUIDs/bookmarks point to the very same file.
+    NSUUID *duplicate = NSUUID.UUID;
+    uuid_t bytes; [duplicate getUUIDBytes:bytes];
+    NSArray *records = @[@{@"url":file, @"relativePath":file.lastPathComponent,
+                          @"displayName":file.lastPathComponent}];
+    XCTAssertTrue([bridge_ scanFileRecords:records
+                                sourceUUID:[NSData dataWithBytes:bytes length:16] sourceScope:3
+                                incomplete:NO error:nil]);
+    FlyNesBookmarkStore *bookmarks = [[FlyNesBookmarkStore alloc] initWithDefaults:defaults_];
+    [bookmarks setBookmark:[bookmarks bookmarkForURL:file error:nil] forUUID:duplicate];
+    NSMutableDictionary *duplicateRow = [service_.sources.firstObject mutableCopy];
+    duplicateRow[@"uuid"] = duplicate.UUIDString;
+    [defaults_ setObject:@[service_.sources.firstObject, duplicateRow] forKey:@"flynes.source_metadata_v1"];
+    if (missingIndex) {
+        NSUUID *firstUUID = [[NSUUID alloc] initWithUUIDString:first];
+        uuid_t firstBytes; [firstUUID getUUIDBytes:firstBytes];
+        XCTAssertTrue([bridge_ removeSourceUUID:[NSData dataWithBytes:firstBytes length:16] scope:3 error:nil]);
+    }
+    service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:nil];
+    XCTAssertEqual(service_.sources.count, 2u);
+    XCTAssertTrue([service_ removeUUID:first error:nil]);
+    XCTAssertEqual(service_.sources.count, 0u, @"one removal must also handle old duplicate records");
+    XCTAssertEqual([bridge_ catalogSnapshotGames].count, 0u);
+    XCTAssertEqual([defaults_ dictionaryForKey:@"flynes.source_uuid_bookmarks_v1"].count, 0u);
+    XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:file.path]);
+    bridge_ = [[FlyNesAppBridge alloc] init];
+    XCTAssertTrue([bridge_ createWithDataRoot:root_.path cacheRoot:root_.path error:nil]);
+    service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:nil];
+    XCTAssertEqual(service_.sources.count, 0u);
+    XCTAssertEqual([bridge_ catalogSnapshotGames].count, 0u);
+}
+
+- (void)testRemovingLegacyDuplicateSourceClearsAllCopies { [self assertLegacyDuplicateRemovalWithMissingIndex:NO]; }
+- (void)testRemovingLegacySourceWithMissingIndexStillClearsDuplicates { [self assertLegacyDuplicateRemovalWithMissingIndex:YES]; }
+
+- (void)testDistinctSourcesWithSameGameRemainIndependent
+{
+    NSURL *firstURL = [sources_ URLByAppendingPathComponent:@"first.nes"];
+    NSURL *secondURL = [sources_ URLByAppendingPathComponent:@"second.nes"];
+    NSData *rom = [self romFixture];
+    XCTAssertTrue([rom writeToURL:firstURL atomically:YES]);
+    XCTAssertTrue([rom writeToURL:secondURL atomically:YES]);
+    NSString *first = [service_ addURL:firstURL directory:NO error:nil];
+    NSString *second = [service_ addURL:secondURL directory:NO error:nil];
+    XCTAssertNotNil(first); XCTAssertNotNil(second);
+    XCTAssertNotEqualObjects(first, second);
+    XCTAssertTrue([service_ removeUUID:first error:nil]);
+    NSArray *cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""];
+    XCTAssertEqual(cards.count, 1u, @"another independently imported file still supplies this game");
+    XCTAssertEqualObjects([service_ romDataForCanonicalID:cards.firstObject[@"canonicalId"] error:nil], rom);
+    XCTAssertTrue([service_ removeUUID:second error:nil]);
+    XCTAssertEqual([bridge_ catalogSnapshotGames].count, 0u);
+}
+
 - (void)testDuplicateGamesAreCanonicalizedToOneRow
 {
     NSData *rom = [self romFixture];
@@ -202,6 +291,86 @@ static int run_zip(NSString *workingDirectory, NSArray<NSString *> *arguments)
     XCTAssertNotEqualObjects(rows[0][@"variantId"], rows[1][@"variantId"]);
     NSArray<NSDictionary *> *cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""];
     XCTAssertEqual(cards.count, 1u, @"the Game Center must show a canonical game once");
+}
+
+// The phone crash happened in presentation, not scanning. Existing import tests
+// only presented one canonical payload, even when they imported several files.
+- (void)verifyDistinctLibraryWithCount:(NSUInteger)count
+{
+    self.continueAfterFailure = NO;
+    NSData *fixture = [self romFixture];
+    XCTAssertGreaterThan(fixture.length, 32u);
+    for (NSUInteger index = 0; index < count; ++index) {
+        NSMutableData *rom = [fixture mutableCopy];
+        uint8_t *bytes = static_cast<uint8_t *>(rom.mutableBytes);
+        bytes[rom.length - 2] = static_cast<uint8_t>(index >> 8);
+        bytes[rom.length - 1] = static_cast<uint8_t>(index & 255u);
+        NSString *name = [NSString stringWithFormat:@"Game-%03lu.nes", (unsigned long)index];
+        XCTAssertTrue([rom writeToURL:[sources_ URLByAppendingPathComponent:name] atomically:YES]);
+        NSString *alias = [NSString stringWithFormat:@"别名-%03lu.nes", (unsigned long)index];
+        XCTAssertTrue([rom writeToURL:[sources_ URLByAppendingPathComponent:alias] atomically:YES]);
+    }
+    NSError *failure = nil;
+    NSString *uuid = [service_ addURL:sources_ directory:YES error:&failure];
+    XCTAssertNotNil(uuid, @"%@", failure);
+    XCTAssertEqual([bridge_ catalogSnapshotGames].count, count * 2);
+    NSArray<NSDictionary *> *cards = nil;
+    XCTAssertNoThrow(cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""]);
+    XCTAssertEqual(cards.count, count, @"variants must collapse without losing distinct games");
+    NSArray *match = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@"别名-000"];
+    XCTAssertEqual(match.count, 1u, @"merged variant names remain searchable");
+    NSString *canonical = match.firstObject[@"canonicalId"];
+    XCTAssertTrue([bridge_ setFavorite:YES canonicalID:canonical error:nil]);
+    XCTAssertTrue([bridge_ markPlayedCanonicalID:canonical error:nil]);
+    for (NSUInteger cycle = 0; cycle < 5; ++cycle) {
+        XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, count);
+        XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"FAVORITES" query:@""].count, 1u);
+        XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@"no-match-in-fixture"].count, 0u);
+    }
+    service_ = nil;
+    bridge_ = nil;
+    bridge_ = [[FlyNesAppBridge alloc] init];
+    XCTAssertTrue([bridge_ createWithDataRoot:root_.path cacheRoot:root_.path error:nil]);
+    service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:nil];
+    XCTAssertNoThrow(cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""]);
+    XCTAssertEqual(cards.count, count, @"cold restart must present the persisted multi-game catalog");
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"FAVORITES" query:@""].count, 1u);
+    XCTAssertTrue([service_ rescanUUID:uuid error:&failure], @"%@", failure);
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, count);
+    XCTAssertTrue([service_ removeUUID:uuid error:&failure], @"%@", failure);
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, 0u);
+}
+
+- (void)testTwoDistinctGamesPresentAndReopenWithoutCollectionMutation
+{
+    [self verifyDistinctLibraryWithCount:2];
+}
+
+- (void)testBuiltinPlusOneImportedGamePresentsWithoutCollectionMutation
+{
+    self.continueAfterFailure = NO;
+    NSURL *builtin = [NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"];
+    service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:builtin];
+    XCTAssertTrue([service_ prepareBuiltin:nil]);
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, 1u);
+    NSMutableData *rom = [[self romFixture] mutableCopy];
+    static_cast<uint8_t *>(rom.mutableBytes)[rom.length - 1] ^= 1;
+    NSURL *single = [sources_ URLByAppendingPathComponent:@"single-import.nes"];
+    XCTAssertTrue([rom writeToURL:single atomically:YES]);
+    NSError *failure = nil;
+    XCTAssertNotNil([service_ addURL:single directory:NO error:&failure], @"%@", failure);
+    NSArray *cards = nil;
+    XCTAssertNoThrow(cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""]);
+    XCTAssertEqual(cards.count, 2u, @"a single import joins the existing builtin card");
+    bridge_ = [[FlyNesAppBridge alloc] init];
+    XCTAssertTrue([bridge_ createWithDataRoot:root_.path cacheRoot:root_.path error:nil]);
+    XCTAssertNoThrow(cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""]);
+    XCTAssertEqual(cards.count, 2u);
+}
+
+- (void)testHundredDistinctGamesWithDuplicateVariantsSearchFavoriteAndRestart
+{
+    [self verifyDistinctLibraryWithCount:100];
 }
 
 - (void)testCancelledAndUnsupportedImportsAreRefused

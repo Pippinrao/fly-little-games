@@ -4,6 +4,7 @@
 #import "FlyNesAppBridge.h"
 #include "RomPackage.hpp"
 #include "catalog/bounded_zip_archive.hpp"
+#include <flynes/flynes_app.h>
 #include <exception>
 
 static NSString *const SourceMetadataKey = @"flynes.source_metadata_v1";
@@ -125,6 +126,22 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
     builtinPrepared_ = [self scanURL:builtinURL_ uuid:BuiltinUUID scope:1 error:error];
     return builtinPrepared_;
 } }
+// Source identity is the resolved file-provider location, not the ROM payload:
+// separate files containing the same game must remain independently removable.
+- (NSArray<NSString *> *)sourceUUIDsForURL:(NSURL *)url scope:(uint32_t)scope {
+    NSMutableArray<NSString *> *matches = [NSMutableArray array];
+    NSString *path = url.URLByStandardizingPath.path;
+    for (NSString *candidate in [metadata_.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        if ([metadata_[candidate][@"scope"] unsignedIntValue] != scope) continue;
+        BOOL access = NO;
+        NSURL *existing = [bookmarks_ resolveUUID:[[NSUUID alloc] initWithUUIDString:candidate]
+                                  didStartAccess:&access error:nil];
+        @try {
+            if (existing && [existing.URLByStandardizingPath.path isEqual:path]) [matches addObject:candidate];
+        } @finally { if (access) [bookmarks_ stopAccessing:existing]; }
+    }
+    return matches;
+}
 - (NSString *)addURL:(NSURL *)url directory:(BOOL)directory error:(NSError **)error { @synchronized(self) {
     BOOL accessing = [url startAccessingSecurityScopedResource];
     NSString *uuid = nil;
@@ -132,7 +149,7 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
         if (![self validateURL:url directory:directory error:error]) return nil;
         NSData *bookmark = [bookmarks_ bookmarkForURL:url error:error];
         if (!bookmark) return nil;
-        uuid = NSUUID.UUID.UUIDString;
+        uuid = [self sourceUUIDsForURL:url scope:directory ? 2 : 3].firstObject ?: NSUUID.UUID.UUIDString;
         [bookmarks_ setBookmark:bookmark forUUID:[[NSUUID alloc] initWithUUIDString:uuid]];
         metadata_[uuid] = [@{@"uuid":uuid, @"scope":@(directory ? 2 : 3), @"name":url.lastPathComponent, @"error":@""} mutableCopy];
         [self persist];
@@ -178,10 +195,30 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
 - (BOOL)removeUUID:(NSString *)uuid error:(NSError **)error { @synchronized(self) {
     NSDictionary *source = metadata_[uuid];
     if (!source) { if (error) *error = SourceError(@"library.source.not_found"); return NO; }
-    if (![bridge_ removeSourceUUID:UUIDBytes(uuid) scope:[source[@"scope"] unsignedIntValue] error:error]) return NO;
-    [metadata_ removeObjectForKey:uuid];
-    [bookmarks_ removeBookmarkForUUID:[[NSUUID alloc] initWithUUIDString:uuid]];
-    [self persist]; return YES;
+    uint32_t scope = [source[@"scope"] unsignedIntValue];
+    NSMutableArray<NSString *> *targets = [NSMutableArray arrayWithObject:uuid];
+    BOOL access = NO;
+    NSURL *url = [bookmarks_ resolveUUID:[[NSUUID alloc] initWithUUIDString:uuid] didStartAccess:&access error:nil];
+    @try {
+        // Older builds assigned a new UUID on every import of the same URL.
+        // Remove those duplicate references together; never delete the ROM.
+        if (url) for (NSString *candidate in [self sourceUUIDsForURL:url scope:scope])
+            if (![candidate isEqual:uuid]) [targets addObject:candidate];
+    } @finally { if (access) [bookmarks_ stopAccessing:url]; }
+    for (NSString *target in targets) {
+        NSError *failure = nil;
+        BOOL removed = [bridge_ removeSourceUUID:UUIDBytes(target) scope:scope error:&failure];
+        // A recovered catalog can already lack this record while preferences
+        // still contain it. Only that precise result is safe to clean up.
+        BOOL alreadyAbsent = [failure.domain isEqual:@"com.flynes.app"] && failure.code == FLY_RESULT_NOT_FOUND;
+        if (!removed && !alreadyAbsent) { if (error) *error = failure; return NO; }
+        [metadata_ removeObjectForKey:target];
+        [bookmarks_ removeBookmarkForUUID:[[NSUUID alloc] initWithUUIDString:target]];
+        // Keep metadata consistent with each committed catalog removal even if
+        // a subsequent duplicate cannot be removed due to a storage error.
+        [self persist];
+    }
+    return YES;
 } }
 - (NSData *)romDataForRow:(NSDictionary *)selected error:(NSError **)error {
     if ([selected[@"compatibilityState"] unsignedIntValue] != 1) { if (error) *error = SourceError(@"library.source.game_unsupported"); return nil; }

@@ -17,17 +17,21 @@ produced those pixels.
 
 ## Source SHA-256
 
+Hashes use UTF-8 source with LF line endings so Windows and macOS checkouts
+verify the same shader text. The table includes the RGB565 and precision fixes
+already present in the baseline; updating this manifest does not qualify a device.
+
 | Shader | SHA-256 |
 |--------|---------|
-| Nearest.metal | ac7aa8308399372d27782173c813ddb89ff4bd3fb49bb3080a79409ff6cc0d2f |
-| SharpBilinear.metal | d6c687a794903469d17a00af46888c675e4797617aeb2205510d8bdf3d89eb09 |
-| Crt.metal | 67b0248a41d28c747370b92cf77182a9596f69d673839d263ae8326166cdcca2 |
-| Mmpx2x.metal | ee77494062b50cd566af685873adaf7f21293bc395c87449379a186f21c5c85f |
-| ScaleFxPass0.metal | 5d363481baacabd68b8ffac21ccb8e181b1032bd48eedca4ed0fdced908a5377 |
-| ScaleFxPass1.metal | f30b265395774aef88beb31b242e105e59aeb9bf6752059bc996a411694313bc |
-| ScaleFxPass2.metal | 3632ba59dfab768ce68aa51fff8a241ecef19af8cf7827699470823628e00677 |
-| ScaleFxPass3.metal | e6de44655121ce81b6332c5466b0a37c3cd987be3f23bedec0412adad59ba818 |
-| ScaleFxPass4.metal | 9eb7b74ec390cbe16301dc5999656de946d3554b6e9db892d9ebe95af01bd2a3 |
+| Nearest.metal | b41a43c2d1f6c3c4f5e5110d4880227da1ef01df25d0a4d3fa9eadd53ffb4b6b |
+| SharpBilinear.metal | 3a2723ebad1a4a2eb60faff1344140f4002a2c332db0e9411f1f3fb8c5b27dac |
+| Crt.metal | 497b923723b87b21005acba0bce35361c6803cbe470443ca9fe9738bba979abb |
+| Mmpx2x.metal | afb22e38fe34ca4545bb069a787fba2e5e1433b69465edbce9c0179de39ee9f1 |
+| ScaleFxPass0.metal | 457f90c1fed76fa91f1057d657c98b06d22ddf6d0cbc6ad68b729738dea6c6c0 |
+| ScaleFxPass1.metal | 8f092a60f8db003afa5daac3cec9b70b4f838a77671d128432234dd01e45d70c |
+| ScaleFxPass2.metal | 904e79202f399ef2c7002a8ac44cb4240ddd643dfd321c3d8f37f0826d07ebb5 |
+| ScaleFxPass3.metal | d748a28e5af300b76f656fab7ec5426a42b5e71bd01f1ef10b745f5286d45cc4 |
+| ScaleFxPass4.metal | 84e4a92537ef15c14b1e1e0110c8fcb995cc5a1766895fd971664a3f35379796 |
 
 Rebuild of a shader requires updating this table in the same change.
 

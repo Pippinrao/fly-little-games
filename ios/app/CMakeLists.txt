@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.22)
 
 project(flynes_ios_product LANGUAGES C CXX OBJC OBJCXX)
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../../VERSION")
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../VERSION" FLYNES_IOS_VERSION LIMIT_COUNT 1)
+if(NOT FLYNES_IOS_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+    message(FATAL_ERROR "VERSION must contain a semantic version")
+endif()
+math(EXPR FLYNES_IOS_BUILD_NUMBER "${CMAKE_MATCH_1} * 1000000 + ${CMAKE_MATCH_2} * 1000 + ${CMAKE_MATCH_3}")
+
 if(NOT APPLE OR NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     message(FATAL_ERROR "ios/app is an iOS product cross-build only; host contracts live in ios/tests")
 endif()
@@ -105,6 +112,8 @@ add_executable(FlyNES MACOSX_BUNDLE
     "${FLYNES_IOS_ROM_FIXTURE}"
     "${FLYNES_IOS_ROM_LICENSE}"
 )
+target_sources(FlyNES PRIVATE Assets.xcassets)
+set_source_files_properties(Assets.xcassets PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 set_source_files_properties(
     en.lproj/Localizable.strings
     PROPERTIES MACOSX_PACKAGE_LOCATION Resources
@@ -203,6 +212,7 @@ set_target_properties(FlyNES PROPERTIES
     XCODE_ATTRIBUTE_SUPPORTED_DEVICE_FAMILIES "1"
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1"
     XCODE_ATTRIBUTE_INFOPLIST_KEY_CFBundleDisplayName "FlyNES"
+    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME AppIcon
 )
 
 if(FLYNES_IOS_IS_SIMULATOR)
@@ -251,9 +261,10 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
         ../tests/PlaybackAudioPlayerTests.mm
         ../tests/CatalogTitleCoverTests.mm
         ../tests/CatalogSourceImportTests.mm
+        ../tests/MetalPixelParityTests.mm
         ../tests/PlaybackSoakTests.mm)
     target_include_directories(FlyNESRuntimeTests PRIVATE bridge run platform "../../shared/include" "../../core/include")
-    target_link_libraries(FlyNESRuntimeTests PRIVATE flynes_runtime "-framework UIKit" "-framework AVFoundation" "-framework CoreGraphics")
+    target_link_libraries(FlyNESRuntimeTests PRIVATE flynes_runtime "-framework UIKit" "-framework AVFoundation" "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
     target_compile_features(FlyNESRuntimeTests PRIVATE cxx_std_17)
     set_target_properties(FlyNESRuntimeTests PROPERTIES
         XCODE_GENERATE_SCHEME YES
@@ -264,7 +275,7 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
         XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@loader_path/Frameworks @executable_path/Frameworks ${_platform_developer}/Library/Frameworks")
-    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm)
+    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm ../tests/ProductImportUITests.mm)
     add_dependencies(FlyNESUITests FlyNES)
     target_link_libraries(FlyNESUITests PRIVATE "${XCTest_LIBRARY}" "-framework Foundation" "-framework UIKit")
     set_target_properties(FlyNESUITests PROPERTIES

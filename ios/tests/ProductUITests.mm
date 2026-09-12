@@ -7,20 +7,22 @@
 /// assert on durable app state (captured covers) instead of UI proxies.
 static NSString *installedDataContainer(void)
 {
-    NSString *udid = NSProcessInfo.processInfo.environment[@"SIMULATOR_UDID"];
-    NSString *devices = [NSProcessInfo.processInfo.environment[@"HOME"]
-        stringByAppendingPathComponent:@"Library/Developer/CoreSimulator/Devices"];
-    if (udid.length == 0 || ![NSFileManager.defaultManager fileExistsAtPath:devices])
-        return nil;
+    // Xcode can reinstall the app into a new UUID after the host runner starts.
+    // Resolve the current container by its exact MCM identifier at assertion time.
+    NSString *applications = NSProcessInfo.processInfo.environment[@"FLYNES_TEST_APPLICATION_CONTAINERS"];
+    if (applications.length == 0) return nil;
     NSFileManager *files = NSFileManager.defaultManager;
-    NSString *applications = [[devices stringByAppendingPathComponent:udid]
-        stringByAppendingPathComponent:@"data/Containers/Data/Application"];
-    for (NSString *entry in [files contentsOfDirectoryAtPath:applications error:nil]) {
-        NSString *candidate = [applications stringByAppendingPathComponent:entry];
-        NSString *bundle = [candidate stringByAppendingPathComponent:@"com.flynes.app"];
-        if ([files fileExistsAtPath:bundle]) return candidate;
+    NSString *found = nil;
+    for (NSString *name in [files contentsOfDirectoryAtPath:applications error:nil]) {
+        NSString *candidate = [applications stringByAppendingPathComponent:name];
+        NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:
+            [candidate stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];
+        if ([metadata[@"MCMMetadataIdentifier"] isEqual:@"com.flynes.app"]) {
+            if (found != nil) return nil; // Never choose an arbitrary stale container.
+            found = candidate;
+        }
     }
-    return nil;
+    return found;
 }
 
 @implementation ProductUITests
@@ -95,7 +97,9 @@ static NSString *installedDataContainer(void)
     [app.buttons[@"game_center"] tap];
 
     NSString *container = installedDataContainer();
-    if (container.length > 0) {
+    XCTAssertGreaterThan(container.length, 0u,
+                         @"Run via run_simulator_tests.py to resolve the product container");
+    {
         NSFileManager *files = NSFileManager.defaultManager;
         NSString *covers = [[container stringByAppendingPathComponent:@"Library/Caches"]
             stringByAppendingPathComponent:@"covers/v1"];

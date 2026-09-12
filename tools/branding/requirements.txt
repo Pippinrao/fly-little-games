@@ -1,0 +1,2 @@
+# Pin the rasterizer for reproducible checked-in icon PNGs.
+Pillow==12.3.0

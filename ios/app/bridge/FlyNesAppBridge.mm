@@ -580,7 +580,9 @@ NSDictionary<NSString *, id> *with_merged_presentation(
         }
     }
     // One card per canonical game, titled from every variant Android would consider.
-    for (NSString *canonical in by_id)
+    // Replacing dictionary values invalidates Foundation's fast enumeration.
+    // Enumerate a fixed key snapshot while merging each game's presentation.
+    for (NSString *canonical in [by_id allKeys])
         by_id[canonical] = [with_merged_presentation(by_id[canonical], variants[canonical]) mutableCopy];
     std::vector<GameCenterItem> items;
     items.reserve(by_id.count);

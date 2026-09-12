@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>@FLYNES_IOS_VERSION@</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>@FLYNES_IOS_BUILD_NUMBER@</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>MinimumOSVersion</key>

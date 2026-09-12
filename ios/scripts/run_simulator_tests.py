@@ -19,13 +19,32 @@ testables.clear()
 testable = ET.SubElement(testables, "TestableReference", {"skipped": "NO"})
 reference = tree.find("BuildAction/BuildActionEntries/BuildActionEntry/BuildableReference")
 testable.append(copy.deepcopy(reference))
-tree.write(scheme, encoding="utf-8", xml_declaration=True)
 os.environ.setdefault("DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
+if scheme_name == "FlyNESUITests":
+    subprocess.run(["xcrun", "simctl", "install", sys.argv[1],
+                    str(build / "Debug-iphonesimulator/FlyNES.app")], check=True)
+    container = subprocess.check_output(
+        ["xcrun", "simctl", "get_app_container", sys.argv[1], "com.flynes.app", "data"],
+        text=True).strip()
+    if not container or not Path(container).is_dir():
+        raise RuntimeError("simctl did not return an existing FlyNES data container")
+    action = tree.find("TestAction")
+    action.set("shouldUseLaunchSchemeArgsEnv", "NO")
+    environment = action.find("EnvironmentVariables")
+    if environment is None:
+        environment = ET.SubElement(action, "EnvironmentVariables")
+    for entry in list(environment):
+        if entry.get("key") in {"FLYNES_TEST_APP_CONTAINER", "FLYNES_TEST_APPLICATION_CONTAINERS"}:
+            environment.remove(entry)
+    ET.SubElement(environment, "EnvironmentVariable", {
+        "key": "FLYNES_TEST_APPLICATION_CONTAINERS", "value": str(Path(container).parent), "isEnabled": "YES"})
+tree.write(scheme, encoding="utf-8", xml_declaration=True)
 stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 result = build / "evidence" / ("tests-" + stamp + ".xcresult")
 result.parent.mkdir(parents=True, exist_ok=True)
 command = ["xcodebuild", "test-without-building", "-project", str(project),
            "-scheme", scheme_name, "-destination", "platform=iOS Simulator,id=" + sys.argv[1],
            "-parallel-testing-enabled", "NO", "-resultBundlePath", str(result)]
+command.extend(sys.argv[3:])
 print("Result bundle:", result, flush=True)
 sys.exit(subprocess.call(command))
