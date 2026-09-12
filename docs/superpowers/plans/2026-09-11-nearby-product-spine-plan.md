@@ -8,7 +8,7 @@ Approved design (unchanged): `docs/superpowers/specs/2026-09-04-cross-platform-n
 
 Baseline re-verified on 2026-09-11 (this plan's first round):
 
-- Host build `cmake --build .artifacts/nearby-host --config Release` exit 0; **41/41 CTests passed, 14.07s**.
+- Host build `cmake --build .artifacts/nearby-host --config Release` exit 0; **41/41 CTests passed, 14.07s**. A second, independent clean configure into `.artifacts/build/shared-host` also gave **41/41 passed, 13.71s**.
 - `cmake`/`ctest` are NOT on PATH. Use `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\{cmake,ctest}.exe`.
 - **Environment quirk:** MSBuild fails with `MSB6001 … 字典中的关键字:"NO_PROXY"所添加的关键字:"no_proxy"` because this shell exports case-variant duplicates (`HTTP_PROXY`/`http_proxy`/`https_proxy`, `NO_PROXY`/`no_proxy`). Remove the lower-case duplicates before any `cmake --build`:
 
@@ -90,9 +90,13 @@ Scope, in this order:
 
 Acceptance: host Release build + full CTest green (≥41 tests, no test deleted); RED→GREEN recorded; Android arm64 and Harmony arm64 cross-compile of `flynes_session` still succeed; public struct sizes unchanged or version-gated.
 
-### C3 — CI coverage for the shared session suite (offline, small)
+### C3 — CI coverage for the shared session suite — DONE
 
-`scripts/ci-check.ps1` does not build `shared`. Add a check that configures/builds/runs `FLYNES_BUILD_TESTS` for `shared` so stub regressions cannot land silently. Must not depend on the Android SDK cmake path; use the VS cmake.
+`scripts/ci-check.ps1` previously built only `core`, so the shared session/ABI suite could regress silently. Added **Check 4/5 "shared session host test"**: it reuses the canonical toolchain that Check 3 already bootstraps (`$hostTools` / `$hostCMake` / `$hostCTest` / `$hostZlibRoot`, so no extra bootstrap and no extra network), configures `shared` with `FLYNES_BUILD_TESTS=ON` into `.artifacts/build/shared-host`, builds it and requires `100% tests passed`. The Android build was renumbered to Check 5/5.
+
+Verified 2026-09-11: a fresh configure of `shared` with the canonical generator/toolset (`Visual Studio 17 2022`, x64, `ZLIB_ROOT=<pinned zlib 1.3.1 install>`, `TrackFileAccess=false`, `CMAKE_TRY_COMPILE_CONFIGURATION=Release`) succeeded, the full build succeeded, and **41/41 CTests passed in 13.71s** from that clean directory. Script parse check: 0 errors.
+
+Not verified end-to-end: the whole `ci-check.ps1` gate was not run, because Check 3 first bootstraps the pinned zlib/toolchain into `.artifacts/host-deps` of this worktree (that directory is currently absent; the worktree build dirs point `ZLIB_ROOT` at the main checkout's `.artifacts/host-deps/zlib-1.3.1-install`). The verification above substituted that same zlib install, so the only unexercised link is Check 3's pre-existing bootstrap step.
 
 ### A1 — three-platform entry + friends/nearby + pairing + lobby + in-game status pages
 
