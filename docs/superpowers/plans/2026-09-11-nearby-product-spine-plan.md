@@ -147,6 +147,18 @@ Verified 2026-09-11: a fresh configure of `shared` with the canonical generator/
 
 Not verified end-to-end: the whole `ci-check.ps1` gate was not run, because Check 3 first bootstraps the pinned zlib/toolchain into `.artifacts/host-deps` of this worktree (that directory is currently absent; the worktree build dirs point `ZLIB_ROOT` at the main checkout's `.artifacts/host-deps/zlib-1.3.1-install`). The verification above substituted that same zlib install, so the only unexercised link is Check 3's pre-existing bootstrap step.
 
+### A0 — session surface on the three platform bindings (DECIDED ownership: the shared/session line, not A1)
+
+Decided 2026-09-11 (this is a work-ownership decision, not a product decision). The A1 spec's open question D4 asked whether the A1 implementer or the session owner adds `fly_session*` to the platform bindings. Answer: **the shared/session line owns it**, as slice A0, because:
+
+- it is ABI work that must stay consistent with `flynes_session.h` and versioned once, not invented independently three times;
+- it must be reviewed together with the C2/C2b ABI decisions instead of being frozen by a UI task (design §30);
+- it is what makes A1's live-value rendering possible at all.
+
+Verified starting state: **zero** `fly_session` / `flynes_session` references exist in any of the three bindings — Android `app/src/main/cpp/flynes_app_jni.cpp`, Harmony `harmony/entry/src/main/cpp/napi_init.cpp` (+ `cpp/types/libentry/Index.d.ts`), iOS `ios/app/bridge/FlyNesAppBridge.{h,mm}`. `FlyNesAppBridge.h:10-37` exposes only create/settings/controlLayout/catalog/scan.
+
+Ordering: A0 depends on C2 (and on the C2b decision only for anything that consumes received bytes). A1 tasks that lay out pages and render blocked/empty states do **not** depend on A0 and may proceed; A1 tasks that render a live session value must wait for A0.
+
 ### A1 — three-platform entry + friends/nearby + pairing + lobby + in-game status pages
 
 Decomposed per platform so the three can proceed independently: A1a Android, A1b Harmony, A1c iOS.
