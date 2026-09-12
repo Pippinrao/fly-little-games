@@ -25,6 +25,17 @@ public final class LaunchResult {
         return new LaunchResult(code, request, Objects.requireNonNull(message, "message"));
     }
 
+    /**
+     * Reports a failure that escaped the launch pipeline entirely. The launch executor is a bare
+     * {@code execute} call, so an unreported runtime fault there terminates the process.
+     */
+    public static LaunchResult unexpectedFailure(String message) {
+        return new LaunchResult(
+                Code.SOURCE_OPEN_FAILED, null,
+                message == null || message.trim().isEmpty()
+                        ? "unexpected launch failure" : message);
+    }
+
     public Code code() {
         return code;
     }

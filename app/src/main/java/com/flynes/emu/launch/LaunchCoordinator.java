@@ -54,6 +54,13 @@ public final class LaunchCoordinator {
             payload = loader.load(request);
         } catch (ExactRomLoader.LoadException failure) {
             return LaunchResult.failure(map(failure.code()), request, failure.getMessage());
+        } catch (RuntimeException failure) {
+            // Platform providers raise unchecked faults for malformed locators. Reporting them
+            // keeps the failure on the launch thread instead of killing the process.
+            return LaunchResult.failure(
+                    LaunchResult.Code.SOURCE_OPEN_FAILED,
+                    request,
+                    failureMessage(failure, "unexpected ROM source failure"));
         }
 
         LaunchRequest loadedRequest = request;

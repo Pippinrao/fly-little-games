@@ -49,7 +49,16 @@ public final class AndroidGameLaunchService {
                                     "could not persist launch history", failure);
                         }
                     });
-            LaunchResult result = coordinator.launch(variantId);
+            LaunchResult completed;
+            try {
+                completed = coordinator.launch(variantId);
+            } catch (RuntimeException fatal) {
+                // This executor runs with a bare execute(), so anything that escapes here would
+                // terminate the process rather than reach the callback.
+                Log.e(TAG, "unexpected launch failure", fatal);
+                completed = LaunchResult.unexpectedFailure(fatal.getMessage());
+            }
+            LaunchResult result = completed;
             if (!result.sessionCommitted()) {
                 Log.e(TAG, "launch failed: code=" + result.code() + ", message=" + result.message());
             }
