@@ -125,8 +125,16 @@ All ids below are added to every locale file that platform has. Grouped, not rep
 | Pairing actions | `nearby.join.request_anonymous`, `nearby.join.accept`, `nearby.join.reject`, `nearby.code.label`, `nearby.code.confirm`, `nearby.wifi.path_building`, `nearby.wifi.system_confirm_once` |
 | Friends management | `nearby.friends.section`, `nearby.friends.manage`, `nearby.friends.saved_after_auth`, `nearby.friends.rename`, `nearby.friends.delete`, `nearby.friends.block`, `nearby.friends.identity_reset` |
 | Blocked reasons | `nearby.blocked.permissions`, `nearby.blocked.discovery`, `nearby.blocked.auth`, `nearby.blocked.wifi`, `nearby.blocked.quic`, `nearby.blocked.version`, `nearby.blocked.codec`, `nearby.blocked.friend_store`, `nearby.blocked.rom_transfer`, `nearby.blocked.profile_verify`, `nearby.blocked.mode_gate`, `nearby.blocked.connection_quality`, `nearby.blocked.authority_recovery`, `nearby.blocked.branch_merge`, `nearby.blocked.local_mute`, `nearby.blocked.session_read` |
+| Stage status (accessibility) | `nearby.stage.status.passed`, `nearby.stage.status.current`, `nearby.stage.status.not_reached` |
 
 `nearby.blocked.session_read` is the generic fallback: "会话状态尚未接入本端" — used wherever a page needs a session value the ABI does not yet expose.
+
+**Stage-status keys are mandatory, not decorative.** The three keys above must exist on every platform and must be used as the accessible label or value of each pipeline stage row. UX rule `color-not-only` forbids conveying state by colour alone, and `voiceover-sr` requires a meaningful announced label; an icon plus a colour is not sufficient for a screen-reader user. Whether the status also appears as visible text is each platform's choice, but the accessible string is required.
+
+**Resolved reading of D5 versus §4 (confirmed after A1c-1 raised it).** The pipeline stage list and the per-capability rows are **two different UI elements** and are not contradictory:
+- The **pipeline list** renders all seven stages in order; only the first failing stage carries `nearby.stage.<stage>.reason`; earlier stages are marked passed and later stages are marked not-reached with no reason and no blocked key (D5).
+- A **capability row** (for example the BLE-discovery capability above the 寻找设备 button) shows `nearby.stage.discovery` plus `.reason` and the capability's own `nearby.blocked.discovery` on its disabled control, as §4's table requires.
+The two elements may both be on the 附近设备 tab. Keep them visually distinct so no reader sees one list with two renderings. This is the converged reading all three platforms already implemented independently — keep it.
 
 ## 3. ABI boundary — what the UI may read
 
