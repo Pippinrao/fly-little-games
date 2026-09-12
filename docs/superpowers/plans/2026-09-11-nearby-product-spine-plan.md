@@ -97,9 +97,13 @@ Scope actually implemented in this slice, in this order:
 
 Acceptance: host Release build + full CTest green (≥41 tests, no test deleted); RED→GREEN recorded; Android arm64 and Harmony arm64 cross-compile of `flynes_session` still succeed; public struct sizes unchanged or version-gated.
 
-### C2b — wire envelope decoder (shared, offline) — NOT STARTED, blocks the receive path
+### C2b — wire type identification + envelope (shared, offline) — NOT STARTED, blocks the receive path
 
-Implement the §11.3 envelope parse (magic, wire_major, wire_minor, family, type, flags, payload_length, then lineage/branch/session/authority_term, then timeline_epoch/seat_revision/mode_generation/media_generation, then channel_id[16]/channel_sequence/transition_id) with network byte order, total-length and checked-arithmetic validation before any decode, plus the §11.4 per-channel family/type constraints. Only after this exists may the receive path select a codec kind by tag and fail closed on unknown/illegal tag-on-channel combinations. This is also where the 16-byte wire `transition_id` (spec:450, 1021, 1050, 1058) enters the process, which is the point at which the versioned 128-bit ABI question must be answered.
+Start from the concrete encodings, not from §11.3 alone. The wire layouts are fully specified in `shared/schema/flynes_session_v1.schema` (123 KB) with generators `generate_v1.py` / `generate_goldens.py` and a golden corpus of ~40 object kinds under `shared/schema/golden/<kind>/{legal,truncate,trailing,nonzero_reserved,unknown_enum}.bin` + `type.txt` (e.g. `channel_bind_v1_initial/legal.bin` = 136 bytes, `channel_resume_summary_v1/legal.bin` = 176 bytes matching the spec's fixed176 layout). `session_codec.check(type_name, …)` already validates each of those exact layouts by name.
+
+What is missing is the **type identification** step before `check`: spec:468 states that reliable streams use a per-direction unidirectional stream plus a **stream-kind prefix** (可靠stream-kind前缀), and §11.4 (spec:454-464) fixes which datagram families may appear on the Input/Video/Audio channels (Input alone may carry INPUT_SAMPLE, CANONICAL_HINT or FRAME_BEACON, so even datagrams need an in-object discriminator). Implement that prefix/tag → codec type-name mapping, with the §11.3 envelope fields (magic, wire_major, wire_minor, family, type, flags, payload_length, then lineage/branch/session/authority_term, then timeline_epoch/seat_revision/mode_generation/media_generation, then channel_id[16]/channel_sequence/transition_id — spec:445-452) parsed with network byte order, total-length and checked-arithmetic validation before any decode, plus illegal-tag-on-channel rejection.
+
+Only after this exists may the receive path select a codec kind by tag and fail closed on unknown or illegal combinations. This is also where the 16-byte wire `transition_id` (spec:450, 1021, 1050, 1058) enters the process, which is the point at which the versioned 128-bit ABI question must be answered.
 
 ### C3 — CI coverage for the shared session suite — DONE
 
