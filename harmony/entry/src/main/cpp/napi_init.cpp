@@ -1,6 +1,11 @@
 #include "catalog_smoke.hpp"
+#include "harmony_renderer.hpp"
+#include "play_package.hpp"
 #include "play_session.hpp"
+#include "native_play_runtime.hpp"
 #include "product_bridge.hpp"
+#include "scan_job_executor.hpp"
+#include "scan_job_queue.hpp"
 
 #include <flynes/flynes_app.h>
 
@@ -17,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -114,7 +120,7 @@ napi_value report_error(napi_env env, const char* message, bool type_error) noex
     return nullptr;
 }
 
-std::unique_ptr<flynes::harmony::PlaySession> g_play;
+std::unique_ptr<flynes::harmony::NativePlayRuntime> g_play;
 
 struct AppDeleter final
 {
@@ -142,6 +148,7 @@ struct SnapshotDeleter final
 
 std::unique_ptr<fly_app_t, AppDeleter> g_app;
 std::unique_ptr<fly_scan_t, ScanDeleter> g_scan;
+std::unique_ptr<flynes::harmony::ScanJobQueue> g_scan_jobs;
 
 class FlyCallError final : public std::runtime_error
 {
@@ -248,6 +255,13 @@ void open_app(const std::string& data_root, const std::string& cache_root)
         throw FlyCallError("fly_app_create invariant", FLY_RESULT_INTERNAL_ERROR);
     }
     g_app.reset(raw_app);
+    g_scan_jobs = std::make_unique<flynes::harmony::ScanJobQueue>(
+        [raw_app](const flynes::harmony::ScanJobRequest& request,
+                  const flynes::harmony::ScanJobQueue::CancelCheck& cancelled,
+                  const flynes::harmony::ScanJobQueue::ProgressSink& progress) {
+            return flynes::harmony::execute_scan_job(*raw_app, request, cancelled, progress);
+        },
+        [](int fd) { if (fd >= 0) close(fd); });
 }
 
 std::vector<std::uint8_t> read_buffer(napi_env env, napi_value value, const char* argument_name)
@@ -444,6 +458,12 @@ flynes::harmony::GameCenterRow read_game_center_row(napi_env env, napi_value val
         env, named_property(env, value, "lastPlayedSequence"), "lastPlayedSequence");
     row.original_filename = read_utf8_string(
         env, named_property(env, value, "originalFilename"), "originalFilename");
+    row.source_uuid_hex = read_utf8_string(
+        env, named_property(env, value, "sourceUuidHex"), "sourceUuidHex");
+    row.source_relative_path = read_utf8_string(
+        env, named_property(env, value, "sourceRelativePath"), "sourceRelativePath");
+    row.package_format = read_int32(
+        env, named_property(env, value, "packageFormat"), "packageFormat");
     return row;
 }
 
@@ -476,6 +496,18 @@ napi_value make_game_center_row(napi_env env, const flynes::harmony::GameCenterR
                      env, result, "originalFilename",
                      create_string(env, row.original_filename, "create originalFilename")),
                  "set originalFilename");
+    require_napi(napi_set_named_property(
+                     env, result, "sourceUuidHex",
+                     create_string(env, row.source_uuid_hex, "create sourceUuidHex")),
+                 "set sourceUuidHex");
+    require_napi(napi_set_named_property(
+                     env, result, "sourceRelativePath",
+                     create_string(env, row.source_relative_path, "create sourceRelativePath")),
+                 "set sourceRelativePath");
+    require_napi(napi_set_named_property(
+                     env, result, "packageFormat",
+                     create_int64(env, row.package_format, "create packageFormat")),
+                 "set packageFormat");
     return result;
 }
 
@@ -555,7 +587,7 @@ napi_value make_hit_map(napi_env env, const flynes::harmony::HitMapDto& hit_map)
     return result;
 }
 
-flynes::harmony::PlaySession& require_play()
+flynes::harmony::NativePlayRuntime& require_play()
 {
     if (g_play == nullptr)
     {
@@ -622,7 +654,7 @@ napi_value PlayOpen(napi_env env, napi_callback_info info)
         }
         const std::vector<std::uint8_t> rom = read_buffer(env, arguments[0], "rom");
         g_play.reset();
-        g_play = flynes::harmony::PlaySession::open(rom.data(), rom.size());
+        g_play = flynes::harmony::NativePlayRuntime::open(rom.data(), rom.size());
         napi_value undefined = nullptr;
         require_napi(napi_get_undefined(env, &undefined), "playOpen undefined");
         return undefined;
@@ -645,6 +677,40 @@ napi_value PlayOpen(napi_env env, napi_callback_info info)
     }
 }
 
+napi_value PlayDecodePackage(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 3;
+        napi_value arguments[3] = {nullptr, nullptr, nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read playDecodePackage arguments");
+        if (argument_count < 3)
+        {
+            throw NapiTypeError("playDecodePackage requires bytes, packageFormat, and zipEntryName");
+        }
+        const std::vector<std::uint8_t> physical = read_buffer(env, arguments[0], "rom");
+        const std::int32_t package_format = read_int32(env, arguments[1], "packageFormat");
+        const std::string zip_entry = read_utf8_string(env, arguments[2], "zipEntryName");
+        const std::vector<std::uint8_t> payload = flynes::harmony::decode_rom_package(
+            physical.data(), physical.size(), static_cast<std::uint32_t>(package_format), zip_entry);
+        return create_arraybuffer(env, payload.data(), payload.size(), "playDecodePackage payload");
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "playDecodePackage failed: unknown native error", false);
+    }
+}
+
 napi_value PlaySetButtons(napi_env env, napi_callback_info info)
 {
     try
@@ -660,7 +726,7 @@ napi_value PlaySetButtons(napi_env env, napi_callback_info info)
         }
         std::uint32_t buttons = 0;
         require_napi(napi_get_value_uint32(env, arguments[0], &buttons), "read button mask");
-        require_play().set_port0_buttons(buttons);
+        require_play().set_buttons(buttons);
         napi_value undefined = nullptr;
         require_napi(napi_get_undefined(env, &undefined), "playSetButtons undefined");
         return undefined;
@@ -684,7 +750,8 @@ napi_value PlayStep(napi_env env, napi_callback_info info)
     try
     {
         (void)info;
-        return make_play_result(env, require_play().step());
+        const flynes::harmony::PlayStepResult step = require_play().copy_latest_frame();
+        return make_play_result(env, step);
     }
     catch (const NapiTypeError& error)
     {
@@ -697,6 +764,306 @@ napi_value PlayStep(napi_env env, napi_callback_info info)
     catch (...)
     {
         return report_error(env, "playStep failed: unknown native error", false);
+    }
+}
+
+napi_value PlaySetPaused(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read playSetPaused arguments");
+        if (argument_count < 1) throw NapiTypeError("playSetPaused requires paused");
+        bool paused = false;
+        require_napi(napi_get_value_bool(env, arguments[0], &paused), "read play paused");
+        require_play().set_paused(paused);
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "playSetPaused undefined");
+        return undefined;
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+}
+
+napi_value PlaySetAudioMuted(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read playSetAudioMuted arguments");
+        if (argument_count < 1) throw NapiTypeError("playSetAudioMuted requires muted");
+        bool muted = false;
+        require_napi(napi_get_value_bool(env, arguments[0], &muted), "read audio muted");
+        require_play().set_muted(muted);
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "playSetAudioMuted undefined");
+        return undefined;
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+}
+
+napi_value PlayRuntimeStatus(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        (void)info;
+        const auto status = require_play().status();
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create playRuntimeStatus");
+        auto set_bool = [&](const char* name, bool value) {
+            require_napi(napi_set_named_property(env, result, name,
+                                                 create_bool(env, value, name)), name);
+        };
+        auto set_i64 = [&](const char* name, std::int64_t value) {
+            require_napi(napi_set_named_property(env, result, name,
+                                                 create_int64(env, value, name)), name);
+        };
+        set_bool("running", status.running);
+        set_bool("paused", status.paused);
+        set_bool("audioReady", status.audio_ready);
+        set_bool("audioStarted", status.audio_started);
+        set_bool("audioTimestampValid", status.audio_timestamp_valid);
+        set_i64("sourceFrames", static_cast<std::int64_t>(status.source_frames));
+        set_i64("audioUnderflows", static_cast<std::int64_t>(status.audio_underflows));
+        set_i64("audioPostFallbackUnderflows",
+                static_cast<std::int64_t>(status.audio_post_fallback_underflows));
+        set_i64("audioLockMisses", static_cast<std::int64_t>(status.audio_lock_misses));
+        set_i64("audioShortReads", static_cast<std::int64_t>(status.audio_short_reads));
+        set_i64("audioPrimingCallbacks",
+                static_cast<std::int64_t>(status.audio_priming_callbacks));
+        set_i64("audioDroppedSamples", static_cast<std::int64_t>(status.audio_dropped_samples));
+        set_i64("audioProducedSamples", static_cast<std::int64_t>(status.audio_produced_samples));
+        set_i64("audioConsumedSamples", static_cast<std::int64_t>(status.audio_consumed_samples));
+        set_i64("audioQueuedSamples", static_cast<std::int64_t>(status.audio_queued_samples));
+        set_i64("audioHighWaterSamples", static_cast<std::int64_t>(status.audio_high_water_samples));
+        set_i64("audioCallbackFrames", status.audio_callback_frames);
+        set_i64("audioSampleRate", status.audio_sample_rate);
+        set_i64("audioChannelCount", status.audio_channel_count);
+        set_i64("audioLastCallbackBytes", status.audio_last_callback_bytes);
+        set_i64("audioCallbackCount", static_cast<std::int64_t>(status.audio_callback_count));
+        set_bool("audioFastPath", status.audio_fast_path);
+        set_i64("audioDelaySamples", static_cast<std::int64_t>(status.audio_delay_samples));
+        set_i64("audioFramePosition", status.audio_frame_position);
+        set_i64("audioTimestampNanos", status.audio_timestamp_ns);
+        require_napi(napi_set_named_property(env, result, "sourceFps",
+                                             create_double(env, status.source_fps, "sourceFps")),
+                     "sourceFps");
+        require_napi(napi_set_named_property(env, result, "sourceStandard",
+                                             create_string(env, status.source_standard,
+                                                           "sourceStandard")),
+                     "sourceStandard");
+        require_napi(napi_set_named_property(
+                         env, result, "audioTemporalState",
+                         create_string(env, status.audio_temporal_state,
+                                       "audioTemporalState")),
+                     "audioTemporalState");
+        require_napi(napi_set_named_property(
+                         env, result, "audioFallbackReason",
+                         create_string(env, status.audio_fallback_reason,
+                                       "audioFallbackReason")),
+                     "audioFallbackReason");
+        require_napi(napi_set_named_property(env, result, "error",
+                                             create_string(env, status.error, "play error")),
+                     "play error");
+        return result;
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+}
+
+napi_value RenderConfigure(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 5;
+        napi_value arguments[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read renderConfigure arguments");
+        if (argument_count < 5)
+        {
+            throw NapiTypeError("renderConfigure requires refresh, temporal, spatial, post, and protection");
+        }
+        const std::int32_t refresh = read_int32(env, arguments[0], "refresh");
+        const std::int32_t temporal = read_int32(env, arguments[1], "temporal");
+        const std::int32_t spatial = read_int32(env, arguments[2], "spatial");
+        const std::int32_t post = read_int32(env, arguments[3], "post");
+        bool protection = false;
+        require_napi(napi_get_value_bool(env, arguments[4], &protection), "read protection");
+        flynes::harmony::harmony_renderer().configure(
+            refresh, temporal, spatial, post, protection);
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "renderConfigure undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+}
+
+napi_value RenderSetPaused(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read renderSetPaused arguments");
+        if (argument_count < 1)
+        {
+            throw NapiTypeError("renderSetPaused requires paused");
+        }
+        bool paused = false;
+        require_napi(napi_get_value_bool(env, arguments[0], &paused), "read paused");
+        flynes::harmony::harmony_renderer().set_paused(paused);
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "renderSetPaused undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+}
+
+napi_value RenderSetProtection(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 3;
+        napi_value arguments[3] = {nullptr, nullptr, nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read renderSetProtection arguments");
+        if (argument_count < 3)
+        {
+            throw NapiTypeError("renderSetProtection requires thermal, battery, and validity flags");
+        }
+        bool thermal_limited = false;
+        bool low_battery = false;
+        bool observation_valid = false;
+        require_napi(napi_get_value_bool(env, arguments[0], &thermal_limited),
+                     "read thermal protection");
+        require_napi(napi_get_value_bool(env, arguments[1], &low_battery),
+                     "read battery protection");
+        require_napi(napi_get_value_bool(env, arguments[2], &observation_valid),
+                     "read protection observation validity");
+        flynes::harmony::harmony_renderer().set_protection(
+            thermal_limited, low_battery, observation_valid);
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "renderSetProtection undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+}
+
+napi_value RenderStatus(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        (void)info;
+        const flynes::harmony::HarmonyRenderStatus status =
+            flynes::harmony::harmony_renderer().status();
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create renderStatus result");
+        auto set_bool = [&](const char* name, bool value) {
+            require_napi(napi_set_named_property(
+                             env, result, name, create_bool(env, value, name)),
+                         "set renderStatus boolean");
+        };
+        auto set_i64 = [&](const char* name, std::int64_t value) {
+            require_napi(napi_set_named_property(
+                             env, result, name, create_int64(env, value, name)),
+                         "set renderStatus integer");
+        };
+        set_bool("componentBound", status.component_bound);
+        set_bool("surfaceReady", status.mailbox.surface_ready);
+        set_bool("nativeReady", status.native_ready);
+        set_bool("fallbackActive", status.fallback_active);
+        set_bool("timingValid", status.timing_valid);
+        set_bool("gpuTimingValid", status.gpu_timing_valid);
+        set_bool("displayRequestAccepted", status.display.request_accepted);
+        set_bool("displayObservationValid", status.display.observation_valid);
+        set_bool("motionQualified", status.display.motion_qualified);
+        set_bool("protectionObservationValid",
+                 status.display.protection_observation_valid);
+        set_bool("thermalLimited", status.display.thermal_limited);
+        set_bool("lowBattery", status.display.low_battery);
+        set_i64("surfaceGeneration", static_cast<std::int64_t>(status.mailbox.surface_generation));
+        set_i64("sourceFrames", static_cast<std::int64_t>(status.mailbox.source_frames));
+        set_i64("uploadedFrames", static_cast<std::int64_t>(status.mailbox.uploaded_frames));
+        set_i64("presentedFrames", static_cast<std::int64_t>(status.mailbox.presented_frames));
+        set_i64("presentFailures", static_cast<std::int64_t>(status.mailbox.present_failures));
+        set_i64("requestedSpatial", status.requested_spatial);
+        set_i64("effectiveSpatial", status.effective_spatial);
+        set_i64("requestedPost", status.requested_post);
+        set_i64("vsyncPeriodNanos", status.vsync_period_ns);
+        set_i64("gpuTimeNanos", status.gpu_time_ns);
+        set_i64("gpuTimeMaxNanos", status.gpu_time_max_ns);
+        set_i64("gpuTimingSamples", static_cast<std::int64_t>(status.gpu_timing_samples));
+        set_i64("requestedRefreshHz", status.display.requested_hz);
+        set_i64("actualRefreshMilliHz", status.display.actual_millihz);
+        set_i64("effectiveRefreshHz", status.display.effective_hz);
+        set_i64("displayRequestGeneration",
+                static_cast<std::int64_t>(status.display.request_generation));
+        set_i64("motionSourceSlots", static_cast<std::int64_t>(status.motion.source_slots));
+        set_i64("motionSynthesizedSlots",
+                static_cast<std::int64_t>(status.motion.synthesized_slots));
+        set_i64("motionHoldSlots", static_cast<std::int64_t>(status.motion.hold_slots));
+        set_i64("motionAdjacentPairs", static_cast<std::int64_t>(status.motion.adjacent_pairs));
+        require_napi(napi_set_named_property(
+                         env, result, "fallbackReason",
+                         create_string(env, status.fallback_reason, "fallbackReason")),
+                     "set fallbackReason");
+        require_napi(napi_set_named_property(
+                         env, result, "displayFallbackReason",
+                         create_string(env, status.display.fallback_reason,
+                                       "displayFallbackReason")),
+                     "set displayFallbackReason");
+        require_napi(napi_set_named_property(
+                         env, result, "temporalState",
+                         create_string(env, status.temporal_state, "temporalState")),
+                     "set temporalState");
+        require_napi(napi_set_named_property(
+                         env, result, "temporalFallbackReason",
+                         create_string(env, status.temporal_fallback_reason,
+                                       "temporalFallbackReason")),
+                     "set temporalFallbackReason");
+        return result;
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
     }
 }
 
@@ -719,6 +1086,37 @@ napi_value PlaySaveCheckpoint(napi_env env, napi_callback_info info)
     catch (...)
     {
         return report_error(env, "playSaveCheckpoint failed: unknown native error", false);
+    }
+}
+
+napi_value PlayLoadCheckpoint(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read playLoadCheckpoint arguments");
+        if (argument_count < 1)
+        {
+            throw NapiTypeError("playLoadCheckpoint requires checkpoint bytes");
+        }
+        const std::vector<std::uint8_t> bytes = read_buffer(
+            env, arguments[0], "checkpoint");
+        require_play().load_checkpoint(bytes.data(), bytes.size());
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined),
+                     "playLoadCheckpoint undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
     }
 }
 
@@ -1157,6 +1555,8 @@ napi_value AppClose(napi_env env, napi_callback_info info)
     try
     {
         (void)info;
+        g_scan_jobs.reset();
+        g_play.reset();
         g_scan.reset();
         g_app.reset();
         napi_value undefined = nullptr;
@@ -1336,6 +1736,267 @@ napi_value SourceStatusList(napi_env env, napi_callback_info info)
     }
 }
 
+napi_value SourceRemove(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read sourceRemove arguments");
+        if (argument_count < 1)
+        {
+            throw NapiTypeError("sourceRemove requires sourceUuidHex");
+        }
+        const std::string hex = read_utf8_string(env, arguments[0], "sourceUuidHex");
+        std::uint8_t uuid[16] = {};
+        parse_uuid_hex(hex, uuid);
+        fly_app_t& app = require_app();
+        std::uint64_t count = 0;
+        require_fly(fly_source_status_count(&app, &count), "fly_source_status_count");
+        bool found = false;
+        std::uint32_t scope = 0;
+        for (std::uint64_t index = 0; index < count; ++index)
+        {
+            fly_source_status status{};
+            status.struct_size = FLY_SOURCE_STATUS_V1_SIZE;
+            status.version = FLY_SOURCE_STATUS_VERSION_1;
+            require_fly(fly_source_status_get(&app, index, &status), "fly_source_status_get");
+            bool match = true;
+            for (std::size_t byte = 0; byte < 16; ++byte)
+            {
+                if (status.source_uuid[byte] != uuid[byte])
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                found = true;
+                scope = status.source_scope;
+                break;
+            }
+        }
+        if (!found)
+        {
+            throw FlyCallError("fly_source_remove", FLY_RESULT_NOT_FOUND);
+        }
+        if (g_scan_jobs != nullptr)
+        {
+            g_scan_jobs->cancel_source(hex, scope);
+        }
+        require_fly(fly_source_remove(&app, uuid, scope), "fly_source_remove");
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "sourceRemove undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "sourceRemove failed: unknown native error", false);
+    }
+}
+
+flynes::harmony::ScanJobQueue& require_scan_jobs()
+{
+    if (g_scan_jobs == nullptr)
+    {
+        throw NapiTypeError("app is not open");
+    }
+    return *g_scan_jobs;
+}
+
+void close_scan_job_files(flynes::harmony::ScanJobRequest& request) noexcept
+{
+    for (flynes::harmony::ScanJobFile& file : request.files)
+    {
+        if (file.owned_fd >= 0)
+        {
+            close(file.owned_fd);
+            file.owned_fd = -1;
+        }
+    }
+}
+
+napi_value ScanJobStart(napi_env env, napi_callback_info info)
+{
+    flynes::harmony::ScanJobRequest request;
+    try
+    {
+        std::size_t argument_count = 4;
+        napi_value arguments[4] = {nullptr, nullptr, nullptr, nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read scanJobStart arguments");
+        if (argument_count < 4)
+        {
+            throw NapiTypeError(
+                "scanJobStart requires sourceUuidHex, sourceScope, files, and completeness");
+        }
+        request.source_uuid_hex = read_utf8_string(env, arguments[0], "sourceUuidHex");
+        std::uint8_t parsed_uuid[16]{};
+        parse_uuid_hex(request.source_uuid_hex, parsed_uuid);
+        const std::int32_t scope = read_int32(env, arguments[1], "sourceScope");
+        const std::int32_t completeness = read_int32(env, arguments[3], "completeness");
+        if (scope < 0 || completeness < 0)
+        {
+            throw NapiTypeError("sourceScope and completeness must be non-negative");
+        }
+        request.source_scope = static_cast<std::uint32_t>(scope);
+        request.final_completeness = static_cast<std::uint32_t>(completeness);
+
+        bool is_array = false;
+        require_napi(napi_is_array(env, arguments[2], &is_array), "inspect scan files array");
+        if (!is_array) throw NapiTypeError("files must be an Array");
+        std::uint32_t count = 0u;
+        require_napi(napi_get_array_length(env, arguments[2], &count), "measure scan files array");
+        request.files.reserve(count);
+        for (std::uint32_t index = 0u; index < count; ++index)
+        {
+            napi_value item = nullptr;
+            require_napi(napi_get_element(env, arguments[2], index, &item), "read scan file item");
+            flynes::harmony::ScanJobFile file;
+            file.relative_path = read_utf8_string(
+                env, named_property(env, item, "relativePath"), "relativePath");
+            file.display_name = read_utf8_string(
+                env, named_property(env, item, "displayName"), "displayName");
+            const std::int32_t borrowed_fd = read_int32(
+                env, named_property(env, item, "borrowedFd"), "borrowedFd");
+            const std::int64_t declared_size = read_int64(
+                env, named_property(env, item, "declaredSize"), "declaredSize");
+            if (borrowed_fd < 0 || declared_size < 0)
+            {
+                throw NapiTypeError("borrowedFd and declaredSize must be non-negative");
+            }
+            file.owned_fd = dup(borrowed_fd);
+            if (file.owned_fd < 0)
+            {
+                throw std::runtime_error("dup borrowedFd failed");
+            }
+            file.declared_size = static_cast<std::uint64_t>(declared_size);
+            request.files.push_back(std::move(file));
+        }
+        const std::uint64_t id = require_scan_jobs().start(std::move(request));
+        return create_int64(env, static_cast<std::int64_t>(id), "create scan job id");
+    }
+    catch (const NapiTypeError& error)
+    {
+        close_scan_job_files(request);
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        close_scan_job_files(request);
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        close_scan_job_files(request);
+        return report_error(env, "scanJobStart failed: unknown native error", false);
+    }
+}
+
+napi_value ScanJobStatus(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read scanJobStatus arguments");
+        if (argument_count < 1) throw NapiTypeError("scanJobStatus requires jobId");
+        const std::int64_t signed_id = read_int64(env, arguments[0], "jobId");
+        if (signed_id <= 0) throw NapiTypeError("jobId must be positive");
+        const auto status = require_scan_jobs().status(static_cast<std::uint64_t>(signed_id));
+        if (status.phase == flynes::harmony::ScanJobPhase::UNKNOWN)
+        {
+            throw NapiTypeError("scan job was not found");
+        }
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create ScanJobStatusDto");
+        require_napi(napi_set_named_property(
+                         env, result, "id",
+                         create_int64(env, static_cast<std::int64_t>(status.id), "create scan id")),
+                     "set scan id");
+        require_napi(napi_set_named_property(
+                         env, result, "phase",
+                         create_uint32(env, static_cast<std::uint32_t>(status.phase),
+                                       "create scan phase")),
+                     "set scan phase");
+        require_napi(napi_set_named_property(
+                         env, result, "processedFiles",
+                         create_int64(env, static_cast<std::int64_t>(status.processed_files),
+                                      "create processed files")),
+                     "set processed files");
+        require_napi(napi_set_named_property(
+                         env, result, "resultCount",
+                         create_int64(env, static_cast<std::int64_t>(status.result_count),
+                                      "create result count")),
+                     "set result count");
+        require_napi(napi_set_named_property(
+                         env, result, "cancelRequested",
+                         create_bool(env, status.cancel_requested, "create cancel requested")),
+                     "set cancel requested");
+        require_napi(napi_set_named_property(
+                         env, result, "error",
+                         create_string(env, status.error, "create scan error")),
+                     "set scan error");
+        return result;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "scanJobStatus failed: unknown native error", false);
+    }
+}
+
+napi_value ScanJobCancel(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read scanJobCancel arguments");
+        if (argument_count < 1) throw NapiTypeError("scanJobCancel requires jobId");
+        const std::int64_t signed_id = read_int64(env, arguments[0], "jobId");
+        if (signed_id <= 0) throw NapiTypeError("jobId must be positive");
+        return create_bool(env,
+                           require_scan_jobs().cancel(static_cast<std::uint64_t>(signed_id)),
+                           "create scan cancellation result");
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "scanJobCancel failed: unknown native error", false);
+    }
+}
+
 napi_value ScanBegin(napi_env env, napi_callback_info info)
 {
     try
@@ -1416,7 +2077,18 @@ napi_value ScanAddFile(napi_env env, napi_callback_info info)
         fly_scan_file_result scan_result{};
         scan_result.struct_size = FLY_SCAN_FILE_RESULT_V1_SIZE;
         scan_result.version = FLY_SCAN_FILE_RESULT_VERSION_1;
-        require_fly(fly_scan_add_file(g_scan.get(), &file, &scan_result), "fly_scan_add_file");
+        const fly_result add_status =
+            fly_scan_add_file(g_scan.get(), &file, &scan_result);
+        if (add_status != FLY_RESULT_OK)
+        {
+            throw FlyCallError(
+                (std::string("fly_scan_add_file path=") + relative + " display=" + display +
+                 " fd=" + std::to_string(borrowed_fd) + " size=" +
+                 std::to_string(declared_size) + " struct=" +
+                 std::to_string(static_cast<unsigned>(FLY_SCAN_FILE_V1_SIZE)))
+                    .c_str(),
+                add_status);
+        }
         napi_value result = nullptr;
         require_napi(napi_create_object(env, &result), "create ScanFileResultDto");
         require_napi(napi_set_named_property(
@@ -1518,6 +2190,54 @@ std::string basename_utf8(const std::string& path)
     return path.substr(slash + 1u);
 }
 
+/** Android RomPackageScanner.titleLanguage parity: any HAN code point → zh-Hans title. */
+bool contains_han_script(const std::string& value)
+{
+    // Iterate UTF-8 code points; HAN ranges: 4E00–9FFF, 3400–4DBF, F900–FAFF,
+    // 20000–2A6DF (supplementary, encoded as 4-byte sequences).
+    std::size_t index = 0u;
+    while (index < value.size())
+    {
+        const unsigned char byte0 = static_cast<unsigned char>(value[index]);
+        std::uint32_t code_point = 0u;
+        std::size_t advance = 1u;
+        if (byte0 < 0x80u)
+        {
+            code_point = byte0;
+        }
+        else if ((byte0 & 0xE0u) == 0xC0u && index + 1u < value.size())
+        {
+            code_point = (static_cast<std::uint32_t>(byte0 & 0x1Fu) << 6u) |
+                static_cast<std::uint32_t>(static_cast<unsigned char>(value[index + 1u]) & 0x3Fu);
+            advance = 2u;
+        }
+        else if ((byte0 & 0xF0u) == 0xE0u && index + 2u < value.size())
+        {
+            code_point = (static_cast<std::uint32_t>(byte0 & 0x0Fu) << 12u) |
+                (static_cast<std::uint32_t>(static_cast<unsigned char>(value[index + 1u]) & 0x3Fu) << 6u) |
+                static_cast<std::uint32_t>(static_cast<unsigned char>(value[index + 2u]) & 0x3Fu);
+            advance = 3u;
+        }
+        else if ((byte0 & 0xF8u) == 0xF0u && index + 3u < value.size())
+        {
+            code_point = (static_cast<std::uint32_t>(byte0 & 0x07u) << 18u) |
+                (static_cast<std::uint32_t>(static_cast<unsigned char>(value[index + 1u]) & 0x3Fu) << 12u) |
+                (static_cast<std::uint32_t>(static_cast<unsigned char>(value[index + 2u]) & 0x3Fu) << 6u) |
+                static_cast<std::uint32_t>(static_cast<unsigned char>(value[index + 3u]) & 0x3Fu);
+            advance = 4u;
+        }
+        if ((code_point >= 0x4E00u && code_point <= 0x9FFFu) ||
+            (code_point >= 0x3400u && code_point <= 0x4DBFu) ||
+            (code_point >= 0xF900u && code_point <= 0xFAFFu) ||
+            (code_point >= 0x20000u && code_point <= 0x2A6DFu))
+        {
+            return true;
+        }
+        index += advance;
+    }
+    return false;
+}
+
 flynes::harmony::GameCenterRow row_from_catalog_entry(fly_app_t& app, const fly_catalog_entry& entry)
 {
     flynes::harmony::GameCenterRow row;
@@ -1529,8 +2249,13 @@ flynes::harmony::GameCenterRow row_from_catalog_entry(fly_app_t& app, const fly_
                                      : entry.source_relative_path_utf8;
     row.original_filename = !display.empty() ? display : basename_utf8(relative);
     row.title_en = !display.empty() ? display : row.original_filename;
-    row.title_zh_hans = {};
+    // Android RomPackageScanner.titleLanguage parity: a title containing HAN
+    // script characters is a zh-Hans title; Latin-only titles stay EN.
+    row.title_zh_hans = contains_han_script(row.title_en) ? row.title_en : std::string{};
     row.builtin = entry.source_scope == FLY_SOURCE_SCOPE_BUILTIN;
+    row.source_uuid_hex = uuid_to_hex(entry.source_uuid);
+    row.source_relative_path = relative;
+    row.package_format = static_cast<int>(entry.package_format);
 
     fly_catalog_user_state user{};
     user.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE;
@@ -1637,7 +2362,7 @@ napi_value CatalogSmoke(napi_env env, napi_callback_info info)
     }
     catch (const std::bad_alloc&)
     {
-        return report_error(env, "catalogSmoke failed: native allocation error", false);
+        return report_error(env, "catalogSnapshot failed: native allocation error", false);
     }
     catch (const std::exception& error)
     {
@@ -1645,7 +2370,128 @@ napi_value CatalogSmoke(napi_env env, napi_callback_info info)
     }
     catch (...)
     {
-        return report_error(env, "catalogSmoke failed: unknown native error", false);
+        return report_error(env, "catalogSnapshot failed: unknown native error", false);
+    }
+}
+
+napi_value CatalogFavoriteSet(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 2;
+        napi_value arguments[2] = {nullptr, nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read catalogFavoriteSet arguments");
+        if (argument_count < 2)
+        {
+            throw NapiTypeError("catalogFavoriteSet requires (canonicalId, favorite)");
+        }
+        const std::string canonical = read_utf8_string(env, arguments[0], "canonicalId");
+        const bool favorite = read_bool(env, arguments[1], "favorite");
+        fly_app_t& app = require_app();
+        require_fly(fly_catalog_favorite_set(&app, canonical.data(),
+                                             static_cast<std::uint32_t>(canonical.size()),
+                                             favorite ? 1u : 0u),
+                    "fly_catalog_favorite_set");
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "catalogFavoriteSet undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "catalogFavoriteSet failed: unknown native error", false);
+    }
+}
+
+napi_value CatalogMarkPlayed(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read catalogMarkPlayed arguments");
+        if (argument_count < 1)
+        {
+            throw NapiTypeError("catalogMarkPlayed requires canonicalId");
+        }
+        const std::string canonical = read_utf8_string(env, arguments[0], "canonicalId");
+        fly_app_t& app = require_app();
+        require_fly(fly_catalog_mark_played(&app, canonical.data(),
+                                            static_cast<std::uint32_t>(canonical.size())),
+                    "fly_catalog_mark_played");
+        napi_value undefined = nullptr;
+        require_napi(napi_get_undefined(env, &undefined), "catalogMarkPlayed undefined");
+        return undefined;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "catalogMarkPlayed failed: unknown native error", false);
+    }
+}
+
+napi_value CatalogUserStateGet(napi_env env, napi_callback_info info)
+{
+    try
+    {
+        std::size_t argument_count = 1;
+        napi_value arguments[1] = {nullptr};
+        require_napi(napi_get_cb_info(
+                         env, info, &argument_count, arguments, nullptr, nullptr),
+                     "read catalogUserStateGet arguments");
+        if (argument_count < 1)
+        {
+            throw NapiTypeError("catalogUserStateGet requires canonicalId");
+        }
+        const std::string canonical = read_utf8_string(env, arguments[0], "canonicalId");
+        fly_app_t& app = require_app();
+        fly_catalog_user_state user{};
+        user.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE;
+        user.version = FLY_CATALOG_USER_STATE_VERSION_1;
+        require_fly(fly_catalog_user_state_get(&app, canonical.data(),
+                                               static_cast<std::uint32_t>(canonical.size()),
+                                               &user),
+                    "fly_catalog_user_state_get");
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create catalogUserStateGet result");
+        require_napi(napi_set_named_property(env, result, "favorite",
+                                             create_bool(env, user.favorite != 0, "favorite")),
+                     "set favorite");
+        require_napi(napi_set_named_property(env, result, "lastPlayedSequence",
+                                             create_int64(env, static_cast<std::int64_t>(
+                                                 user.last_played_sequence), "lastPlayedSequence")),
+                     "set lastPlayedSequence");
+        return result;
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        return report_error(env, "catalogUserStateGet failed: unknown native error", false);
     }
 }
 
@@ -1657,6 +2503,12 @@ napi_value Init(napi_env env, napi_value exports)
             {"catalogSmoke", nullptr, CatalogSmoke, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"catalogSnapshot", nullptr, CatalogSnapshot, nullptr, nullptr, nullptr, napi_default,
              nullptr},
+            {"catalogFavoriteSet", nullptr, CatalogFavoriteSet, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"catalogMarkPlayed", nullptr, CatalogMarkPlayed, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"catalogUserStateGet", nullptr, CatalogUserStateGet, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
             {"gameCenterFilter", nullptr, GameCenterFilter, nullptr, nullptr, nullptr, napi_default,
              nullptr},
             {"controlLayoutRecommended", nullptr, ControlLayoutRecommended, nullptr, nullptr, nullptr,
@@ -1677,19 +2529,43 @@ napi_value Init(napi_env env, napi_value exports)
             {"settingsApply", nullptr, SettingsApply, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"sourceStatusList", nullptr, SourceStatusList, nullptr, nullptr, nullptr, napi_default,
              nullptr},
+            {"sourceRemove", nullptr, SourceRemove, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
             {"scanBegin", nullptr, ScanBegin, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"scanAddFile", nullptr, ScanAddFile, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"scanCommit", nullptr, ScanCommit, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"scanAbort", nullptr, ScanAbort, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"scanJobStart", nullptr, ScanJobStart, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"scanJobStatus", nullptr, ScanJobStatus, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"scanJobCancel", nullptr, ScanJobCancel, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
             {"playOpen", nullptr, PlayOpen, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"playDecodePackage", nullptr, PlayDecodePackage, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
             {"playSetButtons", nullptr, PlaySetButtons, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"playStep", nullptr, PlayStep, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"playSetPaused", nullptr, PlaySetPaused, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"playSetAudioMuted", nullptr, PlaySetAudioMuted, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"playRuntimeStatus", nullptr, PlayRuntimeStatus, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"renderConfigure", nullptr, RenderConfigure, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"renderSetPaused", nullptr, RenderSetPaused, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"renderSetProtection", nullptr, RenderSetProtection, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"renderStatus", nullptr, RenderStatus, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
             {"playSaveCheckpoint", nullptr, PlaySaveCheckpoint, nullptr, nullptr, nullptr, napi_default, nullptr},
+            {"playLoadCheckpoint", nullptr, PlayLoadCheckpoint, nullptr, nullptr, nullptr, napi_default, nullptr},
             {"playClose", nullptr, PlayClose, nullptr, nullptr, nullptr, napi_default, nullptr},
         };
         require_napi(napi_define_properties(
                          env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors),
                      "define entry exports");
+        flynes::harmony::harmony_renderer().bind_component(env, exports);
         return exports;
     }
     catch (const std::exception& error)

@@ -89,6 +89,18 @@
       "value": "This game could not be opened."
     },
     {
+      "name": "game_center_continue",
+      "value": "Continue game"
+    },
+    {
+      "name": "game_center_add_favorite",
+      "value": "Add to favorites"
+    },
+    {
+      "name": "game_center_remove_favorite",
+      "value": "Remove from favorites"
+    },
+    {
       "name": "pause_eyebrow",
       "value": "GAME PAUSED"
     },
@@ -297,12 +309,56 @@
       "value": "Discard"
     },
     {
+      "name": "control_layout_undo",
+      "value": "Undo"
+    },
+    {
+      "name": "control_layout_test",
+      "value": "Try controls now"
+    },
+    {
+      "name": "control_layout_warning_small",
+      "value": "Some controls are too small."
+    },
+    {
+      "name": "control_layout_warning_overlap",
+      "value": "Some controls overlap."
+    },
+    {
+      "name": "control_layout_warning_gesture",
+      "value": "A control enters the system gesture area."
+    },
+    {
+      "name": "control_layout_warning_center",
+      "value": "A control covers the central game area."
+    },
+    {
+      "name": "control_layout_warning_save",
+      "value": "This layout has ergonomic warnings. Save anyway?"
+    },
+    {
+      "name": "control_layout_keep_editing",
+      "value": "Keep editing"
+    },
+    {
       "name": "sources_add_folder",
       "value": "Add folder"
     },
     {
+      "name": "sources_add_games",
+      "value": "Add games"
+    },
+    {
+      "name": "sources_debug_sideload",
+      "value": "Debug sideload"
+    },
+    {
+      "name": "sources_debug_cleanup",
+      "value": "Clean debug files"
+    },
+    {
       "name": "sources_empty",
-      "value": "No folders yet. Add a folder to scan your games."
+      "value": "No folders yet. Use Add games to pick .nes or .zip files."
     },
     {
       "name": "sources_stale",
@@ -313,8 +369,224 @@
       "value": "Authorize again"
     },
     {
+      "name": "sources_rescan",
+      "value": "Rescan"
+    },
+    {
+      "name": "sources_cancel_scan",
+      "value": "Cancel scan"
+    },
+    {
+      "name": "sources_games",
+      "value": "games"
+    },
+    {
+      "name": "game_center_external_ready",
+      "value": "External library ready"
+    },
+    {
+      "name": "remove_source",
+      "value": "Remove"
+    },
+    {
+      "name": "remove_source_title",
+      "value": "Remove this source?"
+    },
+    {
+      "name": "remove_source_message",
+      "value": "The folder and its ROM files will not be changed."
+    },
+    {
+      "name": "remove",
+      "value": "Remove"
+    },
+    {
+      "name": "cancel",
+      "value": "Cancel"
+    },
+    {
       "name": "permission_file_access_persist",
       "value": "Keep access to folders you pick as game sources"
+    },
+    {
+      "name": "permission_internet",
+      "value": "Download test ROM files from the development host"
+    },
+    {
+      "name": "settings",
+      "value": "Settings"
+    },
+    {
+      "name": "display_quality_title",
+      "value": "Picture quality & power"
+    },
+    {
+      "name": "display_quality_subtitle",
+      "value": "Choose a complete preset or tune each axis. FlyNES reports requests, active modes, and evidence separately."
+    },
+    {
+      "name": "settings_video_power_summary",
+      "value": "60 Hz · Native frames · Nearest pixels"
+    },
+    {
+      "name": "settings_video_balanced_summary",
+      "value": "60 Hz · Native frames · Sharp scaling"
+    },
+    {
+      "name": "settings_video_extreme_summary",
+      "value": "Requires exact device-lab qualification"
+    },
+    {
+      "name": "settings_video_custom_summary",
+      "value": "Choose refresh, temporal and spatial processing"
+    },
+    {
+      "name": "video_custom_axes",
+      "value": "Custom pipeline"
+    },
+    {
+      "name": "video_custom_refresh",
+      "value": "Refresh rate"
+    },
+    {
+      "name": "video_custom_temporal",
+      "value": "Temporal processing"
+    },
+    {
+      "name": "video_custom_spatial",
+      "value": "Spatial scaling"
+    },
+    {
+      "name": "video_custom_post",
+      "value": "Post effect"
+    },
+    {
+      "name": "video_refresh_follow",
+      "value": "Follow system"
+    },
+    {
+      "name": "video_refresh_60",
+      "value": "60 Hz"
+    },
+    {
+      "name": "video_refresh_90",
+      "value": "90 Hz"
+    },
+    {
+      "name": "video_refresh_120",
+      "value": "120 Hz (requires device qualification)"
+    },
+    {
+      "name": "video_temporal_native",
+      "value": "Native frames"
+    },
+    {
+      "name": "video_temporal_motion",
+      "value": "Motion interpolation"
+    },
+    {
+      "name": "video_spatial_nearest",
+      "value": "Nearest"
+    },
+    {
+      "name": "video_spatial_sharp",
+      "value": "Sharp bilinear"
+    },
+    {
+      "name": "video_spatial_mmpx",
+      "value": "MMPX"
+    },
+    {
+      "name": "video_spatial_scalefx",
+      "value": "ScaleFX"
+    },
+    {
+      "name": "video_post_none",
+      "value": "None"
+    },
+    {
+      "name": "video_post_crt",
+      "value": "CRT"
+    },
+    {
+      "name": "video_extreme_locked_title",
+      "value": "Extreme is not qualified on this device"
+    },
+    {
+      "name": "video_extreme_locked_message",
+      "value": "This build has no exact device-lab certificate for the current phone, driver, display mode and algorithm combination. Balanced remains fully available."
+    },
+    {
+      "name": "ok",
+      "value": "OK"
+    },
+    {
+      "name": "control_layout_summary",
+      "value": "Move and resize controls on a safe game preview."
+    },
+    {
+      "name": "reset_controls_summary",
+      "value": "Restore safe sizes, positions, opacity, and feedback."
+    },
+    {
+      "name": "license_information",
+      "value": "Licenses"
+    },
+    {
+      "name": "license_copy_link",
+      "value": "Copy source link"
+    },
+    {
+      "name": "license_link_copied",
+      "value": "Source link copied"
+    },
+    {
+      "name": "license_source_unconfigured",
+      "value": "Source link not configured"
+    },
+    {
+      "name": "license_load_failed",
+      "value": "Could not load this license text."
+    },
+    {
+      "name": "license_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "close_search",
+      "value": "Close search"
+    },
+    {
+      "name": "open_pause",
+      "value": "Pause game"
+    },
+    {
+      "name": "game_ready",
+      "value": "Ready to play"
+    },
+    {
+      "name": "haptic_preview",
+      "value": "Preview A / B haptics"
+    },
+    {
+      "name": "haptic_preview_summary",
+      "value": "Plays A once, then the distinct B rhythm."
+    },
+    {
+      "name": "aspect_mode",
+      "value": "Aspect ratio"
+    },
+    {
+      "name": "project_source",
+      "value": "FlyNES project source"
+    },
+    {
+      "name": "project_source_unconfigured",
+      "value": "Public source link is not configured in this alpha build."
+    },
+    {
+      "name": "permission_vibrate",
+      "value": "Vibrate for button feedback"
     }
   ]
 }

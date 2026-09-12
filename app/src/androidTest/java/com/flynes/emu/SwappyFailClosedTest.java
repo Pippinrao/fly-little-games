@@ -6,6 +6,7 @@ import android.os.SystemClock;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.lifecycle.Lifecycle;
 
 import com.flynes.emu.video.GameSurfaceView;
 
@@ -26,6 +27,11 @@ public final class SwappyFailClosedTest {
                         2L, 120.0f, 60.0988f, deadline, true));
                 surface.onResume();
             });
+            // Complete MainActivity's bounded pause/surface transaction before
+            // ActivityScenario closes the activity. Under a full-suite emulator
+            // load, combining both transitions can exhaust ActivityScenario's
+            // destroy wait even though the fail-closed assertions have passed.
+            scenario.moveToState(Lifecycle.State.CREATED);
         }
     }
 }

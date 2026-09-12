@@ -11,6 +11,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNotEquals;
 
+import android.app.Activity;
+import android.app.Instrumentation;
 import android.content.Context;
 import android.os.SystemClock;
 import android.view.MotionEvent;
@@ -18,33 +20,57 @@ import android.view.View;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 import com.flynes.emu.input.ControlLayoutV2;
 import com.flynes.emu.input.DirectionControlMode;
 import com.flynes.emu.input.GamepadHitMap;
 import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.ControlLayoutRepository;
 import com.flynes.emu.settings.SettingsRepository;
-import com.flynes.emu.settings.SharedPreferencesSettingsStore;
+import com.flynes.emu.settings.SettingsAccess;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class ControlLayoutActivityTest {
     @Test public void settingsIsTheOnlyEntryAndOpensEditor() {
-        try(ActivityScenario<SettingsActivity> scenario=ActivityScenario.launch(SettingsActivity.class)) {
-            scenario.onActivity(activity -> {
-                activity.findViewById(R.id.settings_controls_master).performClick();
-                activity.getSupportFragmentManager().executePendingTransactions();
-                com.flynes.emu.settings.SettingsFragment fragment =
-                        (com.flynes.emu.settings.SettingsFragment) activity.getSupportFragmentManager()
-                                .findFragmentById(R.id.settings_content);
-                org.junit.Assert.assertNotNull(fragment);
-                androidx.preference.Preference preference=fragment.findPreference("controls.layout_editor");
-                org.junit.Assert.assertNotNull(preference);
-                preference.performClick();
-            });
-            onView(withId(R.id.control_layout_preview)).check(matches(isDisplayed()));
-            onView(withId(R.id.control_layout_save)).check(matches(isDisplayed()));
+        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
+                ControlLayoutActivity.class.getName(), null, false);
+        Activity editor = null;
+        try {
+            try(ActivityScenario<SettingsActivity> scenario=
+                        ActivityScenario.launch(SettingsActivity.class)) {
+                scenario.onActivity(activity -> {
+                    activity.findViewById(R.id.settings_controls_master).performClick();
+                    activity.getSupportFragmentManager().executePendingTransactions();
+                    com.flynes.emu.settings.SettingsFragment fragment =
+                            (com.flynes.emu.settings.SettingsFragment) activity
+                                    .getSupportFragmentManager()
+                                    .findFragmentById(R.id.settings_content);
+                    org.junit.Assert.assertNotNull(fragment);
+                    androidx.preference.Preference preference =
+                            fragment.findPreference("controls.layout_editor");
+                    org.junit.Assert.assertNotNull(preference);
+                    preference.performClick();
+                });
+                editor = instrumentation.waitForMonitorWithTimeout(monitor, 30_000L);
+                org.junit.Assert.assertTrue(editor instanceof ControlLayoutActivity);
+                Activity launchedEditor = editor;
+                instrumentation.runOnMainSync(() -> {
+                    org.junit.Assert.assertTrue(launchedEditor
+                            .findViewById(R.id.control_layout_preview).isShown());
+                    org.junit.Assert.assertTrue(launchedEditor
+                            .findViewById(R.id.control_layout_save).isShown());
+                });
+                instrumentation.runOnMainSync(editor::finish);
+                instrumentation.waitForIdleSync();
+            }
+        } finally {
+            instrumentation.removeMonitor(monitor);
+            if (editor != null && !editor.isFinishing()) {
+                instrumentation.runOnMainSync(editor::finish);
+            }
         }
     }
 
@@ -65,13 +91,19 @@ public final class ControlLayoutActivityTest {
                 view.dispatchTouchEvent(down);view.dispatchTouchEvent(move);view.dispatchTouchEvent(up);
                 down.recycle();move.recycle();up.recycle();
             });
-            onView(withId(R.id.control_layout_save)).perform(androidx.test.espresso.action.ViewActions.click());
+            scenario.onActivity(activity -> {
+                View save = activity.findViewById(R.id.control_layout_save);
+                org.junit.Assert.assertTrue(save.isShown());
+                org.junit.Assert.assertTrue(save.performClick());
+            });
         }
         ControlLayoutV2 saved=new ControlLayoutRepository((android.content.Context)
                 androidx.test.core.app.ApplicationProvider.getApplicationContext()).load();
         assertNotEquals(before,saved);
-        try(ActivityScenario<ControlLayoutActivity> ignored=ActivityScenario.launch(ControlLayoutActivity.class)) {
-            onView(withId(R.id.control_layout_preview)).check(matches(isDisplayed()));
+        try(ActivityScenario<ControlLayoutActivity> restored=
+                    ActivityScenario.launch(ControlLayoutActivity.class)) {
+            restored.onActivity(activity -> org.junit.Assert.assertTrue(
+                    activity.findViewById(R.id.control_layout_preview).isShown()));
         }
     }
 
@@ -130,7 +162,7 @@ public final class ControlLayoutActivityTest {
                                                    DirectionControlMode mode) {
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
                 .edit().clear().commit();
-        new SettingsRepository(new SharedPreferencesSettingsStore(context)).save(
+        SettingsAccess.repository(context).save(
                 AppSettings.defaults().toBuilder().directionControlMode(mode).build());
         ControlLayoutEditorView view = new ControlLayoutEditorView(context);
         view.setLayout(ControlLayoutV2.recommended());

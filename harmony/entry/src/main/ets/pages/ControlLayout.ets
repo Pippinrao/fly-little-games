@@ -1,6 +1,12 @@
 import { common } from '@kit.AbilityKit';
-import { router } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import nativeApp from 'libentry.so';
+import {
+  ControlLayoutWarningCode,
+  ControlLayoutWarnings,
+  ControlPlacement,
+  UndoStack
+} from './ControlLayoutWarnings';
 
 class LayoutElement {
   name: string = '';
@@ -14,26 +20,37 @@ class ParsedLayout {
   elements: LayoutElement[] = [];
 }
 
+class LayoutSnapshot {
+  opacity: number = 0.52;
+  elements: LayoutElement[] = [];
+}
+
 const ELEMENT_NAMES: string[] = ['D_PAD', 'A', 'B', 'SELECT', 'START'];
 const MIN_OPACITY: number = 0.4;
 const MAX_OPACITY: number = 1.0;
 const MIN_SCALE: number = 0.5;
 const MAX_SCALE: number = 1.8;
+const COLOR_WARNING: string = '#FFB35E';
 
 @Entry
 @Component
 struct ControlLayout {
   @State private layoutOpacity: number = 0.52;
   @State private selected: string = 'A';
+  @State private pressed: string = '';
+  @State private tryMode: boolean = false;
   @State private elements: LayoutElement[] = ControlLayout.defaultElements();
+  @State private warningText: string = '';
   @State private stageW: number = 1;
   @State private stageH: number = 1;
   @State private status: string = '';
+  private readonly undoStack: UndoStack<LayoutSnapshot> = new UndoStack<LayoutSnapshot>(20);
   private dragName: string = '';
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private fingerOriginX: number = 0;
   private fingerOriginY: number = 0;
+  private pushedForGesture: boolean = false;
 
   aboutToAppear(): void {
     this.loadLayout();
@@ -47,10 +64,16 @@ struct ControlLayout {
           .height('100%')
           .backgroundColor('#0D0E11')
           .stateEffect(false)
+          .enabled(!this.tryMode)
           .onClick((event: ClickEvent) => {
+            if (this.tryMode) {
+              return;
+            }
+            this.pushUndo();
             const nx = event.x / Math.max(1, this.stageW);
             const ny = event.y / Math.max(1, this.stageH);
             this.moveSelected(nx, ny);
+            this.refreshWarnings();
           })
         ForEach(this.elements, (element: LayoutElement) => {
           Text(element.name)
@@ -59,10 +82,10 @@ struct ControlLayout {
             .textAlign(TextAlign.Center)
             .width(this.elementWidth(element))
             .height(this.elementHeight(element))
-            .backgroundColor(element.name === this.selected ? '#8A25282F' : '#8425282F')
+            .backgroundColor(this.controlFill(element.name))
             .border({
               width: 2,
-              color: element.name === this.selected ? '#FF6B5E' : '#BEB8AE'
+              color: this.controlBorder(element.name)
             })
             .borderRadius(element.name === 'A' || element.name === 'B' ? 40 : 10)
             .opacity(this.layoutOpacity)
@@ -76,14 +99,24 @@ struct ControlLayout {
             .gesture(
               PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
                 .onActionStart(() => {
+                  if (this.tryMode) {
+                    return;
+                  }
                   this.beginDrag(element.name);
                 })
                 .onActionEnd((event: GestureEvent) => {
+                  if (this.tryMode) {
+                    return;
+                  }
                   this.updateDrag(element.name, event.offsetX, event.offsetY);
                   this.dragName = '';
+                  this.pushedForGesture = false;
+                  this.refreshWarnings();
                 })
                 .onActionCancel(() => {
                   this.dragName = '';
+                  this.pushedForGesture = false;
+                  this.pressed = '';
                 })
             )
         }, (element: LayoutElement) => `${element.name}:${element.x.toFixed(4)}:${element.y.toFixed(4)}:${element.scale.toFixed(4)}`)
@@ -96,7 +129,9 @@ struct ControlLayout {
       })
 
       Column({ space: 10 }) {
-        Text($r('app.string.control_layout_title'))
+        Scroll() {
+          Column({ space: 10 }) {
+            Text($r('app.string.control_layout_title'))
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
           .fontColor('#F4EFE6')
@@ -105,6 +140,12 @@ struct ControlLayout {
           .fontSize(14)
           .fontColor('#BEB8AE')
           .width('100%')
+        if (this.warningText.length > 0) {
+          Text(this.warningText)
+            .fontSize(13)
+            .fontColor(COLOR_WARNING)
+            .width('100%')
+        }
         if (this.status.length > 0) {
           Text(this.status)
             .fontSize(13)
@@ -123,8 +164,11 @@ struct ControlLayout {
           style: SliderStyle.OutSet
         })
           .width('100%')
+          .enabled(!this.tryMode)
           .onChange((value: number) => {
+            this.pushUndo();
             this.resizeSelected(value);
+            this.refreshWarnings();
           })
         Text($r('app.string.control_layout_opacity_label'))
           .fontSize(13)
@@ -138,28 +182,69 @@ struct ControlLayout {
           style: SliderStyle.OutSet
         })
           .width('100%')
+          .enabled(!this.tryMode)
           .onChange((value: number) => {
+            this.pushUndo();
             this.layoutOpacity = Math.max(MIN_OPACITY, Math.min(MAX_OPACITY, value));
           })
-        Blank()
-        Button($r('app.string.control_layout_recommended'))
+            Row() {
+              Text($r('app.string.control_layout_test'))
+            .fontSize(14)
+            .fontColor('#F4EFE6')
+            .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.tryMode })
+            .selectedColor('#FF6B5E')
+            .onChange((isOn: boolean) => {
+              this.tryMode = isOn;
+              this.pressed = '';
+            })
+            }
+            .width('100%')
+            .height(48)
+          }
           .width('100%')
-          .height(48)
-          .onClick(() => {
-            this.resetRecommended();
-          })
-        Button($r('app.string.control_layout_save'))
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+        Column({ space: 8 }) {
+          Row({ space: 8 }) {
+            Button($r('app.string.control_layout_undo'))
+            .layoutWeight(1)
+            .height(48)
+            .enabled(!this.tryMode)
+            .onClick(() => {
+              this.undo();
+            })
+            Button($r('app.string.control_layout_recommended'))
+            .layoutWeight(1.4)
+            .height(48)
+            .enabled(!this.tryMode)
+            .onClick(() => {
+              this.pushUndo();
+              this.resetRecommended();
+              this.refreshWarnings();
+            })
+          }
           .width('100%')
-          .height(52)
-          .onClick(() => {
-            this.saveLayout();
-          })
-        Button($r('app.string.control_layout_discard'))
-          .width('100%')
-          .height(48)
-          .onClick(() => {
-            router.back();
-          })
+          Button($r('app.string.control_layout_save'))
+            .id('control-layout-save')
+            .width('100%')
+            .height(52)
+            .onClick(() => {
+              this.requestSave();
+            })
+          Button($r('app.string.control_layout_discard'))
+            .id('control-layout-discard')
+            .width('100%')
+            .height(48)
+            .onClick(() => {
+              router.back();
+            })
+        }
+        .id('control-layout-actions')
+        .width('100%')
       }
       .width(320)
       .height('100%')
@@ -171,6 +256,20 @@ struct ControlLayout {
     .backgroundColor('#121316')
   }
 
+  private controlFill(name: string): string {
+    if (this.pressed === name) {
+      return '#C8FF6B5E';
+    }
+    return name === this.selected ? '#8A25282F' : '#8425282F';
+  }
+
+  private controlBorder(name: string): string {
+    if (this.pressed === name) {
+      return '#FFB35E';
+    }
+    return name === this.selected ? '#FF6B5E' : '#BEB8AE';
+  }
+
   private handleControlTouch(name: string, event: TouchEvent): void {
     const touch = event.type === TouchType.Up || event.type === TouchType.Cancel
       ? (event.changedTouches.length > 0 ? event.changedTouches[0] : undefined)
@@ -179,19 +278,35 @@ struct ControlLayout {
       return;
     }
     if (event.type === TouchType.Down) {
+      this.selected = name;
+      if (this.tryMode) {
+        this.pressed = name;
+        return;
+      }
       this.beginDrag(name);
       this.fingerOriginX = touch.windowX;
       this.fingerOriginY = touch.windowY;
-    } else if ((event.type === TouchType.Up || event.type === TouchType.Cancel) &&
-      this.dragName === name) {
-      this.updateDrag(name, touch.windowX - this.fingerOriginX, touch.windowY - this.fingerOriginY);
-      this.dragName = '';
+    } else if ((event.type === TouchType.Up || event.type === TouchType.Cancel)) {
+      this.pressed = '';
+      if (this.tryMode) {
+        return;
+      }
+      if (this.dragName === name) {
+        this.updateDrag(name, touch.windowX - this.fingerOriginX, touch.windowY - this.fingerOriginY);
+        this.dragName = '';
+        this.pushedForGesture = false;
+        this.refreshWarnings();
+      }
     }
   }
 
   private beginDrag(name: string): void {
     this.selected = name;
     this.dragName = name;
+    if (!this.pushedForGesture) {
+      this.pushUndo();
+      this.pushedForGesture = true;
+    }
     this.dragStartX = 0;
     this.dragStartY = 0;
     for (let index = 0; index < this.elements.length; index++) {
@@ -261,6 +376,7 @@ struct ControlLayout {
     if (host === undefined) {
       this.status = 'UIAbility context is unavailable';
       this.resetRecommended();
+      this.refreshWarnings();
       return;
     }
     const context = host as common.UIAbilityContext;
@@ -268,10 +384,32 @@ struct ControlLayout {
       nativeApp.appOpen(context.filesDir, context.cacheDir);
       this.applyEncoded(nativeApp.controlLayoutGet());
       this.status = '';
+      this.refreshWarnings();
     } catch (error) {
       this.resetRecommended();
       this.status = error instanceof Error ? error.message : 'layout load failed';
+      this.refreshWarnings();
     }
+  }
+
+  private requestSave(): void {
+    this.refreshWarnings();
+    const warnings = this.inspectWarnings();
+    if (warnings.isEmpty()) {
+      this.saveLayout();
+      return;
+    }
+    promptAction.showDialog({
+      message: $r('app.string.control_layout_warning_save'),
+      buttons: [
+        { text: $r('app.string.control_layout_keep_editing'), color: '#A8B0BD' },
+        { text: $r('app.string.control_layout_save'), color: '#FF6B5E' }
+      ]
+    }).then((result) => {
+      if (result.index === 1) {
+        this.saveLayout();
+      }
+    }).catch(() => {});
   }
 
   private saveLayout(): void {
@@ -283,7 +421,7 @@ struct ControlLayout {
     const context = host as common.UIAbilityContext;
     try {
       nativeApp.appOpen(context.filesDir, context.cacheDir);
-      const applied = nativeApp.controlLayoutApply(this.encode());
+      const applied: string = nativeApp.controlLayoutApply(this.encode());
       this.applyEncoded(applied);
       this.status = '';
       router.back();
@@ -293,7 +431,7 @@ struct ControlLayout {
   }
 
   private applyEncoded(encoded: string): void {
-    const decoded = nativeApp.controlLayoutDecodeOrRecommended(encoded);
+    const decoded: string = nativeApp.controlLayoutDecodeOrRecommended(encoded);
     const parsed = ControlLayout.parseWire(decoded);
     this.layoutOpacity = parsed.opacity;
     this.elements = parsed.elements;
@@ -306,6 +444,54 @@ struct ControlLayout {
       out += `|${element.name},${element.x.toFixed(4)},${element.y.toFixed(4)},${element.scale.toFixed(4)}`;
     }
     return out;
+  }
+
+  private pushUndo(): void {
+    const snapshot = new LayoutSnapshot();
+    snapshot.opacity = this.layoutOpacity;
+    snapshot.elements = this.cloneElements();
+    this.undoStack.push(snapshot);
+  }
+
+  private undo(): void {
+    const snapshot = this.undoStack.undo();
+    if (snapshot === undefined) {
+      return;
+    }
+    this.layoutOpacity = snapshot.opacity;
+    this.elements = snapshot.elements;
+    this.refreshWarnings();
+  }
+
+  private inspectWarnings(): ControlLayoutWarnings {
+    const placements: ControlPlacement[] = [];
+    for (let index = 0; index < this.elements.length; index++) {
+      const element = this.elements[index];
+      placements.push(new ControlPlacement(element.x, element.y, element.scale));
+    }
+    return ControlLayoutWarnings.inspect(placements);
+  }
+
+  private refreshWarnings(): void {
+    const warnings = this.inspectWarnings();
+    if (warnings.isEmpty()) {
+      this.warningText = '';
+      return;
+    }
+    const lines: string[] = [];
+    if (warnings.contains(ControlLayoutWarningCode.TOO_SMALL)) {
+      lines.push('Some controls are too small.');
+    }
+    if (warnings.contains(ControlLayoutWarningCode.OVERLAP)) {
+      lines.push('Some controls overlap.');
+    }
+    if (warnings.contains(ControlLayoutWarningCode.GESTURE_ZONE)) {
+      lines.push('A control enters the system gesture area.');
+    }
+    if (warnings.contains(ControlLayoutWarningCode.CENTRAL_PROTECTION)) {
+      lines.push('A control covers the central game area.');
+    }
+    this.warningText = lines.join('\n');
   }
 
   private cloneElements(): LayoutElement[] {

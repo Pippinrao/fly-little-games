@@ -1,7 +1,9 @@
-import nativePlay from 'libentry.so';
+import nativePlay, { PlayStepResult } from 'libentry.so';
 import { image } from '@kit.ImageKit';
-import { audio } from '@kit.AudioKit';
 import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { HarmonySourceMap } from '../platform/HarmonySourceMap';
+import { CheckpointStore } from './CheckpointStore';
 
 export const NES_BTN_A = 0x01;
 export const NES_BTN_B = 0x02;
@@ -12,54 +14,71 @@ export const NES_BTN_DOWN = 0x20;
 export const NES_BTN_LEFT = 0x40;
 export const NES_BTN_RIGHT = 0x80;
 
+export let lastRomOpenError: string = '';
+
+export function rememberRomOpenError(message: string): void {
+  lastRomOpenError = message;
+}
+
+export function takeRomOpenError(): string {
+  const value = lastRomOpenError;
+  lastRomOpenError = '';
+  return value;
+}
+
 export function mapsToBuiltinFromBelow(canonicalId: string): boolean {
   const id = canonicalId.trim().toLowerCase();
   return id === 'builtin' || id.indexOf('from_below') >= 0 || id.indexOf('from-below') >= 0;
 }
 
+export class RomLaunchLocator {
+  canonicalId: string = '';
+  sourceUuidHex: string = '';
+  sourceRelativePath: string = '';
+  packageFormat: number = 0;
+  zipEntryName: string = '';
+}
+
 export class PlayService {
   private buttons: number = 0;
-  private renderer: audio.AudioRenderer | undefined = undefined;
-  private pendingPcm: ArrayBuffer[] = [];
-  private pendingOffset: number = 0;
+  private audioMuted: boolean = false;
   private outputPaused: boolean = false;
-  private readonly onWriteData = (data: ArrayBuffer): audio.AudioDataCallbackResult => {
-    this.fillAudioBuffer(data);
-    return audio.AudioDataCallbackResult.VALID;
-  };
+  private opened: boolean = false;
+  private checkpointStore: CheckpointStore | undefined = undefined;
+  private checkpointId: string = '';
 
-  async open(context: common.UIAbilityContext, canonicalId: string): Promise<void> {
-    if (!mapsToBuiltinFromBelow(canonicalId)) {
-      throw new Error('This game could not be opened.');
-    }
-    let rom: Uint8Array;
-    try {
-      rom = context.resourceManager.getRawFileContentSync('from_below.nes');
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Failed to read ROM rawfile';
-      throw new Error(detail);
+  async open(context: common.UIAbilityContext, locator: RomLaunchLocator,
+    restoreCheckpoint: boolean = true): Promise<void> {
+    lastRomOpenError = '';
+    let rom: Uint8Array | ArrayBuffer;
+    if (mapsToBuiltinFromBelow(locator.canonicalId)) {
+      try {
+        rom = context.resourceManager.getRawFileContentSync('from_below.nes');
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Failed to read ROM rawfile';
+        throw new Error(detail);
+      }
+    } else {
+      rom = await this.loadUserRom(context, locator);
     }
     nativePlay.playOpen(rom);
-    try {
-      this.renderer = await audio.createAudioRenderer({
-        streamInfo: {
-          samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_48000,
-          channels: audio.AudioChannel.CHANNEL_1,
-          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
-          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
-        },
-        rendererInfo: {
-          usage: audio.StreamUsage.STREAM_USAGE_GAME,
-          rendererFlags: 0
+    this.opened = true;
+    this.checkpointStore = new CheckpointStore(context.filesDir);
+    this.checkpointId = locator.canonicalId;
+    if (restoreCheckpoint && this.checkpointId.length > 0) {
+      try {
+        const checkpoint = this.checkpointStore.read(this.checkpointId);
+        if (checkpoint !== undefined) {
+          nativePlay.playLoadCheckpoint(checkpoint);
+          console.info(`FlyNES autosave restored for ${this.checkpointId}`);
         }
-      });
-      this.renderer.on('writeData', this.onWriteData);
-      await this.renderer.start();
-    } catch (error) {
-      this.renderer = undefined;
-      const detail = error instanceof Error ? error.message : 'audio start failed';
-      console.error(`FlyNES audio disabled: ${detail}`);
+      } catch (error) {
+        this.checkpointStore.quarantine(this.checkpointId);
+        const detail = error instanceof Error ? error.message : 'autosave restore failed';
+        console.error(`FlyNES corrupt autosave quarantined: ${detail}`);
+      }
     }
+    nativePlay.playSetAudioMuted(this.audioMuted);
   }
 
   setButtons(mask: number): void {
@@ -67,12 +86,16 @@ export class PlayService {
     nativePlay.playSetButtons(this.buttons);
   }
 
-  stepFrame() {
-    const result = nativePlay.playStep();
-    if (!this.outputPaused && result.pcm.byteLength > 0) {
-      this.pendingPcm.push(result.pcm);
+  /** Settings parity: audio.enabled=0 mutes output while the game keeps running. */
+  setAudioMuted(muted: boolean): void {
+    this.audioMuted = muted;
+    if (this.opened) {
+      nativePlay.playSetAudioMuted(muted);
     }
-    return result;
+  }
+
+  stepFrame(): PlayStepResult {
+    return nativePlay.playStep();
   }
 
   createFrame(rgb565: ArrayBuffer): image.PixelMap {
@@ -85,78 +108,60 @@ export class PlayService {
   }
 
   saveCheckpoint(): void {
-    nativePlay.playSaveCheckpoint();
+    if (!this.opened || this.checkpointStore === undefined || this.checkpointId.length === 0) {
+      throw new Error('play session is not open');
+    }
+    this.checkpointStore.write(this.checkpointId, nativePlay.playSaveCheckpoint());
   }
 
   pauseOutput(): void {
     this.outputPaused = true;
-    this.pendingPcm = [];
-    this.pendingOffset = 0;
-    const renderer = this.renderer;
-    if (renderer !== undefined) {
-      renderer.pause().catch((error: Object) => {
-        const detail = error instanceof Error ? error.message : 'audio pause failed';
-        console.error(`FlyNES audio pause failed: ${detail}`);
-      });
-    }
+    nativePlay.playSetPaused(true);
   }
 
   resumeOutput(): void {
     this.outputPaused = false;
-    const renderer = this.renderer;
-    if (renderer !== undefined) {
-      renderer.start().catch((error: Object) => {
-        const detail = error instanceof Error ? error.message : 'audio resume failed';
-        console.error(`FlyNES audio resume failed: ${detail}`);
-      });
-    }
+    nativePlay.playSetPaused(false);
   }
 
   close(): void {
     try {
-      nativePlay.playClose();
+      if (this.opened) {
+        nativePlay.playClose();
+      }
     } finally {
-      const renderer = this.renderer;
-      this.renderer = undefined;
-      this.pendingPcm = [];
-      this.pendingOffset = 0;
+      this.opened = false;
+      this.checkpointStore = undefined;
+      this.checkpointId = '';
       this.outputPaused = false;
       this.buttons = 0;
-      if (renderer !== undefined) {
-        try {
-          renderer.off('writeData', this.onWriteData);
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : 'audio off failed';
-          console.error(`FlyNES audio detach failed: ${detail}`);
-        }
-        renderer.stop().then(() => renderer.release()).catch(() => {
-          renderer.release();
-        });
+    }
+  }
+
+  private async loadUserRom(context: common.UIAbilityContext,
+    locator: RomLaunchLocator): Promise<ArrayBuffer> {
+    if (locator.sourceUuidHex.length !== 32 || locator.sourceRelativePath.length === 0) {
+      throw new Error('This game could not be opened.');
+    }
+    const sourceMap = new HarmonySourceMap();
+    await sourceMap.load(context);
+    const base = sourceMap.get(locator.sourceUuidHex);
+    if (base.length === 0) {
+      throw new Error('This game could not be opened.');
+    }
+    const childUri = `${base}/${locator.sourceRelativePath}`;
+    let file: fileIo.File | undefined = undefined;
+    try {
+      file = fileIo.openSync(childUri, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(file.fd);
+      const physical = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, physical);
+      return nativePlay.playDecodePackage(physical, locator.packageFormat, locator.zipEntryName);
+    } finally {
+      if (file !== undefined) {
+        fileIo.closeSync(file.fd);
       }
     }
   }
 
-  private fillAudioBuffer(data: ArrayBuffer): void {
-    const dest = new Uint8Array(data);
-    if (this.outputPaused) {
-      dest.fill(0);
-      return;
-    }
-    let written = 0;
-    while (written < dest.length && this.pendingPcm.length > 0) {
-      const source = new Uint8Array(this.pendingPcm[0]);
-      const available = source.length - this.pendingOffset;
-      const copy = Math.min(available, dest.length - written);
-      dest.set(source.subarray(this.pendingOffset, this.pendingOffset + copy), written);
-      written += copy;
-      this.pendingOffset += copy;
-      if (this.pendingOffset >= source.length) {
-        this.pendingPcm.shift();
-        this.pendingOffset = 0;
-      }
-    }
-    if (written < dest.length) {
-      dest.fill(0, written);
-    }
-  }
 }

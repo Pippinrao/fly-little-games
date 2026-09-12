@@ -24,6 +24,7 @@ import com.flynes.emu.settings.AppSettings;
 import com.flynes.emu.settings.AspectMode;
 import com.flynes.emu.settings.SharedPreferencesSettingsStore;
 import com.flynes.emu.settings.SettingsRepository;
+import com.flynes.emu.settings.SettingsAccess;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -33,8 +34,7 @@ public final class SettingsPersistenceTest {
     @Test
     public void directionModesAreOrderedAndCleanDefaultThenFollowPersist() {
         Context context = ApplicationProvider.getApplicationContext();
-        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
-                .edit().clear().commit();
+        resetProductionSettings(context);
         assertArrayEquals(new String[]{
                         context.getString(R.string.direction_fixed_joystick),
                         context.getString(R.string.direction_joystick),
@@ -72,13 +72,17 @@ public final class SettingsPersistenceTest {
     @Test
     public void hapticAndAspectPersistAcrossRecreation() {
         Context context = ApplicationProvider.getApplicationContext();
-        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
-                .edit().clear().commit();
+        resetProductionSettings(context);
 
         try (ActivityScenario<SettingsActivity> scenario =
                      ActivityScenario.launch(SettingsActivity.class)) {
             // Aspect now belongs to the explicit Custom quality axes, not a legacy preference row.
-            onView(withId(R.id.video_preset_custom_card)).perform(scrollTo(), click());
+            onView(withId(R.id.video_preset_custom_card)).perform(scrollTo());
+            scenario.onActivity(activity -> {
+                android.view.View custom = activity.findViewById(R.id.video_preset_custom_card);
+                org.junit.Assert.assertTrue("custom preset card is not shown", custom.isShown());
+                org.junit.Assert.assertTrue("custom preset click was not accepted", custom.performClick());
+            });
             onView(withId(R.id.video_aspect_spinner)).perform(scrollTo(), click());
             onView(withText(R.string.aspect_square_pixels)).perform(click());
             onView(withId(R.id.settings_controls_master)).perform(click());
@@ -104,5 +108,9 @@ public final class SettingsPersistenceTest {
             result[index] = values[index].toString();
         }
         return result;
+    }
+
+    private static void resetProductionSettings(Context context) {
+        assertEquals(true, SettingsAccess.repository(context).save(AppSettings.defaults()));
     }
 }

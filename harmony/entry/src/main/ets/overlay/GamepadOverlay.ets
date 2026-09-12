@@ -151,7 +151,7 @@ class OverlayHitMath {
     }
     const dx = x - this.dpadCenterX();
     const dy = y - this.dpadCenterY();
-    const capture = this.hit.joystickRadius + 16 * this.density;
+    const capture: number = this.hit.joystickRadius + 16 * this.density;
     return dx * dx + dy * dy <= capture * capture;
   }
 
@@ -171,7 +171,7 @@ class OverlayHitMath {
     if (this.hit === undefined) {
       return x;
     }
-    const minimum = this.safeLeft() + this.hit.joystickRadius;
+    const minimum: number = this.safeLeft() + this.hit.joystickRadius;
     const maximum = Math.max(minimum, this.safeCenterX() - this.hit.joystickRadius);
     return Math.max(minimum, Math.min(maximum, x));
   }
@@ -180,7 +180,7 @@ class OverlayHitMath {
     if (this.hit === undefined) {
       return y;
     }
-    const minimum = this.safeTop() + this.hit.joystickRadius;
+    const minimum: number = this.safeTop() + this.hit.joystickRadius;
     const maximum = Math.max(minimum, this.safeBottom() - this.hit.joystickRadius);
     return Math.max(minimum, Math.min(maximum, y));
   }
@@ -221,7 +221,7 @@ class OverlayHitMath {
     const dx = x - centerX;
     const dy = y - centerY;
     const normalized = Math.sqrt(dx * dx + dy * dy) / this.hit.joystickRadius;
-    const threshold = previousBits === 0 ? this.hit.deadZone : Math.max(0.08, this.hit.deadZone - 0.06);
+    const threshold: number = previousBits === 0 ? this.hit.deadZone : Math.max(0.08, this.hit.deadZone - 0.06);
     if (normalized < threshold) {
       return 0;
     }
@@ -424,7 +424,7 @@ export struct GamepadOverlay {
     const dx = this.effectiveX - this.stickX;
     const dy = this.effectiveY - this.stickY;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const travel = this.math.hit.joystickTravelRadius;
+    const travel: number = this.math.hit.joystickTravelRadius;
     if (distance <= travel || distance === 0) {
       return;
     }
@@ -440,7 +440,7 @@ export struct GamepadOverlay {
     const dx = this.effectiveX - this.stickX;
     const dy = this.effectiveY - this.stickY;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const travel = this.math.hit.joystickTravelRadius;
+    const travel: number = this.math.hit.joystickTravelRadius;
     const scale = distance > travel && distance > 0 ? travel / distance : 1;
     this.knobX = this.stickX + dx * scale;
     this.knobY = this.stickY + dy * scale;
@@ -475,7 +475,7 @@ export struct GamepadOverlay {
     if (this.widthPx <= 0 || this.heightPx <= 0) {
       return;
     }
-    const layout = this.layoutUtf8.length > 0 ? this.layoutUtf8 : nativePlay.controlLayoutRecommended();
+    const layout: string = this.layoutUtf8.length > 0 ? this.layoutUtf8 : nativePlay.controlLayoutRecommended();
     const key =
       `${this.widthPx}|${this.heightPx}|${this.density}|${this.insetL}|${this.insetR}|${this.insetT}|${this.insetB}|${layout}|${this.directionMode}|${this.deadZone}`;
     if (key === this.geometryKey && this.math.hit !== undefined) {
@@ -522,7 +522,7 @@ export struct GamepadOverlay {
   private redraw(): void {
     this.rebuildHitMap();
     const ctx = this.canvasContext;
-    const hit = this.math.hit;
+    const hit: HitMapDto | undefined = this.math.hit;
     if (hit === undefined || this.widthPx <= 0 || this.heightPx <= 0) {
       return;
     }
@@ -621,7 +621,15 @@ export struct GamepadOverlay {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = pressed ? 'rgba(18, 19, 22, 1)' : `rgba(255, 255, 255, ${this.overlayOpacity()})`;
-    ctx.font = `${Math.round((target.shape === 'PILL' ? 11 : 22) * this.density)}px sans-serif`;
+    // Android GamepadView draws labels with fontPx = (PILL?11:22) * density, giving a
+    // glyph ~22% of the button size. On OHOS the canvas font value does not follow the
+    // same pipeline as geometry: measured on the emulator, the rendered glyph equals
+    // fontValue / density, so the font value must be button-relative AND multiplied by
+    // density again. fontValue = button * ratio * density => glyph ≈ button * ratio * 0.72.
+    const labelPx = target.shape === 'PILL'
+      ? Math.max(28, Math.round(height * 0.42 * this.density))
+      : Math.max(28, Math.round(Math.min(width, height) * 0.30 * this.density));
+    ctx.font = `bold ${labelPx}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, target.centerX, target.centerY);

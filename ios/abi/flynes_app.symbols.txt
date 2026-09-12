@@ -16,3 +16,4 @@ fly_settings_apply
 fly_settings_get
 fly_source_status_count
 fly_source_status_get
+fly_source_remove

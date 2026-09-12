@@ -9,6 +9,7 @@
 #include "catalog/content_identity.hpp"
 #include "catalog/rom_payload_parser.hpp"
 #include "catalog/unsupported_payload_classifier.hpp"
+#include "gbk_table.h"
 
 #include <algorithm>
 #include <array>
@@ -771,17 +772,121 @@ CandidateRecord scan_raw_candidate(const SourceKey& source,
     return result;
 }
 
+/**
+ * Android RomPackageScanner GB18030-fallback parity: converts one GB18030
+ * (GBK-compatible) byte string to UTF-8. Returns false when the input is not
+ * fully decodable; control characters other than tab are rejected.
+ */
+bool gb18030_to_utf8(const std::vector<std::uint8_t>& input, std::string& utf8_out)
+{
+    // Decode strictly per GBK two-byte sequences (ASCII passes through) using
+    // the generated delta table in gbk_table.h.
+    std::u32string code_points;
+    code_points.reserve(input.size());
+    std::size_t index = 0u;
+    while (index < input.size())
+    {
+        const std::uint8_t byte0 = input[index];
+        if (byte0 < 0x80u)
+        {
+            if (byte0 == 0x00u || (byte0 < 0x20u && byte0 != 0x09u)) return false;
+            code_points.push_back(static_cast<char32_t>(byte0));
+            index += 1u;
+            continue;
+        }
+        if (byte0 >= flynes::app::kGbkLeadMin && byte0 <= flynes::app::kGbkLeadMax &&
+            index + 1u < input.size())
+        {
+            const std::uint8_t byte1 = input[index + 1u];
+            if ((byte1 >= 0x40u && byte1 <= 0x7Eu) || (byte1 >= 0x80u && byte1 <= 0xFEu))
+            {
+                const std::uint16_t trail_index = byte1 < 0x7Fu
+                    ? static_cast<std::uint16_t>(byte1 - 0x40u)
+                    : static_cast<std::uint16_t>(byte1 - 0x80u + 63u);
+                const std::uint16_t lead_index = byte0 - flynes::app::kGbkLeadMin;
+                const std::uint32_t run_begin = flynes::app::kGbkLeadOffset[lead_index];
+                const std::uint32_t run_end = flynes::app::kGbkLeadEnd[lead_index];
+                bool mapped = false;
+                for (std::uint32_t run = run_begin; run < run_end; ++run)
+                {
+                    const std::int32_t start = flynes::app::kGbkRuns[run][0];
+                    const std::int32_t end = flynes::app::kGbkRuns[run][1];
+                    if (static_cast<std::int32_t>(trail_index) < start ||
+                        static_cast<std::int32_t>(trail_index) > end)
+                    {
+                        continue;
+                    }
+                    const std::uint32_t gbk_code =
+                        (static_cast<std::uint32_t>(byte0) << 8u) | byte1;
+                    const std::int32_t delta = flynes::app::kGbkRuns[run][2];
+                    code_points.push_back(
+                        static_cast<char32_t>(static_cast<std::int32_t>(gbk_code) + delta));
+                    mapped = true;
+                    break;
+                }
+                if (!mapped) return false;
+                index += 2u;
+                continue;
+            }
+            return false;
+        }
+        return false;
+    }
+    // Encode as UTF-8.
+    utf8_out.clear();
+    utf8_out.reserve(code_points.size() * 3u);
+    for (const char32_t cp : code_points)
+    {
+        if (cp < 0x80u)
+        {
+            utf8_out.push_back(static_cast<char>(cp));
+        }
+        else if (cp < 0x800u)
+        {
+            utf8_out.push_back(static_cast<char>(0xC0u | (cp >> 6u)));
+            utf8_out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+        }
+        else if (cp < 0x10000u)
+        {
+            utf8_out.push_back(static_cast<char>(0xE0u | (cp >> 12u)));
+            utf8_out.push_back(static_cast<char>(0x80u | ((cp >> 6u) & 0x3Fu)));
+            utf8_out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+        }
+        else
+        {
+            utf8_out.push_back(static_cast<char>(0xF0u | (cp >> 18u)));
+            utf8_out.push_back(static_cast<char>(0x80u | ((cp >> 12u) & 0x3Fu)));
+            utf8_out.push_back(static_cast<char>(0x80u | ((cp >> 6u) & 0x3Fu)));
+            utf8_out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+        }
+    }
+    return true;
+}
+
 bool strict_zip_display_path(const BoundedZipEntry& zip_entry, std::string& decoded)
 {
     if (zip_entry.raw_name.empty() || zip_entry.raw_name.size() > FLY_SCAN_MAX_ZIP_NAME_BYTES)
         return false;
     const char* bytes = reinterpret_cast<const char*>(zip_entry.raw_name.data());
-    if (!is_valid_utf8(bytes,
-                       static_cast<std::uint32_t>(zip_entry.raw_name.size()),
-                       FLY_SCAN_MAX_ZIP_NAME_BYTES))
-        return false;
-    decoded.assign(bytes, zip_entry.raw_name.size());
-    return is_safe_relative_path(decoded);
+    if (is_valid_utf8(bytes,
+                      static_cast<std::uint32_t>(zip_entry.raw_name.size()),
+                      FLY_SCAN_MAX_ZIP_NAME_BYTES))
+    {
+        decoded.assign(bytes, zip_entry.raw_name.size());
+        return is_safe_relative_path(decoded);
+    }
+    // Android RomPackageScanner.decodeEntryName parity: non-UTF-8 names fall back
+    // to GB18030 (most Chinese NES packs label entries in GBK). Re-encode the
+    // decoded text as UTF-8 so display names carry real Chinese titles.
+    if (gb18030_to_utf8(zip_entry.raw_name, decoded) &&
+        decoded.size() <= FLY_SCAN_MAX_ZIP_NAME_BYTES &&
+        is_valid_utf8(decoded.data(),
+                      static_cast<std::uint32_t>(decoded.size()),
+                      FLY_SCAN_MAX_ZIP_NAME_BYTES))
+    {
+        return is_safe_relative_path(decoded);
+    }
+    return false;
 }
 
 CandidateRecord scan_zip_candidate(const SourceKey& source,
@@ -1625,6 +1730,78 @@ extern "C" fly_result fly_source_status_get(const fly_app_t* app,
         output.last_completeness = source.last_completeness;
         output.freshness = source_freshness_summary(catalog, source.key);
         *status_out = output;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_source_remove(fly_app_t* app,
+                                        const std::uint8_t source_uuid[16],
+                                        std::uint32_t source_scope)
+{
+    if (app == nullptr || source_uuid == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (is_zero_uuid(source_uuid) || !is_valid_scope(source_scope))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (source_scope == FLY_SOURCE_SCOPE_BUILTIN)
+    {
+        return FLY_RESULT_FORBIDDEN;
+    }
+    SourceKey target{};
+    std::copy(source_uuid, source_uuid + 16, target.uuid.begin());
+    target.scope = source_scope;
+    try
+    {
+        std::lock_guard<std::mutex> lock(app->state->mutex);
+        const CatalogData& current = *app->state->catalog;
+        bool found = false;
+        for (const SourceRecord& existing : current.sources)
+        {
+            if (same_source(existing.key, target))
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            return FLY_RESULT_NOT_FOUND;
+        }
+        if (current.generation == std::numeric_limits<std::uint64_t>::max())
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        auto next = std::make_shared<CatalogData>();
+        next->generation = current.generation + 1u;
+        next->users = current.users;
+        next->next_favorite_revision = current.next_favorite_revision;
+        next->next_play_sequence = current.next_play_sequence;
+        next->sources.reserve(current.sources.size());
+        for (const SourceRecord& existing : current.sources)
+        {
+            if (!same_source(existing.key, target))
+            {
+                next->sources.push_back(existing);
+            }
+        }
+        next->entries.reserve(current.entries.size());
+        for (const CatalogEntryData& entry : current.entries)
+        {
+            if (!same_source(entry.source, target))
+            {
+                next->entries.push_back(entry);
+            }
+        }
+        if (!flynes::app::save_catalog(app->state->data_root, *next))
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        app->state->catalog = std::move(next);
         return FLY_RESULT_OK;
     }
     catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }

@@ -1,0 +1,11 @@
+#!/bin/sh
+repo_root="$(git rev-parse --show-toplevel)" || exit 1
+if command -v pwsh >/dev/null 2>&1; then
+  shell=pwsh
+elif command -v powershell.exe >/dev/null 2>&1; then
+  shell=powershell.exe
+else
+  echo "FlyNES pre-commit: PowerShell is required to bump VERSION." >&2
+  exit 1
+fi
+"$shell" -NoProfile -ExecutionPolicy Bypass -File "$repo_root/tools/versioning/Bump-Patch.ps1" -RepositoryRoot "$repo_root" -Stage -UseCommitGuard

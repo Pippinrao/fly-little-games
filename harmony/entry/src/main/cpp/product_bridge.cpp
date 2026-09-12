@@ -115,13 +115,25 @@ std::vector<GameCenterRow> game_center_filter(const std::vector<GameCenterRow>& 
     result.reserve(filtered.size());
     for (const GameCenterItem& item : filtered)
     {
-        result.push_back(GameCenterRow{item.canonical_id,
-                                       item.title_en,
-                                       item.title_zh_hans,
-                                       item.builtin,
-                                       item.favorite,
-                                       item.last_played_sequence,
-                                       item.original_filename});
+        GameCenterRow row;
+        row.canonical_id = item.canonical_id;
+        row.title_en = item.title_en;
+        row.title_zh_hans = item.title_zh_hans;
+        row.builtin = item.builtin;
+        row.favorite = item.favorite;
+        row.last_played_sequence = item.last_played_sequence;
+        row.original_filename = item.original_filename;
+        for (const GameCenterRow& source : rows)
+        {
+            if (source.canonical_id == item.canonical_id)
+            {
+                row.source_uuid_hex = source.source_uuid_hex;
+                row.source_relative_path = source.source_relative_path;
+                row.package_format = source.package_format;
+                break;
+            }
+        }
+        result.push_back(row);
     }
     return result;
 }
