@@ -5,6 +5,7 @@ param(
     [string]$AndroidNdk = "$env:LOCALAPPDATA/Android/Sdk/ndk/27.0.12077973",
     [switch]$Release
 )
+$previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Stop'
 $probeRoot = $PSScriptRoot
 $repoRoot = (Resolve-Path (Join-Path $probeRoot '../..')).Path
@@ -42,4 +43,5 @@ try {
     }
 } finally {
     foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+    $ErrorActionPreference = $previousErrorActionPreference
 }

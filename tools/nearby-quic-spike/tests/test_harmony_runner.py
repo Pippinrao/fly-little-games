@@ -54,7 +54,7 @@ class RunnerContract(unittest.TestCase):
 
     def test_dot_sourced_mobile_failure_restores_environment(self):
         script = str(ROOT / 'build-mobile.ps1').replace("'", "''")
-        command = "$env:CC_aarch64_unknown_linux_ohos='preserved-compiler'; $env:CARGO_ENCODED_RUSTFLAGS='preserved-flags'; try { . '" + script + "' -Platform ohos -DevEcoHome 'Z:/nonexistent-probe-sdk' } catch { }; if ($env:CC_aarch64_unknown_linux_ohos -ne 'preserved-compiler' -or $env:CARGO_ENCODED_RUSTFLAGS -ne 'preserved-flags') { exit 8 }"
+        command = "$ErrorActionPreference='Continue'; $env:CC_aarch64_unknown_linux_ohos='preserved-compiler'; $env:CARGO_ENCODED_RUSTFLAGS='preserved-flags'; try { . '" + script + "' -Platform ohos -DevEcoHome 'Z:/nonexistent-probe-sdk' } catch { }; if ($env:CC_aarch64_unknown_linux_ohos -ne 'preserved-compiler' -or $env:CARGO_ENCODED_RUSTFLAGS -ne 'preserved-flags' -or $ErrorActionPreference -ne 'Continue') { exit 8 }"
         result = subprocess.run(['pwsh', '-NoProfile', '-Command', command + '; exit 0'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
