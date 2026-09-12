@@ -79,8 +79,8 @@ function Sync-FlyNesVersion {
     $harmony = Get-Content -Raw -LiteralPath $harmonyPath
     $harmonyCodeReplacement = '${1}' + $code + '${2}'
     $harmonyNameReplacement = '${1}"' + $version.Text + '"${2}'
-    $harmony = $harmony -replace '(?m)^(\s*\"versionCode\"\s*:\s*)\d+(\s*,?)$', $harmonyCodeReplacement
-    $harmony = $harmony -replace '(?m)^(\s*\"versionName\"\s*:\s*)\"[^\"]+\"(\s*,?)$', $harmonyNameReplacement
+    $harmony = $harmony -replace '(?m)^(\s*\"versionCode\"\s*:\s*)\d+([ \t]*,?[ \t]*\r?)$', $harmonyCodeReplacement
+    $harmony = $harmony -replace '(?m)^(\s*\"versionName\"\s*:\s*)\"[^\"]+\"([ \t]*,?[ \t]*\r?)$', $harmonyNameReplacement
     Write-Utf8NoBom -Path $harmonyPath -Text $harmony
     return $version
 }
