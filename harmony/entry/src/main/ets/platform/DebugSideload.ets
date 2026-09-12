@@ -7,6 +7,11 @@ export function shouldDownloadSideloadFile(destinationExists: boolean): boolean 
   return !destinationExists;
 }
 
+/** Encodes filenames as UTF-8 URI components, including non-ASCII titles. */
+export function encodeSideloadFileName(name: string): string {
+  return encodeURIComponent(name);
+}
+
 /** Identifies only disposable files created by the emulator TDD sideload fixture. */
 export function isDebugSideloadFixture(name: string): boolean {
   if (name === 'slow-2048-roms.zip') {

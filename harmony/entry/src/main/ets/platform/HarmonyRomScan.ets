@@ -1,7 +1,11 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import nativeApp, { ScanJobFileDto, ScanJobStatusDto } from 'libentry.so';
-import { isDebugSideloadFixture, shouldDownloadSideloadFile } from './DebugSideload';
+import {
+  encodeSideloadFileName,
+  isDebugSideloadFixture,
+  shouldDownloadSideloadFile
+} from './DebugSideload';
 
 class ListFolderOptions {
   recursion: boolean = true;
@@ -300,7 +304,7 @@ export class HarmonyRomScan {
         if (!shouldDownloadSideloadFile(fileIo.accessSync(destPath))) {
           continue;
         }
-        const encoded = this.encodeUriPath(name);
+        const encoded = encodeSideloadFileName(name);
         const fileResp = await client.request(`${baseUrl}/${encoded}`, {
           method: http.RequestMethod.GET,
           expectDataType: http.HttpDataType.ARRAY_BUFFER,
@@ -347,23 +351,6 @@ export class HarmonyRomScan {
       removed += 1;
     }
     return removed;
-  }
-
-  /** Percent-encodes a bare filename for use in an HTTP request path. */
-  private encodeUriPath(name: string): string {
-    let encoded = '';
-    for (let index = 0; index < name.length; index++) {
-      const code = name.charCodeAt(index);
-      if ((code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A) ||
-        (code >= 0x30 && code <= 0x39) || code === 0x2D || code === 0x5F ||
-        code === 0x2E || code === 0x7E) {
-        encoded += name.charAt(index);
-      } else {
-        const hex = code.toString(16).toUpperCase().padStart(2, '0');
-        encoded += `%${hex}`;
-      }
-    }
-    return encoded;
   }
 
   private isCatalogCandidate(relative: string): boolean {

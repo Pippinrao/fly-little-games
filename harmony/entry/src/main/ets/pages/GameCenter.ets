@@ -470,7 +470,7 @@ struct GameCenter {
   }
 
   private canOpenSelected(): boolean {
-    const row = this.selectedRow();
+    const row: GameCenterRow | undefined = this.selectedRow();
     if (row === undefined) {
       return false;
     }
@@ -488,7 +488,7 @@ struct GameCenter {
       this.openFailed = true;
       return;
     }
-    const row = this.selectedRow();
+    const row: GameCenterRow | undefined = this.selectedRow();
     if (row === undefined) {
       return;
     }
@@ -526,7 +526,7 @@ struct GameCenter {
   }
 
   private selectedTitle(): string {
-    const row = this.selectedRow();
+    const row: GameCenterRow | undefined = this.selectedRow();
     if (row === undefined) {
       return '';
     }
@@ -534,7 +534,7 @@ struct GameCenter {
   }
 
   private selectedSubtitle(): string {
-    const row = this.selectedRow();
+    const row: GameCenterRow | undefined = this.selectedRow();
     if (row === undefined) {
       return '';
     }
@@ -568,7 +568,7 @@ struct GameCenter {
   }
 
   private selectedIsRecent(): boolean {
-    const row = this.selectedRow();
+    const row: GameCenterRow | undefined = this.selectedRow();
     return row !== undefined && row.lastPlayedSequence > 0;
   }
 
@@ -592,7 +592,7 @@ struct GameCenter {
   }
 
   private refreshDetailExtras(): void {
-    const row = this.selectedRow();
+    const row: GameCenterRow | undefined = this.selectedRow();
     this.selectedFavorite = row !== undefined && row.favorite;
     this.detailCover = undefined;
     const store = this.coverStore;
@@ -643,7 +643,7 @@ struct GameCenter {
       this.applyFilter();
       // applyFilter() may replace visibleRows; re-read the favorite flag from the
       // freshly loaded row so the heart state always mirrors persisted state.
-      const updated = this.selectedRow();
+      const updated: GameCenterRow | undefined = this.selectedRow();
       this.selectedFavorite = updated !== undefined && updated.favorite;
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'favorite toggle failed';
