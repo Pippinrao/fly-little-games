@@ -139,6 +139,21 @@ Four further findings, one of which **corrects an overstatement this plan previo
 
 Because the two fail-closed entry points reject before inspecting bytes, no existing behaviour constrains the choice — the design space is genuinely open.
 
+#### C2b design addendum — approved by the owner 2026-09-11
+
+The owner approved adopting the repository's existing in-band type-byte idiom (answer "可以" to the eight questions above). This is a **design addition**, not an edit of the frozen design: the approved spec's blob stays `c88683050f52cb72773917bb6c97573bdddae8af`. It is recorded here for design §30 centralised review before any cross-platform integration depends on it.
+
+1. **Scope.** Applies to the 7 QUIC application channels only (Control, Input, StateCommit, Bulk, Rom, Video, Audio). The two pre-app bind streams keep their existing preambles unchanged (spec:439 `"FNR1"`, spec:441 `"FNB1"`).
+2. **Framing.** Every application-layer record — reliable-stream message and datagram alike — is framed as
+   `u32be(frame_length) || object_kind u16be || exact_object_bytes`
+   where `frame_length = 2 + len(exact_object_bytes)`, `object_kind` is the schema's ObjectKind value, and `exact_object_bytes` is the canonical object encoding that `session_codec.check()` validates and hashes today, at offset 0.
+3. **Why this shape.** spec:386 already uses `u32be(1+body_length) || logical_type u8 || exact_body` for pre-bind records, so this is the house idiom rather than an invention. The type field is **u16be, not u8**, because the schema's ObjectKind values are 16-bit (`0x0201`, `0x0212`, `0x0110`, …). The object bytes and their hash window are unchanged, so every existing golden and validator stays valid and `check()` needs no base-offset parameter.
+4. **Identification.** Parse `frame_length` with checked arithmetic and a per-channel maximum (Control ≤ 64 KiB per spec:490); reject truncated, over-long and trailing bytes; read `object_kind`; map it through the schema's kind→name table to a codec type name; then `check(type_name, body, body_len)`. The prefix bytes are **outside** the object's validated-and-hashed window.
+5. **Per-channel legality.** The design §11.4 channel table becomes an explicit per-channel allow-list, generated from one table. A kind that is not legal on the channel is rejected (fail closed).
+6. **Resolves the spec:459/460 `CanonicalInputBundleV1` contradiction:** it is legal on **State Commit** only (spec:460 lists the canonical INPUT_BUNDLE there). The Input channel carries the datagram families `INPUT_SAMPLE` / `CANONICAL_HINT` / `FRAME_BEACON` from spec:459.
+7. **Consequence, and the next piece of work:** `InputSampleV1`, `FRAME_BEACON`, the Video objects, `AUDIO_DATA` and `AUDIO_XOR_FEC` exist only in spec prose and must be added to `shared/schema/flynes_session_v1.schema` with goldens before the Input/Video/Audio channels can be anything but fail-closed. Their channels stay fail-closed until then.
+8. **Cost.** 6 bytes of framing per datagram, which is small against a 144-byte `InputSampleV1` and negligible against reliable-stream messages.
+
 ### C3 — CI coverage for the shared session suite — DONE
 
 `scripts/ci-check.ps1` previously built only `core`, so the shared session/ABI suite could regress silently. Added **Check 4/5 "shared session host test"**: it reuses the canonical toolchain that Check 3 already bootstraps (`$hostTools` / `$hostCMake` / `$hostCTest` / `$hostZlibRoot`, so no extra bootstrap and no extra network), configures `shared` with `FLYNES_BUILD_TESTS=ON` into `.artifacts/build/shared-host`, builds it and requires `100% tests passed`. The Android build was renumbered to Check 5/5.

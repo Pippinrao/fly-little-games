@@ -376,9 +376,31 @@ Live-value rendering (any task that shows a real seat, mode, stage, friend, or p
 
 After any `cmake --build`, remove the case-variant proxy duplicates first (plan lines 13-19) or MSBuild fails with `MSB6001`.
 
-## 10. Decisions I could NOT make
+## 10. Decisions — resolved 2026-09-11
 
-Each of these is a genuine choice the design and the repository leave open. No answer is invented; the tasks above mark where each gate lands.
+Owner authorisation: the owner delegated these to a human–computer-interaction optimum judgement on 2026-09-11 ("选择人机交互最优解，可以通过独立审核专家判断"). Each decision cites the UX rule or repo convention it follows. §10.1 keeps the original question text for traceability.
+
+| id | Decision | Rationale |
+|---|---|---|
+| D1 | **Pages-first.** A1 ships no new permission declarations; each permission is declared in the same change that first *uses* it. The `permission` stage still renders truthfully (not yet requested) with a grant action once that capability lands. | Declaring unused BLE/camera permissions adds store-review risk (iOS usage-description strings) and buys no working flow. UX rule: `progressive-disclosure`. |
+| D2 | 好友管理 is a **row inside the existing Settings page** that opens a dedicated 好友管理 page. Do **not** add a sixth settings root. | UX rule: `nav-hierarchy` separates primary from secondary navigation; the repo deliberately has five settings roots on all three platforms. Rule: `persistent-nav`. |
+| D3 | Harmony gains **no** `en_US`. New strings go into `base` (English) + `zh_CN`, matching the existing convention. | UX rule: `consistency`. A duplicate English locale creates a second source of truth. |
+| D4 | (decided earlier, plan slice A0) The shared/session line owns adding `fly_session*` to the three bindings. | ABI must be versioned once and reviewed with the C2/C2b ABI decisions. |
+| D5 | Stage precedence is the design's listed pipeline order 权限→发现→认证→Wi-Fi→QUIC→版本→codec. The page marks the **first failing** stage and shows later stages as not yet reached. Once A0 lands the current stage is session-reported. | UX rules: `error-clarity`, `focus-management` — one actionable cause at a time, in pipeline order. |
+| D6 | **No persistent in-game HUD.** Mode/quality/P1-P2/pause-reconnect status lives in the existing pause drawer. **Additionally**, states that demand user action (冻结, 重连倒计时, authority 超时选项) are shown as a modal overlay on the run surface, because they must not be hidden. | UX rules: `persistent-nav`, `modal-vs-navigation`; design §22.4 requires network problems to show a freeze and countdown rather than silently changing mode or owner. A HUD would cover a 256×240 game surface. |
+| D7 | In local single-player there is **no nearby status block at all** — not a blocked row. It appears only when a session exists. | No session means nothing to report; permanent in-game chrome for a non-existent session is noise. UX rule: `content-priority`. |
+| D8 | 双端确认 is **one primary 确认入局 button per side** on the lobby page, which turns into a distinct "确认已失效" banner with the same button re-enabled whenever authority or seat changes (design §22.3 last line). No per-field confirmation. | UX rules: `primary-action` (one CTA per screen), `confirmation-dialogs`, `progressive-disclosure`. |
+| D9 | Authority-timeout options (接管 / 继续单人 / 保存结束) render as a three-action list. Unavailable options are **shown disabled with a specific reason** from a closed, session-reported set with static fallbacks. | UX rules: `disabled-states`, `error-clarity` (cause plus recovery path). |
+| D10 | Multi-branch reunion (design §22.4) is **deferred out of A1 entirely** and returns with the recovery/branch-identity slice, because no branch identity exists in the ABI. | UX rule: `content-priority` — a permanently blocked row for a concept with no ABI support is noise, not honesty. |
+| D11 | Stage **names** are static strings; stage **reasons** are session/platform-reported detail with a static per-stage fallback. Each stage therefore keeps both keys. | UX rule: `error-clarity` requires the actual cause and fix, which a static string cannot state. |
+| D12 | iOS acceptance for A1 is **static verification only** — CMakeLists registration, route and `navigationDestination` wiring, localization key-count parity across `en`/`zh-Hans`, and a no-syntax review — explicitly labelled unverified. A macOS/Xcode build is required before any iOS claim. Known constraint to re-verify before scheduling iOS device work: `ios/app` requires the iOS 17.0 SDK, while the only reachable Mac runs Xcode 14.3.1 / iOS 16.4 and therefore cannot build it. | Cannot be built on this machine; the only alternative is an unverifiable claim, which this repo's rules forbid. |
+| D13 | 好友/附近设备 is **one page with two tabs** (好友 / 附近设备). | Design §22.1 says 页面分为好友和附近设备; the repo already uses Toggle-type tabs (`GameCenter.ets`). UX rules: `avoid-mixed-patterns`, `bottom-nav-top-level`. |
+
+**Visual style: the generated design-system proposal is not adopted.** `ui-ux-pro-max --design-system` proposed a light rose palette, Orbitron + JetBrains Mono, and a "3D & Hyperrealism" style while listing "3D effects" and "complex shadows" in its own anti-pattern list. A1 uses each platform's existing theme tokens (Android `colors.xml` + `values-night`, Harmony `color.json` and string resources, iOS programmatic SwiftUI). Higher-priority rules `platform-adaptive` and `consistency` outrank introducing a new brand style, and the designed surface is a dark, immersive emulator shell rather than a marketing page.
+
+### 10.1 Original open questions (kept for traceability)
+
+Each of these was a genuine choice the design and the repository leave open. No answer was invented at the time; the tasks in §8 mark where each gate lands.
 
 - **D1 — Which permission declarations ship in A1, and with which identifiers?** Design §22.2 requires BLE discovery, QR scanning and a Wi-Fi path, but A1 can also ship pages-first (every stage then truthfully renders `nearby.stage.permission`). For Android and iOS the standard identifiers follow from those capabilities; for HarmonyOS NEXT the exact permission names and their `reason` strings must be read from the installed SDK. Decide: (a) declare now or pages-first, and (b) the exact identifier set per platform.
 - **D2 — Where does 好友管理 live in Settings?** Design §22.1 says the settings page provides rename / delete / block / identity reset, but not whether that is a new settings section, a row inside an existing section, or only a link to the friends-management page. Also: the existing settings roots are deliberately five on all three platforms — does adding a sixth root violate that convention?
