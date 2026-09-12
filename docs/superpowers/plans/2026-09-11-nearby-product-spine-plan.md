@@ -78,17 +78,28 @@ Ordering rule: only slices that produce verifiable progress without a device com
 
 Commit `59d633f`. `build-mobile.ps1` no longer leaves the caller's `$ErrorActionPreference` at `Stop`; regression assertion added to `tools/nearby-quic-spike/tests/test_harmony_runner.py:55-59`. RED observed (exit 8), GREEN observed (6/6 Python tests).
 
-### C2 — session public path (shared, offline) — NEXT
+### C2 — session public path (shared, offline) — IN PROGRESS
 
-Scope, in this order:
+**Blocker discovered 2026-09-11 (must be read before touching the receive path): there is no envelope decoder, so `fly_session_receive_stream` / `_datagram` must stay fail-closed.**
 
-1. Route `fly_session_receive_stream` / `_datagram` into `wire::check` for the declared channels; on codec success produce the corresponding internal reducer event, on failure keep failing closed. Unauthenticated content must still be rejected: a validated-and-hashed envelope is not authentication (design §12.6, spec:713).
+Design §11.3 (spec:443-452) defines the common envelope and lists `family` and `type` among its semantic fields (spec:447); §11.4 (spec:454-464) then defines which content travels on each QUIC channel — the Control channel alone carries HELLO, pair proof, capability, authority/seat proposal+ACK, mode, pause/resume, transition, heartbeat and goodbye/error (spec:458). So a received object's kind is identified by the envelope's **explicit `family`/`type` tag**, not by trying candidate types until one validates.
+
+That decoder does not exist: `shared/src/session/wire/session_codec.cpp` dispatches by an out-of-band type **name the caller supplies** and reads no tag from the bytes. Unknown bytes therefore cannot be honestly classified, and any "try every declared type" helper would bypass channel/family semantics — the exact hazard the fail-closed receive path exists to prevent. Until the envelope decoder is implemented as its own slice, `receive_stream`/`receive_datagram` keep returning `FLY_RESULT_INVALID_STATE`.
+
+Scope actually implemented in this slice, in this order:
+
+1. **Not** wiring the receive path (see blocker above). Negative tests assert fail-closed behaviour for well-formed-but-unauthenticated bytes, wrong channel, truncated/trailing/non-zero-reserved bytes and null input.
 2. Bridge `fly_session_poll_command` → `poll_initial_plan_command` and `fly_session_complete_command` → `complete_initial_plan_command`, mapping the local monotonically increasing command id; keep the 64-bit public `transition_id` explicitly unused/zero rather than truncating a wire id.
 3. Project the real snapshot in `fly_session_get_snapshot` from `initial_plan_snapshot()` instead of the hardcoded `UI_IDLE`.
-4. Preserve every public struct size. Any needed ABI addition is versioned through `struct_size` / `abi_version` per §12.1 (spec:523-528) — never by changing an existing field's width or meaning.
-5. Update the stub-locking assertions in `shared/tests/test_session.cpp` deliberately; add new behavioural tests. TDD: show the failing assertion before the fix.
+4. Implement `fly_session_submit_event` only for what the existing seam genuinely accepts; invent no decoder. Note the open ABI question: `fly_session_event` (header:110-116) has **no payload**, while §12.6 (spec:712) requires user/lifecycle/capability/runtime/media/storage/transport payloads. That is a versioned ABI addition and needs an explicit decision.
+5. Preserve every public struct size. Any needed ABI addition is versioned through `struct_size` / `abi_version` per §12.1 (spec:523-528) — never by changing an existing field's width or meaning.
+6. Update the stub-locking assertions in `shared/tests/test_session.cpp` deliberately; add new behavioural tests. TDD: show the failing assertion before the fix.
 
 Acceptance: host Release build + full CTest green (≥41 tests, no test deleted); RED→GREEN recorded; Android arm64 and Harmony arm64 cross-compile of `flynes_session` still succeed; public struct sizes unchanged or version-gated.
+
+### C2b — wire envelope decoder (shared, offline) — NOT STARTED, blocks the receive path
+
+Implement the §11.3 envelope parse (magic, wire_major, wire_minor, family, type, flags, payload_length, then lineage/branch/session/authority_term, then timeline_epoch/seat_revision/mode_generation/media_generation, then channel_id[16]/channel_sequence/transition_id) with network byte order, total-length and checked-arithmetic validation before any decode, plus the §11.4 per-channel family/type constraints. Only after this exists may the receive path select a codec kind by tag and fail closed on unknown/illegal tag-on-channel combinations. This is also where the 16-byte wire `transition_id` (spec:450, 1021, 1050, 1058) enters the process, which is the point at which the versioned 128-bit ABI question must be answered.
 
 ### C3 — CI coverage for the shared session suite — DONE
 
