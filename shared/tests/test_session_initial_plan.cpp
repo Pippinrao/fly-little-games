@@ -231,13 +231,13 @@ void raw_public_paths_stay_untrusted()
     check(fly_session_receive_stream(f.session, FLY_SESSION_QUIC_CONTROL, raw, sizeof(f.pair)) == FLY_RESULT_INVALID_STATE, "raw stream cannot submit verified evidence");
     check(fly_session_receive_datagram(f.session, FLY_SESSION_QUIC_INPUT, raw, sizeof(f.pair)) == FLY_RESULT_INVALID_STATE, "raw datagram cannot submit verified evidence");
     fly_session_event event{}; event.struct_size = FLY_SESSION_EVENT_V1_SIZE; event.version = FLY_SESSION_EVENT_VERSION_1; event.kind = FLY_SESSION_EVENT_TRANSPORT;
-    check(fly_session_submit_event(f.session, &event) == FLY_RESULT_INVALID_STATE, "public event remains stub");
+    check(fly_session_submit_event(f.session, &event) == FLY_RESULT_INVALID_STATE, "payload-less public event fails closed");
     fly_session_command command{}; command.struct_size = FLY_SESSION_COMMAND_V1_SIZE; command.version = FLY_SESSION_COMMAND_VERSION_1;
-    check(fly_session_poll_command(f.session, &command) == FLY_RESULT_OK && command.kind == FLY_SESSION_COMMAND_NONE && command.command_id == 0 && command.transition_id == 0, "public poll does not expose trusted effect or truncated identities");
+    check(fly_session_poll_command(f.session, &command) == FLY_RESULT_OK && command.kind == FLY_SESSION_COMMAND_NONE && command.command_id == pending.id && command.transition_id == 0, "public poll exposes only the local command id, never a truncated wire identity");
     fly_session_command_result result{}; result.struct_size = FLY_SESSION_COMMAND_RESULT_V1_SIZE; result.version = FLY_SESSION_COMMAND_RESULT_VERSION_1;
-    check(fly_session_complete_command(f.session, &result) == FLY_RESULT_INVALID_STATE, "public completion remains stub");
+    check(fly_session_complete_command(f.session, &result) == FLY_RESULT_INVALID_STATE, "completion without a polled id fails closed");
     fly_session_snapshot snapshot{}; snapshot.struct_size = FLY_SESSION_SNAPSHOT_V1_SIZE; snapshot.version = FLY_SESSION_SNAPSHOT_VERSION_1;
-    check(fly_session_get_snapshot(f.session, &snapshot) == FLY_RESULT_OK && snapshot.ui_state == FLY_SESSION_UI_IDLE && snapshot.authority_role == 0, "public snapshot remains idle");
+    check(fly_session_get_snapshot(f.session, &snapshot) == FLY_RESULT_OK && snapshot.ui_state != FLY_SESSION_UI_IDLE && snapshot.authority_role == 0, "public snapshot reports live, not idle");
     check(f.command(InitialPlanCommandKind::PersistPlan).id == pending.id && !f.snapshot().locked && !f.snapshot().failed, "public paths never mutate trusted reducer");
 }
 } // namespace

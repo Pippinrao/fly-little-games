@@ -13,6 +13,15 @@ struct fly_session_handle
     std::uint64_t pair_generation = 0u;
     std::uint64_t original_context_start_ns = 0u;
     flynes::session::InitialPlanLock initial_plan;
+
+    // Last command the public poll handed out. Mapping only: the wire
+    // transition_id (16 bytes) is not representable in the public 64-bit field
+    // and is never truncated into it. The generation is the one the command was
+    // issued under, not the live handle generation: the seam's fence must stay
+    // meaningful if a later slice ever allows an attempt restart.
+    std::uint64_t polled_command_id = 0u;
+    std::uint64_t polled_command_generation = 0u;
+    bool has_polled_command = false;
 };
 
 namespace flynes::session {
@@ -205,9 +214,23 @@ extern "C" fly_result fly_session_submit_event(fly_session_t* session,
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    // The v1 fly_session_event carries only a kind: no payload, no payload
+    // length and no owner/serial token (flynes_session.h:110-116). None of the
+    // private reducer entry points can be reached from it, and synthesising
+    // trusted evidence from a kind is forbidden, so every kind fails closed.
+    // Payload-carrying event DTOs are a versioned ABI addition, not a decision
+    // this slice may take unilaterally.
     return FLY_RESULT_INVALID_STATE;
 }
 
+// Raw transport bytes stay failing closed. The frozen design identifies a wire
+// object by its in-band envelope tag (family/type, design §11.3-11.4), but the
+// current shared codec dispatches by an out-of-band type name supplied by the
+// caller and reads no tag from the bytes (session_codec.cpp check()). Guessing a
+// kind by trying candidate types, or deriving authentication from a validated
+// and hashed envelope, is forbidden: a validated-and-hashed envelope is NOT
+// authentication. Until a real envelope decoder exists, no received byte may
+// reach the trusted evidence seam, so both entry points reject.
 extern "C" fly_result fly_session_receive_stream(fly_session_t* session,
                                                  uint32_t channel,
                                                  const uint8_t* bytes,
@@ -229,6 +252,8 @@ extern "C" fly_result fly_session_receive_datagram(fly_session_t* session,
                                                    const uint8_t* bytes,
                                                    size_t size)
 {
+    // Same fail-closed contract as the stream entry point; the channel form does
+    // not make an undecodable envelope acceptable.
     return fly_session_receive_stream(session, channel, bytes, size);
 }
 
@@ -253,6 +278,23 @@ extern "C" fly_result fly_session_poll_command(fly_session_t* session,
     command_out->struct_size = struct_size;
     command_out->version = version;
     command_out->kind = FLY_SESSION_COMMAND_NONE;
+    // The v1 public command struct has no representation for the seam's command
+    // kinds and no room for a 128-bit wire transition_id. Only the seam's local
+    // monotonic id is exposed; transition_id stays exactly zero, never truncated.
+    const auto pending = flynes::session::poll_initial_plan_command(session);
+    if (pending.has_value())
+    {
+        command_out->command_id = pending->id;
+        session->polled_command_id = pending->id;
+        session->polled_command_generation = pending->generation;
+        session->has_polled_command = true;
+    }
+    else
+    {
+        session->polled_command_id = 0u;
+        session->polled_command_generation = 0u;
+        session->has_polled_command = false;
+    }
     return FLY_RESULT_OK;
 }
 
@@ -272,7 +314,23 @@ extern "C" fly_result fly_session_complete_command(
     {
         return FLY_RESULT_UNSUPPORTED_VERSION;
     }
-    return FLY_RESULT_INVALID_STATE;
+    if (result->transition_id != 0u)
+    {
+        // A wire transition id is 16 bytes; the public field must never be used
+        // as a truncated substitute for it.
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (result->command_id == 0u || !session->has_polled_command ||
+        result->command_id != session->polled_command_id)
+    {
+        // Only the command the public poll handed out can be completed; the
+        // seam remains the authority on staleness, duplicates and ordering.
+        return FLY_RESULT_INVALID_STATE;
+    }
+    const bool accepted = flynes::session::complete_initial_plan_command(
+        session, result->command_id, session->polled_command_generation,
+        result->result == FLY_RESULT_OK);
+    return accepted ? FLY_RESULT_OK : FLY_RESULT_INVALID_STATE;
 }
 
 extern "C" fly_result fly_session_tick(fly_session_t* session, uint64_t now_ns)
@@ -318,7 +376,17 @@ extern "C" fly_result fly_session_get_snapshot(fly_session_t* session,
     std::memset(snapshot_out, 0, sizeof(*snapshot_out));
     snapshot_out->struct_size = struct_size;
     snapshot_out->version = version;
-    snapshot_out->ui_state = FLY_SESSION_UI_IDLE;
+    // Projected from the real reducer state. The v1 enum only defines IDLE, so a
+    // live or terminal initial plan is reported as FLY_SESSION_UI_UNSPECIFIED
+    // ("this ABI cannot say") rather than being misreported as idle.
+    // authority_role/mode, frame cursor and evidence cursor stay unspecified
+    // (zero/GENESIS/NONE): the reducer owns no seat, mode or committed-frame
+    // state yet.
+    const auto state = flynes::session::initial_plan_snapshot(session);
+    const bool idle = state.has_value() && !state->started && !state->active &&
+                      !state->failed && !state->not_supported && !state->locked &&
+                      !state->mutually_locked && !state->prompt_consumed;
+    snapshot_out->ui_state = idle ? FLY_SESSION_UI_IDLE : FLY_SESSION_UI_UNSPECIFIED;
     fill_genesis(&snapshot_out->committed_through);
     fill_none_evidence(&snapshot_out->state_verified_through);
     return FLY_RESULT_OK;
