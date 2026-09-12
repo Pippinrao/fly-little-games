@@ -99,13 +99,34 @@ Acceptance: host Release build + full CTest green (≥41 tests, no test deleted)
 
 **Open interpretation to revisit when a real executor/adapter exists (recorded, not resolved):** design §12.6 (spec:715) says `fly_session_complete_command` 重复结果幂等 — duplicate results are idempotent. The public layer as wired returns `FLY_RESULT_INVALID_STATE` for a duplicate completion of an already-completed id, which is idempotent in the sense that no second effect occurs, but is not idempotent in the sense of repeating the same successful result. That behaviour is inherited from the pre-existing reducer (`InitialPlanLock::complete` at `initial_plan_lock.cpp:151-154` rejects a non-pending id via `reject()`, which calls `invalidate()` and fails the attempt closed) and this slice does not change it. It is now documented in the public header. It must be re-decided when the platform adapters get real retry logic, because a retry that treats `INVALID_STATE` as a hard failure would mis-handle a benign duplicate. Do not silently change it before then.
 
-### C2b — wire type identification + envelope (shared, offline) — NOT STARTED, blocks the receive path
+### C2b — wire type identification — **BLOCKED ON A SPEC DECISION (owner input required)**
 
-Start from the concrete encodings, not from §11.3 alone. The wire layouts are fully specified in `shared/schema/flynes_session_v1.schema` (123 KB) with generators `generate_v1.py` / `generate_goldens.py` and a golden corpus of ~40 object kinds under `shared/schema/golden/<kind>/{legal,truncate,trailing,nonzero_reserved,unknown_enum}.bin` + `type.txt` (e.g. `channel_bind_v1_initial/legal.bin` = 136 bytes, `channel_resume_summary_v1/legal.bin` = 176 bytes matching the spec's fixed176 layout). `session_codec.check(type_name, …)` already validates each of those exact layouts by name.
+Verified 2026-09-11 by direct inspection of the schema, the generators, the golden corpus and the codec, plus a hexdump of the golden binaries. **The approved design and the wire schema do not define how a receiver identifies the type of a wire object on any of the 7 application channels.** This is a gap in the approved specification, not an implementation shortfall, so it must not be filled in by an implementer.
 
-What is missing is the **type identification** step before `check`: spec:468 states that reliable streams use a per-direction unidirectional stream plus a **stream-kind prefix** (可靠stream-kind前缀), and §11.4 (spec:454-464) fixes which datagram families may appear on the Input/Video/Audio channels (Input alone may carry INPUT_SAMPLE, CANONICAL_HINT or FRAME_BEACON, so even datagrams need an in-object discriminator). Implement that prefix/tag → codec type-name mapping, with the §11.3 envelope fields (magic, wire_major, wire_minor, family, type, flags, payload_length, then lineage/branch/session/authority_term, then timeline_epoch/seat_revision/mode_generation/media_generation, then channel_id[16]/channel_sequence/transition_id — spec:445-452) parsed with network byte order, total-length and checked-arithmetic validation before any decode, plus illegal-tag-on-channel rejection.
+Evidence:
 
-Only after this exists may the receive path select a codec kind by tag and fail closed on unknown or illegal combinations. This is also where the 16-byte wire `transition_id` (spec:450, 1021, 1050, 1058) enters the process, which is the point at which the versioned 128-bit ABI question must be answered.
+| Question | Finding |
+|---|---|
+| Is there a generic envelope (§11.3 magic/wire_major/wire_minor/family/type/payload_length) in the encodings? | **No.** `flynes_session_v1.schema` top-level keys are `hash_domain_strings, illegal_kinds, kinds, messages, quic_channels, schema_id, unassigned_illegal, unknown_critical_tlv, unknown_optional_tlv, wire_endian, wire_integer_endian` — no envelope/magic/family/payload_length key. Zero grep hits for `magic\|wire_major\|wire_minor\|stream_kind\|prefix` in the schema or the two generators. Spec:445-452 is prose ("按需要包含") with no widths, offsets or order. |
+| Do the golden objects start with a type tag? | **No.** All objects begin with their own `version=1 u16be` (`00 01`). `channel_resume_summary_v1/legal.bin` (176 B) reconciles byte-for-byte with spec:470's `version u16be \|\| reserved_zero[6] \|\| session_id[16] \|\| branch_id[16] \|\| …`. The 8-byte opening `00 01 00 00 00 00 00 00` is byte-identical across ChannelBindV1, ChannelResumeSummaryV1 and several kind-tagged objects, so it carries **zero** identifying power. `manifest.json` declares no expected prefix or in-band tag. |
+| Does `check()` expect a prefix? | **No.** It validates body-at-byte-0, and the same bytes/size window is validated and hashed (`session_codec.cpp:45-53,175-201,294-299`). Dispatch is a pure string compare on the caller-supplied `type_name` (`:279-284`). |
+| What stream-kind prefix values exist? | Only **two**, both for pre-app bind streams written once at stream open: `BindStreamPreambleV1 = magic[4]"FNB1" \|\| version=1 u16be \|\| stream_kind=CHANNEL_BIND(1) u16be` (spec:441, 8 B) and `ReconnectPrebindPreambleV1 = "FNR1" \|\| version \|\| stream_kind=RECONNECT_PREBIND(2)` (spec:439, 8 B). Spec:468's "可靠stream-kind前缀" for Control/StateCommit gives **no** magic, size or value set, and for Input/Bulk/ROM/Video/Audio it does not exist. |
+| Is there a per-channel allowed-type mapping? | **No.** Schema `quic_channels` is only `{id, name, form}`. No kind carries a channel field. The six `messages` are explicitly "Not an ObjectKind" and have no kind hex. |
+
+Decisions that only the owner/design revision may make (do **not** invent any of these):
+
+1. Does the §11.3 envelope get a concrete byte layout, and is it in-band for all objects, some objects, or none?
+2. What are the stream-kind prefix magic, size and value set for each of Control, StateCommit, Input, Bulk, ROM, Video and Audio?
+3. Is the prefix written once per stream or once per object?
+4. Are the prefix bytes inside or outside the length and hash window?
+5. Which concrete wire types are legal on each channel (specifically: does CanonicalInputBundleV1 belong to Input or State Commit — spec:459 vs spec:460 conflict)?
+6. Do datagram channels carry any prefix or in-band discriminator, and if so where?
+7. How are the six non-ObjectKind `messages` identified?
+8. Is `u32be(record_length) || record` (spec:441) the framing model for **all** reliable streams, or only for the bind streams?
+
+Consequence for the objective: the "raw 接收" half of objective item (2) cannot be implemented honestly until decision 1-4 are made, because a receiver that cannot identify an object cannot enforce authentication or channel/family constraints. The rest of item (2) (poll/complete/snapshot/submit_event fail-closed) is unaffected and is being delivered by C2. Per handoff §3 and design §30, this goes back for centralized review rather than being frozen by this task.
+
+Reusable when the decision lands: body validators/lengths/hashes (`session_codec.cpp:173-201,237-258,329-354`), `Status`/`QuicChannel` (`session_codec.hpp:9-31`), the golden corpus plus `manifest.json`, and the byte recipes in `generate_goldens.py:282-292`. This is also where the 16-byte wire `transition_id` (spec:450, 1021, 1050, 1058) would enter the process, which is the point at which the versioned 128-bit ABI question must be answered.
 
 ### C3 — CI coverage for the shared session suite — DONE
 
