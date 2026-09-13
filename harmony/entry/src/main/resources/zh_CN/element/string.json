@@ -907,6 +907,426 @@
     {
       "name": "nearby_ingame_local_mute",
       "value": "每端独立静音"
+    },
+    {
+      "name": "nearby_entry_connected",
+      "value": "双人联机中"
+    },
+    {
+      "name": "nearby_entry_interrupted",
+      "value": "联机中断"
+    },
+    {
+      "name": "nearby_entry_unavailable",
+      "value": "暂时无法确认联机状态"
+    },
+    {
+      "name": "nearby_screen_entry",
+      "value": "附近联机"
+    },
+    {
+      "name": "nearby_screen_invite",
+      "value": "创建联机"
+    },
+    {
+      "name": "nearby_screen_joinCode",
+      "value": "输入配对码"
+    },
+    {
+      "name": "nearby_screen_scan",
+      "value": "扫码加入"
+    },
+    {
+      "name": "nearby_screen_waitHost",
+      "value": "等待房主接受"
+    },
+    {
+      "name": "nearby_screen_hostRequest",
+      "value": "附近设备请求加入"
+    },
+    {
+      "name": "nearby_screen_sas",
+      "value": "身份校验码"
+    },
+    {
+      "name": "nearby_screen_connecting",
+      "value": "正在建立联机"
+    },
+    {
+      "name": "nearby_screen_connected",
+      "value": "双人联机中"
+    },
+    {
+      "name": "nearby_screen_gameCenter",
+      "value": "游戏大厅"
+    },
+    {
+      "name": "nearby_screen_gameConfig",
+      "value": "本局配置"
+    },
+    {
+      "name": "nearby_screen_failure",
+      "value": "联机失败"
+    },
+    {
+      "name": "nearby_screen_content",
+      "value": "文件补齐"
+    },
+    {
+      "name": "nearby_screen_friends",
+      "value": "好友管理"
+    },
+    {
+      "name": "nearby_action_create",
+      "value": "创建联机"
+    },
+    {
+      "name": "nearby_action_enterCode",
+      "value": "输入配对码"
+    },
+    {
+      "name": "nearby_action_scanQr",
+      "value": "扫码加入"
+    },
+    {
+      "name": "nearby_action_findDevices",
+      "value": "寻找设备"
+    },
+    {
+      "name": "nearby_action_openFriends",
+      "value": "好友"
+    },
+    {
+      "name": "nearby_action_backToGameCenter",
+      "value": "返回游戏大厅"
+    },
+    {
+      "name": "nearby_action_regenerate",
+      "value": "重新生成"
+    },
+    {
+      "name": "nearby_action_cancelInvite",
+      "value": "取消作废邀请"
+    },
+    {
+      "name": "nearby_action_submitJoinCode",
+      "value": "请求加入"
+    },
+    {
+      "name": "nearby_action_switchToScan",
+      "value": "改用扫码"
+    },
+    {
+      "name": "nearby_action_switchToJoinCode",
+      "value": "改用输入配对码"
+    },
+    {
+      "name": "nearby_action_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "nearby_action_cancelRequest",
+      "value": "取消请求"
+    },
+    {
+      "name": "nearby_action_accept",
+      "value": "接受，继续验证"
+    },
+    {
+      "name": "nearby_action_reject",
+      "value": "拒绝"
+    },
+    {
+      "name": "nearby_action_sasMatch",
+      "value": "数字一致"
+    },
+    {
+      "name": "nearby_action_sasMismatch",
+      "value": "数字不一致，取消"
+    },
+    {
+      "name": "nearby_action_cancelConnecting",
+      "value": "取消"
+    },
+    {
+      "name": "nearby_action_viewDetails",
+      "value": "详情"
+    },
+    {
+      "name": "nearby_action_goToGameCenter",
+      "value": "去游戏大厅"
+    },
+    {
+      "name": "nearby_action_disconnect",
+      "value": "断开"
+    },
+    {
+      "name": "nearby_action_openNearby",
+      "value": "附近联机"
+    },
+    {
+      "name": "nearby_action_selectGame",
+      "value": "开始游戏"
+    },
+    {
+      "name": "nearby_action_disableMultiplayerFilter",
+      "value": "关闭支持双人筛选"
+    },
+    {
+      "name": "nearby_action_confirmConfig",
+      "value": "确认入局"
+    },
+    {
+      "name": "nearby_action_backToLobby",
+      "value": "返回大厅换游戏"
+    },
+    {
+      "name": "nearby_action_retry",
+      "value": "重试"
+    },
+    {
+      "name": "nearby_action_newInvite",
+      "value": "新邀请"
+    },
+    {
+      "name": "nearby_action_backToEntry",
+      "value": "返回"
+    },
+    {
+      "name": "nearby_action_grantSend",
+      "value": "许可发送"
+    },
+    {
+      "name": "nearby_action_grantReceive",
+      "value": "许可接收"
+    },
+    {
+      "name": "nearby_action_confirmImport",
+      "value": "确认导入"
+    },
+    {
+      "name": "nearby_action_cancelTransfer",
+      "value": "取消"
+    },
+    {
+      "name": "nearby_action_renameFriend",
+      "value": "重命名"
+    },
+    {
+      "name": "nearby_action_deleteFriend",
+      "value": "删除"
+    },
+    {
+      "name": "nearby_action_blockFriend",
+      "value": "拉黑"
+    },
+    {
+      "name": "nearby_action_resetIdentity",
+      "value": "重置本机身份"
+    },
+    {
+      "name": "nearby_invite_codeLabel",
+      "value": "本次六位配对码"
+    },
+    {
+      "name": "nearby_invite_qrLabel",
+      "value": "邀请二维码"
+    },
+    {
+      "name": "nearby_invite_validFor",
+      "value": "剩余有效期"
+    },
+    {
+      "name": "nearby_join_codeLabel",
+      "value": "六位配对码"
+    },
+    {
+      "name": "nearby_wait_anonymousNote",
+      "value": "已发送请求，等待房主接受"
+    },
+    {
+      "name": "nearby_host_anonymousTitle",
+      "value": "附近设备请求加入"
+    },
+    {
+      "name": "nearby_host_sourceNote",
+      "value": "来源：附近设备"
+    },
+    {
+      "name": "nearby_sas_digitCount",
+      "value": "六位身份校验码"
+    },
+    {
+      "name": "nearby_connecting_stageLabel",
+      "value": "当前阶段"
+    },
+    {
+      "name": "nearby_connecting_wifiPath",
+      "value": "Wi-Fi 路径"
+    },
+    {
+      "name": "nearby_connected_friendLabel",
+      "value": "已验证好友"
+    },
+    {
+      "name": "nearby_connected_shortCodeLabel",
+      "value": "身份短码"
+    },
+    {
+      "name": "nearby_config_hostLabel",
+      "value": "主机"
+    },
+    {
+      "name": "nearby_config_seatLabel",
+      "value": "座位"
+    },
+    {
+      "name": "nearby_config_soundLabel",
+      "value": "本机声音"
+    },
+    {
+      "name": "nearby_config_shortCodeLabel",
+      "value": "配置短码"
+    },
+    {
+      "name": "nearby_config_waitingConfirm",
+      "value": "待确认"
+    },
+    {
+      "name": "nearby_config_confirmed",
+      "value": "已确认"
+    },
+    {
+      "name": "nearby_failure_stageLabel",
+      "value": "失败阶段"
+    },
+    {
+      "name": "nearby_failure_reasonLabel",
+      "value": "失败原因"
+    },
+    {
+      "name": "nearby_filter_multiplayerOnly",
+      "value": "支持双人"
+    },
+    {
+      "name": "nearby_capability_unknown",
+      "value": "支持情况待确认"
+    },
+    {
+      "name": "nearby_stage_permissions",
+      "value": "权限"
+    },
+    {
+      "name": "nearby_stage_authentication",
+      "value": "认证"
+    },
+    {
+      "name": "nearby_stage_notStarted",
+      "value": "未开始"
+    },
+    {
+      "name": "nearby_stage_inProgress",
+      "value": "进行中"
+    },
+    {
+      "name": "nearby_stage_passed",
+      "value": "已通过"
+    },
+    {
+      "name": "nearby_stage_failed",
+      "value": "失败"
+    },
+    {
+      "name": "nearby_stage_permissions_failed",
+      "value": "权限阶段失败"
+    },
+    {
+      "name": "nearby_stage_discovery_failed",
+      "value": "发现阶段失败"
+    },
+    {
+      "name": "nearby_stage_authentication_failed",
+      "value": "认证阶段失败"
+    },
+    {
+      "name": "nearby_stage_wifi_failed",
+      "value": "Wi-Fi 阶段失败"
+    },
+    {
+      "name": "nearby_stage_quic_failed",
+      "value": "QUIC 阶段失败"
+    },
+    {
+      "name": "nearby_stage_version_failed",
+      "value": "版本阶段失败"
+    },
+    {
+      "name": "nearby_stage_codec_failed",
+      "value": "codec 阶段失败"
+    },
+    {
+      "name": "nearby_stage_timeline_invalid",
+      "value": "连接阶段状态异常"
+    },
+    {
+      "name": "nearby_reason_code_invalidFormat",
+      "value": "配对码格式不正确"
+    },
+    {
+      "name": "nearby_reason_code_expired",
+      "value": "配对码已过期"
+    },
+    {
+      "name": "nearby_reason_code_notFound",
+      "value": "未找到对应的邀请"
+    },
+    {
+      "name": "nearby_reason_host_rejected",
+      "value": "房主已拒绝加入请求"
+    },
+    {
+      "name": "nearby_reason_request_cancelled",
+      "value": "请求已取消"
+    },
+    {
+      "name": "nearby_reason_request_staleGeneration",
+      "value": "该邀请已失效"
+    },
+    {
+      "name": "nearby_reason_sas_mismatch",
+      "value": "身份校验码不一致"
+    },
+    {
+      "name": "nearby_reason_permission_cameraDenied",
+      "value": "相机权限被拒绝，可改用输入配对码"
+    },
+    {
+      "name": "nearby_reason_permission_discoveryDenied",
+      "value": "附近发现权限被拒绝"
+    },
+    {
+      "name": "nearby_reason_permission_wifiDenied",
+      "value": "Wi-Fi 未确认，无法建立连接"
+    },
+    {
+      "name": "nearby_reason_connection_interrupted",
+      "value": "连接已中断"
+    },
+    {
+      "name": "nearby_reason_config_changed",
+      "value": "本局配置已变更，需要双方重新确认"
+    },
+    {
+      "name": "nearby_reason_content_sendDenied",
+      "value": "对方未许可发送文件"
+    },
+    {
+      "name": "nearby_reason_content_receiveDenied",
+      "value": "对方未许可接收文件"
+    },
+    {
+      "name": "nearby_open_entry",
+      "value": "附近联机"
     }
   ]
 }

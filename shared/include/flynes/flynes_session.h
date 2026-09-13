@@ -48,7 +48,19 @@ enum fly_session_event_kind
 
 enum fly_session_command_kind
 {
-    FLY_SESSION_COMMAND_NONE = 0
+    FLY_SESSION_COMMAND_NONE = 0,
+    /*
+     * 2026-09-13 invite-code amendment (additive v1 values). The invite route
+     * issues these through poll; the executor effect is:
+     *  - INVITE_CODE_LOOKUP: transmit INVITE_CODE_LOOKUP_REQUEST_V1 (kind
+     *    0x0214) for the live joiner attempt named by the command generation.
+     *  - INVITE_CODE_CANCEL: stop the live lookup connection.
+     *  - INVITE_REGENERATE: switch advertisement and displayed code/QR to the
+     *    new invitation generation. The old generation is already dead.
+     */
+    FLY_SESSION_COMMAND_INVITE_CODE_LOOKUP = 1,
+    FLY_SESSION_COMMAND_INVITE_CODE_CANCEL = 2,
+    FLY_SESSION_COMMAND_INVITE_REGENERATE = 3
 };
 
 /*
@@ -176,6 +188,32 @@ typedef struct fly_session_snapshot
     ((uint32_t)(offsetof(fly_session_snapshot, state_verified_through) + \
                 sizeof(fly_evidence_cursor_v1)))
 
+/*
+ * 2026-09-13 invite-code amendment: additive snapshot of the invite-code
+ * lookup route (one joiner attempt and one host invitation at most). All
+ * zero values mean "no route state". join_phase values are the shared route
+ * contract: 0 Idle, 1 LookingUp, 2 WaitingHostApproval, 3 WaitingSasConfirm,
+ * 4 Authenticated, 5 Cancelled, 6 Expired, 7 Ambiguous. host_phase: 0 Idle,
+ * 1 Active. reserved_zero must be zero on input and is written zero.
+ */
+#define FLY_SESSION_INVITE_SNAPSHOT_VERSION_1 UINT32_C(1)
+
+typedef struct fly_session_invite_snapshot_v1
+{
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t join_phase;
+    uint32_t host_phase;
+    uint64_t join_attempt_id;
+    uint64_t host_generation;
+    uint32_t host_attempts_left;
+    uint32_t reserved_zero;
+} fly_session_invite_snapshot_v1;
+
+#define FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE \
+    ((uint32_t)(offsetof(fly_session_invite_snapshot_v1, reserved_zero) + \
+                sizeof(uint32_t)))
+
 FLYNES_API fly_result fly_session_create(const fly_session_config* config,
                                          fly_session_t** session_out);
 FLYNES_API void fly_session_destroy(fly_session_t* session);
@@ -215,6 +253,13 @@ FLYNES_API fly_result fly_session_tick(fly_session_t* session, uint64_t now_ns);
 
 FLYNES_API fly_result fly_session_get_snapshot(fly_session_t* session,
                                                fly_session_snapshot* snapshot_out);
+
+/*
+ * 2026-09-13 invite-code amendment: additive projection of the invite-code
+ * lookup route. Read-only; never authorizes an effect by itself.
+ */
+FLYNES_API fly_result fly_session_get_invite_snapshot(
+    fly_session_t* session, fly_session_invite_snapshot_v1* snapshot_out);
 
 #ifdef __cplusplus
 }

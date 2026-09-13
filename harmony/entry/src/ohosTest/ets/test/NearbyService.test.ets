@@ -21,10 +21,58 @@ import {
   NearbyBanner,
   NearbyInGameRow,
   NearbyLobbyRow,
-  NearbyStageRow
+  NearbyStageRow,
+  NearbyEntryFacts,
+  normalizeInviteCode,
+  projectNearbyEntry
 } from '../../../main/ets/service/NearbyService';
 
 export default function nearbyServiceTest() {
+    // 2026-09-13 UI parity: entry status rule (C01/C09/C14) and code input rule (C05).
+    it('projects_entry_status_from_real_facts_only', 0, () => {
+      const clean: NearbyEntryFacts = {
+        factsKnown: true, peerVerified: false, channelBound: false,
+        compatibilityVerified: false, connectionEstablished: false,
+        previousConnectionEstablished: false, reconnecting: false
+      };
+      expect(projectNearbyEntry(clean).status).assertEqual('disconnected');
+      expect(projectNearbyEntry(clean).stringKey).assertEqual('nearby.open');
+      const partial: NearbyEntryFacts = {
+        factsKnown: true, peerVerified: true, channelBound: true,
+        compatibilityVerified: false, connectionEstablished: false,
+        previousConnectionEstablished: false, reconnecting: false
+      };
+      expect(projectNearbyEntry(partial).status).assertEqual('pairing');
+      const connected: NearbyEntryFacts = {
+        factsKnown: true, peerVerified: true, channelBound: true,
+        compatibilityVerified: true, connectionEstablished: true,
+        previousConnectionEstablished: false, reconnecting: false
+      };
+      expect(projectNearbyEntry(connected).status).assertEqual('connected');
+      expect(projectNearbyEntry(connected).stringKey).assertEqual('nearby.entry.connected');
+      const interrupted: NearbyEntryFacts = {
+        factsKnown: true, peerVerified: false, channelBound: false,
+        compatibilityVerified: false, connectionEstablished: false,
+        previousConnectionEstablished: true, reconnecting: true
+      };
+      expect(projectNearbyEntry(interrupted).status).assertEqual('interrupted');
+      const unknown: NearbyEntryFacts = {
+        factsKnown: false, peerVerified: false, channelBound: false,
+        compatibilityVerified: false, connectionEstablished: false,
+        previousConnectionEstablished: false, reconnecting: false
+      };
+      expect(projectNearbyEntry(unknown).status).assertEqual('unknown');
+    });
+
+    it('invite_code_input_keeps_leading_zeros_and_rejects_the_rest', 0, () => {
+      expect(normalizeInviteCode('012345')).assertEqual('012345');
+      expect(normalizeInviteCode('  012345  ')).assertEqual('012345');
+      expect(normalizeInviteCode('12345')).assertEqual('');
+      expect(normalizeInviteCode('1234567')).assertEqual('');
+      expect(normalizeInviteCode('12a456')).assertEqual('');
+      expect(normalizeInviteCode('')).assertEqual('');
+    });
+
   describe('NearbyService', () => {
     it('renders_the_seven_pipeline_stages_in_canonical_order', 0, () => {
       const rows: NearbyStageRow[] = nearbyPairingStages('nearby_stage_permission', NEARBY_STAGE_ORDER);

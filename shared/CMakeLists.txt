@@ -196,6 +196,8 @@ add_library(flynes_product STATIC
     src/product/control_layout.cpp
     src/product/gamepad_hit_map.cpp
     src/product/game_center_state.cpp
+    src/product/nearby_ui_state.cpp
+    src/product/multiplayer_eligibility.cpp
 )
 target_include_directories(flynes_product PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(flynes_product PUBLIC cxx_std_17)
@@ -225,6 +227,13 @@ target_compile_features(flynes_initial_plan_lock PUBLIC cxx_std_17)
 set_target_properties(flynes_initial_plan_lock PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
 flynes_enable_strict_warnings(flynes_initial_plan_lock)
 
+add_library(flynes_invite_code_route STATIC src/session/invite_code_route.cpp)
+target_link_libraries(flynes_invite_code_route PUBLIC flynes_session_codec)
+target_include_directories(flynes_invite_code_route PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+target_compile_features(flynes_invite_code_route PUBLIC cxx_std_17)
+set_target_properties(flynes_invite_code_route PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+flynes_enable_strict_warnings(flynes_invite_code_route)
+
 add_library(flynes_session STATIC
     src/session/flynes_session.cpp
 )
@@ -232,7 +241,7 @@ target_include_directories(flynes_session PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_features(flynes_session PRIVATE cxx_std_17)
-target_link_libraries(flynes_session PRIVATE flynes_initial_plan_lock)
+target_link_libraries(flynes_session PRIVATE flynes_initial_plan_lock flynes_invite_code_route)
 set_target_properties(flynes_session PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE YES
@@ -369,6 +378,16 @@ if(FLYNES_BUILD_TESTS)
     target_link_libraries(flynes_product_pause_actions_test PRIVATE flynes_product)
     flynes_enable_strict_warnings(flynes_product_pause_actions_test)
     add_test(NAME flynes_product_pause_actions COMMAND flynes_product_pause_actions_test)
+
+    add_executable(flynes_product_nearby_ui_test tests/test_product_nearby_ui.cpp)
+    target_link_libraries(flynes_product_nearby_ui_test PRIVATE flynes_product)
+    flynes_enable_strict_warnings(flynes_product_nearby_ui_test)
+    add_test(NAME nearby_product_ui COMMAND flynes_product_nearby_ui_test)
+
+    add_executable(flynes_multiplayer_eligibility_test tests/test_multiplayer_eligibility.cpp)
+    target_link_libraries(flynes_multiplayer_eligibility_test PRIVATE flynes_product)
+    flynes_enable_strict_warnings(flynes_multiplayer_eligibility_test)
+    add_test(NAME flynes_multiplayer_eligibility COMMAND flynes_multiplayer_eligibility_test)
 
     add_executable(flynes_catalog_scan_test
         tests/test_catalog_scan.cpp
@@ -809,6 +828,12 @@ if(FLYNES_BUILD_TESTS)
         FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
     )
     add_test(NAME flynes_session_public_path COMMAND flynes_session_public_path_test)
+
+    add_executable(flynes_invite_code_route_test tests/test_invite_code_route.cpp)
+    target_link_libraries(flynes_invite_code_route_test PRIVATE flynes_invite_code_route flynes_session)
+    flynes_enable_strict_warnings(flynes_invite_code_route_test)
+    add_test(NAME flynes_invite_code_route COMMAND flynes_invite_code_route_test)
+
 
     add_executable(flynes_session_receive_seam_test tests/test_session_receive_seam.cpp)
     target_link_libraries(flynes_session_receive_seam_test PRIVATE flynes_session flynes_session_codec)

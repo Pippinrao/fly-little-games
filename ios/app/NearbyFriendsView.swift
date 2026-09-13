@@ -89,6 +89,36 @@ struct NearbyFriendsView: View {
     /// discovery stage and its reason.
     @ViewBuilder private var devicesTab: some View {
         Section {
+            // N00's three primary actions (design 2026-09-13 U07, C04):
+            // content-priority puts them first, none requires a selected
+            // game, and the camera is requested on use only (C10).
+            NavigationLink {
+                NearbyPairingView(mode: .create)
+            } label: {
+                Text("nearby.action.create")
+                    .accessibilityIdentifier("nearby_action_create_label")
+            }
+            .accessibilityIdentifier("nearby_action_create")
+            // XCUITest resolves List NavigationLinks as cells in some iOS
+            // versions; the identifier on the inner Text keeps the element
+            // discoverable as a staticText as well.
+            NavigationLink {
+                NearbyPairingView(mode: .joinCode)
+            } label: {
+                Text("nearby.action.enterCode")
+                    .accessibilityIdentifier("nearby_action_enter_code_label")
+            }
+            .accessibilityIdentifier("nearby_action_enter_code")
+            // XCUITest resolves List NavigationLinks as cells in some iOS
+            // versions; the identifier on the inner Text keeps the element
+            // discoverable as a staticText as well.
+            NavigationLink {
+                NearbyPairingView(mode: .scan)
+            } label: {
+                Text("nearby.action.scanQr")
+                    .accessibilityIdentifier("nearby_action_scan_qr_label")
+            }
+            .accessibilityIdentifier("nearby_action_scan_qr")
             ForEach(PairingStage.allCases) { stage in
                 PairingStageRow(stage: stage)
             }
@@ -131,8 +161,15 @@ struct NearbyFriendsView: View {
         // than by a navigation path from this tab, and an entry is added by the
         // slice that owns the post-pairing transition.
         Section {
+            // N00's three primary actions (design 2026-09-13 U07, C04): none of
+            // them requires a selected game. 扫码加入 is the only camera
+            // consumer and is requested on use; a denial never disables the
+            // code path (C10).
+            // XCUITest resolves List NavigationLinks as cells in some iOS
+            // versions; the identifier on the inner Text keeps the element
+            // discoverable as a staticText as well.
             NavigationLink {
-                NearbyPairingView()
+                NearbyPairingView(mode: .create)
             } label: {
                 Text("nearby.pairing.title")
             }

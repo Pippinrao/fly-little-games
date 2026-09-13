@@ -184,6 +184,36 @@ struct NearbyFriends {
           .width('100%')
           .padding({ left: 12, right: 12 })
 
+        // N00's three primary actions (design 2026-09-13 U07, C04): none of them
+        // requires a selected game. 扫码加入 is the only camera consumer and is
+        // requested on use; a denial never disables the code path (C10).
+        Button($r('app.string.nearby_action_create'))
+          .width('100%')
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#FF6B5E')
+          .fontColor('#F4EFE6')
+          .onClick(() => {
+            void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'create' } });
+          })
+        Button($r('app.string.nearby_action_enterCode'))
+          .width('100%')
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#1B1D22')
+          .fontColor('#F4EFE6')
+          .onClick(() => {
+            void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'join_code' } });
+          })
+        Button($r('app.string.nearby_action_scanQr'))
+          .width('100%')
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#1B1D22')
+          .fontColor('#F4EFE6')
+          .onClick(() => {
+            void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'scan' } });
+          })
         // Both discovery actions cannot act yet: present, disabled, and each with
         // its own visible reason (§4).
         Button($r('app.string.nearby_find_devices'))

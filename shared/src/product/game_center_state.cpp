@@ -110,11 +110,13 @@ int popularity_for_package(std::string_view outer_filename, std::string_view ent
 
 GameCenterState GameCenterState::restore(const std::string& category_name,
                                          const std::string& query,
-                                         const std::string& selected_canonical_id)
+                                         const std::string& selected_canonical_id,
+                                         bool multiplayer_only)
 {
     GameCenterState state;
     state.category_ = category_from_name(category_name);
     state.query_ = query;
+    state.multiplayer_only_ = multiplayer_only;
     if (!is_blank(selected_canonical_id))
     {
         state.selections_[state.category_] = selected_canonical_id;
@@ -216,6 +218,29 @@ std::vector<GameCenterItem> GameCenterState::filtered(
     {
         if (contains(item.title_en, needle) || contains(item.title_zh_hans, needle)
             || contains(item.original_filename, needle))
+        {
+            result.push_back(item);
+        }
+    }
+    return result;
+}
+
+std::vector<GameCenterItem> GameCenterState::filtered(
+    const std::vector<GameCenterItem>& all,
+    const MultiplayerCapabilityRegistry& capabilities) const
+{
+    const std::vector<GameCenterItem> base = filtered(all);
+    if (!multiplayer_only_)
+    {
+        return base;
+    }
+    // Stable post-filter: the two-player switch removes rows only; it never
+    // re-sorts, never re-ranks, and never guesses capability from names.
+    std::vector<GameCenterItem> result;
+    result.reserve(base.size());
+    for (const GameCenterItem& item : base)
+    {
+        if (capabilities.eligibility_for(item.canonical_id) == MultiplayerEligibility::Supported)
         {
             result.push_back(item);
         }

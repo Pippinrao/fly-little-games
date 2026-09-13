@@ -10,7 +10,6 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Intent;
 import android.graphics.Rect;
-import android.os.ParcelFileDescriptor;
 import android.view.View;
 
 import androidx.test.core.app.ActivityScenario;
@@ -19,8 +18,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
-import java.io.FileInputStream;
 
 @RunWith(AndroidJUnit4.class)
 public final class SettingsMasterDetailTest {
@@ -66,6 +63,7 @@ public final class SettingsMasterDetailTest {
     }
 
     @Test public void twoHundredPercentFontKeepsMasterTargetsVisible() throws Exception {
+        String originalFontScale = originalFontScale();
         shell("settings put system font_scale 2.0");
         try (ActivityScenario<SettingsActivity> scenario = ActivityScenario.launch(SettingsActivity.class)) {
             scenario.onActivity(activity -> {
@@ -80,7 +78,7 @@ public final class SettingsMasterDetailTest {
                 }
             });
         } finally {
-            shell("settings put system font_scale 1.0");
+            shell("settings put system font_scale " + originalFontScale);
         }
     }
 
@@ -127,11 +125,12 @@ public final class SettingsMasterDetailTest {
         throw new AssertionError("no visible settings fragment");
     }
 
-    private static void shell(String command) throws Exception {
-        ParcelFileDescriptor descriptor = androidx.test.platform.app.InstrumentationRegistry
-                .getInstrumentation().getUiAutomation().executeShellCommand(command);
-        try (FileInputStream input = new FileInputStream(descriptor.getFileDescriptor())) {
-            while (input.read() != -1) { }
-        }
+    private static String originalFontScale() {
+        String scale = com.flynes.emu.test.UiShell.run("settings get system font_scale").trim();
+        return scale.isEmpty() ? "1.0" : scale;
+    }
+
+    private static void shell(String command) {
+        com.flynes.emu.test.UiShell.run(command);
     }
 }

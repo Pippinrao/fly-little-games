@@ -939,6 +939,426 @@
     {
       "name": "nearby_ingame_local_mute",
       "value": "Mute only on this end"
+    },
+    {
+      "name": "nearby_entry_connected",
+      "value": "Two-Player Online"
+    },
+    {
+      "name": "nearby_entry_interrupted",
+      "value": "Connection Lost"
+    },
+    {
+      "name": "nearby_entry_unavailable",
+      "value": "Cannot confirm connection status yet"
+    },
+    {
+      "name": "nearby_screen_entry",
+      "value": "Nearby Play"
+    },
+    {
+      "name": "nearby_screen_invite",
+      "value": "Create Invite"
+    },
+    {
+      "name": "nearby_screen_joinCode",
+      "value": "Enter Pairing Code"
+    },
+    {
+      "name": "nearby_screen_scan",
+      "value": "Scan QR Code"
+    },
+    {
+      "name": "nearby_screen_waitHost",
+      "value": "Waiting for Host"
+    },
+    {
+      "name": "nearby_screen_hostRequest",
+      "value": "Nearby Device Requests to Join"
+    },
+    {
+      "name": "nearby_screen_sas",
+      "value": "Identity Check Code"
+    },
+    {
+      "name": "nearby_screen_connecting",
+      "value": "Connecting"
+    },
+    {
+      "name": "nearby_screen_connected",
+      "value": "Two-Player Online"
+    },
+    {
+      "name": "nearby_screen_gameCenter",
+      "value": "Game Library"
+    },
+    {
+      "name": "nearby_screen_gameConfig",
+      "value": "Match Setup"
+    },
+    {
+      "name": "nearby_screen_failure",
+      "value": "Connection Failed"
+    },
+    {
+      "name": "nearby_screen_content",
+      "value": "File Completion"
+    },
+    {
+      "name": "nearby_screen_friends",
+      "value": "Friend Management"
+    },
+    {
+      "name": "nearby_action_create",
+      "value": "Create Invite"
+    },
+    {
+      "name": "nearby_action_enterCode",
+      "value": "Enter Pairing Code"
+    },
+    {
+      "name": "nearby_action_scanQr",
+      "value": "Scan QR Code"
+    },
+    {
+      "name": "nearby_action_findDevices",
+      "value": "Find Devices"
+    },
+    {
+      "name": "nearby_action_openFriends",
+      "value": "Friends"
+    },
+    {
+      "name": "nearby_action_backToGameCenter",
+      "value": "Back to Library"
+    },
+    {
+      "name": "nearby_action_regenerate",
+      "value": "Regenerate"
+    },
+    {
+      "name": "nearby_action_cancelInvite",
+      "value": "Cancel and Void Invite"
+    },
+    {
+      "name": "nearby_action_submitJoinCode",
+      "value": "Request to Join"
+    },
+    {
+      "name": "nearby_action_switchToScan",
+      "value": "Use QR Scan Instead"
+    },
+    {
+      "name": "nearby_action_switchToJoinCode",
+      "value": "Use Pairing Code Instead"
+    },
+    {
+      "name": "nearby_action_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "nearby_action_cancelRequest",
+      "value": "Cancel Request"
+    },
+    {
+      "name": "nearby_action_accept",
+      "value": "Accept and Continue Verification"
+    },
+    {
+      "name": "nearby_action_reject",
+      "value": "Reject"
+    },
+    {
+      "name": "nearby_action_sasMatch",
+      "value": "Digits Match"
+    },
+    {
+      "name": "nearby_action_sasMismatch",
+      "value": "Digits Differ, Cancel"
+    },
+    {
+      "name": "nearby_action_cancelConnecting",
+      "value": "Cancel"
+    },
+    {
+      "name": "nearby_action_viewDetails",
+      "value": "Details"
+    },
+    {
+      "name": "nearby_action_goToGameCenter",
+      "value": "Go to Library"
+    },
+    {
+      "name": "nearby_action_disconnect",
+      "value": "Disconnect"
+    },
+    {
+      "name": "nearby_action_openNearby",
+      "value": "Nearby Play"
+    },
+    {
+      "name": "nearby_action_selectGame",
+      "value": "Start Game"
+    },
+    {
+      "name": "nearby_action_disableMultiplayerFilter",
+      "value": "Turn Off Two-Player Filter"
+    },
+    {
+      "name": "nearby_action_confirmConfig",
+      "value": "Confirm Setup"
+    },
+    {
+      "name": "nearby_action_backToLobby",
+      "value": "Back to Library to Change Game"
+    },
+    {
+      "name": "nearby_action_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "nearby_action_newInvite",
+      "value": "New Invite"
+    },
+    {
+      "name": "nearby_action_backToEntry",
+      "value": "Back"
+    },
+    {
+      "name": "nearby_action_grantSend",
+      "value": "Allow Sending"
+    },
+    {
+      "name": "nearby_action_grantReceive",
+      "value": "Allow Receiving"
+    },
+    {
+      "name": "nearby_action_confirmImport",
+      "value": "Confirm Import"
+    },
+    {
+      "name": "nearby_action_cancelTransfer",
+      "value": "Cancel"
+    },
+    {
+      "name": "nearby_action_renameFriend",
+      "value": "Rename"
+    },
+    {
+      "name": "nearby_action_deleteFriend",
+      "value": "Delete"
+    },
+    {
+      "name": "nearby_action_blockFriend",
+      "value": "Block"
+    },
+    {
+      "name": "nearby_action_resetIdentity",
+      "value": "Reset Local Identity"
+    },
+    {
+      "name": "nearby_invite_codeLabel",
+      "value": "Six-digit pairing code"
+    },
+    {
+      "name": "nearby_invite_qrLabel",
+      "value": "Invite QR code"
+    },
+    {
+      "name": "nearby_invite_validFor",
+      "value": "Time remaining"
+    },
+    {
+      "name": "nearby_join_codeLabel",
+      "value": "Six-digit pairing code"
+    },
+    {
+      "name": "nearby_wait_anonymousNote",
+      "value": "Request sent, waiting for the host to accept"
+    },
+    {
+      "name": "nearby_host_anonymousTitle",
+      "value": "Nearby device requests to join"
+    },
+    {
+      "name": "nearby_host_sourceNote",
+      "value": "Source: nearby devices"
+    },
+    {
+      "name": "nearby_sas_digitCount",
+      "value": "Six-digit identity check code"
+    },
+    {
+      "name": "nearby_connecting_stageLabel",
+      "value": "Current stage"
+    },
+    {
+      "name": "nearby_connecting_wifiPath",
+      "value": "Wi-Fi path"
+    },
+    {
+      "name": "nearby_connected_friendLabel",
+      "value": "Verified friend"
+    },
+    {
+      "name": "nearby_connected_shortCodeLabel",
+      "value": "Identity short code"
+    },
+    {
+      "name": "nearby_config_hostLabel",
+      "value": "Host"
+    },
+    {
+      "name": "nearby_config_seatLabel",
+      "value": "Seat"
+    },
+    {
+      "name": "nearby_config_soundLabel",
+      "value": "Local sound"
+    },
+    {
+      "name": "nearby_config_shortCodeLabel",
+      "value": "Setup short code"
+    },
+    {
+      "name": "nearby_config_waitingConfirm",
+      "value": "Waiting for confirmation"
+    },
+    {
+      "name": "nearby_config_confirmed",
+      "value": "Confirmed"
+    },
+    {
+      "name": "nearby_failure_stageLabel",
+      "value": "Failed stage"
+    },
+    {
+      "name": "nearby_failure_reasonLabel",
+      "value": "Failure reason"
+    },
+    {
+      "name": "nearby_filter_multiplayerOnly",
+      "value": "Two-Player Supported"
+    },
+    {
+      "name": "nearby_capability_unknown",
+      "value": "Support to be confirmed"
+    },
+    {
+      "name": "nearby_stage_permissions",
+      "value": "Permissions"
+    },
+    {
+      "name": "nearby_stage_authentication",
+      "value": "Authentication"
+    },
+    {
+      "name": "nearby_stage_notStarted",
+      "value": "Not started"
+    },
+    {
+      "name": "nearby_stage_inProgress",
+      "value": "In progress"
+    },
+    {
+      "name": "nearby_stage_passed",
+      "value": "Passed"
+    },
+    {
+      "name": "nearby_stage_failed",
+      "value": "Failed"
+    },
+    {
+      "name": "nearby_stage_permissions_failed",
+      "value": "Permissions stage failed"
+    },
+    {
+      "name": "nearby_stage_discovery_failed",
+      "value": "Discovery stage failed"
+    },
+    {
+      "name": "nearby_stage_authentication_failed",
+      "value": "Authentication stage failed"
+    },
+    {
+      "name": "nearby_stage_wifi_failed",
+      "value": "Wi-Fi stage failed"
+    },
+    {
+      "name": "nearby_stage_quic_failed",
+      "value": "QUIC stage failed"
+    },
+    {
+      "name": "nearby_stage_version_failed",
+      "value": "Version stage failed"
+    },
+    {
+      "name": "nearby_stage_codec_failed",
+      "value": "Codec stage failed"
+    },
+    {
+      "name": "nearby_stage_timeline_invalid",
+      "value": "Connection stage state error"
+    },
+    {
+      "name": "nearby_reason_code_invalidFormat",
+      "value": "Invalid pairing code format"
+    },
+    {
+      "name": "nearby_reason_code_expired",
+      "value": "Pairing code expired"
+    },
+    {
+      "name": "nearby_reason_code_notFound",
+      "value": "No matching invitation found"
+    },
+    {
+      "name": "nearby_reason_host_rejected",
+      "value": "The host rejected the join request"
+    },
+    {
+      "name": "nearby_reason_request_cancelled",
+      "value": "Request cancelled"
+    },
+    {
+      "name": "nearby_reason_request_staleGeneration",
+      "value": "This invitation is no longer valid"
+    },
+    {
+      "name": "nearby_reason_sas_mismatch",
+      "value": "Identity check codes do not match"
+    },
+    {
+      "name": "nearby_reason_permission_cameraDenied",
+      "value": "Camera permission denied; use the pairing code instead"
+    },
+    {
+      "name": "nearby_reason_permission_discoveryDenied",
+      "value": "Nearby discovery permission denied"
+    },
+    {
+      "name": "nearby_reason_permission_wifiDenied",
+      "value": "Wi-Fi not confirmed; cannot establish the connection"
+    },
+    {
+      "name": "nearby_reason_connection_interrupted",
+      "value": "Connection lost"
+    },
+    {
+      "name": "nearby_reason_config_changed",
+      "value": "Match setup changed; both players must confirm again"
+    },
+    {
+      "name": "nearby_reason_content_sendDenied",
+      "value": "The other side did not allow sending files"
+    },
+    {
+      "name": "nearby_reason_content_receiveDenied",
+      "value": "The other side did not allow receiving files"
+    },
+    {
+      "name": "nearby_open_entry",
+      "value": "Nearby Play"
     }
   ]
 }

@@ -1,0 +1,252 @@
+{
+  "fixtureId": "flynes-nearby-ui-v1-cases",
+  "description": "Semantic input/output fixture for unified acceptance cases C01-C18 (design 2026-09-13 section 8). All three platforms replay these cases from the same data; no real device identities, package paths, or network results appear here. Layout cases (C17/C18) carry the widths and the expected flags that platform evidence must report.",
+  "cases": [
+    {
+      "id": "C01",
+      "title": "无连接进入大厅",
+      "input": { "connection": "disconnected", "locale": "zh-CN" },
+      "expected": {
+        "screenId": "G00",
+        "entryKey": "nearby.open",
+        "entryTextZh": "附近联机",
+        "categoriesPresent": ["RECENT", "FAVORITES", "ALL", "BUILTIN"],
+        "searchPresent": true,
+        "lobbyDetailAndGridPreserved": true
+      }
+    },
+    {
+      "id": "C02",
+      "title": "任一分类 x 双人开关 x 搜索 x connect/disconnect",
+      "input": {
+        "category": "FAVORITES",
+        "query": "abc",
+        "multiplayerOnly": true,
+        "connectionEvents": ["connected", "disconnected"]
+      },
+      "expected": {
+        "categoryUnchangedAfterConnectionEvents": true,
+        "multiplayerOnlyUnchangedAfterConnectionEvents": true,
+        "queryUnchangedAfterConnectionEvents": true,
+        "visibleIsIntersectionInStableOrder": true,
+        "compareVisibleIdsNotCountOnly": true
+      }
+    },
+    {
+      "id": "C03",
+      "title": "内置仅单人，开启支持双人",
+      "input": { "category": "BUILTIN", "multiplayerOnly": true, "supportedInCategory": 0 },
+      "expected": {
+        "visibleIds": [],
+        "categoryStaysBuiltin": true,
+        "zeroResultAction": "disableMultiplayerFilter",
+        "zeroResultActionLabelKey": "nearby.action.disableMultiplayerFilter",
+        "closingFilterClearsOnlyTheSwitch": true
+      }
+    },
+    {
+      "id": "C04",
+      "title": "创建、输入码、扫码",
+      "input": { "screenId": "N00", "selectedGame": null },
+      "expected": {
+        "actionsPresent": ["createInvite", "enterInviteCode", "scanQr"],
+        "requiresSelectedGame": false,
+        "noScrollNeededForThreeActions": true
+      }
+    },
+    {
+      "id": "C05",
+      "title": "配对码输入边界",
+      "inputs": [
+        { "code": "012345", "expect": "lookupRequestSent", "leadingZerosPreserved": true },
+        { "code": "", "expect": "noRequest" },
+        { "code": "12345", "expect": "noRequest" },
+        { "code": "1234567", "expect": "noRequest" },
+        { "code": "12a456", "expect": "noRequest" },
+        { "code": "  012345  ", "expect": "lookupRequestSent", "pasteWhitespaceTrimmed": true },
+        { "code": "expired", "expect": "failure", "reasonKey": "nearby.reason.code.expired" }
+      ]
+    },
+    {
+      "id": "C06",
+      "title": "候选/请求保持匿名",
+      "input": { "candidateVisible": true, "hostApprovalAbsent": true },
+      "expected": {
+        "allowedFields": ["displayName", "rssi"],
+        "forbiddenFields": ["friendNickname", "longTermPublicKey", "stableFingerprint"],
+        "noProtectedCredentialsSent": true
+      }
+    },
+    {
+      "id": "C07",
+      "title": "仅一端确认身份校验码 / 不一致",
+      "inputs": [
+        {
+          "localSasConfirmed": true,
+          "peerSasConfirmed": false,
+          "expectConnection": "disconnected",
+          "entryKey": "nearby.open"
+        },
+        {
+          "localSasConfirmed": true,
+          "peerSasConfirmed": false,
+          "peerReportsMismatch": true,
+          "expect": "generationCancelled",
+          "reasonKey": "nearby.reason.sas.mismatch"
+        }
+      ]
+    },
+    {
+      "id": "C08",
+      "title": "合法扫码 / 篡改 / 重放 / 过期",
+      "inputs": [
+        { "qr": "valid", "expect": "waitsHostApproval", "forcedSas": false },
+        { "qr": "tampered", "expect": "failure", "noAutoRetry": true, "noPlaintextDowngrade": true },
+        { "qr": "replayed", "expect": "failure", "singleUse": true },
+        { "qr": "expired", "expect": "failure", "reasonKey": "nearby.reason.code.expired" }
+      ]
+    },
+    {
+      "id": "C09",
+      "title": "建网中 / 全部验证成功",
+      "inputs": [
+        {
+          "connection": "buildingNetwork",
+          "expected": { "entryKey": "nearby.open", "entryTextZh": "附近联机" }
+        },
+        {
+          "connection": "fullyVerified",
+          "facts": ["connectionEstablished", "peerVerified", "channelBound", "compatibilityVerified"],
+          "expected": { "entryKey": "nearby.entry.connected", "entryTextZh": "双人联机中" },
+          "saveFriendOnlyAfterSuccess": true
+        }
+      ]
+    },
+    {
+      "id": "C10",
+      "title": "相机拒绝 / Wi-Fi 拒绝",
+      "inputs": [
+        {
+          "cameraDenied": true,
+          "expected": {
+            "scanActionRemoved": true,
+            "codePathEnabled": true,
+            "discoveryPathEnabled": true,
+            "reasonKey": "nearby.reason.permission.cameraDenied",
+            "repeatSystemPrompt": false
+          }
+        },
+        {
+          "wifiDenied": true,
+          "expected": {
+            "reasonKey": "nearby.reason.permission.wifiDenied",
+            "repeatSystemPrompt": false,
+            "soloStillAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "C11",
+      "title": "主机/seat/ROM/capability plan 变化",
+      "input": {
+        "before": { "pendingConfigId": "config-g1", "localConfirmed": true, "peerConfirmed": true },
+        "change": "host",
+        "after": { "pendingConfigId": "config-g2" }
+      },
+      "expected": {
+        "bothConfirmationsInvalidated": true,
+        "sameNewShortCodeOnBothEnds": true,
+        "reconfirmRequired": true,
+        "reasonKeyOnUi": "nearby.reason.config.changed"
+      }
+    },
+    {
+      "id": "C12",
+      "title": "文件补齐许可",
+      "inputs": [
+        { "senderConsent": true, "receiverConsent": false, "expectTransfer": false },
+        {
+          "senderConsent": true,
+          "receiverConsent": true,
+          "expectTransfer": true,
+          "stillRequiresGenericCheckAndImportConfirm": true
+        }
+      ]
+    },
+    {
+      "id": "C13",
+      "title": "返回大厅换游戏",
+      "input": { "connected": true, "backToLobbyThenSelectOtherGame": true },
+      "expected": {
+        "connectionKept": true,
+        "configConfirmationInvalidated": true,
+        "multiplayerFilterPreserved": true
+      }
+    },
+    {
+      "id": "C14",
+      "title": "已连接后断线",
+      "input": { "connected": true, "thenConnectionDropped": true },
+      "expected": {
+        "entryKey": "nearby.entry.interrupted",
+        "entryTextZh": "联机中断",
+        "autoSoloFallback": false,
+        "silentHostMigration": false,
+        "forcedModeSwitch": false
+      }
+    },
+    {
+      "id": "C15",
+      "title": "好友改名/删除/拉黑/身份重置",
+      "input": { "operations": ["renameFriend", "deleteFriend", "blockFriend", "resetIdentity"] },
+      "expected": {
+        "permissionsIndependent": true,
+        "oldIdentityNotInheritedByNewDevice": true
+      }
+    },
+    {
+      "id": "C16",
+      "title": "取消、重生成、超时之后迟到回调",
+      "inputs": [
+        { "lateCallbackAfter": "cancel", "expectRevival": false },
+        { "lateCallbackAfter": "regenerate", "expectRevival": false, "reasonKey": "nearby.reason.request.staleGeneration" },
+        { "lateCallbackAfter": "timeout", "expectRevival": false }
+      ],
+      "expected": {
+        "oldRequestNeverRevived": true,
+        "oldConnectionNeverRevived": true,
+        "oldConfigConfirmationNeverRevived": true
+      }
+    },
+    {
+      "id": "C17",
+      "title": "宽度矩阵",
+      "input": { "widthsDp": [320, 375, 550, 580, 640, 736, 900, 1024] },
+      "expected": {
+        "overflowOutsideGameGrid": false,
+        "allPagesIncludingDialogs": true
+      }
+    },
+    {
+      "id": "C18",
+      "title": "横屏与大字",
+      "input": {
+        "landscapeSizes": [
+          [640, 360],
+          [736, 414],
+          [844, 390]
+        ],
+        "fontScales": [1.0, 1.3, 2.0],
+        "keyboard": ["closed", "open"],
+        "safeArea": true
+      },
+      "expected": {
+        "mainActionReachable": true,
+        "bodyScrollable": true,
+        "noOcclusion": true,
+        "filtersNeverSqueezedAway": true
+      }
+    }
+  ]
+}

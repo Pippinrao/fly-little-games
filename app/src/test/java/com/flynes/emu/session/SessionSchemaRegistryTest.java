@@ -14,7 +14,7 @@ import java.security.MessageDigest;
 /** JVM hash-check of the byte-identical flynes_session_v1 schema copy. */
 public final class SessionSchemaRegistryTest {
     private static final String FROZEN_HEX =
-            "b8583a3baeb053f9617546d7985f0d338bf9056759b8623bc7c0f241a5bbd719";
+            "7c6a1293cf49bf81959e9ae73ac37836f2669f0b6f1738965597e19d05846db8";
     private static final String DOMAIN = "flynes-session-schema-registry-v1";
 
     @Test

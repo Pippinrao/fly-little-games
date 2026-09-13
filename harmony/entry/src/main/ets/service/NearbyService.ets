@@ -590,3 +590,64 @@ export function nearbyManageActions(): NearbyManageAction[] {
     { label: 'nearby_friends_identity_reset', blocked: NEARBY_FRIEND_STORE_BLOCKED }
   ];
 }
+
+// ------------------------------------------------------- 2026-09-13 UI parity
+/**
+ * Entry-status projection (UI contract nearby_ui_v1, design 2026-09-13 3.1 / U02).
+ * Mirrors shared flynes::product::nearby::project_entry and Android
+ * NearbyEntryStatus: facts come from the real session only - never from a
+ * persisted boolean, elapsed time, page paths or test flags. A scan match, a
+ * host acceptance, a correct code or a single-side SAS confirmation can never
+ * project as connected on its own.
+ */
+export interface NearbyEntryFacts {
+  factsKnown: boolean;
+  peerVerified: boolean;
+  channelBound: boolean;
+  compatibilityVerified: boolean;
+  connectionEstablished: boolean;
+  previousConnectionEstablished: boolean;
+  reconnecting: boolean;
+}
+
+export interface NearbyEntry {
+  status: string;      // 'unknown' | 'disconnected' | 'pairing' | 'connected' | 'interrupted'
+  stringKey: string;   // UI contract key
+  textKey: string;     // Harmony resource name ($r key suffix)
+}
+
+export function projectNearbyEntry(facts: NearbyEntryFacts): NearbyEntry {
+  if (!facts.factsKnown) {
+    return { status: 'unknown', stringKey: 'nearby.entry.unavailable', textKey: 'nearby_entry_unavailable' };
+  }
+  if (facts.connectionEstablished && facts.peerVerified && facts.channelBound
+    && facts.compatibilityVerified) {
+    return { status: 'connected', stringKey: 'nearby.entry.connected', textKey: 'nearby_entry_connected' };
+  }
+  if (facts.previousConnectionEstablished && facts.reconnecting) {
+    return { status: 'interrupted', stringKey: 'nearby.entry.interrupted', textKey: 'nearby_entry_interrupted' };
+  }
+  const pairing: boolean = facts.peerVerified || facts.channelBound
+    || facts.compatibilityVerified || facts.reconnecting;
+  return { status: pairing ? 'pairing' : 'disconnected', stringKey: 'nearby.open', textKey: 'nearby_title' };
+}
+
+/**
+ * Joiner-side input rule (shared parse_invite_code): exactly six ASCII digits
+ * after trimming ASCII whitespace, leading zeros preserved, no silent
+ * truncation - anything else is not a code and must not produce a lookup
+ * request (C05).
+ */
+export function normalizeInviteCode(raw: string): string {
+  const trimmed: string = (raw === null || raw === undefined) ? '' : raw.trim();
+  if (trimmed.length !== 6) {
+    return '';
+  }
+  for (let index = 0; index < trimmed.length; index++) {
+    const code: number = trimmed.charCodeAt(index);
+    if (code < 0x30 || code > 0x39) {
+      return '';
+    }
+  }
+  return trimmed;
+}

@@ -101,6 +101,8 @@ constexpr FrameTagEntry kFrameTags[] = {
     {0x0211u, FrameTypeNamespace::ObjectKind, "0x0211"},
     {0x0212u, FrameTypeNamespace::ObjectKind, "0x0212"},
     {0x0213u, FrameTypeNamespace::ObjectKind, "0x0213"},
+    {0x0214u, FrameTypeNamespace::ObjectKind, "0x0214"},
+    {0x0215u, FrameTypeNamespace::ObjectKind, "0x0215"},
     {0x0301u, FrameTypeNamespace::ObjectKind, "0x0301"},
     {0x0302u, FrameTypeNamespace::ObjectKind, "0x0302"},
     {0x0303u, FrameTypeNamespace::ObjectKind, "0x0303"},
@@ -236,8 +238,8 @@ constexpr std::size_t kMaxObjectBytesCount = sizeof(kMaxObjectBytes) / sizeof(kM
 static_assert(kMaxObjectBytesCount == kChannelAllowListCount + 1u,
               "one maximum per QUIC application channel");
 static_assert(kFrameTags[0].tag == 0x0001u, "the type table starts at 0x0001");
-static_assert(kFrameTags[59].tag == message_tag_base, "message rows start at message_tag_base");
-static_assert(kFrameTagCount == 65u, "59 schema kinds plus 6 schema messages");
+static_assert(kFrameTags[61].tag == message_tag_base, "message rows start at message_tag_base");
+static_assert(kFrameTagCount == 67u, "61 schema kinds plus 6 schema messages");
 
 const ChannelAllowList* allow_list_for(QuicChannel channel) noexcept
 {

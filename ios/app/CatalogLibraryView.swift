@@ -22,6 +22,42 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// Shared, versioned two-player capability projection (design 2026-09-13 §3.2).
+/// The only legal source of two-player eligibility: never inferred from file
+/// names, "P2" in a title, or controller counts. Unread ids and entries whose
+/// profile version mismatches project UNKNOWN, never UNSUPPORTED.
+enum MultiplayerEligibility: UInt8 {
+    case unsupported = 0
+    case supported = 1
+    case unknown = 2
+}
+
+struct MultiplayerCapabilityRegistry {
+    let profileVersion: UInt32
+    private var entries: [String: (eligibility: MultiplayerEligibility, version: UInt32)] = [:]
+    init(profileVersion: UInt32) {
+        self.profileVersion = profileVersion
+    }
+
+    mutating func put(_ canonicalId: String, _ eligibility: MultiplayerEligibility,
+                      _ version: UInt32) {
+        entries[canonicalId] = (eligibility, version)
+    }
+
+    func eligibilityFor(_ canonicalId: String) -> MultiplayerEligibility {
+        guard let entry = entries[canonicalId], entry.version == profileVersion else {
+            return .unknown
+        }
+        return entry.eligibility
+    }
+}
+
+/// Populated by the ObjC++ bridge from the shared versioned profile projection
+/// (P6); never from local file inspection.
+enum MultiplayerCapabilitySource {
+    static var registry = MultiplayerCapabilityRegistry(profileVersion: 0)
+}
+
 /// Mirrors Android HomeActivity: selected detail on the left, two-row horizontal
 /// card grid on the right. Selecting a card never navigates away from the grid.
 struct CatalogLibraryView: View {
@@ -29,6 +65,9 @@ struct CatalogLibraryView: View {
     @State private var cachedRows: [[String: Any]] = []
     @AppStorage("GameCenterCategory") private var category = LibraryFilter.all.rawValue
     @AppStorage("GameCenterQuery") private var searchText = ""
+    // Independent two-player filter (design U04): persisted per device, never
+    // changed by category, query, or connection events.
+    @AppStorage("GameCenterMultiplayerOnly") private var multiplayerOnly = false
     @AppStorage("GameCenterSelected.ALL") private var allSelection = ""
     @AppStorage("GameCenterSelected.RECENT") private var recentSelection = ""
     @AppStorage("GameCenterSelected.FAVORITES") private var favoriteSelection = ""
@@ -206,8 +245,16 @@ struct CatalogLibraryView: View {
     }
 
     private func reloadSnapshot() {
-        cachedRows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
+        var rows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
             forCategory: LibraryFilter(rawValue: category)?.rawValue ?? "ALL", query: searchText)
+        if multiplayerOnly {
+            // Stable post-filter: removes non-SUPPORTED rows only, never re-sorts.
+            rows = rows.filter { row in
+                guard let canonicalId = row["canonicalId"] as? String else { return false }
+                return MultiplayerCapabilitySource.registry.eligibilityFor(canonicalId) == .supported
+            }
+        }
+        cachedRows = rows
         reprojectTitles()
         covers.preload(canonicalIds: snapshot.games.map(\.id))
     }

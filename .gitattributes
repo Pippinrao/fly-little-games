@@ -23,3 +23,5 @@ ios/abi/flynes_session_v1/golden/**/*.bin binary
 harmony/schema/flynes_session_v1/golden/**/*.bin binary
 harmony/entry/src/main/resources/rawfile/*.nes binary
 shared/schema/golden/**/*.json text eol=lf
+# The game title check compares bytes against LF generator output.
+shared/data/game_titles.inc text eol=lf

@@ -200,6 +200,57 @@ Status check_channel_bind(const std::uint8_t* bytes, std::size_t size, std::uint
     return Status::Ok;
 }
 
+Status check_invite_code_request(const std::uint8_t* bytes, std::size_t size,
+                                 std::uint8_t hash_out[32])
+{
+    // 2026-09-13 invite-code amendment, kind 0x0214: six ASCII digits only,
+    // leading zeros preserved; the code locates an invitation, it is not a
+    // credential, so no further structure is carried.
+    const Status ls = length_status(size, 32u);
+    if (ls != Status::Ok)
+        return ls;
+    const Status vs = require_version_reserved(bytes, size);
+    if (vs != Status::Ok)
+        return vs;
+    for (std::size_t i = 8u; i < 14u; ++i)
+    {
+        if (bytes[i] < 0x30u || bytes[i] > 0x39u)
+            return Status::InvalidField;
+    }
+    if (!zeros(bytes + 14u, 18u))
+        return Status::NonzeroReserved;
+    write_hash("flynes-invite-code-lookup-request-v1", bytes, size, hash_out);
+    return Status::Ok;
+}
+
+Status check_invite_code_response(const std::uint8_t* bytes, std::size_t size,
+                                  std::uint8_t hash_out[32])
+{
+    // 2026-09-13 invite-code amendment, kind 0x0215: generation is revealed
+    // only on a match and must equal the host's active invitation generation;
+    // every other status carries zero.
+    const Status ls = length_status(size, 24u);
+    if (ls != Status::Ok)
+        return ls;
+    const Status vs = require_version_reserved(bytes, size);
+    if (vs != Status::Ok)
+        return vs;
+    const std::uint8_t status = bytes[8];
+    if (status < 1u || status > 4u)
+        return Status::UnknownEnum;
+    if (!zeros(bytes + 9u, 7u))
+        return Status::NonzeroReserved;
+    std::uint64_t generation = 0u;
+    for (std::size_t i = 16u; i < 24u; ++i)
+    {
+        generation = (generation << 8u) | bytes[i];
+    }
+    if (status != 1u && generation != 0u)
+        return Status::InvalidField;
+    write_hash("flynes-invite-code-lookup-response-v1", bytes, size, hash_out);
+    return Status::Ok;
+}
+
 Status check_end_package(const std::uint8_t* bytes, std::size_t size, std::uint8_t hash_out[32])
 {
     if (size < 4u)
@@ -299,6 +350,10 @@ Status check(const char* type_name, const std::uint8_t* bytes, std::size_t size,
     }
     if (name == "0x0306")
         return check_end_package(bytes, size, hash_out);
+    if (name == "0x0214")
+        return check_invite_code_request(bytes, size, hash_out);
+    if (name == "0x0215")
+        return check_invite_code_response(bytes, size, hash_out);
     if (name == "0x010f")
         return check_counted(bytes, size, 220u, 36u, 216u, 32u,
                              "flynes-end-closure-manifest-v1", hash_out);

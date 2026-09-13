@@ -1,11 +1,15 @@
 package com.flynes.emu;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
@@ -27,7 +31,28 @@ import com.google.android.material.button.MaterialButtonToggleGroup;
  * <p>The initial tab follows the friend store (附近设备 while no friend is saved, 好友 once one is)
  * and is never persisted; see {@link #savedFriendCount()}.
  */
-public final class NearbyFriendsActivity extends AppCompatActivity {
+public final class NearbyFriendsActivity extends AppCompatActivity
+        implements PermissionGate.CameraPermissionHost {
+
+    private boolean cameraDeniedOnce;
+    private PermissionGate.Outcome pendingCameraOutcome;
+
+    @Override public void requestCamera(PermissionGate.Outcome outcome) {
+        pendingCameraOutcome = outcome;
+        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA},
+                PermissionGate.REQUEST_CAMERA);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                                     @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != PermissionGate.REQUEST_CAMERA || pendingCameraOutcome == null) return;
+        boolean denied = grantResults.length == 0
+                || grantResults[0] != PackageManager.PERMISSION_GRANTED;
+        PermissionGate.Outcome outcome = pendingCameraOutcome;
+        pendingCameraOutcome = null;
+        outcome.onDone(denied);
+    }
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -64,6 +89,18 @@ public final class NearbyFriendsActivity extends AppCompatActivity {
 
         NearbyStagePipeline.render(this, firstFailingStage());
 
+        // N00's three primary actions (design 2026-09-13 U07). None requires a
+        // selected game (C04). 扫码加入 is the only camera consumer: the
+        // permission is requested on use, a denial disables nothing else (C10),
+        // and the system prompt is never repeated in one visit.
+        findViewById(R.id.nearby_action_create).setOnClickListener(view ->
+                NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_CREATE));
+        findViewById(R.id.nearby_action_enter_code).setOnClickListener(view ->
+                NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_JOIN_CODE));
+        findViewById(R.id.nearby_action_scan_qr).setOnClickListener(view -> onScanClicked());
+        findViewById(R.id.nearby_friends_manage_inline).setOnClickListener(view ->
+                startActivity(new Intent(this, NearbyFriendsManageActivity.class)));
+
         // 好友管理 is a real destination, not a placeholder: rename / delete / block / identity
         // reset are governed by the friend store and the page states exactly what is missing.
         findViewById(R.id.nearby_friends_manage).setOnClickListener(view ->
@@ -73,12 +110,36 @@ public final class NearbyFriendsActivity extends AppCompatActivity {
         // page must exist to display its blocked stages. 大厅 has no equivalent entry: it follows a
         // completed pairing, and §4 permits the exception only into 配对.
         findViewById(R.id.nearby_open_pairing).setOnClickListener(view ->
-                startActivity(new Intent(this, NearbyPairingActivity.class)));
+                NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_CREATE));
 
         // A disabled control still has to say why it cannot act (spec §4); the visible reason is
         // the row below each button and the same text is repeated to accessibility services.
         describeDisabled(R.id.nearby_find_devices, R.id.nearby_find_devices_reason);
         describeDisabled(R.id.nearby_scan_host_qr, R.id.nearby_scan_host_qr_reason);
+    }
+
+    private void onScanClicked() {
+        if (PermissionGate.hasCamera(this)) {
+            startActivity(NearbyPairingActivity.scanIntent(this));
+            return;
+        }
+        if (cameraDeniedOnce) {
+            // One system prompt per visit; the denial reason explains the
+            // remaining legal paths instead of looping the dialog (C10).
+            showScanDeniedReason();
+            return;
+        }
+        cameraDeniedOnce = true;
+        PermissionGate.requestCamera(this, denied -> {
+            if (denied) showScanDeniedReason();
+            else startActivity(NearbyPairingActivity.scanIntent(this));
+        });
+    }
+
+    private void showScanDeniedReason() {
+        TextView reason = findViewById(R.id.nearby_scan_denied_reason);
+        reason.setText(R.string.nearby_reason_permission_cameraDenied);
+        reason.setVisibility(View.VISIBLE);
     }
 
     /**

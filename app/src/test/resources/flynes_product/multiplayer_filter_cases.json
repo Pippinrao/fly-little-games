@@ -1,0 +1,76 @@
+{
+  "fixtureId": "flynes-nearby-ui-v1-multiplayer-filter",
+  "description": "Canonical capability-filter cases for the Game Center two-player switch (design 2026-09-13 section 3.2, cases C02/C03). All three platforms consume this data: the Android unit test loads the committed copy under app/src/test/resources/flynes_product/, the shared C++ test encodes the same expectations, and tools/quality parity tooling verifies the copies stay identical. canonical ids are opaque hashes; leading zeros are significant. Order comparisons compare id sequences, not counts.",
+  "profileVersion": 7,
+  "catalog": [
+    { "canonicalId": "solo-cart", "builtin": false, "favorite": false, "lastPlayedSequence": 0, "popularityScore": 10 },
+    { "canonicalId": "dual-cart", "builtin": false, "favorite": true, "lastPlayedSequence": 0, "popularityScore": 90 },
+    { "canonicalId": "solo-builtin", "builtin": true, "favorite": false, "lastPlayedSequence": 0, "popularityScore": 20 },
+    { "canonicalId": "dual-builtin", "builtin": false, "favorite": true, "lastPlayedSequence": 3, "popularityScore": 20 },
+    { "canonicalId": "stale-profile", "builtin": false, "favorite": true, "lastPlayedSequence": 0, "popularityScore": 5, "registeredProfileVersion": 6 },
+    { "canonicalId": "unread", "builtin": false, "favorite": true, "lastPlayedSequence": 1, "popularityScore": 5 },
+    { "canonicalId": "00puzzle", "builtin": false, "favorite": true, "lastPlayedSequence": 2, "popularityScore": 0 }
+  ],
+  "capabilities": {
+    "dual-cart": "SUPPORTED",
+    "dual-builtin": "SUPPORTED",
+    "solo-cart": "UNSUPPORTED",
+    "solo-builtin": "UNSUPPORTED"
+  },
+  "cases": [
+    {
+      "id": "filter-off-equals-base-pipeline",
+      "category": "FAVORITES", "query": "", "multiplayerOnly": false,
+      "expectedVisibleIds": ["dual-cart", "dual-builtin", "stale-profile", "unread", "00puzzle"]
+    },
+    {
+      "id": "favorites-times-filter",
+      "category": "FAVORITES", "query": "", "multiplayerOnly": true,
+      "expectedVisibleIds": ["dual-cart", "dual-builtin"]
+    },
+    {
+      "id": "recent-times-filter",
+      "category": "RECENT", "query": "", "multiplayerOnly": true,
+      "expectedVisibleIds": ["dual-builtin"]
+    },
+    {
+      "id": "all-times-filter",
+      "category": "ALL", "query": "", "multiplayerOnly": true,
+      "expectedVisibleIds": ["dual-cart", "dual-builtin"]
+    },
+    {
+      "id": "builtin-times-filter-zero-result-stays",
+      "category": "BUILTIN", "query": "", "multiplayerOnly": true,
+      "expectedVisibleIds": [],
+      "categoryStays": "BUILTIN",
+      "zeroResultAction": "disableMultiplayerFilter"
+    },
+    {
+      "id": "search-times-filter-unknown-drops",
+      "category": "FAVORITES", "query": "puzzle", "multiplayerOnly": true,
+      "expectedVisibleIds": []
+    },
+    {
+      "id": "search-times-filter-off-unknown-visible",
+      "category": "FAVORITES", "query": "puzzle", "multiplayerOnly": false,
+      "expectedVisibleIds": ["00puzzle"]
+    },
+    {
+      "id": "connection-events-change-nothing",
+      "category": "FAVORITES", "query": "", "multiplayerOnly": true,
+      "connectionEvents": ["connected", "disconnected", "reconnecting"],
+      "expectedVisibleIds": ["dual-cart", "dual-builtin"]
+    },
+    {
+      "id": "duplicate-canonical-id-still-deduplicated",
+      "category": "ALL", "query": "", "multiplayerOnly": true,
+      "duplicateRows": ["dual-cart"],
+      "expectedVisibleIds": ["dual-cart", "dual-builtin"]
+    },
+    {
+      "id": "popularity-ties-keep-canonical-id-order",
+      "category": "ALL", "query": "", "multiplayerOnly": false,
+      "expectedVisibleIds": ["dual-cart", "dual-builtin", "solo-builtin", "solo-cart", "stale-profile", "unread", "00puzzle"]
+    }
+  ]
+}

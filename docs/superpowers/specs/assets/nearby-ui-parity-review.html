@@ -1,0 +1,247 @@
+<style>
+#fly-existing { --fe-bg:light-dark(#f4f1eb,#121316); --fe-surface:light-dark(#fff,#1b1d22); --fe-raised:light-dark(#eae6df,#292b31); --fe-text:light-dark(#252321,#f4efe6); --fe-muted:light-dark(#686058,#beb8ae); --fe-line:light-dark(#d8d2c9,#393b40); --fe-primary:light-dark(#b83328,#ff6b5e); --fe-on-primary:light-dark(#fff,#121316); --fe-green:light-dark(#256247,#91d8af); --fe-amber:light-dark(#805119,#e7b775); color:var(--fe-text); font:14px/1.45 "Segoe UI","Microsoft YaHei",sans-serif; }
+#fly-existing * { box-sizing:border-box; }
+#fly-existing button,#fly-existing input { font:inherit; }
+#fly-existing button { cursor:pointer; touch-action:manipulation; }
+#fly-existing button:focus-visible,#fly-existing input:focus-visible { outline:3px solid var(--fe-primary); outline-offset:3px; }
+#fly-existing button:active:not(:disabled) { filter:brightness(.88); }
+#fly-existing button:disabled { opacity:.55; cursor:not-allowed; }
+#fly-existing .fe-review { display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:12px; color:var(--fe-muted); font-size:12px; }
+#fly-existing .fe-demo-controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+#fly-existing .fe-demo-controls > span { color:var(--fe-muted); font-size:12px; margin-right:4px; }
+#fly-existing .fe-demo { border:1px solid var(--fe-line); border-radius:9px; background:var(--fe-surface); color:var(--fe-muted); padding:8px 12px; min-height:44px; }
+#fly-existing .fe-demo[aria-pressed=true] { border-color:var(--fe-primary); color:var(--fe-text); }
+#fly-existing .fe-screen { background:var(--fe-bg); border:1px solid var(--fe-line); padding:0 12px 14px; border-radius:18px; }
+#fly-existing .fe-top { display:flex; align-items:center; gap:8px; min-height:64px; }
+#fly-existing h2 { font-size:18px; font-weight:600; line-height:1.3; margin:0; white-space:nowrap; }
+#fly-existing h3 { font-size:21px; font-weight:600; line-height:1.3; margin:0; }
+#fly-existing h4 { font-size:15px; font-weight:600; margin:0; }
+#fly-existing p { margin:0; }
+#fly-existing .fe-muted { font-size:12px; color:var(--fe-muted); }
+#fly-existing .fe-tabs { display:flex; flex:1; }
+#fly-existing .fe-tab { min-height:48px; padding:8px 13px; border:1px solid var(--fe-line); background:transparent; color:var(--fe-text); white-space:nowrap; }
+#fly-existing .fe-tab + .fe-tab { border-left:0; }
+#fly-existing .fe-tab:first-child { border-radius:24px 0 0 24px; }
+#fly-existing .fe-tab:last-child { border-radius:0 24px 24px 0; }
+#fly-existing .fe-tab[aria-pressed=true] { background:var(--fe-raised); color:var(--fe-primary); }
+#fly-existing .fe-tools { display:flex; gap:0; }
+#fly-existing .fe-icon { min-width:48px; min-height:48px; border:0; background:transparent; color:var(--fe-text); border-radius:12px; display:inline-flex; justify-content:center; align-items:center; }
+#fly-existing svg { width:19px; height:19px; flex-shrink:0; }
+#fly-existing .fe-mode { min-height:48px; padding:8px; border:0; background:transparent; color:var(--fe-text); display:flex; gap:6px; align-items:center; border-radius:12px; white-space:nowrap; }
+#fly-existing .fe-mode[data-mode=paired] { color:var(--fe-green); }
+#fly-existing .fe-mode[data-mode=lost] { color:var(--fe-amber); }
+#fly-existing .fe-body { display:grid; grid-template-columns:minmax(170px,30fr) minmax(0,70fr); gap:8px; }
+#fly-existing .fe-detail { border-radius:20px; background:var(--fe-surface); border:1px solid var(--fe-line); padding:16px; display:flex; flex-direction:column; gap:8px; min-width:0; }
+#fly-existing .fe-art { min-height:110px; flex:1; border-radius:7px; border:1px solid var(--fe-line); background:var(--fe-raised); color:var(--fe-muted); display:flex; align-items:center; justify-content:center; text-align:center; font-weight:600; padding:10px; }
+#fly-existing .fe-detail-title { display:flex; gap:6px; align-items:center; }
+#fly-existing .fe-detail-title h3 { flex:1; font-size:20px; }
+#fly-existing .fe-favorite { color:var(--fe-primary); }
+#fly-existing .fe-favorite[aria-pressed=true] svg { fill:currentColor; }
+#fly-existing .fe-button { min-height:48px; border:1px solid var(--fe-line); border-radius:12px; padding:10px 14px; background:var(--fe-raised); color:var(--fe-text); display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+#fly-existing .fe-launch { min-height:56px; width:100%; background:var(--fe-primary); border-color:var(--fe-primary); color:var(--fe-on-primary); margin-top:4px; font-weight:600; }
+#fly-existing .fe-list { min-width:0; }
+#fly-existing .fe-listbar { display:flex; align-items:center; gap:8px; min-height:48px; padding:0 4px; }
+#fly-existing .fe-count { color:var(--fe-muted); font-size:12px; flex:1; }
+#fly-existing .fe-filter { display:flex; align-items:center; gap:7px; padding:0 8px; min-height:48px; color:var(--fe-text); cursor:pointer; white-space:nowrap; font-size:13px; }
+#fly-existing .fe-filter input { width:19px; height:19px; margin:0; accent-color:var(--fe-primary); }
+#fly-existing .fe-games { display:grid; grid-auto-flow:column; grid-template-rows:repeat(2,126px); grid-auto-columns:205px; gap:8px; padding:4px 4px 10px; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-color:var(--fe-muted) var(--fe-bg); }
+#fly-existing .fe-game { display:flex; gap:8px; min-width:0; align-items:stretch; background:var(--fe-surface); color:var(--fe-text); border:1px solid var(--fe-line); border-radius:12px; padding:8px; text-align:left; }
+#fly-existing .fe-game[aria-pressed=true] { border-color:var(--fe-primary); background:var(--fe-raised); }
+#fly-existing .fe-thumb { width:70px; flex-shrink:0; border-radius:6px; background:var(--fe-raised); border:1px solid var(--fe-line); display:flex; justify-content:center; align-items:center; color:var(--fe-muted); text-align:center; font-size:11px; padding:4px; font-weight:600; }
+#fly-existing .fe-game-copy { display:flex; flex-direction:column; justify-content:center; gap:5px; min-width:0; }
+#fly-existing .fe-game-copy strong { font-size:14px; font-weight:600; }
+#fly-existing .fe-game-copy small { font-size:11px; color:var(--fe-muted); }
+#fly-existing .fe-list-hint { font-size:11px; color:var(--fe-muted); padding:0 4px; margin-top:4px; }
+#fly-existing .fe-empty { padding:32px 16px; min-height:252px; display:flex; flex-direction:column; gap:14px; align-items:center; justify-content:center; text-align:center; }
+#fly-existing .fe-search { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+#fly-existing .fe-search[hidden] { display:none; }
+#fly-existing .fe-search label { font-size:12px; color:var(--fe-muted); }
+#fly-existing .fe-search input { min-width:0; flex:1; min-height:48px; background:var(--fe-surface); border:1px solid var(--fe-line); border-radius:8px; padding:8px; color:var(--fe-text); font-size:16px; }
+#fly-existing .fe-panel { background:var(--fe-surface); border:1px solid var(--fe-line); border-radius:16px; padding:20px; margin-top:2px; min-height:316px; }
+#fly-existing .fe-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
+#fly-existing .fe-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 0; border-bottom:1px solid var(--fe-line); }
+#fly-existing .fe-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
+#fly-existing .fe-actions > * { flex:1; }
+@media(max-width:690px) { #fly-existing .fe-top h2 { display:none; } #fly-existing .fe-tab { padding:8px 10px; } #fly-existing .fe-games { grid-auto-columns:185px; } }
+@media(max-width:550px) { #fly-existing .fe-top { flex-wrap:wrap; padding:8px 0; gap:4px; } #fly-existing .fe-tabs { flex-basis:100%; } #fly-existing .fe-tab { flex:1; } #fly-existing .fe-mode { margin-left:auto; } #fly-existing .fe-body { grid-template-columns:1fr; } #fly-existing .fe-art { min-height:80px; } #fly-existing .fe-detail { padding:12px; } }
+</style>
+<style>
+#fly-existing [hidden] { display:none !important; }
+#fly-existing .fe-demo-controls select { min-height:44px; max-width:100%; padding:8px; border:1px solid var(--fe-line); border-radius:8px; color:var(--fe-text); background:var(--fe-surface); font:inherit; }
+#fly-existing .fn-header { min-height:64px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--fe-line); }
+#fly-existing .fn-header h2 { flex:1; }
+#fly-existing .fn-columns { display:grid; grid-template-columns:224px minmax(0,1fr); gap:18px; padding:16px 4px; min-height:284px; }
+#fly-existing .fn-side { display:flex; flex-direction:column; gap:10px; padding-right:18px; border-right:1px solid var(--fe-line); }
+#fly-existing .fn-stack { display:flex; flex-direction:column; gap:12px; min-width:0; }
+#fly-existing .fn-kicker { font-size:11px; letter-spacing:.13em; color:var(--fe-primary); }
+#fly-existing .fn-side .fe-launch { min-height:48px; margin-top:0; }
+#fly-existing .fn-foot { min-height:58px; border-top:1px solid var(--fe-line); display:flex; align-items:center; gap:10px; padding:8px 4px; }
+#fly-existing .fn-foot .fe-button { margin-left:auto; flex-shrink:0; }
+#fly-existing .fn-foot > .fe-muted { flex:1; min-width:0; overflow-wrap:anywhere; }
+#fly-existing .fn-foot .fe-launch { width:auto; min-width:160px; max-width:100%; min-height:48px; margin-top:0; }
+#fly-existing .fn-columns > * { min-width:0; }
+#fly-existing .fe-actions > .fe-button { width:auto; min-width:0; overflow-wrap:anywhere; }
+#fly-existing .fn-tabs { display:flex; align-items:center; gap:10px; }
+#fly-existing .fn-tabs .fe-icon { margin-left:auto; }
+#fly-existing .fn-tab { border:0; border-bottom:2px solid transparent; background:transparent; color:var(--fe-muted); min-height:48px; padding:8px; }
+#fly-existing .fn-tab[aria-pressed=true] { color:var(--fe-text); border-bottom-color:var(--fe-primary); }
+#fly-existing .fn-avatar { min-width:40px; height:40px; display:grid; place-items:center; border-radius:12px; background:var(--fe-raised); }
+#fly-existing .fn-row-copy { flex:1; min-width:0; }
+#fly-existing .fn-notice { background:var(--fe-surface); border:1px solid var(--fe-line); padding:12px; border-radius:12px; }
+#fly-existing .fn-code { font:600 29px/1.4 "Segoe UI",sans-serif; letter-spacing:.17em; padding:10px 12px; background:var(--fe-raised); border-radius:10px; text-align:center; margin:4px 0; }
+#fly-existing .fn-code-input { width:100%; min-height:60px; text-align:center; font-size:28px; letter-spacing:.16em; padding:8px; border:1px solid var(--fe-line); border-radius:12px; background:var(--fe-surface); color:var(--fe-text); }
+#fly-existing .fn-qr-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
+#fly-existing .fn-qr { width:170px; height:170px; background:#fff; padding:9px; display:grid; grid-template-columns:repeat(25,1fr); grid-template-rows:repeat(25,1fr); }
+#fly-existing .fn-qr b { background:#121316; }
+#fly-existing .fn-camera { min-height:206px; border:2px dashed var(--fe-muted); border-radius:16px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:14px; background:var(--fe-surface); padding:16px; text-align:center; }
+#fly-existing .fn-camera svg { width:44px; height:44px; color:var(--fe-muted); }
+#fly-existing .fn-stage { display:flex; align-items:center; gap:8px; padding:6px 0; }
+#fly-existing .fn-green { color:var(--fe-green); }
+#fly-existing .fn-amber { color:var(--fe-amber); }
+#fly-existing .fn-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#fly-existing .fn-controls select { min-height:48px; padding:8px; color:var(--fe-text); background:var(--fe-raised); border:1px solid var(--fe-line); border-radius:8px; font:inherit; }
+#fly-existing .fn-controls input { width:20px; height:20px; accent-color:var(--fe-primary); }
+#fly-existing .fn-controls label { min-height:48px; display:flex; align-items:center; gap:8px; }
+@media(max-width:580px) { #fly-existing .fn-columns { grid-template-columns:1fr; } #fly-existing .fn-side { border-right:0; border-bottom:1px solid var(--fe-line); padding:0 0 14px; } #fly-existing .fn-foot { flex-wrap:wrap; } #fly-existing .fn-foot .fe-button { flex:1; } }
+</style>
+<div id="fly-existing" aria-label="现有游戏大厅，联机状态与独立双人筛选评审">
+  <div class="fe-review"><span>FLYNES / 原始联机流程对齐 · 04</span><span>交互样稿 · 码、设备、网络结果均为模拟</span></div>
+  <div class="fe-demo-controls" aria-label="评审场景"><label for="fn-scene">场景</label><select id="fn-scene"><option value="nearby">附近联机 · 第一版布局</option><option value="invite">房主 · 配对码与二维码</option><option value="joincode">输入配对码加入</option><option value="scan">扫码加入</option><option value="request">房主 · 接受请求</option><option value="sas">双方 · 身份校验码</option><option value="network">验证与建立连接</option><option value="lobby-single">原大厅 · 附近联机</option><option value="lobby-paired">原大厅 · 双人联机中</option><option value="config">本局确认</option><option value="failed">连接失败</option></select><button type="button" id="fn-simulate" class="fe-demo" data-action="simulate" hidden>模拟下一步</button></div>
+  <div class="fe-screen">
+    <header class="fe-top">
+      <h2>游戏大厅</h2>
+      <nav class="fe-tabs" aria-label="原有游戏分类"><button type="button" class="fe-tab" data-category="recent" aria-pressed="false">最近</button><button type="button" class="fe-tab" data-category="favorites" aria-pressed="false">收藏</button><button type="button" class="fe-tab" data-category="all" aria-pressed="true">全部</button><button type="button" class="fe-tab" data-category="builtin" aria-pressed="false">内置</button></nav>
+      <div class="fe-tools"><button type="button" class="fe-icon" data-action="search" aria-label="搜索游戏"><i data-lucide="search" aria-hidden="true"></i></button><button type="button" class="fe-icon" data-action="sources" aria-label="管理来源"><i data-lucide="folder-open" aria-hidden="true"></i></button><button type="button" class="fe-icon" data-action="settings" aria-label="设置"><i data-lucide="settings" aria-hidden="true"></i></button></div>
+      <button type="button" id="fe-mode" class="fe-mode" data-action="connection" data-mode="single"><i data-lucide="radio" aria-hidden="true"></i>附近联机</button>
+    </header>
+    <header class="fn-header" id="fn-header"><button type="button" class="fe-icon" data-action="nearby-back" aria-label="返回"><i data-lucide="arrow-left" aria-hidden="true"></i></button><h2 id="fn-title">附近联机</h2><span class="fe-muted" id="fn-stage-name">连接后再选游戏</span><button type="button" class="fe-icon" data-action="diagnostics" aria-label="连接详情"><i data-lucide="info" aria-hidden="true"></i></button></header>
+    <div class="fe-search" id="fe-search" hidden><label for="fe-query">搜索游戏</label><input id="fe-query" type="search" placeholder="游戏名称"><button type="button" class="fe-icon" data-action="close-search" aria-label="关闭搜索"><i data-lucide="x" aria-hidden="true"></i></button></div>
+    <main id="fe-main" aria-live="polite"></main>
+  </div>
+</div>
+<script>
+(() => {
+  const root=document.getElementById('fly-existing');
+  const state={mode:'single',screen:'nearby',route:'code',friendTab:false,joinCode:'',error:'',accepted:false,localVerified:false,category:'all',multi:false,selected:1,query:'',panel:'',recent:[1,3,5],favorites:new Set([1,3,4]),ready:false,host:'me',seat:'p1',sound:true,configRevision:1,missing:false};
+  const games=[{id:1,name:'冒险游戏 A',sub:'ADVENTURE A',multi:true,builtin:false},{id:2,name:'对战游戏 B',sub:'ARCADE B',multi:true,builtin:false},{id:3,name:'解谜游戏 C',sub:'PUZZLE C',multi:false,builtin:true},{id:4,name:'竞速游戏 D',sub:'RACING D',multi:true,builtin:false},{id:5,name:'探索游戏 E',sub:'EXPLORE E',multi:null,builtin:false},{id:6,name:'益智游戏 F',sub:'PUZZLE F',multi:false,builtin:true}];
+  const names={recent:'最近',favorites:'收藏',all:'全部',builtin:'内置'};
+  const icon=n=>`<i data-lucide="${n}" aria-hidden="true"></i>`;
+  const button=(text,action,primary=false,disabled=false)=>`<button type="button" class="fe-button ${primary?'fe-launch':''}" data-action="${action}" ${disabled?'disabled':''}>${text}</button>`;
+  const support=g=>g.multi===true?'支持双人联机':g.multi===false?'仅支持单人':'双人能力待确认';
+  function filtered(){let list=state.category==='recent'?state.recent.map(id=>games.find(g=>g.id===id)):games.filter(g=>state.category==='favorites'?state.favorites.has(g.id):state.category==='builtin'?g.builtin:true);return list.filter(g=>(!state.multi||g.multi===true)&&(!state.query||g.name.toLowerCase().includes(state.query.toLowerCase())));}
+  function lobby(){
+    const list=filtered();if(!list.some(g=>g.id===state.selected))state.selected=list[0]?.id??null;
+    const selected=list.find(g=>g.id===state.selected);
+    const launchLabel=state.mode==='single'?'开始游戏':state.mode==='lost'?'等待恢复连接':selected?.multi===true?'双人联机开始':selected?.multi===false?'仅支持单人':'双人能力待确认';
+    const disabled=!selected||state.mode==='lost'||(state.mode==='paired'&&selected.multi!==true);
+    return `<div class="fe-body"><section class="fe-detail" aria-label="原有游戏详情区"><div class="fe-art">${selected?selected.sub:'暂无游戏'}</div><div class="fe-detail-title"><h3>${selected?selected.name:'没有匹配游戏'}</h3>${selected?`<button type="button" class="fe-icon fe-favorite" data-action="favorite" aria-label="${state.favorites.has(selected.id)?'取消收藏':'添加收藏'}" aria-pressed="${state.favorites.has(selected.id)}">${icon('heart')}</button>`:''}</div><p class="fe-muted">${selected?(selected.builtin?'内置游戏':'本地游戏'):'保留当前分类与筛选'}</p><p class="fe-muted">${selected?support(selected):'可关闭支持双人筛选'}</p>${button(icon('play')+launchLabel,'launch',true,disabled)}</section><section class="fe-list" aria-label="原有横向游戏网格"><div class="fe-listbar"><span class="fe-count">${list.length} 个游戏 · ${names[state.category]}</span><label class="fe-filter"><input type="checkbox" data-multi ${state.multi?'checked':''}>支持双人</label></div>${list.length?`<div class="fe-games">${list.map(g=>`<button type="button" class="fe-game" data-game="${g.id}" aria-pressed="${g.id===state.selected}"><span class="fe-thumb">${g.sub}</span><span class="fe-game-copy"><strong>${g.name}</strong><small>${g.builtin?'内置':'本地'}${state.favorites.has(g.id)?' · 收藏':''}</small><small>${support(g)}</small></span></button>`).join('')}</div><p class="fe-list-hint">横向滑动浏览全部${state.multi?' · 仅显示已确认支持双人联机的游戏':''}</p>`:`<div class="fe-empty"><h4>${state.multi?'当前分类暂无支持双人的游戏':'当前分类没有匹配游戏'}</h4><p class="fe-muted">${names[state.category]}${state.query?' · '+state.query:''}</p>${state.multi?button('关闭支持双人筛选','clear-multi'):''}</div>`}</section></div>`;
+  }
+  const foot=(text,label='',action='',primary=false)=>`<div class="fn-foot"><span class="fe-muted">${text}</span>${label?button(label,action,primary):''}</div>`;
+  const row=(mark,title,sub,label,action)=>`<div class="fe-row"><span class="fn-avatar">${mark}</span><div class="fn-row-copy"><h4>${title}</h4><p class="fe-muted">${sub}</p></div>${label?button(label,action):''}</div>`;
+  function qrSample(){return `<div class="fn-qr" role="img" aria-label="二维码视觉占位，无法用于连接">${Array.from({length:625},(_,i)=>{const x=i%25,y=Math.floor(i/25);const corners=[[0,0],[18,0],[0,18]];let fill=null;for(const [a,b] of corners){if(x>=a&&x<a+7&&y>=b&&y<b+7){const xx=x-a,yy=y-b;fill=xx===0||xx===6||yy===0||yy===6||(xx>=2&&xx<=4&&yy>=2&&yy<=4);break;}}if(fill===null)fill=(x*13+y*7+x*y)%5<2;return fill?'<b></b>':'<span></span>';}).join('')}</div>`;}
+  function nearby(){return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">PLAY TOGETHER</span><h3>和身边的人<br>再来一局。</h3><p class="fe-muted">一人创建，另一人加入。</p>${button(icon('plus')+'创建联机','create',true)}${button(icon('keyboard')+'输入配对码','joincode')}${button(icon('scan-line')+'扫码加入','scan')}</section><section><div class="fn-tabs"><button type="button" class="fn-tab" data-action="devices" aria-pressed="${!state.friendTab}">附近设备</button><button type="button" class="fn-tab" data-action="friends" aria-pressed="${state.friendTab}">好友</button><button type="button" class="fe-icon" data-action="${state.friendTab?'manage-friends':'discover'}" aria-label="${state.friendTab?'好友管理':'寻找设备'}">${icon(state.friendTab?'user-round-cog':'radar')}</button></div>${state.friendTab?`${row('林','小林','已保存好友 · 本次仍需认证','邀请','friend-invite')}${row('鱼','小鱼','未发现可验证的在线设备','','')}<p class="fe-muted" style="margin-top:12px">首次认证并进入同一大厅后保存好友。</p>`:`${row('A','附近设备 A','匿名设备 · 尚未验证','连接','ble-join')}${row('B','附近设备 B','匿名设备 · 尚未验证','连接','ble-join')}<div style="margin-top:10px">${button('寻找设备','discover')}</div>`}</section></div>${foot('输入配对码 / 扫码 / 附近设备 → 接受请求 → 验证 → 游戏大厅')}`;}
+  function flow(){
+    if(state.screen==='nearby')return nearby();
+    if(state.screen==='invite')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">HOST · INVITE</span><h3>让朋友加入</h3><p class="fe-muted">把配对码告诉朋友，或让朋友扫码。</p><label>本次配对码</label><div class="fn-code">482619</div><p class="fe-muted">本次邀请 60 秒有效 · 演示值</p>${button('重新生成邀请','renew')}</section><section class="fn-qr-wrap">${qrSample()}<h4>扫描房主二维码</h4><p class="fe-muted">二维码视觉占位 · 不可实际连接</p><p class="fe-muted">朋友加入时，你仍需接受请求。</p></section></div>${foot('正在等待朋友 · 尚未选择游戏','取消邀请','cancel')}`;
+    if(state.screen==='joincode')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">JOIN WITH CODE</span><h3>输入房主的<br>配对码</h3><p class="fe-muted">请朋友打开「创建联机」，查看本次配对码。</p>${button('改用扫码加入','scan')}</section><section class="fn-stack"><label for="fn-code-input">六位配对码</label><input id="fn-code-input" class="fn-code-input" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="输入六位数字" value="${state.joinCode}"><p class="fn-amber" role="alert" id="fn-code-error">${state.error}</p><p class="fe-muted">配对码只用于找到本次邀请，之后还需房主接受和身份验证。</p><div class="fn-notice fe-muted">评审用配对码：482619</div></section></div>${foot('尚未认证','请求加入','submit-code',true)}`;
+    if(state.screen==='scan')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">SCAN TO JOIN</span><h3>扫描房主的<br>二维码</h3><p class="fe-muted">让朋友打开「创建联机」，出示本次邀请。</p>${button('改用输入配对码','joincode')}<p class="fe-muted">仅在扫码时申请相机权限。</p></section><section class="fn-stack"><div class="fn-camera">${icon('scan-line')}<h4>将二维码放入取景区域</h4><p class="fe-muted">相机画面占位 · 不调用摄像头</p></div><p class="fe-muted">扫描后等待房主接受，随后验证身份。</p></section></div>${foot('无效、过期或已使用的二维码不能加入','取消','cancel')}`;
+    if(state.screen==='waiting')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">JOIN REQUEST SENT</span><h3>等待房主接受</h3><p class="fe-muted">${state.route==='qr'?'已识别本次邀请二维码':state.route==='code'?'已找到配对码对应的邀请':'已选择附近设备'}。</p></section><section class="fn-stack"><div class="fn-notice"><h4>加入请求已发出</h4><p class="fe-muted" style="margin-top:10px">请朋友在另一台设备上选择「接受」。</p></div><p class="fe-muted">尚未认证，不显示好友昵称或身份信息。</p></section></div>${foot('拒绝或超时会结束本次邀请','取消请求','cancel')}`;
+    if(state.screen==='request')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">HOST · JOIN REQUEST</span><h3>附近设备<br>请求加入</h3><p class="fe-muted">${state.route==='qr'?'对方扫描了你的邀请二维码':state.route==='code'?'对方输入了本次配对码':'对方选择了你的附近设备'}。</p><p class="fe-muted">对方身份尚未验证。</p></section><section class="fn-stack"><div class="fn-notice"><h4>是你正在邀请的朋友吗？</h4><p class="fe-muted" style="margin-top:10px">接受后继续身份验证。此时不会自动开始游戏或接收文件。</p></div><div class="fe-actions">${button('拒绝','cancel')}${button('接受，继续验证','accept',true)}</div></section></div>${foot('房主端 · 匿名加入请求')}`;
+    if(state.screen==='sas')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">VERIFY BOTH DEVICES</span><h3>核对双方的<br>身份校验码</h3><p class="fe-muted">两台设备显示的数字必须一致。</p><p class="fn-green fn-stage">${icon('circle-check')}房主已接受请求</p><p class="fe-muted">这是身份校验码，与刚才输入的配对码用途不同。</p></section><section class="fn-stack"><h4>两台设备上的数字一致吗？</h4><div class="fn-code">386241</div><p class="fe-muted">双方分别核对并确认，不需要再次输入。</p>${state.localVerified?'<div class="fn-notice fn-amber">你已确认，等待另一端确认。</div>':button('数字不一致，取消','cancel')}</section></div>${foot('双方确认后才能建立连接',state.localVerified?'等待对方确认':'身份校验码一致','verify',true)}`;
+    if(state.screen==='network')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">VERIFY & CONNECT</span><h3>正在建立连接</h3><p class="fe-muted">${state.route==='qr'?'已扫码且房主已接受，继续验证邀请与设备身份。':'双方已确认身份校验码，继续建立安全连接。'}</p>${button('连接详情','diagnostics')}</section><section class="fn-stack"><div class="fn-stage fn-green">${icon('circle-check')}加入请求已接受</div><div class="fn-stage fn-amber">${icon('circle-dot')}验证身份与建立 Wi-Fi 路径</div><div class="fn-stage fe-muted">${icon('circle')}检查安全通道、版本和音视频能力</div><div class="fn-notice fe-muted">若需要加入临时 Wi-Fi，系统最多询问一次。连接完成后回到游戏大厅。</div></section></div>${foot('验证未全部完成，不显示“双人联机中”','取消连接','cancel')}`;
+    if(state.screen==='connected')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">CONNECTED · 2 / 2</span><h3>已和小林连接</h3><p class="fn-green fn-stage">${icon('circle-check')}身份与连接验证通过</p><p class="fe-muted">好友已保存 · 本次尚未选择游戏。</p></section><section class="fn-stack">${row('我','我','本机设备','','')}${row('林','小林','身份短码 A72F · 已验证','','')}<p class="fe-muted">进入当前游戏大厅选游戏。更换游戏会保留连接，但需重新确认本局。</p>${button('断开连接','disconnect')}</section></div>${foot('双人联机中','去游戏大厅选游戏','go-lobby',true)}`;
+    if(state.screen==='config'){const g=games.find(g=>g.id===state.selected)||games[0];return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">CONFIRM THIS GAME</span><h3>${g.name}</h3><p class="fe-muted">待确认配置：C8${state.configRevision}A（模拟）</p><div class="fn-notice"><h4>${state.missing?'小林缺少游戏文件':'双方游戏文件一致'}</h4><p class="fe-muted">${state.missing?'可在双方同意后补齐文件':'两端均已有 · 无需传输'}</p></div>${button(state.missing?'文件补齐与传输确认':'游戏与连接详情','content-details')}<label class="fn-controls"><input type="checkbox" data-sound ${state.sound?'checked':''}>本机游戏声音</label></section><section class="fn-stack"><div class="fn-controls"><label for="fn-host">本局主机</label><select id="fn-host"><option value="me" ${state.host==='me'?'selected':''}>我</option><option value="friend" ${state.host==='friend'?'selected':''}>小林</option></select><span class="fe-muted">双方均具备能力 · 暂无风险</span></div><div class="fn-controls"><label for="fn-seat">我的座位</label><select id="fn-seat"><option value="p1" ${state.seat==='p1'?'selected':''}>P1</option><option value="p2" ${state.seat==='p2'?'selected':''}>P2</option></select><span class="fe-muted">小林 · ${state.seat==='p1'?'P2':'P1'}</span></div><p class="fe-muted">自动运行方式：${state.missing?'主机串流 STREAM':'双端运行 DUAL'} · 已验证（模拟）</p><div class="fn-notice"><p>${state.ready?'我已确认 · 等待小林':'双方待确认'}</p><p class="fe-muted">${state.configRevision>1?'配置已变化，请双方重新确认。':'双方看到同一配置短码后，分别确认入局。'}</p></div></section></div>${foot('返回大厅换游戏会保留连接',state.ready?'等待另一端确认':'确认入局','verify-config',true)}`;}
+    if(state.screen==='failed')return `<div class="fn-columns"><section class="fn-side"><span class="fn-kicker">CONNECTION INTERRUPTED</span><h3>未能建立连接</h3><p class="fn-amber">Wi-Fi 阶段：加入临时网络被拒绝。</p><p class="fe-muted">本次连接没有完成，单人游戏仍可使用。</p>${button('重新创建邀请','create',true)}</section><section class="fn-stack">${['权限','发现','认证','Wi-Fi','QUIC','版本','codec'].map((s,i)=>`<div class="fn-stage ${i<3?'fn-green':i===3?'fn-amber':'fe-muted'}">${icon(i<3?'circle-check':i===3?'circle-alert':'circle')} ${s} · ${i<3?'已通过':i===3?'当前失败':'尚未开始'}</div>`).join('')}</section></div>${foot('不会重复弹出同一次连接的 Wi-Fi 确认','回到游戏大厅','go-lobby')}`;
+    return nearby();
+  }
+  function panel(){
+    const head=title=>`<section class="fe-panel"><div class="fe-panel-head"><h3>${title}</h3><button type="button" class="fe-icon" data-action="close" aria-label="返回游戏大厅">${icon('x')}</button></div>`;
+    if(state.panel==='game-ready')return head('双方已确认 · 准备进入游戏')+`<p>游戏、主机、座位与待确认配置短码一致（模拟）。</p><p class="fe-muted" style="margin-top:14px">评审流程在此结束，不启动真实游戏。</p><div class="fe-actions">${button('返回本局配置','close')}${button('回大厅继续选游戏','go-lobby',true)}</div></section>`;
+    if(state.panel==='diagnostics')return head('连接详情')+`<p class="fe-muted">权限 → 发现 → 认证 → Wi-Fi → QUIC → 版本 → codec</p><div class="fe-row"><span>当前阶段</span><span>${state.screen==='network'?'身份验证与建网中':state.mode==='paired'?'全部验证通过（模拟）':'尚未建立连接'}</span></div><p class="fe-muted" style="margin-top:16px">失败时仅标明首个失败阶段、原因和可执行操作；后续未开始的阶段保持中性状态。</p><div class="fe-actions">${button('返回当前页','close')}${button('预览 Wi-Fi 拒绝','preview-failure')}</div></section>`;
+    if(state.panel==='content-details')return head('游戏与连接详情')+`<div class="fe-row"><span>游戏身份</span><span>冒险游戏 A · 8D2C…41AF（模拟）</span></div><div class="fe-row"><span>本机 / 小林</span><span>${state.missing?'已有 / 缺少文件':'均已有且校验一致'}</span></div><div class="fe-row"><span>当前网络提供设备</span><span>我 · 与本局主机选择独立</span></div><div class="fe-row"><span>小林身份短码</span><span>A72F · 19C3</span></div><p class="fe-muted" style="margin-top:12px">运行方式自动确定。串流本身不传游戏文件；补齐文件需要双方单独同意，并完成文件校验与导入。</p><div class="fe-actions">${button('返回本局配置','close')}${state.missing?button('申请补齐游戏文件','file-consent'):button('预览缺少文件','preview-missing')}</div></section>`;
+    if(state.panel==='file-consent')return head('游戏文件传输确认')+`<div class="fe-row"><span>文件</span><span>冒险游戏 A · 本机已有</span></div><div class="fe-row"><span>方向</span><span>本机 → 小林</span></div><p class="fe-muted" style="margin-top:12px">双方均同意后才开始传输；接收端还会校验文件并确认导入。</p><div class="fe-actions">${button('取消传输','close')}${button('我同意发送','file-wait',true)}</div></section>`;
+    if(state.panel==='file-wait')return head('等待对方同意接收')+`<p>本机已同意发送 · 小林尚未同意接收</p><p class="fe-muted" style="margin-top:12px">尚未发送文件。</p><div class="fe-actions">${button('取消申请','close')}</div></section>`;
+    if(state.panel==='file-progress')return head('正在传输并校验')+`<p>双方已同意 · 传输进度 64%（模拟）</p><progress value="64" max="100" style="width:100%;margin:20px 0" aria-label="传输进度">64%</progress><p class="fe-muted">传输完成后，接收端仍需完成校验与导入确认。</p></section>`;
+    if(state.panel==='file-import')return head('接收端 · 确认导入游戏')+`<p>文件已接收并通过校验（模拟）。</p><p class="fe-muted" style="margin-top:12px">导入后会重新计算运行方式，并要求双方确认本局配置。</p><div class="fe-actions">${button('暂不导入','close')}${button('确认导入','file-imported',true)}</div></section>`;
+    if(state.panel==='manage-friends')return head('好友管理')+`${row('林','小林','已保存的认证身份','管理','friend-actions')}${row('鱼','小鱼','未在线','','')}<div class="fe-actions">${button('重置本机身份','identity-reset')}</div></section>`;
+    if(state.panel==='friend-actions')return head('小林 · 好友操作')+`<div class="fn-stack">${button('修改备注','rename-friend')}${button('删除好友','delete-friend')}${button('拉黑好友','block-friend')}</div></section>`;
+    if(['rename-friend','delete-friend','block-friend','identity-reset'].includes(state.panel))return head({ 'rename-friend':'修改好友备注','delete-friend':'删除好友？','block-friend':'拉黑好友？','identity-reset':'重置本机身份？'}[state.panel])+`<p>${state.panel==='identity-reset'?'重置后需要重新建立好友信任，不能自动继承旧身份。':'操作入口评审，不会修改真实好友记录。'}</p><div class="fe-actions">${button('返回','close')}</div></section>`;
+    if(state.panel==='renew')return head('重新生成邀请？')+`<p>旧配对码和二维码会失效。朋友需要使用新的邀请重新加入。</p><div class="fe-actions">${button('取消','close')}${button('重新生成（模拟）','new-invite',true)}</div></section>`;
+    if(state.panel==='discover')return head('寻找附近设备')+`<p>权限允许后进行短时扫描；未认证设备保持匿名。</p><div class="fe-actions">${button('查看模拟发现结果','close')}${button('预览权限未授权','permission-denied')}</div></section>`;
+    if(state.panel==='permission-denied')return head('附近设备权限未授权')+`<p>无法寻找附近设备。可返回单人游戏，或在系统设置中允许权限后再试。</p><div class="fe-actions">${button('返回游戏大厅','go-lobby')}${button('返回附近联机','close')}</div></section>`;
+    if(state.panel==='connection')return head(state.mode==='single'?'连接朋友':state.mode==='lost'?'双人联机 · 连接中断':'双人联机')+`<div class="fe-row"><div><h4>${state.mode==='single'?'小林 · 附近设备':'已连接的朋友 · 小林'}</h4><p class="fe-muted">${state.mode==='single'?'先建立连接，再返回大厅选游戏':state.mode==='lost'?'正在尝试重新连接':'尚未开始本局 · 可以继续选择游戏'}</p></div>${state.mode==='single'?button('连接','pair'):state.mode==='lost'?button('重试','retry'):'<span style="color:var(--fe-green)">已连接</span>'}</div><p class="fe-muted" style="margin-top:16px">连接、断开和返回大厅均保留当前分类、搜索与双人筛选。</p><div class="fe-actions">${button('返回大厅','close')}${state.mode!=='single'?button('断开连接','disconnect'):''}</div></section>`;
+    if(state.panel==='pair')return head('配对确认')+`<p>请核对你和小林设备上的数字是否一致。</p><p style="font-size:30px;letter-spacing:.2em;margin:20px 0">386241</p><p class="fe-muted">校验码与连接为评审模拟，不绑定游戏。</p><div class="fe-actions">${button('返回','close')}${button('一致，连接后回大厅','paired',true)}</div></section>`;
+    if(state.panel==='disconnect')return head('断开与小林的连接？')+`<p>回到单人状态，当前分类与“支持双人”开关保持原样。</p><div class="fe-actions">${button('保持连接','close')}${button('断开连接','disconnected',true)}</div></section>`;
+    if(state.panel==='retry')return head('正在重新连接')+`<p>游戏大厅继续保留双人联机中断状态。</p><div class="fe-actions">${button('返回大厅','close')}${button('预览连接恢复','paired',true)}</div></section>`;
+    if(state.panel==='launch'){const g=games.find(g=>g.id===state.selected);return head(state.mode==='paired'?'确认本局 · '+g.name:'开始游戏 · '+g.name)+`<div class="fe-row"><span>我 · ${state.mode==='paired'?'P1':'单人'}</span><span>${state.ready?'已确认':'待确认'}</span></div>${state.mode==='paired'?'<div class="fe-row"><span>小林 · P2</span><span>已确认（模拟）</span></div>':''}<p class="fe-muted" style="margin-top:16px">${state.mode==='paired'?'返回大厅换游戏会保留朋友连接，并清除本局确认。':'评审稿不启动实际游戏。'}</p><div class="fe-actions">${button('返回大厅','close')}${button(state.ready?'已确认（演示）':'确认入局','ready',true,state.ready)}</div></section>`;}
+    return head(state.panel==='sources'?'管理来源':'设置')+`<p>沿用当前${state.panel==='sources'?'来源管理':'设置'}界面。</p><p class="fe-muted" style="margin-top:14px">本稿只评审大厅的联机状态与独立筛选。</p><div class="fe-actions">${button('返回大厅','close')}</div></section>`;
+  }
+  function show(screen){state.screen=screen;state.panel='';state.error='';}
+  function invalidate(){state.ready=false;state.configRevision++;}
+  function render(){
+    root.querySelectorAll('[data-category]').forEach(b=>b.setAttribute('aria-pressed',String(state.category===b.dataset.category)));
+    const inLobby=state.screen==='lobby';root.querySelector('.fe-top').hidden=!inLobby;root.querySelector('#fn-header').hidden=inLobby;if(!inLobby)root.querySelector('#fe-search').hidden=true;
+    root.querySelector('#fn-title').textContent={nearby:'附近联机',invite:'创建联机',joincode:'输入配对码',scan:'扫描房主二维码',request:'加入请求 · 房主端',waiting:'等待房主接受',sas:'身份校验码',network:'验证与连接',connected:'双人联机中',config:'本局确认',failed:'连接失败'}[state.screen]||'附近联机';
+    root.querySelector('#fn-stage-name').textContent=state.mode==='paired'?'双人联机中':'连接后再选游戏';
+    const m=root.querySelector('#fe-mode');m.dataset.mode=state.mode;m.innerHTML=icon(state.mode==='single'?'radio':state.mode==='lost'?'wifi-off':'users-round')+(state.mode==='single'?'附近联机':state.mode==='lost'?'联机中断':'双人联机中');m.setAttribute('aria-label',state.mode==='single'?'附近联机':state.mode==='lost'?'与小林的联机中断':'双人联机中，与小林已连接');
+    root.querySelector('#fe-main').innerHTML=state.panel?panel():inLobby?lobby():flow();
+    const sim=root.querySelector('#fn-simulate');const simLabels={invite:'模拟朋友请求加入',scan:'模拟识别邀请二维码',waiting:'查看房主端请求',network:'模拟全部验证通过',config:state.ready?'模拟另一端确认':''};
+    const label=state.panel==='file-wait'?'模拟对方同意接收':state.panel==='file-progress'?'模拟传输与校验完成':state.panel?'':state.screen==='sas'&&state.localVerified?'模拟另一端码一致':simLabels[state.screen];sim.hidden=!label;sim.textContent=label||'模拟下一步';
+    root.querySelector('#fn-scene').value=inLobby?(state.mode==='paired'?'lobby-paired':'lobby-single'):state.screen==='waiting'?'request':state.screen==='connected'?'lobby-paired':state.screen;
+    if(state.screen==='sas'&&state.localVerified){const b=root.querySelector('[data-action=verify]');if(b)b.disabled=true;}
+    if(state.screen==='config'&&state.ready){const b=root.querySelector('[data-action=verify-config]');if(b)b.disabled=true;}
+    if(globalThis.lucide)globalThis.lucide.createIcons({attrs:{width:19,height:19}});
+  }
+  root.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.disabled)return;
+    if(b.dataset.category){state.category=b.dataset.category;state.panel='';state.ready=false;}
+    else if(b.dataset.game){state.selected=Number(b.dataset.game);invalidate();}
+    else {const a=b.dataset.action;
+      if(a==='close'){state.panel='';}
+      else if(a==='nearby-back'){if(state.panel)state.panel='';else if(state.screen==='nearby'||state.screen==='connected'||state.screen==='config')show('lobby');else {show('nearby');state.localVerified=false;}}
+      else if(a==='connection')show(state.mode==='paired'?'connected':state.mode==='lost'?'failed':'nearby');
+      else if(a==='go-lobby'){show('lobby');state.ready=false;}
+      else if(a==='cancel'){show('nearby');state.localVerified=false;state.accepted=false;}
+      else if(a==='create'||a==='new-invite'){state.route='code';state.mode='single';show('invite');}
+      else if(a==='joincode'||a==='scan'){state.route=a==='scan'?'qr':'code';show(a);}
+      else if(a==='submit-code'){const input=root.querySelector('#fn-code-input');state.joinCode=input.value.trim();if(!/^\d{6}$/.test(state.joinCode))state.error='请输入完整的六位数字。';else if(state.joinCode!=='482619')state.error='配对码无效或已过期，请向房主确认。';else {state.route='code';show('waiting');}}
+      else if(a==='ble-join'||a==='friend-invite'){state.route='ble';show('waiting');}
+      else if(a==='accept'){state.accepted=true;state.localVerified=false;show(state.route==='qr'?'network':'sas');}
+      else if(a==='verify'){state.localVerified=true;}
+      else if(a==='devices')state.friendTab=false;
+      else if(a==='friends')state.friendTab=true;
+      else if(a==='simulate'){
+        if(state.panel==='file-wait')state.panel='file-progress';
+        else if(state.panel==='file-progress')state.panel='file-import';
+        else if(state.screen==='invite'){state.route='qr';show('request');}
+        else if(state.screen==='scan')show('waiting');
+        else if(state.screen==='waiting')show('request');
+        else if(state.screen==='sas'&&state.localVerified)show('network');
+        else if(state.screen==='network'){state.mode='paired';show('connected');}
+        else if(state.screen==='config'&&state.ready){state.panel='game-ready';}
+      }
+      else if(a==='preview-failure'){state.mode='single';show('failed');}
+      else if(a==='preview-missing'){state.missing=true;invalidate();state.panel='content-details';}
+      else if(a==='file-imported'){state.missing=false;invalidate();show('config');}
+      else if(a==='verify-config')state.ready=true;
+      else if(a==='launch'){if(state.mode==='paired'){state.ready=false;show('config');}else state.panel='launch';}
+      else if(a==='favorite'){state.favorites.has(state.selected)?state.favorites.delete(state.selected):state.favorites.add(state.selected);}
+      else if(a==='clear-multi')state.multi=false;
+      else if(a==='search'){root.querySelector('#fe-search').hidden=false;root.querySelector('#fe-query').focus();}
+      else if(a==='close-search'){state.query='';root.querySelector('#fe-query').value='';root.querySelector('#fe-search').hidden=true;}
+      else if(a==='disconnected'){state.mode='single';show('lobby');state.ready=false;}
+      else if(a==='ready')state.ready=true;
+      else if(a)state.panel=a;
+    }
+    render();
+  });
+  root.addEventListener('change',e=>{
+    if(e.target.matches('[data-multi]')){state.multi=e.target.checked;state.ready=false;render();}
+    else if(e.target.matches('[data-sound]'))state.sound=e.target.checked;
+    else if(e.target.id==='fn-host'||e.target.id==='fn-seat'){state[e.target.id==='fn-host'?'host':'seat']=e.target.value;invalidate();render();}
+  });
+  root.querySelector('#fn-scene').addEventListener('change',e=>{const scene=e.target.value;state.ready=false;state.localVerified=false;state.accepted=false;state.mode=['lobby-paired','config'].includes(scene)?'paired':'single';if(scene.startsWith('lobby-'))show('lobby');else show(scene);render();});
+  root.querySelector('#fe-query').addEventListener('input',e=>{state.query=e.target.value;state.panel='';render();});
+  render();
+  if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:()=>{invalidate();render();}});tweak.addToggle(state,'multi',{label:'大厅独立的支持双人筛选'});tweak.addToggle(state,'missing',{label:'本局确认：对方缺少游戏文件'});}
+})();
+</script>

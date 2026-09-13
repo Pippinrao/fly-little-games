@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -158,6 +160,65 @@ class CorpusTitleReviewTests(unittest.TestCase):
             entry = next(e for sha, e in self.entries.items() if sha.startswith(prefix))
             self.assertTrue(entry['en'].startswith(en), entry['en'])
             self.assertTrue(entry['zh'].startswith(zh), entry['zh'])
+
+
+class GitCheckoutTests(unittest.TestCase):
+    """Fresh checkouts must keep the generated table LF even with core.autocrlf=true.
+
+    The checker compares bytes exactly while the generator writes LF, so a
+    CRLF checkout breaks check on otherwise-correct commits unless
+    .gitattributes pins the generated file.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location('game_titles_checkout', SCRIPT)
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def run_git(self, repo, *args):
+        result = subprocess.run(
+            ['git', '-C', str(repo),
+             '-c', 'user.name=FlyNES Host Test',
+             '-c', 'user.email=host-test@invalid',
+             '-c', 'commit.gpgsign=false', *args],
+            check=True, capture_output=True)
+        return result.stdout
+
+    def test_fresh_autocrlf_clone_checks_clean(self):
+        repo_root = SCRIPT.parents[2]
+        source = repo_root / 'shared/data/game_titles.json'
+        generated = self.module.render(
+            json.loads(source.read_text(encoding='utf-8'))).encode('utf-8')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            origin = root / 'origin'
+            (origin / 'shared' / 'data').mkdir(parents=True)
+            table = origin / 'shared' / 'data' / 'game_titles.inc'
+            table.write_bytes(generated)
+            shutil.copyfile(repo_root / '.gitattributes', origin / '.gitattributes')
+            self.run_git(origin, '-c', 'core.autocrlf=false', 'init', '-b', 'main')
+            self.run_git(origin, '-c', 'core.autocrlf=false', 'add', '.gitattributes',
+                         'shared/data/game_titles.inc')
+            self.run_git(origin, '-c', 'core.autocrlf=false', 'commit', '-m', 'generated table')
+            self.assertEqual(
+                hashlib.sha256(generated).hexdigest(),
+                hashlib.sha256(
+                    self.run_git(origin, 'show', 'HEAD:shared/data/game_titles.inc')).hexdigest(),
+                'committed blob must stay byte-exact')
+            clone = root / 'clone'
+            self.run_git(root, 'clone', '-c', 'core.autocrlf=true', origin, clone)
+            checked_out = clone / 'shared' / 'data' / 'game_titles.inc'
+            content = checked_out.read_bytes()
+            self.assertEqual(0, content.count(b'\r'),
+                             'core.autocrlf=true checkout must keep the generated table at LF '
+                             '(found %d CR bytes; add text eol=lf to .gitattributes)' % content.count(b'\r'))
+            self.assertEqual(hashlib.sha256(generated).hexdigest(),
+                             hashlib.sha256(content).hexdigest(),
+                             'core.autocrlf=true checkout must keep the generated table byte-exact')
+            with contextlib.redirect_stderr(io.StringIO()) as errors:
+                result = self.module.main(['check', '--source', str(source), '--output', str(checked_out)])
+            self.assertEqual(0, result, errors.getvalue())
 
 
 if __name__ == '__main__':

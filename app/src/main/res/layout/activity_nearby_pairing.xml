@@ -26,6 +26,37 @@
         app:title="@string/nearby_pairing_title" app:titleTextColor="@color/fly_on_surface" />
     <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
+            <!--
+              N01 创建联机: the invitation lifecycle. The code is bound to a
+              generation with the 60 s continuous clock; 重新生成 and 取消作废邀请
+              kill the previous generation and its QR together, and a cancelled or
+              expired invitation is never revived (C16).
+            -->
+            <LinearLayout android:id="@+id/nearby_create_block" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+                <TextView android:id="@+id/nearby_invite_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_invite_codeLabel" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+                <TextView android:id="@+id/nearby_invite_code_value" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:letterSpacing="0.3" android:textAppearance="?attr/textAppearanceHeadlineMedium" android:textColor="@color/fly_on_surface" />
+                <TextView android:id="@+id/nearby_invite_valid_for" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_invite_validFor" android:textColor="@color/fly_on_surface_muted" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:baselineAligned="false" android:orientation="horizontal">
+                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_invite_regenerate" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:text="@string/nearby_action_regenerate" android:textColor="@color/fly_on_surface" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_invite_cancel" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:text="@string/nearby_action_cancelInvite" android:textColor="@color/fly_on_surface" />
+                </LinearLayout>
+            </LinearLayout>
+            <!--
+              N02 输入配对码: exactly six ASCII digits with the leading-zero rule;
+              the request is never sent on incomplete input, submit is locked while
+              a request for the current generation is in flight, and the field
+              error sits directly under the input (C05/C16).
+            -->
+            <LinearLayout android:id="@+id/nearby_join_block" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+                <TextView android:id="@+id/nearby_join_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_join_codeLabel" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+                <com.google.android.material.textfield.TextInputEditText android:id="@+id/nearby_join_code_input" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:digits="0123456789" android:hint="@string/nearby_join_codeLabel" android:inputType="number" android:maxLength="6" android:textColor="@color/fly_on_surface" android:textColorHint="@color/fly_on_surface_muted" />
+                <TextView android:id="@+id/nearby_join_code_error" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_reason_code_invalidFormat" android:textColor="@color/fly_error" android:visibility="gone" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:baselineAligned="false" android:orientation="horizontal">
+                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_submit" style="@style/Widget.Material3.Button" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:enabled="false" android:text="@string/nearby_action_submitJoinCode" android:textColor="@color/fly_on_primary" app:backgroundTint="@color/fly_primary" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_cancel" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:text="@string/nearby_action_cancelRequest" android:textColor="@color/fly_on_surface" />
+                </LinearLayout>
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_switch_to_scan" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_1" android:minWidth="48dp" android:text="@string/nearby_action_switchToScan" android:textColor="@color/fly_on_surface" />
+            </LinearLayout>
             <TextView android:id="@+id/nearby_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_code_label" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
             <TextView android:id="@+id/nearby_code_confirm_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_auth" android:textColor="@color/fly_error" />
             <com.google.android.material.button.MaterialButton android:id="@+id/nearby_code_confirm" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:enabled="false" android:text="@string/nearby_code_confirm" />

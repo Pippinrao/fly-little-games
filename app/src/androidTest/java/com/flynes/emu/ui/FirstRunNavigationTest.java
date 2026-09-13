@@ -16,7 +16,6 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ResolveInfo;
 import android.os.SystemClock;
 import android.graphics.Rect;
-import android.os.ParcelFileDescriptor;
 import android.text.Layout;
 import android.view.View;
 import android.widget.TextView;
@@ -29,6 +28,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.flynes.emu.HomeActivity;
 import com.flynes.emu.R;
+import com.flynes.emu.test.UiShell;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -164,6 +164,8 @@ public final class FirstRunNavigationTest {
     }
 
     @Test public void largeFontKeepsStatusCardAndCtaFullyVisible() throws Exception {
+        String originalFontScale = UiShell.run("settings get system font_scale").trim();
+        if (originalFontScale.isEmpty()) originalFontScale = "1.0";
         shell("settings put system font_scale 2.0");
         try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
             final boolean[] ready = {false};
@@ -193,7 +195,7 @@ public final class FirstRunNavigationTest {
                 assertTouchTarget(cta);
             });
         } finally {
-            shell("settings put system font_scale 1.0");
+            shell("settings put system font_scale " + originalFontScale);
         }
     }
 
@@ -293,10 +295,7 @@ public final class FirstRunNavigationTest {
         return bounds;
     }
 
-    private static void shell(String command) throws Exception {
-        try (ParcelFileDescriptor ignored = InstrumentationRegistry.getInstrumentation()
-                .getUiAutomation().executeShellCommand(command)) {
-            SystemClock.sleep(400L);
-        }
+    private static void shell(String command) {
+        UiShell.run(command);
     }
 }

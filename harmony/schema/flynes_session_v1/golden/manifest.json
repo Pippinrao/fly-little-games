@@ -136,6 +136,24 @@
       "sha256": "c64ad141edb769b9b3faf6510843ea28a1172f26785343d4e083bfd81412e2c1"
     },
     {
+      "domain": "flynes-invite-code-lookup-request-v1",
+      "enum_offset": null,
+      "kind": "0x0214",
+      "length": 32,
+      "name": "invite_code_lookup_request_v1",
+      "reserved_offset": 2,
+      "sha256": "7b445c7f05f55bc6579fcbb30a08c18bf7e4d9f04ad894218535c6c53c153924"
+    },
+    {
+      "domain": "flynes-invite-code-lookup-response-v1",
+      "enum_offset": 8,
+      "kind": "0x0215",
+      "length": 24,
+      "name": "invite_code_lookup_response_v1",
+      "reserved_offset": 2,
+      "sha256": "5d49611b2b50ee9475f24798b1019295e60ec532be07fa9078d9c3ef6142a5c2"
+    },
+    {
       "domain": "flynes-opaque-recovery-failure-evidence-v1",
       "enum_offset": 176,
       "kind": "0x0208",
