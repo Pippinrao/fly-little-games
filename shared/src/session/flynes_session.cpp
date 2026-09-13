@@ -1,5 +1,6 @@
 #include <flynes/flynes_session.h>
 #include "session_initial_plan.hpp"
+#include "session_receive.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -22,6 +23,11 @@ struct fly_session_handle
     std::uint64_t polled_command_id = 0u;
     std::uint64_t polled_command_generation = 0u;
     bool has_polled_command = false;
+
+    // Diagnostic identification of the last received chunk. Independent of the
+    // trusted reducer: the receive entry points still fail closed and never
+    // route a received byte to the trusted evidence seam.
+    flynes::session::ReceivedFrameSummary last_received;
 };
 
 namespace flynes::session {
@@ -108,6 +114,66 @@ std::optional<SessionInitialPlanSnapshot> initial_plan_snapshot(const fly_sessio
         plan.failed(), plan.not_supported(), plan.locked(), plan.mutually_locked(),
         plan.prompt_consumed(), session->pair_generation, session->original_context_start_ns,
         plan.selected_plan()};
+}
+
+namespace {
+
+void store_received_frame(fly_session_t* session, std::uint32_t channel,
+                          const wire::AppFrame& frame) noexcept
+{
+    session->last_received.identified = true;
+    session->last_received.channel = channel;
+    session->last_received.frame_type_tag = frame.frame_type_tag;
+    session->last_received.type_name = frame.type_name;
+    session->last_received.object_size = frame.object_size;
+    session->last_received.has_app_frame_hash = frame.has_app_frame_hash;
+    if (frame.has_app_frame_hash)
+    {
+        std::memcpy(session->last_received.app_frame_hash, frame.app_frame_hash, 32u);
+    }
+}
+
+} // namespace
+
+bool record_received_stream(fly_session_t* session, std::uint32_t channel,
+                            const std::uint8_t* bytes, std::size_t size) noexcept
+{
+    if (session == nullptr)
+        return false;
+    // Every call replaces the summary: a rejected chunk must not leave a stale
+    // identification behind.
+    session->last_received = ReceivedFrameSummary{};
+    wire::AppFrameCursor cursor = wire::app_frame_cursor(static_cast<wire::QuicChannel>(channel),
+                                                         bytes, size);
+    wire::AppFrame frame{};
+    bool has_frame = false;
+    if (wire::next_app_frame(&cursor, &frame, &has_frame) != wire::Status::Ok || !has_frame)
+    {
+        return false;
+    }
+    store_received_frame(session, channel, frame);
+    return true;
+}
+
+bool record_received_datagram(fly_session_t* session, std::uint32_t channel,
+                              const std::uint8_t* bytes, std::size_t size) noexcept
+{
+    if (session == nullptr)
+        return false;
+    session->last_received = ReceivedFrameSummary{};
+    wire::AppFrame frame{};
+    if (wire::parse_app_frame(static_cast<wire::QuicChannel>(channel), bytes, size, &frame) !=
+        wire::Status::Ok)
+    {
+        return false;
+    }
+    store_received_frame(session, channel, frame);
+    return true;
+}
+
+ReceivedFrameSummary last_received_frame(const fly_session_t* session) noexcept
+{
+    return session == nullptr ? ReceivedFrameSummary{} : session->last_received;
 }
 } // namespace flynes::session
 
@@ -223,14 +289,13 @@ extern "C" fly_result fly_session_submit_event(fly_session_t* session,
     return FLY_RESULT_INVALID_STATE;
 }
 
-// Raw transport bytes stay failing closed. The frozen design identifies a wire
-// object by its in-band envelope tag (family/type, design §11.3-11.4), but the
-// current shared codec dispatches by an out-of-band type name supplied by the
-// caller and reads no tag from the bytes (session_codec.cpp check()). Guessing a
-// kind by trying candidate types, or deriving authentication from a validated
-// and hashed envelope, is forbidden: a validated-and-hashed envelope is NOT
-// authentication. Until a real envelope decoder exists, no received byte may
-// reach the trusted evidence seam, so both entry points reject.
+// Raw transport bytes stay failing closed. The C2b application framing layer can
+// now identify a record's type from its in-band frame type tag (app_frame.hpp)
+// and validates the object with the existing codec, but that identification is
+// recorded for diagnostics only: a validated-and-hashed envelope is NOT
+// authentication (design spec:713), no authenticated decoder exists, and no
+// received byte may reach the trusted evidence seam. Both entry points
+// therefore still reject, and the diagnostic summary is never a decision input.
 extern "C" fly_result fly_session_receive_stream(fly_session_t* session,
                                                  uint32_t channel,
                                                  const uint8_t* bytes,
@@ -244,6 +309,7 @@ extern "C" fly_result fly_session_receive_stream(fly_session_t* session,
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    (void)flynes::session::record_received_stream(session, channel, bytes, size);
     return FLY_RESULT_INVALID_STATE;
 }
 
@@ -253,8 +319,18 @@ extern "C" fly_result fly_session_receive_datagram(fly_session_t* session,
                                                    size_t size)
 {
     // Same fail-closed contract as the stream entry point; the channel form does
-    // not make an undecodable envelope acceptable.
-    return fly_session_receive_stream(session, channel, bytes, size);
+    // not make an undecodable envelope acceptable. A datagram carries exactly one
+    // record, so it is identified with datagram framing rules.
+    if (session == nullptr || (bytes == nullptr && size != 0u))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (!valid_channel(channel))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    (void)flynes::session::record_received_datagram(session, channel, bytes, size);
+    return FLY_RESULT_INVALID_STATE;
 }
 
 extern "C" fly_result fly_session_poll_command(fly_session_t* session,

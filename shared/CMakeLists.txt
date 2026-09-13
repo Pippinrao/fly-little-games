@@ -201,6 +201,7 @@ target_link_libraries(flynes_app PUBLIC flynes_product)
 add_library(flynes_session_codec STATIC
     src/session/wire/sha256.cpp
     src/session/wire/session_codec.cpp
+    src/session/wire/app_frame.cpp
     src/session/wire/pair_capability.cpp
 )
 target_include_directories(flynes_session_codec PUBLIC
@@ -788,6 +789,41 @@ if(FLYNES_BUILD_TESTS)
         FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
     )
     add_test(NAME flynes_session_public_path COMMAND flynes_session_public_path_test)
+
+    add_executable(flynes_session_receive_seam_test tests/test_session_receive_seam.cpp)
+    target_link_libraries(flynes_session_receive_seam_test PRIVATE flynes_session flynes_session_codec)
+    target_include_directories(flynes_session_receive_seam_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_session_receive_seam_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_receive_seam_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_receive_seam_test)
+    target_compile_definitions(flynes_session_receive_seam_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_receive_seam COMMAND flynes_session_receive_seam_test)
+
+    add_executable(flynes_session_app_frame_test tests/test_app_frame.cpp)
+    target_link_libraries(flynes_session_app_frame_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_session_app_frame_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_app_frame_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_app_frame_test)
+    target_compile_definitions(flynes_session_app_frame_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_app_frame COMMAND flynes_session_app_frame_test)
+
+    add_executable(flynes_session_app_frame_consistency_test
+        tests/test_app_frame_consistency.cpp
+    )
+    target_link_libraries(flynes_session_app_frame_consistency_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_session_app_frame_consistency_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_app_frame_consistency_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_app_frame_consistency_test)
+    target_compile_definitions(flynes_session_app_frame_consistency_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+        FLYNES_SESSION_SCHEMA_FILE="${CMAKE_CURRENT_SOURCE_DIR}/schema/flynes_session_v1.schema"
+    )
+    add_test(NAME flynes_session_app_frame_consistency
+        COMMAND flynes_session_app_frame_consistency_test)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library
