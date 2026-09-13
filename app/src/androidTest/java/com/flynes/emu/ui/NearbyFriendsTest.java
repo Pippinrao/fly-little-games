@@ -105,12 +105,16 @@ public final class NearbyFriendsTest {
     public void discoveryControlsArePresentButDisabledWithAReason() {
         try (ActivityScenario<NearbyFriendsActivity> ignored =
                      ActivityScenario.launch(NearbyFriendsActivity.class)) {
+            onView(withId(R.id.nearby_find_devices)).perform(scrollTo());
             onView(withId(R.id.nearby_find_devices)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_find_devices)).check(matches(not(isEnabled())));
+            onView(withId(R.id.nearby_find_devices_reason)).perform(scrollTo());
             onView(withId(R.id.nearby_find_devices_reason)).check(matches(isDisplayed()));
 
+            onView(withId(R.id.nearby_scan_host_qr)).perform(scrollTo());
             onView(withId(R.id.nearby_scan_host_qr)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_scan_host_qr)).check(matches(not(isEnabled())));
+            onView(withId(R.id.nearby_scan_host_qr_reason)).perform(scrollTo());
             onView(withId(R.id.nearby_scan_host_qr_reason)).check(matches(isDisplayed()));
         }
     }

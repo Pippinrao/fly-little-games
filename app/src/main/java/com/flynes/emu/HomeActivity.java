@@ -55,6 +55,7 @@ public final class HomeActivity extends AppCompatActivity {
     public static final String ACTION_SHOW_SOURCES = "com.flynes.emu.action.SHOW_SOURCES";
     private static final int REQUEST_TREE = 4101;
     private static final String UI_PREFS = "game_center_ui";
+    private static final String PREF_MULTIPLAYER_ONLY = "multiplayerOnly";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService waiter = Executors.newSingleThreadExecutor(runnable -> {
@@ -172,6 +173,44 @@ public final class HomeActivity extends AppCompatActivity {
                 view -> startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.open_nearby).setOnClickListener(
                 view -> startActivity(new Intent(this, NearbyFriendsActivity.class)));
+        // U02: the top-right entry projects the real connection status. Facts
+        // come from the session layer only - this build truthfully reports a
+        // clean disconnected state (no pairing flow), never a persisted
+        // boolean or a synthesized success.
+        NearbyEntryStatus.Entry entryStatus =
+                NearbyEntryStatus.project(new NearbyEntryStatus.NearbyFacts());
+        ((com.google.android.material.button.MaterialButton) findViewById(R.id.open_nearby))
+                .setText(entryResourceFor(entryStatus.status));
+        // Large-text reflow (design 6, C18): the count text keeps the full
+        // width and the independent filter drops below it at accessibility
+        // sizes, so neither is squeezed or truncated.
+        android.widget.LinearLayout statusRow = findViewById(R.id.library_status_row);
+        boolean statusReflow = getResources().getConfiguration().fontScale >= 1.8f;
+        statusRow.setOrientation(statusReflow
+                ? android.widget.LinearLayout.VERTICAL : android.widget.LinearLayout.HORIZONTAL);
+        if (statusReflow) {
+            android.widget.LinearLayout.LayoutParams statusParams =
+                    new android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            findViewById(R.id.library_status).setLayoutParams(statusParams);
+        }
+        statusRow.setGravity(statusReflow
+                ? android.view.Gravity.END | android.view.Gravity.CENTER_VERTICAL
+                : android.view.Gravity.CENTER_VERTICAL);
+        com.google.android.material.switchmaterial.SwitchMaterial multiplayerFilter =
+                findViewById(R.id.multiplayer_filter);
+        multiplayerFilter.setOnCheckedChangeListener(null);
+        multiplayerFilter.setChecked(preferences.getBoolean(PREF_MULTIPLAYER_ONLY, false));
+        navigation.setMultiplayerOnly(multiplayerFilter.isChecked());
+        multiplayerFilter.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            navigation.setMultiplayerOnly(isChecked);
+            preferences.edit().putBoolean(PREF_MULTIPLAYER_ONLY, isChecked).apply();
+            renderGames();
+        });
+        findViewById(R.id.disable_multiplayer_filter).setOnClickListener(view -> {
+            multiplayerFilter.setChecked(false);
+        });
         findViewById(R.id.add_source).setOnClickListener(view -> chooseSource());
         launch.setOnClickListener(view -> launchSelected());
         favoriteToggle.setOnClickListener(view -> toggleFavorite());
@@ -287,15 +326,41 @@ public final class HomeActivity extends AppCompatActivity {
         sourceAdapter.submit(new ArrayList<>(runtime.stateSnapshot().sources().values()));
     }
 
+    /** Capability projection: empty until the shared versioned profile
+     *  registry is wired, so every game truthfully reads UNKNOWN - never
+     *  UNSUPPORTED by name guessing (design 3.2). */
+    private final GameCenterState.MultiplayerCapabilityRegistry multiplayerRegistry = new GameCenterState.MultiplayerCapabilityRegistry(1L);
+
+    /** Locale-correct text for the projected entry status (UI contract key). */
+    private int entryResourceFor(NearbyEntryStatus.Status status) {
+        switch (status) {
+            case CONNECTED: return R.string.nearby_entry_connected;
+            case INTERRUPTED: return R.string.nearby_entry_interrupted;
+            case UNKNOWN: return R.string.nearby_entry_unavailable;
+            default: return R.string.nearby_open;
+        }
+    }
+
     private List<GameCenterItem> visibleItems() {
-        if (navigation.query().isEmpty()) return navigation.filtered(allItems);
+        if (navigation.query().isEmpty()) return applyMultiplayerFilter(navigation.filtered(allItems));
         ArrayList<GameCenterItem> searched = new ArrayList<>();
         for (GameCatalogEntry entry : runtime.gameCatalog().search(navigation.query())) {
             for (GameCenterItem item : allItems) {
                 if (item.canonicalId().equals(entry.canonicalGame().id())) searched.add(item);
             }
         }
-        return navigation.itemsFor(navigation.category(), searched);
+        return applyMultiplayerFilter(navigation.itemsFor(navigation.category(), searched));
+    }
+
+    /** Stable post-filter: removes non-SUPPORTED rows only, never re-sorts. */
+    private List<GameCenterItem> applyMultiplayerFilter(List<GameCenterItem> base) {
+        if (!navigation.multiplayerOnly()) return base;
+        ArrayList<GameCenterItem> result = new ArrayList<>();
+        for (GameCenterItem item : base) {
+            if (multiplayerRegistry.eligibilityFor(item.canonicalId())
+                    == GameCenterState.MultiplayerEligibility.SUPPORTED) result.add(item);
+        }
+        return result;
     }
 
     private void renderGames() {
@@ -303,6 +368,8 @@ public final class HomeActivity extends AppCompatActivity {
         List<GameCenterItem> visible = visibleItems();
         navigation.reconcile(visible);
         gameAdapter.submit(visible, navigation.selectedCanonicalId());
+        findViewById(R.id.disable_multiplayer_filter).setVisibility(
+                visible.isEmpty() && navigation.multiplayerOnly() ? View.VISIBLE : View.GONE);
         if (visible.isEmpty()) {
             showStatus(navigation.query().isEmpty() ? R.string.empty_category : R.string.empty_search);
             renderDetail(null);
