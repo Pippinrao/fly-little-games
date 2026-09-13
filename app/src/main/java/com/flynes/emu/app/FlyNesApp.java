@@ -49,10 +49,16 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
 
     @Override public int scanAddFile(
             String relativePath, String displayName, int borrowedFd, byte[] expectedPhysicalSha256) {
+        return scanAddFile(relativePath, displayName, borrowedFd, expectedPhysicalSha256, new int[3]);
+    }
+
+    public int scanAddFile(String relativePath, String displayName, int borrowedFd,
+            byte[] expectedPhysicalSha256, int[] outcome) {
+        if (outcome == null || outcome.length < 3) throw new IllegalArgumentException("scan outcome");
         int flags = expectedPhysicalSha256 != null && expectedPhysicalSha256.length == 32
                 ? SCAN_FILE_FLAG_EXPECTED_PHYSICAL_SHA256 : 0;
         return nativeScanAddFile(scan, utf8(relativePath), utf8(displayName), borrowedFd, flags,
-                expectedPhysicalSha256, new int[3]);
+                expectedPhysicalSha256, outcome);
     }
 
     @Override public int scanCommit(int completeness) {
@@ -203,8 +209,8 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
     }
 
     private NativeCatalogEntry readEntry(long snapshot, long index) {
-        Object[] uuidAndHashes = new Object[5];
-        long[] sizes = new long[5];
+        Object[] uuidAndHashes = new Object[6];
+        long[] sizes = new long[6];
         int[] enums = new int[10];
         Object[] texts = new Object[4];
         int result = nativeCatalogGet(snapshot, index, uuidAndHashes, sizes, enums, texts);
@@ -217,8 +223,28 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
                 (byte[]) uuidAndHashes[1], (byte[]) uuidAndHashes[2], (byte[]) uuidAndHashes[3],
                 (byte[]) uuidAndHashes[4],
                 enums[3], enums[4], enums[5], enums[6], enums[7], enums[8], enums[9],
-                (String) texts[0], (String) texts[1], (String) texts[2], (String) texts[3]);
+                (String) texts[0], (String) texts[1], (String) texts[2], (String) texts[3],
+                (byte[]) uuidAndHashes[5], Math.toIntExact(sizes[5]),
+                decodeTitle(nativeCatalogTitleGet(snapshot, index)));
     }
+
+    /** Resolves cached ROM fingerprints without reading a package or depending on UI language. */
+    public static NativeGameTitle resolveGameTitle(byte[] sha256, String fallbackName) {
+        if (sha256 != null && sha256.length != 32) throw new IllegalArgumentException("SHA-256");
+        return decodeTitle(nativeGameTitleResolve(sha256, utf8(fallbackName)));
+    }
+
+    private static NativeGameTitle decodeTitle(String[] fields) {
+        if (fields == null || fields.length != 5) {
+            throw new IllegalStateException("game title query failed");
+        }
+        return new NativeGameTitle(fields[0], fields[1], fields[2],
+                fields[3].isEmpty() ? List.of() : List.of(fields[3].split("\\n")),
+                Integer.parseInt(fields[4]));
+    }
+
+    private static native String[] nativeCatalogTitleGet(long snapshot, long index);
+    private static native String[] nativeGameTitleResolve(byte[] sha256, byte[] fallbackName);
 
     private void abortScan() {
         if (scan != 0L) {

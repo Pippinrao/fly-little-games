@@ -20,6 +20,14 @@ int main(void)
     fly_catalog_snapshot_t* snapshot = NULL;
     uint64_t generation = UINT64_MAX;
     uint64_t count = UINT64_MAX;
+    fly_game_title title = {0};
+
+    if (fly_game_title_resolve(NULL, NULL, 0, &title) != FLY_RESULT_OK ||
+        title.match_kind != 0 || title.title_en_utf8 == NULL || title.title_en_utf8[0] != '\0')
+    {
+        fputs("C consumer could not resolve empty title\n", stderr);
+        return 1;
+    }
 
     capabilities.struct_size = FLY_PLATFORM_CAPABILITIES_V1_SIZE;
     capabilities.version = FLY_PLATFORM_CAPABILITIES_VERSION_1;
@@ -60,6 +68,12 @@ int main(void)
         return 1;
     }
 
+    if (fly_catalog_snapshot_get_title(snapshot, 0, &title) != FLY_RESULT_OUT_OF_RANGE)
+    {
+        fputs("C consumer observed wrong title range result\n", stderr);
+        fly_catalog_snapshot_release(snapshot);
+        return 1;
+    }
     fly_catalog_snapshot_release(snapshot);
     fly_catalog_snapshot_release(NULL);
     fly_app_destroy(NULL);

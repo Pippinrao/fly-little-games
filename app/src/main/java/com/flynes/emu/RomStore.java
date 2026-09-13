@@ -84,6 +84,8 @@ public class RomStore {
             o.put("chrKb", g.chrKb);
             o.put("zipped", g.zipped);
             o.put("popularity", g.popularity);
+            o.put("payloadSha256", g.payloadSha256);
+            o.put("romName", g.romName);
         } catch (JSONException e) {
             // JSONObject.put never throws for these value types; unreachable.
         }
@@ -102,6 +104,8 @@ public class RomStore {
         g.chrKb = o.optInt("chrKb", -1);
         g.zipped = o.optBoolean("zipped", false);
         g.popularity = o.optInt("popularity", 0);
+        g.payloadSha256 = o.optString("payloadSha256", "");
+        g.romName = o.optString("romName", "");
         return g;
     }
 }

@@ -10,6 +10,8 @@ import com.flynes.emu.app.FlyNesApp;
 import com.flynes.emu.app.NativeCatalogEntry;
 import com.flynes.emu.catalog.GameCatalog;
 import com.flynes.emu.catalog.PhysicalPackage;
+import com.flynes.emu.catalog.PackageOutcome;
+import com.flynes.emu.catalog.StableIds;
 import com.flynes.emu.catalog.RomSource;
 import com.flynes.emu.catalog.ScanIssue;
 import com.flynes.emu.catalog.ScanResult;
@@ -66,7 +68,6 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     private final AndroidRetryableMigrationLog migrationLog;
     private final AndroidPackageLocatorMap locators;
     private final SettingsRepository settingsRepository;
-    private final MemoryStore nativeView;
     private final File dataRoot;
     private final File cacheRoot;
 
@@ -106,9 +107,8 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 throw new IllegalStateException("native catalog cache root unavailable");
             }
             store = new AndroidAtomicCatalogStateStore(stateFile);
-            nativeView = new MemoryStore();
             repository = new CatalogRepository(
-                    CatalogState.empty(AndroidBuiltinCatalogAdapter.SOURCE), nativeView, catalog);
+                    CatalogState.empty(AndroidBuiltinCatalogAdapter.SOURCE), new MemoryStore(), catalog);
             nativeApp = FlyNesApp.create(dataRoot.getAbsolutePath(), cacheRoot.getAbsolutePath());
             SharedPreferences uuidPrefs = this.context.getSharedPreferences(
                     UUID_PREFS, Context.MODE_PRIVATE);
@@ -128,7 +128,6 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             dataRoot = null;
             cacheRoot = null;
             store = new AndroidAtomicCatalogStateStore(stateFile);
-            nativeView = null;
             repository = new CatalogRepository(
                     CatalogState.empty(AndroidBuiltinCatalogAdapter.SOURCE), store, catalog);
             nativeApp = null;
@@ -157,8 +156,30 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         return submit(() -> {
             RomSource source = sources.addOrReauthorize(locator, resultFlags);
             if (nativeCatalog) {
-                if (uuidMap.uuidForLocator(locator) == null) {
-                    uuidMap.put(randomUuid(), locator);
+                byte[] uuid = uuidMap.uuidForLocator(locator);
+                if (uuid == null) {
+                    uuid = randomUuid();
+                    uuidMap.put(uuid, locator);
+                }
+                boolean registered = false;
+                for (var status : nativeApp.sourceStatuses()) {
+                    if (java.util.Arrays.equals(uuid, status.sourceUuid())) {
+                        registered = true;
+                        break;
+                    }
+                }
+                // Persist a new, empty source before replacing the Java view. Never empty-scan
+                // an existing source: that would remove its games during reauthorization.
+                if (!registered) {
+                    int begun = nativeApp.scanBegin(uuid, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY);
+                    if (begun != FlyCatalogCommands.OK) {
+                        throw new IOException("source registration begin failed: " + begun);
+                    }
+                    int committed = nativeApp.scanCommit(FlyCatalogCommands.SCAN_FULL);
+                    if (committed != FlyCatalogCommands.OK) {
+                        nativeApp.scanAbort();
+                        throw new IOException("source registration commit failed: " + committed);
+                    }
                 }
                 refreshNativeView();
             }
@@ -230,13 +251,24 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         if (nativeCatalog) {
             migrateSettingsIfNeeded();
             migrateFncaIfNeeded();
+            // Commit the bundled source before projecting the complete native catalog once.
+            // Previously both sides of this scan rebuilt every external game on each startup.
+            Exception builtinFailure = null;
+            try {
+                scanBuiltinNative();
+            } catch (Exception failure) {
+                nativeApp.scanAbort();
+                builtinFailure = failure;
+            }
             CatalogRepository.LoadResult load = refreshNativeView();
             try {
                 sources.retryPendingReleases();
             } catch (SourceRegistry.PendingReleaseException ignored) {
             }
             sources.verifyPersistedPermissions();
-            scanBuiltinNative();
+            // A bundled-asset/cache failure must still leave the existing library usable.
+            // Preserve the failure for the UI after publishing and checking source permissions.
+            if (builtinFailure != null) throw builtinFailure;
             return new BootstrapResult(load, null);
         }
         boolean storeExisted = store.baseFile().exists()
@@ -318,7 +350,6 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         }
         nativeApp.scanCommit(FlyCatalogCommands.SCAN_FULL);
         locators.put(uuid, "from_below.nes", AndroidBuiltinCatalogAdapter.ASSET_LOCATOR);
-        refreshNativeView();
     }
 
     private CatalogRepository.LoadResult refreshNativeView() throws Exception {
@@ -335,8 +366,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         CatalogState projected = NativeCatalogProjector.project(
                 entries, nativeApp.sourceStatuses(), users, sequence, uuidMap, locators,
                 AndroidDocumentLocators::documentUriFor);
-        nativeView.writeAtomically(CatalogStateCodec.encode(projected));
-        return repository.load();
+        return repository.loadProjection(projected);
     }
 
     private LegacyLibraryMigrator.Result migrateLegacyIfEligible(boolean newStoreAbsent)
@@ -407,11 +437,14 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             uuidMap.put(uuid, source.uri());
         }
         int begun = nativeApp.scanBegin(uuid, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY);
+        android.util.Log.i("FlyNesSources", "scanBegin " + source.uri() + " -> " + begun
+                + " candidates=" + enumeration.candidates().size());
         if (begun != FlyCatalogCommands.OK) {
             nativeApp.scanAbort();
             throw new IOException("fly_scan_begin failed: " + begun);
         }
         HashSet<String> usedNames = new HashSet<>();
+        ArrayList<PackageOutcome> outcomes = new ArrayList<>();
         try {
             for (PackageCandidate candidate : enumeration.candidates()) {
                 String relative = sourceRelative(candidate, source.uri(), usedNames);
@@ -419,7 +452,26 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 try (ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(
                         Uri.parse(candidate.contentLocator()), "r")) {
                     if (pfd == null) throw new IOException("provider returned no fd");
-                    nativeApp.scanAddFile(relative, fileName(relative), pfd.getFd(), null);
+                    int[] outcome = new int[3];
+                    int added = nativeApp.scanAddFile(relative, fileName(relative), pfd.getFd(), null, outcome);
+                    PackageOutcome.Status status = added != FlyCatalogCommands.OK
+                            ? PackageOutcome.Status.ERROR : switch (outcome[0]) {
+                        case 1 -> PackageOutcome.Status.INDEXED;
+                        case 2 -> PackageOutcome.Status.SKIPPED;
+                        default -> PackageOutcome.Status.ERROR;
+                    };
+                    PackageOutcome.Reason reason = switch (outcome[1]) {
+                        case 1 -> PackageOutcome.Reason.INDEXED;
+                        case 2 -> PackageOutcome.Reason.NO_SUPPORTED_PAYLOADS;
+                        case 4 -> PackageOutcome.Reason.PACKAGE_LIMIT_EXCEEDED;
+                        case 6 -> PackageOutcome.Reason.INVALID_ZIP;
+                        default -> PackageOutcome.Reason.IO_ERROR;
+                    };
+                    outcomes.add(new PackageOutcome(StableIds.packageId(source.id(), relative), status, reason));
+                    if (added != FlyCatalogCommands.OK) {
+                        android.util.Log.w("FlyNesSources", "scanAddFile rejected relative="
+                                + relative + " code=" + added);
+                    }
                 }
             }
         } catch (Exception failure) {
@@ -429,12 +481,23 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         int completeness = enumeration.completeness() == SourceEnumerator.Completeness.FATAL
                 ? FlyCatalogCommands.SCAN_FATAL : FlyCatalogCommands.SCAN_FULL;
         int committed = nativeApp.scanCommit(completeness);
+        android.util.Log.i("FlyNesSources", "scanCommit " + source.uri() + " -> " + committed);
         if (committed != FlyCatalogCommands.OK && committed != FlyCatalogCommands.CONFLICT) {
             throw new IOException("fly_scan_commit failed: " + committed);
         }
         refreshNativeView();
+        ArrayList<PhysicalPackage> packages = new ArrayList<>();
+        SourceCatalogState refreshed = repository.state().sources().get(source.id());
+        if (refreshed != null && completeness != FlyCatalogCommands.SCAN_FATAL) {
+            for (PackageOutcome outcome : outcomes) {
+                if (outcome.status() == PackageOutcome.Status.INDEXED) {
+                    var indexed = refreshed.packages().get(outcome.packageId());
+                    if (indexed != null) packages.add(indexed.physicalPackage());
+                }
+            }
+        }
         ScanResult scanned = new ScanResult(
-                java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                packages, outcomes,
                 java.util.Collections.emptyList(), enumeration.issues());
         return SourceScanResult.from(
                 source, repository.state().revision(), Math.addExact(current.lastScanToken(), 1),
@@ -488,6 +551,10 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 output.write(buffer, 0, count);
             }
             output.flush();
+        } catch (IOException | RuntimeException failure) {
+            // noinspection ResultOfMethodCallIgnored
+            copied.delete();
+            throw failure;
         }
         return copied;
     }

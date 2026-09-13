@@ -35,6 +35,21 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class CatalogRepositoryTest {
+    @Test public void nativeProjectionPublishesWithoutSerializingOrReadingLegacyStore() throws Exception {
+        RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
+        CatalogState initial = CatalogState.empty(builtin);
+        CatalogState next = CatalogReconciler.reconcile(initial,
+                full(initial, builtin, 1, pkg(builtin, "one", "game", 'A')));
+        GameCatalog catalog = new GameCatalog();
+        CatalogStateStore unusedStore = new CatalogStateStore() {
+            @Override public byte[] read() { throw new AssertionError("native projection must not read FNCA"); }
+            @Override public void writeAtomically(byte[] bytes) { throw new AssertionError("native projection must not write FNCA"); }
+        };
+        CatalogRepository repository = new CatalogRepository(initial, unusedStore, catalog);
+        assertEquals(CatalogRepository.LoadStatus.LOADED, repository.loadProjection(next).status());
+        assertEquals(next, repository.state());
+        assertEquals("game", catalog.canonicalEntries().get(0).canonicalGame().id());
+    }
     @Test
     public void rootEnumerationTruncationPreservesLastGoodPackageAsStale() throws Exception {
         RomSource builtin = source("builtin", RomSource.Type.BUILTIN);
@@ -480,6 +495,10 @@ public final class CatalogRepositoryTest {
         assertEquals(live, repository.state());
         assertEquals("live-game", catalog.canonicalEntries().get(0).canonicalGame().id());
         assertArrayEquals(preserved, store.bytes);
+        assertEquals(CatalogRepository.LoadStatus.RECOVERY_NEEDED,
+                repository.loadProjection(invalid).status());
+        assertEquals(live, repository.state());
+        assertEquals("live-game", catalog.canonicalEntries().get(0).canonicalGame().id());
     }
 
     @Test

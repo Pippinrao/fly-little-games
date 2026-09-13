@@ -14,10 +14,19 @@ public final class PendingGameLaunch {
         if (request == null || bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("pending launch must contain request and bytes");
         }
-        PENDING.set(new Payload(request, bytes));
+        stage(request, bytes, null);
+    }
+
+    static void stage(LaunchRequest request, byte[] bytes,
+            com.flynes.emu.catalog.CanonicalGame title) {
+        if (request == null || bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException("pending launch must contain request and bytes");
+        }
+        PENDING.set(new Payload(request, bytes, title));
     }
 
     public static Payload consume() { return PENDING.getAndSet(null); }
 
-    public record Payload(LaunchRequest request, byte[] bytes) {}
+    public record Payload(LaunchRequest request, byte[] bytes,
+            com.flynes.emu.catalog.CanonicalGame title) {}
 }

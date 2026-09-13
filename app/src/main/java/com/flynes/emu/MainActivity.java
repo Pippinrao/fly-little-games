@@ -100,6 +100,23 @@ import java.util.concurrent.ConcurrentHashMap;
  * touch input, and auto-save on pause.
  */
 public class MainActivity extends AppCompatActivity {
+    private com.flynes.emu.catalog.CanonicalGame currentGameTitle =
+            new com.flynes.emu.catalog.CanonicalGame("builtin:from-below", "From Below",
+                    "来自下方", java.util.List.of());
+    private byte[] currentRom;
+    private String currentCoverGameId = "builtin:from-below";
+    private record RetainedGame(byte[] rom, com.flynes.emu.catalog.CanonicalGame title,
+            String coverGameId) { }
+
+    @Override public Object onRetainCustomNonConfigurationInstance() {
+        return currentRom == null ? null : new RetainedGame(currentRom, currentGameTitle,
+                currentCoverGameId);
+    }
+
+    private String currentGameDisplayTitle() {
+        return com.flynes.emu.gamecenter.GameTitlePresentation.forLocale(currentGameTitle,
+                getResources().getConfiguration().getLocales().get(0)).primary();
+    }
 
     private static final String TAG = "FlyNES";
     private static final String ROM_ASSET = "roms/from_below.nes";
@@ -430,12 +447,29 @@ public class MainActivity extends AppCompatActivity {
         }
 
         PendingGameLaunch.Payload pending = PendingGameLaunch.consume();
-        String coverGameId = pending == null
-                ? "builtin:from-below" : pending.request().canonicalGameId();
+        RetainedGame retained = getLastCustomNonConfigurationInstance() instanceof RetainedGame game
+                ? game : null;
+        if (pending == null && retained != null) currentGameTitle = retained.title();
+        if (pending != null) {
+            if (pending.title() != null) {
+                currentGameTitle = pending.title();
+            } else {
+                var metadata = com.flynes.emu.app.FlyNesApp.resolveGameTitle(
+                        LegacyGameTitles.parseHash(pending.request().hashes().payloadSha256()),
+                        pending.request().entryPath());
+                currentGameTitle = new com.flynes.emu.catalog.CanonicalGame(
+                        pending.request().canonicalGameId(), metadata.english(), metadata.chinese(),
+                        metadata.aliases());
+            }
+        }
+        String coverGameId = pending != null ? pending.request().canonicalGameId()
+                : retained != null ? retained.coverGameId() : "builtin:from-below";
+        currentCoverGameId = coverGameId;
         coverCapture = new CoverCaptureCoordinator(coverGameId,
                 new AndroidCoverRepository(this), coverExecutor);
         framePublisher.addObserver(coverCapture);
-        byte[] rom = pending == null ? readAsset(ROM_ASSET) : pending.bytes();
+        byte[] rom = pending != null ? pending.bytes()
+                : retained != null ? retained.rom() : readAsset(ROM_ASSET);
         if (rom == null) {
             toastAndFinish(getString(R.string.missing_builtin_game));
             return;
@@ -477,6 +511,14 @@ public class MainActivity extends AppCompatActivity {
         if (startPlaying(rom) < 0) {
             Toast.makeText(this, R.string.load_game_failed, Toast.LENGTH_LONG).show();
             return;
+        }
+        if (data != null) {
+            String english = data.getStringExtra("gameTitleEn");
+            String chinese = data.getStringExtra("gameTitleZh");
+            String fallback = data.getStringExtra("gameTitleFallback");
+            currentGameTitle = new com.flynes.emu.catalog.CanonicalGame("legacy-running-game",
+                    english == null || english.isEmpty() ? fallback : english, chinese,
+                    java.util.List.of());
         }
         // onResume() (which follows immediately) starts a fresh AudioThread and
         // rendering; startPlaying() only loads the ROM and records its hash.
@@ -712,9 +754,12 @@ public class MainActivity extends AppCompatActivity {
         drawer.addView(eyebrow, matchWrap(dp(8)));
         TextView title = new TextView(this);
         title.setId(R.id.pause_game_title);
-        title.setText(R.string.builtin_game_name);
+        title.setText(currentGameDisplayTitle());
         title.setTextColor(0xFFF4EFE6);
         title.setTextSize(28);
+        title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setContentDescription(currentGameDisplayTitle());
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         ViewCompat.setAccessibilityHeading(title, true);
         drawer.addView(title, matchWrap(dp(24)));
@@ -848,6 +893,7 @@ public class MainActivity extends AppCompatActivity {
             return -1;
         }
         Log.i(TAG, "ROM loaded, sequenced GPU presenter ready");
+        currentRom = rom;
         return 0;
     }
 

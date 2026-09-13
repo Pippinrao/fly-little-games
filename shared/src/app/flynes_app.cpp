@@ -1,4 +1,5 @@
 #include <flynes/flynes_app.h>
+#include <flynes/catalog/game_title_index.hpp>
 
 #include "app/catalog_persist.hpp"
 #include "app/catalog_state.hpp"
@@ -1556,6 +1557,56 @@ extern "C" fly_result fly_catalog_snapshot_get(const fly_catalog_snapshot_t* sna
     }
     catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
     catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_game_title_resolve(const std::uint8_t* payload_sha256,
+    const char* fallback_name_utf8, std::uint32_t fallback_name_utf8_length, fly_game_title* out)
+{
+    if (out == nullptr || (fallback_name_utf8 == nullptr && fallback_name_utf8_length != 0u))
+        return FLY_RESULT_INVALID_ARGUMENT;
+    try
+    {
+        const std::string_view fallback = fallback_name_utf8 == nullptr ? std::string_view{} :
+            std::string_view(fallback_name_utf8, fallback_name_utf8_length);
+        const auto match = flynes::catalog::game_title_index().lookup(payload_sha256, fallback);
+        fly_game_title result{"", "", "", "", 0u};
+        if (match.record != nullptr)
+        {
+            result = {match.record->index_id, match.record->title_en, match.record->title_zh_hans,
+                      match.record->aliases, match.match_kind};
+        }
+        *out = result;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&) { return FLY_RESULT_OUT_OF_MEMORY; }
+    catch (...) { return FLY_RESULT_INTERNAL_ERROR; }
+}
+
+extern "C" fly_result fly_catalog_snapshot_get_title(const fly_catalog_snapshot_t* snapshot,
+    std::uint64_t index, fly_game_title* out)
+{
+    if (snapshot == nullptr || out == nullptr) return FLY_RESULT_INVALID_ARGUMENT;
+    if (index >= snapshot->catalog->entries.size()) return FLY_RESULT_OUT_OF_RANGE;
+    const CatalogEntryData& entry = snapshot->catalog->entries[static_cast<std::size_t>(index)];
+    return fly_game_title_resolve(entry.payload_sha256.data(), entry.display_name.data(),
+        static_cast<std::uint32_t>(entry.display_name.size()), out);
+}
+
+extern "C" fly_result fly_catalog_snapshot_get_zip_locator(
+    const fly_catalog_snapshot_t* snapshot, std::uint64_t index,
+    std::uint8_t* raw_name, std::uint32_t capacity,
+    std::uint32_t* required, std::int32_t* offset)
+{
+    if (snapshot == nullptr || required == nullptr || offset == nullptr ||
+        (capacity > 0u && raw_name == nullptr)) return FLY_RESULT_INVALID_ARGUMENT;
+    if (index >= snapshot->catalog->entries.size()) return FLY_RESULT_OUT_OF_RANGE;
+    const CatalogEntryData& entry = snapshot->catalog->entries[static_cast<std::size_t>(index)];
+    const auto length = static_cast<std::uint32_t>(entry.zip_raw_name.size());
+    *required = length;
+    if (capacity < length) return FLY_RESULT_BUFFER_TOO_SMALL;
+    if (length > 0u) std::copy(entry.zip_raw_name.begin(), entry.zip_raw_name.end(), raw_name);
+    *offset = entry.zip_local_header_offset;
+    return FLY_RESULT_OK;
 }
 
 extern "C" void fly_catalog_snapshot_release(fly_catalog_snapshot_t* snapshot)

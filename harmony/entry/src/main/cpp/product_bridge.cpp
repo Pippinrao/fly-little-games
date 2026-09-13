@@ -88,6 +88,21 @@ flynes::product::DirectionControlMode direction_mode_from_int(int value)
 
 } // namespace
 
+void apply_game_title(GameCenterRow& row, const fly_game_title& title)
+{
+    if (row.builtin) {
+        row.title_en = "From Below";
+        row.title_zh_hans = "来自下方";
+    } else if (title.match_kind != 0) {
+        if (title.title_en_utf8 != nullptr && title.title_en_utf8[0] != '\0')
+            row.title_en = title.title_en_utf8;
+        if (title.title_zh_hans_utf8 != nullptr && title.title_zh_hans_utf8[0] != '\0')
+            row.title_zh_hans = title.title_zh_hans_utf8;
+    }
+    if (title.match_kind != 0 && title.aliases_utf8 != nullptr)
+        row.search_aliases = title.aliases_utf8;
+}
+
 std::vector<GameCenterRow> game_center_filter(const std::vector<GameCenterRow>& rows,
                                               const std::string& category,
                                               const std::string& query)
@@ -105,7 +120,8 @@ std::vector<GameCenterRow> game_center_filter(const std::vector<GameCenterRow>& 
                            row.builtin,
                            row.favorite,
                            row.last_played_sequence,
-                           row.original_filename);
+                           row.original_filename + "\n" + row.search_aliases,
+                           row.popularity_score);
     }
 
     GameCenterState state = GameCenterState::restore(category, query, {});
@@ -123,6 +139,7 @@ std::vector<GameCenterRow> game_center_filter(const std::vector<GameCenterRow>& 
         row.favorite = item.favorite;
         row.last_played_sequence = item.last_played_sequence;
         row.original_filename = item.original_filename;
+        row.popularity_score = item.popularity_score;
         for (const GameCenterRow& source : rows)
         {
             if (source.canonical_id == item.canonical_id)
@@ -130,6 +147,8 @@ std::vector<GameCenterRow> game_center_filter(const std::vector<GameCenterRow>& 
                 row.source_uuid_hex = source.source_uuid_hex;
                 row.source_relative_path = source.source_relative_path;
                 row.package_format = source.package_format;
+                row.original_filename = source.original_filename;
+                row.search_aliases = source.search_aliases;
                 break;
             }
         }

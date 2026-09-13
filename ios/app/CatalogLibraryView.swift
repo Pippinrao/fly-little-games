@@ -3,7 +3,7 @@ import SwiftUI
 enum LibraryRoute: Hashable {
     /// The resolved ROM travels with the route, so reaching the run screen already
     /// means the game could be opened.
-    case run(canonicalId: String, rom: Data)
+    case run(canonicalId: String, rom: Data, game: CatalogGame)
 }
 
 enum LibraryFilter: String, CaseIterable, Identifiable {
@@ -23,6 +23,7 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
 /// card grid on the right. Selecting a card never navigates away from the grid.
 struct CatalogLibraryView: View {
     @State private var snapshot: CatalogSnapshot
+    @State private var cachedRows: [[String: Any]] = []
     @AppStorage("GameCenterCategory") private var category = LibraryFilter.all.rawValue
     @AppStorage("GameCenterQuery") private var searchText = ""
     @AppStorage("GameCenterSelected.ALL") private var allSelection = ""
@@ -115,7 +116,7 @@ struct CatalogLibraryView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: LibraryRoute.self) { route in
                 switch route {
-                case .run(let id, let rom): RunGameContainer(canonicalId: id, romData: rom, path: $path)
+                case .run(let id, let rom, let game): RunGameContainer(canonicalId: id, romData: rom, game: game, path: $path)
                 }
             }
             .fullScreenCover(isPresented: $settingsOpen) { SettingsView() }
@@ -127,7 +128,7 @@ struct CatalogLibraryView: View {
             .onReceive(sources.$generation) { _ in reloadSnapshot() }
             .onChange(of: category) { _ in sourcesOpen = false; reloadSnapshot() }
             .onChange(of: searchText) { _ in reloadSnapshot() }
-            .onChange(of: locale) { _ in reloadSnapshot() }
+            .onChange(of: locale) { _ in reprojectTitles() }
         }
     }
 
@@ -192,16 +193,20 @@ struct CatalogLibraryView: View {
     /// Center; a failure is reported in the status line with the grid still visible.
     private func launch(_ game: CatalogGame) {
         sources.launch(canonicalID: game.id, title: game.titlePrimary) { rom in
-            path.append(LibraryRoute.run(canonicalId: game.id, rom: rom))
+            path.append(LibraryRoute.run(canonicalId: game.id, rom: rom, game: game))
         }
     }
 
     private func reloadSnapshot() {
-        let rows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
+        cachedRows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
             forCategory: LibraryFilter(rawValue: category)?.rawValue ?? "ALL", query: searchText)
-        let games = rows.compactMap { CatalogGameFactory.game(from: $0, localeIdentifier: locale.identifier) }
+        reprojectTitles()
+        covers.preload(canonicalIds: snapshot.games.map(\.id))
+    }
+
+    private func reprojectTitles() {
+        let games = cachedRows.compactMap { CatalogGameFactory.game(from: $0, localeIdentifier: locale.identifier) }
         snapshot = CatalogSnapshot(generation: snapshot.generation &+ 1, games: games)
         if !games.contains(where: { $0.id == selectedID }) { selectedID = games.first?.id ?? "" }
-        covers.preload(canonicalIds: games.map(\.id))
     }
 }

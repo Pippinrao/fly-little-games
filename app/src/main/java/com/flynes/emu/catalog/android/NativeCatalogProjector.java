@@ -15,6 +15,7 @@ import com.flynes.emu.catalog.RomHashes;
 import com.flynes.emu.catalog.RomSource;
 import com.flynes.emu.catalog.RomVariant;
 import com.flynes.emu.catalog.StableIds;
+import com.flynes.emu.catalog.TitleCandidate;
 import com.flynes.emu.catalog.ZipEntryIdentity;
 import com.flynes.emu.catalog.ZipNameEncoding;
 import com.flynes.emu.catalog.persistence.CanonicalUserState;
@@ -24,12 +25,10 @@ import com.flynes.emu.catalog.persistence.SourceCatalogState;
 import com.flynes.emu.catalog.persistence.SourceScanResult;
 import com.flynes.emu.catalog.source.DocumentLocatorShape;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -134,8 +133,7 @@ public final class NativeCatalogProjector {
         CanonicalGame game = source.type() == RomSource.Type.BUILTIN
                 ? new CanonicalGame(entry.canonicalId(), "From Below", "来自下方",
                         Collections.emptyList())
-                : new CanonicalGame(entry.canonicalId(), entry.displayName(), "",
-                        Collections.emptyList());
+                : indexedGame(entry, format);
         RomFormat romFormat = romFormat(entry.romFormat());
         CompatibilityDecision compatibility = compatibility(romFormat, entry.compatibilityState(),
                 entry.compatibilityReason());
@@ -149,7 +147,7 @@ public final class NativeCatalogProjector {
         if (format == PackageFormat.ZIP) {
             entryPath = entry.displayName();
             zipIdentity = ZipEntryIdentity.fromRawName(
-                    entryPath.getBytes(StandardCharsets.UTF_8), 0);
+                    entry.zipRawName(), entry.zipLocalHeaderOffset());
             encoding = ZipNameEncoding.UTF8_EFS;
         }
         RomVariant variant = new RomVariant(
@@ -165,6 +163,23 @@ public final class NativeCatalogProjector {
         CatalogPackage.Freshness freshness = entry.freshness() == 2 || !resolved
                 ? CatalogPackage.Freshness.PRESERVED_STALE : CatalogPackage.Freshness.FRESH;
         builder.packages.put(packageId, new CatalogPackage(physicalPackage, freshness));
+    }
+
+    private static CanonicalGame indexedGame(NativeCatalogEntry entry, PackageFormat format) {
+        var metadata = entry.gameTitle();
+        ArrayList<TitleCandidate> titles = new ArrayList<>();
+        if (metadata.matchKind() != 0) {
+            var confidence = metadata.matchKind() == 1 ? TitleCandidate.Confidence.VERIFIED
+                    : TitleCandidate.Confidence.HIGH;
+            if (!metadata.english().isEmpty()) titles.add(new TitleCandidate(metadata.english(),
+                    TitleCandidate.Language.EN, TitleCandidate.Origin.BUILTIN_INDEX,
+                    confidence, TitleCandidate.ReviewState.VERIFIED));
+            if (!metadata.chinese().isEmpty()) titles.add(new TitleCandidate(metadata.chinese(),
+                    TitleCandidate.Language.ZH_HANS, TitleCandidate.Origin.BUILTIN_INDEX,
+                    confidence, TitleCandidate.ReviewState.VERIFIED));
+        }
+        titles.addAll(filenameTitles(entry, format));
+        return new CanonicalGame(entry.canonicalId(), titles, metadata.aliases());
     }
 
     private static RomSource sourceFor(byte[] uuid, int scope, AndroidUuidSafMap map) {
@@ -222,16 +237,44 @@ public final class NativeCatalogProjector {
     }
 
     private static String hex(byte[] bytes) {
-        StringBuilder hex = new StringBuilder(bytes.length * 2);
-        for (byte value : bytes) {
-            hex.append(String.format(Locale.ROOT, "%02X", value & 0xFF));
-        }
-        return hex.toString();
+        return com.flynes.emu.catalog.HexEncoding.upper(bytes);
     }
 
     private static String fileName(String relativePath) {
         int slash = relativePath.lastIndexOf('/');
         return slash < 0 ? relativePath : relativePath.substring(slash + 1);
+    }
+
+    private static List<TitleCandidate> filenameTitles(NativeCatalogEntry entry, PackageFormat format) {
+        ArrayList<TitleCandidate> titles = new ArrayList<>();
+        titles.add(filenameTitle(entry.relativePath(), TitleCandidate.Origin.OUTER_FILENAME));
+        if (format == PackageFormat.ZIP) {
+            titles.add(filenameTitle(entry.displayName(), TitleCandidate.Origin.ZIP_ENTRY_NAME));
+        }
+        return titles;
+    }
+
+    /** Same conservative filename metadata policy as RomPackageScanner; never a verified alias. */
+    private static TitleCandidate filenameTitle(String path, TitleCandidate.Origin origin) {
+        String name = fileName(path.replace('\\', '/'));
+        int dot = name.lastIndexOf('.');
+        String title = dot > 0 ? name.substring(0, dot) : name;
+        if (title.trim().isEmpty()) title = path;
+        TitleCandidate.Language language = TitleCandidate.Language.UNKNOWN;
+        for (int offset = 0; offset < title.length();) {
+            int point = title.codePointAt(offset);
+            Character.UnicodeScript script = Character.UnicodeScript.of(point);
+            if (script == Character.UnicodeScript.HAN) {
+                language = TitleCandidate.Language.ZH_HANS;
+                break;
+            }
+            if (Character.isLetter(point) && script == Character.UnicodeScript.LATIN) {
+                language = TitleCandidate.Language.EN;
+            }
+            offset += Character.charCount(point);
+        }
+        return new TitleCandidate(title, language, origin,
+                TitleCandidate.Confidence.LOW, TitleCandidate.ReviewState.NEEDS_REVIEW);
     }
 
     private static final class SourceBuilder {

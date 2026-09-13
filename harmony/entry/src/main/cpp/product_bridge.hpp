@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <flynes/flynes_app.h>
 
 namespace flynes::harmony {
 
@@ -18,7 +19,11 @@ struct GameCenterRow final
     std::string source_uuid_hex;
     std::string source_relative_path;
     int package_format = 0;
+    int popularity_score = -1;
+    std::string search_aliases;
 };
+
+void apply_game_title(GameCenterRow& row, const fly_game_title& title);
 
 struct HitMapControlDto final
 {

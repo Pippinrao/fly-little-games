@@ -32,6 +32,18 @@ std::vector<flynes::harmony::GameCenterRow> task1_items()
 
 void test_filter_zh_query_selects_contra()
 {
+    auto input = task1_items();
+    input[0].popularity_score = 100; // hidden ZIP name, independent of visible title
+    input[1].popularity_score = 98;  // directory/search aliases must not override score
+    input[2].popularity_score = 0;
+    input.push_back(input[0]);
+    const auto ranked = flynes::harmony::game_center_filter(input, "ALL", "");
+    expect(ranked.size() == 3, "exact content copies collapse");
+    if (ranked.size() == 3) {
+        expect(ranked[0].canonical_id == "builtin", "forward native package popularity");
+        expect(ranked[1].canonical_id == "mario", "keep exact descending popularity");
+        expect(ranked[2].canonical_id == "contra", "do not score display/search text twice");
+    }
     const std::vector<flynes::harmony::GameCenterRow> filtered =
         flynes::harmony::game_center_filter(task1_items(), "ALL", "魂斗");
     expect(filtered.size() == 1, "魂斗 search must return one row");
@@ -39,6 +51,26 @@ void test_filter_zh_query_selects_contra()
     {
         expect(filtered[0].canonical_id == "contra", "魂斗 search must select contra");
     }
+}
+
+void test_index_titles_keep_renamed_source_and_search_aliases()
+{
+    flynes::harmony::GameCenterRow row;
+    row.canonical_id = "game:unchanged";
+    row.original_filename = "renamed.nes";
+    row.title_en = "renamed.nes";
+    fly_game_title title{"fixture", "Contra", "魂斗罗", "Gryzor\n魂斗羅", 1};
+    flynes::harmony::apply_game_title(row, title);
+    expect(row.title_en == "Contra" && row.title_zh_hans == "魂斗罗", "index titles replace renamed file presentation");
+    expect(row.canonical_id == "game:unchanged" && row.original_filename == "renamed.nes", "metadata keeps identity and original filename");
+    for (const auto* query : {"Gryzor", "魂斗羅", "renamed.nes", "Contra", "魂斗罗"})
+        expect(flynes::harmony::game_center_filter({row}, "ALL", query).size() == 1, "index and original aliases remain searchable");
+    fly_game_title unknown{};
+    flynes::harmony::apply_game_title(row, unknown);
+    expect(row.title_en == "Contra", "unknown metadata preserves fallback");
+    row.builtin = true;
+    flynes::harmony::apply_game_title(row, title);
+    expect(row.title_en == "From Below" && row.title_zh_hans == "来自下方", "trusted builtin has precedence");
 }
 
 void test_pause_commands_are_exactly_three_snake_ids()
@@ -136,6 +168,7 @@ void test_hit_map_carries_dpad_and_control_geometry_without_pause()
 int main()
 {
     test_filter_zh_query_selects_contra();
+    test_index_titles_keep_renamed_source_and_search_aliases();
     test_pause_commands_are_exactly_three_snake_ids();
     test_decode_or_recommended_v1_joy_equals_recommended_encode();
     test_checkpoint_bridge_exports_save_and_load_for_per_rom_autosave();

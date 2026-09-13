@@ -64,6 +64,7 @@ public class GameLibraryActivity extends AppCompatActivity {
     private int sortMode = SORT_POPULARITY;
     private boolean scanning = false;
     private boolean launching = false;
+    private int titleLoadGeneration;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -266,9 +267,35 @@ public class GameLibraryActivity extends AppCompatActivity {
     // ------------------------------------------------------------------
 
     private void reloadData() {
-        List<GameEntry> stored = RomStore.loadGames(this);
+        int generation = ++titleLoadGeneration;
+        new Thread(() -> {
+            List<GameEntry> stored = RomStore.loadGames(this);
+            // Show the old list immediately while fingerprints missing from legacy records
+            // are backfilled. Copies keep background metadata writes off the displayed rows.
+            List<GameEntry> initial = new ArrayList<>();
+            for (GameEntry game : stored) initial.add(new GameEntry(game.name, game.uri,
+                    game.source, game.size, game.mapper, game.prgKb, game.chrKb,
+                    game.zipped, game.popularity));
+            ui.post(() -> {
+                if (!isFinishing() && !isDestroyed() && generation == titleLoadGeneration) {
+                    showGames(initial);
+                }
+            });
+            for (GameEntry game : stored) LegacyGameTitles.hydrate(getContentResolver(), game);
+            ui.post(() -> {
+                if (!isFinishing() && !isDestroyed() && generation == titleLoadGeneration) {
+                    RomStore.saveGames(this, stored);
+                    showGames(stored);
+                }
+            });
+        }, "FlyNES-Titles").start();
+    }
+
+    private void showGames(List<GameEntry> stored) {
         allGames.clear();
-        allGames.add(GameEntry.builtinFromBelow());
+        GameEntry builtin = GameEntry.builtinFromBelow();
+        LegacyGameTitles.hydrate(getContentResolver(), builtin);
+        allGames.add(builtin);
         if (stored != null) {
             allGames.addAll(stored);
         }
@@ -291,7 +318,9 @@ public class GameLibraryActivity extends AppCompatActivity {
         String query = searchBox.getText().toString().trim().toLowerCase(Locale.ROOT);
         visible.clear();
         for (GameEntry g : allGames) {
-            if (query.isEmpty() || displayName(g).toLowerCase(Locale.ROOT).contains(query)) {
+            String searchable = g.name + "\n" + g.romName + "\n" + g.titleMetadata.english()
+                    + "\n" + g.titleMetadata.chinese() + "\n" + String.join("\n", g.titleMetadata.aliases());
+            if (query.isEmpty() || searchable.toLowerCase(Locale.ROOT).contains(query)) {
                 visible.add(g);
             }
         }
@@ -389,6 +418,7 @@ public class GameLibraryActivity extends AppCompatActivity {
         launching = true;
         new Thread(() -> {
             final byte[] rom = RomLoader.load(this, entry);
+            final var launchTitle = LegacyGameTitles.forLoadedRom(entry, rom);
             ui.post(() -> {
                 launching = false;
                 if (rom == null) {
@@ -399,7 +429,9 @@ public class GameLibraryActivity extends AppCompatActivity {
                 // byte[] cannot cross an Intent extra; the static field is the
                 // in-process handoff to MainActivity, which clears it after use.
                 NesCore.sPendingRom = rom;
-                setResult(RESULT_OK);
+                setResult(RESULT_OK, new Intent().putExtra("gameTitleEn", launchTitle.english())
+                        .putExtra("gameTitleZh", launchTitle.chinese())
+                        .putExtra("gameTitleFallback", entry.name));
                 finish();
             });
         }, "FlyNES-Load").start();
@@ -476,7 +508,7 @@ public class GameLibraryActivity extends AppCompatActivity {
 
     private String displayName(GameEntry entry) {
         Locale locale = getResources().getConfiguration().getLocales().get(0);
-        return GameTitleLocalizer.localize(entry.name, locale);
+        return GameTitleLocalizer.localize(entry.name, entry.titleMetadata, locale);
     }
 
     private int color(int resource) {

@@ -78,9 +78,59 @@ fly_scan_t* scan_from(jlong handle)
     return reinterpret_cast<fly_scan_t*>(handle);
 }
 
+jobjectArray game_title_strings(JNIEnv* env, const fly_game_title& title)
+{
+    jclass string_class = env->FindClass("java/lang/String");
+    if (string_class == nullptr) return nullptr;
+    jobjectArray result = env->NewObjectArray(5, string_class, nullptr);
+    env->DeleteLocalRef(string_class);
+    if (result == nullptr) return nullptr;
+    const std::string match = std::to_string(title.match_kind);
+    const char* fields[] = {title.index_id_utf8, title.title_en_utf8,
+                           title.title_zh_hans_utf8, title.aliases_utf8, match.c_str()};
+    for (jsize i = 0; i < 5; ++i)
+    {
+        jstring value = utf8_string(env, fields[i]);
+        if (value == nullptr) return nullptr;
+        env->SetObjectArrayElement(result, i, value);
+        env->DeleteLocalRef(value);
+        if (env->ExceptionCheck()) return nullptr;
+    }
+    return result;
+}
+
 } // namespace
 
 extern "C" {
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_flynes_emu_app_FlyNesApp_nativeCatalogTitleGet(
+    JNIEnv* env, jclass, jlong snapshot, jlong index)
+{
+    fly_game_title title{};
+    const auto status = fly_catalog_snapshot_get_title(
+        reinterpret_cast<const fly_catalog_snapshot_t*>(snapshot),
+        static_cast<uint64_t>(index), &title);
+    return status == FLY_RESULT_OK ? game_title_strings(env, title) : nullptr;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_flynes_emu_app_FlyNesApp_nativeGameTitleResolve(
+    JNIEnv* env, jclass, jbyteArray sha256, jbyteArray fallback)
+{
+    std::array<uint8_t, 32> hash{};
+    if (sha256 != nullptr)
+    {
+        if (env->GetArrayLength(sha256) != 32) return nullptr;
+        env->GetByteArrayRegion(sha256, 0, 32, reinterpret_cast<jbyte*>(hash.data()));
+    }
+    const std::string name = copy_bytes(env, fallback);
+    if (env->ExceptionCheck()) return nullptr;
+    fly_game_title title{};
+    const auto status = fly_game_title_resolve(sha256 == nullptr ? nullptr : hash.data(),
+        name.data(), static_cast<uint32_t>(name.size()), &title);
+    return status == FLY_RESULT_OK ? game_title_strings(env, title) : nullptr;
+}
 
 JNIEXPORT jint JNICALL
 Java_com_flynes_emu_app_FlyNesApp_nativeCreate(
@@ -413,7 +463,9 @@ Java_com_flynes_emu_app_FlyNesApp_nativeCatalogGet(
     JNIEnv* env, jclass, jlong snapshot, jlong index, jobjectArray uuidAndHashes,
     jlongArray sizes, jintArray enums, jobjectArray texts)
 {
-    if (uuidAndHashes == nullptr || sizes == nullptr || enums == nullptr || texts == nullptr)
+    if (uuidAndHashes == nullptr || sizes == nullptr || enums == nullptr || texts == nullptr ||
+        env->GetArrayLength(uuidAndHashes) < 6 || env->GetArrayLength(sizes) < 6 ||
+        env->GetArrayLength(enums) < 10 || env->GetArrayLength(texts) < 4)
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
@@ -453,14 +505,23 @@ Java_com_flynes_emu_app_FlyNesApp_nativeCatalogGet(
     put_bytes(2, entry.payload_sha256, 32);
     put_bytes(3, entry.physical_sha256, 32);
     put_bytes(4, entry.payload_crc32, 4);
+    std::array<uint8_t, FLY_SCAN_MAX_ZIP_NAME_BYTES> zip_name{};
+    uint32_t zip_name_size = 0u;
+    int32_t zip_offset = -1;
+    const fly_result zip_result = fly_catalog_snapshot_get_zip_locator(
+        reinterpret_cast<fly_catalog_snapshot_t*>(snapshot), static_cast<uint64_t>(index),
+        zip_name.data(), static_cast<uint32_t>(zip_name.size()), &zip_name_size, &zip_offset);
+    if (zip_result != FLY_RESULT_OK) return zip_result;
+    put_bytes(5, zip_name.data(), static_cast<jsize>(zip_name_size));
     const jlong sizeValues[] = {
         static_cast<jlong>(entry.payload_size),
         static_cast<jlong>(entry.physical_size),
         static_cast<jlong>(entry.expected_bytes),
         static_cast<jlong>(entry.prg_bytes),
         static_cast<jlong>(entry.chr_bytes),
+        static_cast<jlong>(zip_offset),
     };
-    env->SetLongArrayRegion(sizes, 0, 5, sizeValues);
+    env->SetLongArrayRegion(sizes, 0, 6, sizeValues);
     const jint enumValues[] = {
         entry.mapper,
         entry.submapper,

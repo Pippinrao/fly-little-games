@@ -62,6 +62,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     GamepadOverlayView *overlay_;
     UIButton *pauseButton_;
     UIView *pauseLayer_;
+    UILabel *pauseTitle_;
     FlyNesRuntimeBridge *runtime_;
     FlyNesMetalRenderer *renderer_;
     FlyNesDisplayLinkPacer *pacer_;
@@ -80,6 +81,14 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     BOOL checkpointFailed_;
     BOOL romReady_;
     BOOL videoFailureShown_;
+}
+
+@synthesize gameTitle = _gameTitle;
+
+- (void)setGameTitle:(NSString *)gameTitle
+{
+    _gameTitle = [gameTitle copy];
+    pauseTitle_.text = _gameTitle;
 }
 
 - (void)viewDidLoad
@@ -393,6 +402,17 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     stack.spacing = 12.0;
     [drawer addSubview:stack];
 
+    if (self.gameTitle.length > 0) {
+        UILabel *title = [[UILabel alloc] init];
+        pauseTitle_ = title;
+        title.text = self.gameTitle;
+        title.textColor = UIColor.whiteColor;
+        title.font = [UIFont systemFontOfSize:20.0 weight:UIFontWeightSemibold];
+        title.numberOfLines = 2;
+        title.accessibilityIdentifier = @"pause_game_title";
+        [stack addArrangedSubview:title];
+    }
+
     if (checkpointFailed_)
     {
         UILabel *failure = [[UILabel alloc] init];
@@ -483,6 +503,7 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     paused_ = keepPaused;
     [pauseLayer_ removeFromSuperview];
     pauseLayer_ = nil;
+    pauseTitle_ = nil;
     drawerOpen_ = NO;
     overlay_.hidden = NO;
     pauseButton_.hidden = NO;

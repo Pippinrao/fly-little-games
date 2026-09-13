@@ -38,12 +38,20 @@ NSDictionary *fields(NSArray<NSDictionary *> *candidates, NSString *aliases) {
 
 @implementation FlyNesCatalogPresentation
 + (NSDictionary *)fieldsForFilename:(NSString *)filename entryPath:(NSString *)entryPath trustedBuiltin:(BOOL)trustedBuiltin {
+    return [self fieldsForFilename:filename entryPath:entryPath trustedBuiltin:trustedBuiltin
+                  indexedTitleEn:@"" indexedTitleZhHans:@"" aliases:@""];
+}
++ (NSDictionary *)fieldsForFilename:(NSString *)filename entryPath:(NSString *)entryPath
+                    trustedBuiltin:(BOOL)trustedBuiltin indexedTitleEn:(NSString *)titleEn
+                indexedTitleZhHans:(NSString *)titleZhHans aliases:(NSString *)aliases {
     NSMutableArray *candidates = [NSMutableArray array];
     if (trustedBuiltin) {
         // These are the only translations in AndroidBuiltinCatalogAdapter's manifest.
-        [candidates addObject:candidate(@"From Below", @"en", -1)];
-        [candidates addObject:candidate(@"来自下方", @"zh", -1)];
+        [candidates addObject:candidate(@"From Below", @"en", -2)];
+        [candidates addObject:candidate(@"来自下方", @"zh", -2)];
     } else {
+        if (titleEn.length) [candidates addObject:candidate(titleEn, @"en", -1)];
+        if (titleZhHans.length) [candidates addObject:candidate(titleZhHans, @"zh", -1)];
         if (filename.length) {
             NSString *title = title_from_path(filename);
             [candidates addObject:candidate(title, language(title), 0)];
@@ -53,7 +61,7 @@ NSDictionary *fields(NSArray<NSDictionary *> *candidates, NSString *aliases) {
             [candidates addObject:candidate(title, language(title), 1)];
         }
     }
-    return fields(candidates, [NSString stringWithFormat:@"%@ %@", filename, entryPath]);
+    return fields(candidates, [NSString stringWithFormat:@"%@ %@ %@", filename, entryPath, aliases]);
 }
 + (NSDictionary *)mergeFields:(NSDictionary *)first with:(NSDictionary *)second {
     NSMutableArray *candidates = [NSMutableArray arrayWithArray:first[@"titleCandidates"] ?: @[]];

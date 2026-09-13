@@ -270,13 +270,16 @@ public final class HomeActivity extends AppCompatActivity {
             entries.put(entry.canonicalGame().id(), entry);
             boolean builtin = false;
             String filename = "";
+            int popularity = 0;
             for (GameVariant variant : entry.variants()) {
                 builtin |= AndroidBuiltinCatalogAdapter.SOURCE.id().equals(variant.sourceId());
                 if (filename.isEmpty()) filename = variant.originalFilename();
+                popularity = Math.max(popularity, Popularity.scorePackage(
+                        variant.originalFilename(), variant.entryPath()));
             }
             allItems.add(new GameCenterItem(entry.canonicalGame().id(),
                     entry.canonicalGame().englishTitle(), entry.canonicalGame().zhHansTitle(),
-                    builtin, entry.favorite(), entry.lastPlayedSequence(), filename));
+                    builtin, entry.favorite(), entry.lastPlayedSequence(), filename, popularity));
         }
         renderGames();
         sourceAdapter.submit(new ArrayList<>(runtime.stateSnapshot().sources().values()));
@@ -460,13 +463,19 @@ public final class HomeActivity extends AppCompatActivity {
         int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        android.util.Log.i("FlyNesSources", "picker result uri=" + uri
+                + " rawFlags=0x" + Integer.toHexString(data.getFlags())
+                + " maskedFlags=0x" + Integer.toHexString(flags));
         setBusy(true); showStatus(R.string.source_scanning);
         waiter.execute(() -> {
             try {
                 RomSource source = runtime.addOrReauthorizeTree(uri.toString(), flags).get();
+                android.util.Log.i("FlyNesSources", "source registered id=" + source.id());
                 runtime.scanSource(source.id()).get();
+                android.util.Log.i("FlyNesSources", "source scan completed id=" + source.id());
                 main.post(() -> { setBusy(false); refreshSnapshot(); showSources(true); });
             } catch (Exception failure) {
+                android.util.Log.e("FlyNesSources", "add/scan failed uri=" + uri, failure);
                 main.post(() -> { setBusy(false); showStatus(R.string.source_operation_failed); refreshSnapshot(); });
             }
         });
@@ -538,6 +547,24 @@ public final class HomeActivity extends AppCompatActivity {
         void submit(List<GameCenterItem> values, String selectedId) {
             items = new ArrayList<>(values); selected = selectedId; notifyDataSetChanged();
         }
+        void select(String selectedId) {
+            String previous = selected;
+            selected = selectedId;
+            if (java.util.Objects.equals(previous, selectedId)) return;
+            for (int index = 0; index < items.size(); ++index) {
+                String id = items.get(index).canonicalId();
+                if (id.equals(previous) || id.equals(selectedId)) notifyItemChanged(index, "selection");
+            }
+        }
+        @Override public void onBindViewHolder(GameCardHolder holder, int position, List<Object> payloads) {
+            if (!payloads.isEmpty() && payloads.contains("selection")) {
+                holder.itemView.setSelected(items.get(position).canonicalId().equals(selected));
+                holder.itemView.setContentDescription(holder.title.getText() + (holder.itemView.isSelected()
+                        ? ", " + getString(R.string.game_ready) : ""));
+            } else {
+                onBindViewHolder(holder, position);
+            }
+        }
         @Override public GameCardHolder onCreateViewHolder(ViewGroup parent, int viewType) {
             View view = LayoutInflater.from(parent.getContext()).inflate(
                     R.layout.item_game_center_card, parent, false);
@@ -564,7 +591,9 @@ public final class HomeActivity extends AppCompatActivity {
             holder.itemView.setContentDescription(title + (holder.itemView.isSelected()
                     ? ", " + getString(R.string.game_ready) : ""));
             holder.itemView.setOnClickListener(view -> {
-                navigation.select(item.canonicalId()); renderGames();
+                navigation.select(item.canonicalId());
+                gameAdapter.select(item.canonicalId());
+                renderDetail(entries.get(item.canonicalId()));
             });
         }
         @Override public int getItemCount() { return items.size(); }

@@ -51,6 +51,10 @@ add_test(
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
+    NAME flynes_ios_offline_title_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/test_offline_title_contract.py"
+)
+add_test(
     NAME flynes_ios_stage1_contract
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/test_stage1_contract.py"
 )

@@ -25,6 +25,11 @@ public class GameEntry {
     public boolean zipped;
     /** Popularity score 0..100 from {@link Popularity}, 0 when unmatched. */
     public int popularity;
+    /** Cached complete ROM content hash; unrelated to the archive hash or display language. */
+    public String payloadSha256 = "";
+    public String romName = "";
+    public com.flynes.emu.app.NativeGameTitle titleMetadata =
+            com.flynes.emu.app.NativeGameTitle.UNKNOWN;
 
     public GameEntry() {
     }

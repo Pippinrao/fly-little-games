@@ -518,6 +518,33 @@ FLYNES_API fly_result fly_catalog_snapshot_generation(
 FLYNES_API fly_result fly_catalog_snapshot_count(const fly_catalog_snapshot_t* snapshot,
                                                  uint64_t* count_out);
 
+/* Additive display metadata; existing catalog entry and identity ABI is unchanged.
+ * Strings are NUL-terminated UTF-8, library-owned and valid for process lifetime.
+ * aliases_utf8 contains newline-separated aliases. Unknown results have empty
+ * strings and match_kind=0; hash matches use 1 and explicit alias matches use 2.
+ */
+typedef struct fly_game_title
+{
+    const char* index_id_utf8;
+    const char* title_en_utf8;
+    const char* title_zh_hans_utf8;
+    const char* aliases_utf8;
+    uint32_t match_kind;
+} fly_game_title;
+
+/* NULL hash enables alias-only lookup; NULL name requires zero length. A lookup
+ * miss returns OK with an empty result. Errors leave out unchanged. No ROM I/O.
+ */
+FLYNES_API fly_result fly_game_title_resolve(const uint8_t payload_sha256[32],
+    const char* fallback_name_utf8, uint32_t fallback_name_utf8_length,
+    fly_game_title* out);
+
+/* Resolves the stored payload hash, then entry display name (inner ZIP member).
+ * Invalid arguments/out-of-range indices leave out unchanged.
+ */
+FLYNES_API fly_result fly_catalog_snapshot_get_title(
+    const fly_catalog_snapshot_t* snapshot, uint64_t index, fly_game_title* out);
+
 /*
  * Retrieves one entry into caller-owned storage. An index outside the immutable
  * snapshot returns FLY_RESULT_OUT_OF_RANGE without modifying entry_out or its
@@ -526,6 +553,13 @@ FLYNES_API fly_result fly_catalog_snapshot_count(const fly_catalog_snapshot_t* s
 FLYNES_API fly_result fly_catalog_snapshot_get(const fly_catalog_snapshot_t* snapshot,
                                                uint64_t index,
                                                fly_catalog_entry* entry_out);
+
+/* Exact ZIP identity, independent of display-name decoding. Raw packages return
+ * required=0 and offset=-1. BUFFER_TOO_SMALL writes required only; invalid arguments
+ * and out-of-range indices leave all outputs untouched. No NUL terminator is added. */
+FLYNES_API fly_result fly_catalog_snapshot_get_zip_locator(
+    const fly_catalog_snapshot_t* snapshot, uint64_t index,
+    uint8_t* raw_name, uint32_t capacity, uint32_t* required, int32_t* offset);
 
 /* NULL-safe. */
 FLYNES_API void fly_catalog_snapshot_release(fly_catalog_snapshot_t* snapshot);

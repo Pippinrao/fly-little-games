@@ -1,6 +1,8 @@
 import { common } from '@kit.AbilityKit';
 import { display, router, window } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
+import { i18n } from '@kit.LocalizationKit';
+import { localizedGameTitle } from '../service/CatalogProductService';
 import { vibrator } from '@kit.SensorServiceKit';
 import { batteryInfo, BusinessError, thermal } from '@kit.BasicServicesKit';
 import nativePlay, { PlayRuntimeStatusDto, PlayStepResult, RenderStatusDto, SettingsDto } from 'libentry.so';
@@ -36,6 +38,8 @@ struct RunGame {
   @State private paused: boolean = false;
   @State private drawerOpen: boolean = false;
   @State private gameTitle: string = 'Game paused';
+  private titleEn: string = '';
+  private titleZhHans: string = '';
   @State private pressedBits: number = 0;
   @State private checkpointFailed: boolean = false;
   @State private status: string = '';
@@ -63,6 +67,8 @@ struct RunGame {
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, Object>;
     this.gameTitle = parsePauseTitle(params, 'Game paused');
+    this.titleEn = params !== undefined && typeof params['titleEn'] === 'string' ? params['titleEn'] as string : '';
+    this.titleZhHans = params !== undefined && typeof params['titleZhHans'] === 'string' ? params['titleZhHans'] as string : '';
     if (params !== undefined) {
       if (params['canonicalId'] !== undefined) {
         this.canonicalId = params['canonicalId'] as string;
@@ -99,6 +105,8 @@ struct RunGame {
 
   onPageShow(): void {
     this.loadPersistedLayout();
+    this.gameTitle = localizedGameTitle(this.titleEn, this.titleZhHans, this.gameTitle,
+      nativePlay.settingsGet().localeTag, i18n.System.getSystemLanguage());
     if (this.resumeAfterSettings) {
       this.resumeAfterSettings = false;
       this.resumePlay();

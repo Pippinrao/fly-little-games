@@ -3,6 +3,16 @@
 #include <cassert>
 #include <cstdio>
 int main() { @autoreleasepool {
+    auto indexed=[FlyNesCatalogPresentation fieldsForFilename:@"renamed.nes" entryPath:@"" trustedBuiltin:NO
+        indexedTitleEn:@"Contra" indexedTitleZhHans:@"魂斗罗" aliases:@"Gryzor\n魂斗羅"];
+    assert([indexed[@"titleEn"] isEqual:@"Contra"] && [indexed[@"titleZhHans"] isEqual:@"魂斗罗"]);
+    assert([FlyNesCatalogPresentation fields:indexed matchQuery:@"Gryzor"]);
+    assert([FlyNesCatalogPresentation fields:indexed matchQuery:@"renamed.nes"]);
+    assert([[FlyNesCatalogPresentation titleForFields:indexed locale:@"zh-Hans"][@"primary"] isEqual:@"魂斗罗"]);
+    assert([[FlyNesCatalogPresentation titleForFields:indexed locale:@"fr"][@"primary"] isEqual:@"Contra"]);
+    auto trusted=[FlyNesCatalogPresentation fieldsForFilename:@"renamed.nes" entryPath:@"" trustedBuiltin:YES
+        indexedTitleEn:@"Contra" indexedTitleZhHans:@"魂斗罗" aliases:@""];
+    assert([trusted[@"titleEn"] isEqual:@"From Below"]);
     auto builtin=[FlyNesCatalogPresentation fieldsForFilename:@"from_below.nes" entryPath:@"" trustedBuiltin:YES];
     assert([builtin[@"titleEn"] isEqual:@"From Below"]);
     assert([builtin[@"titleZhHans"] isEqual:@"来自下方"]);

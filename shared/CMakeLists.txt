@@ -5,6 +5,7 @@ project(flynes_shared LANGUAGES CXX)
 option(FLYNES_BUILD_TESTS "Build FlyNES shared-layer host tests" OFF)
 
 add_library(flynes_app STATIC
+    src/catalog/game_title_index.cpp
     src/catalog/bounded_zip_archive.cpp
     src/catalog/content_identity.cpp
     src/catalog/rom_payload_parser.cpp
@@ -21,6 +22,9 @@ target_include_directories(flynes_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_features(flynes_app PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(flynes_app PRIVATE /utf-8)
+endif()
 set_target_properties(flynes_app PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE YES
@@ -252,6 +256,13 @@ if(FLYNES_BUILD_TESTS)
     enable_testing()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+    add_test(NAME flynes_game_title_data_check
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/game_titles/game_titles.py check)
+    add_test(NAME flynes_game_title_generator
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/game_titles/test_game_titles.py)
+
     if(NOT TARGET nes_abi)
         set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../core"
@@ -299,6 +310,15 @@ if(FLYNES_BUILD_TESTS)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_android_hmos_overlay_policy.cmake"
         )
     endif()
+
+    add_executable(flynes_game_title_index_test tests/test_game_title_index.cpp)
+    target_link_libraries(flynes_game_title_index_test PRIVATE flynes_app)
+    target_compile_features(flynes_game_title_index_test PRIVATE cxx_std_17)
+    flynes_enable_strict_warnings(flynes_game_title_index_test)
+    if(MSVC)
+        target_compile_options(flynes_game_title_index_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME flynes_game_title_index COMMAND flynes_game_title_index_test)
 
     add_executable(flynes_app_contract_test
         tests/test_app.cpp

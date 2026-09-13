@@ -9,10 +9,12 @@ export interface CatalogUserState {
 }
 
 export interface GameCenterRow {
+  searchAliases?: string;
   canonicalId: string; titleEn: string; titleZhHans: string;
   builtin: boolean; favorite: boolean; lastPlayedSequence: number;
   originalFilename: string; sourceUuidHex: string; sourceRelativePath: string;
   packageFormat: number;
+  popularityScore?: number;
 }
 
 export interface HitMapDto {

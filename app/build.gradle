@@ -10,8 +10,8 @@ android {
         applicationId "com.flynes.emu"
         minSdk 24
         targetSdk 36
-        versionCode 1001004
-        versionName "1.1.4"
+        versionCode 1001005
+        versionName "1.1.5"
         testInstrumentationRunner "com.flynes.emu.test.SingleDeviceCertificationRunner"
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
@@ -55,6 +55,7 @@ android {
 
     sourceSets {
         test.resources.srcDir rootProject.file('shared/tests/fixtures')
+        androidTest.assets.srcDir rootProject.file('shared/data')
     }
 }
 
@@ -74,3 +75,25 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
     androidTestImplementation 'androidx.test.espresso:espresso-contrib:3.7.0'
 }
+
+// Compile the same curated ranking table consumed directly by the shared C++ product layer.
+def popularitySource = rootProject.file('shared/data/popularity.inc')
+def popularityJavaDir = layout.buildDirectory.dir('generated/sources/popularity/java')
+def generatePopularity = tasks.register('generatePopularity') {
+    inputs.file(popularitySource)
+    outputs.dir(popularityJavaDir)
+    doLast {
+        def rows = popularitySource.readLines('UTF-8').findAll {
+            it.startsWith('FLYNES_POPULARITY_RANK(')
+        }.collect { it.replace('FLYNES_POPULARITY_RANK(', 'new Popularity.Rank(') + ',' }
+        if (rows.isEmpty()) throw new GradleException('Popularity table is empty')
+        def target = new File(popularityJavaDir.get().asFile, 'com/flynes/emu/PopularityRanks.java')
+        target.parentFile.mkdirs()
+        target.setText('package com.flynes.emu;\n' +
+                '// Generated from shared/data/popularity.inc; do not edit.\n' +
+                'final class PopularityRanks {\n' +
+                'static final Popularity.Rank[] RANKS = {\n' + rows.join('\n') + '\n};\n}\n', 'UTF-8')
+    }
+}
+android.sourceSets.main.java.srcDir(popularityJavaDir)
+tasks.named('preBuild').configure { dependsOn(generatePopularity) }

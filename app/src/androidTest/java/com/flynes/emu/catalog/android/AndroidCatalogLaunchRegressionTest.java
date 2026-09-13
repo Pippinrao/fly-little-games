@@ -83,6 +83,44 @@ public final class AndroidCatalogLaunchRegressionTest {
             RomTreeProvider.class, AUTHORITY).build();
 
     @Test
+    public void nativeZipScanReopensANonFirstEntryAfterRestart() throws Exception {
+        File root = new File(ApplicationProvider.<Context>getApplicationContext().getCacheDir(),
+                "native-zip-launch-" + java.util.UUID.randomUUID());
+        File data = new File(root, "data");
+        File cache = new File(root, "cache");
+        assertTrue(data.mkdirs());
+        assertTrue(cache.mkdirs());
+        File zip = new File(root, "游戏.zip");
+        try (var output = new java.util.zip.ZipOutputStream(new FileOutputStream(zip))) {
+            output.putNextEntry(new java.util.zip.ZipEntry("readme.txt"));
+            output.write(new byte[]{1, 2, 3});
+            output.closeEntry();
+            output.putNextEntry(new java.util.zip.ZipEntry("NES/游戏.nes"));
+            output.write(ROM);
+            output.closeEntry();
+        }
+        try (var app = com.flynes.emu.app.FlyNesApp.create(data.getPath(), cache.getPath());
+             var pfd = ParcelFileDescriptor.open(zip, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            assertEquals(0, app.scanBegin(uuid(), FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY));
+            assertEquals(0, app.scanAddFile("游戏.zip", "游戏.zip", pfd.getFd(), null));
+            assertEquals(0, app.scanCommit(FlyCatalogCommands.SCAN_FULL));
+        }
+        try (var restarted = com.flynes.emu.app.FlyNesApp.create(data.getPath(), cache.getPath())) {
+            Map<String, String> backing = new LinkedHashMap<>();
+            AndroidUuidSafMap map = new AndroidUuidSafMap(backing::get, backing::put, backing::remove);
+            map.put(uuid(), TREE_LOCATOR);
+            CatalogState state = NativeCatalogProjector.project(restarted.catalogEntries(),
+                    restarted.sourceStatuses(), Map.of(), 0, map, new AndroidPackageLocatorMap(),
+                    AndroidDocumentLocators::documentUriFor);
+            GameCatalog catalog = new GameCatalog();
+            new CatalogRepository(state, new MemoryStateStore(), catalog);
+            var variant = catalog.canonicalEntries().get(0).variants().get(0);
+            ExactRomLoader loader = new ExactRomLoader((sourceId, uri) -> new java.io.FileInputStream(zip));
+            assertArrayEquals(ROM, loader.load(com.flynes.emu.launch.LaunchRequest.forVariant(variant)));
+        }
+    }
+
+    @Test
     public void theStorageProviderRejectsATreeLocatorWithAnAppendedPath() {
         try (InputStream ignored = provider.getResolver().openInputStream(
                 Uri.parse(CRASH_LOCATOR))) {
@@ -188,7 +226,7 @@ public final class AndroidCatalogLaunchRegressionTest {
                 digest("SHA-1", ROM), digest("SHA-256", ROM), digest("SHA-256", ROM), crc32(ROM),
                 FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY,
                 1, 0, 1, 1, 1, 0,
-                "canonical-e2e", VARIANT_ID, "game.nes", RELATIVE_PATH);
+                "canonical-e2e", VARIANT_ID, "game.nes", RELATIVE_PATH, new byte[0], -1);
     }
 
     /** Rewrites the platform locator of every SAF package, as the old build persisted it. */

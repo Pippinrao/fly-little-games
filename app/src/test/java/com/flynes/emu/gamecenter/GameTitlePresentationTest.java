@@ -11,6 +11,20 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 public final class GameTitlePresentationTest {
+    @Test public void explicitManualTitleWinsOverOtherVerifiedMetadata() {
+        var manual = new com.flynes.emu.catalog.TitleCandidate("My title",
+                com.flynes.emu.catalog.TitleCandidate.Language.EN,
+                com.flynes.emu.catalog.TitleCandidate.Origin.MANUAL_OVERRIDE,
+                com.flynes.emu.catalog.TitleCandidate.Confidence.VERIFIED,
+                com.flynes.emu.catalog.TitleCandidate.ReviewState.VERIFIED);
+        var builtin = new com.flynes.emu.catalog.TitleCandidate("Bundled title",
+                com.flynes.emu.catalog.TitleCandidate.Language.EN,
+                com.flynes.emu.catalog.TitleCandidate.Origin.BUILTIN_MANIFEST,
+                com.flynes.emu.catalog.TitleCandidate.Confidence.VERIFIED,
+                com.flynes.emu.catalog.TitleCandidate.ReviewState.VERIFIED);
+        assertEquals("My title", GameTitlePresentation.forLocale(new CanonicalGame(
+                "stable-id", List.of(builtin, manual), List.of()), Locale.ENGLISH).primary());
+    }
     @Test public void chineseUiUsesChineseNameAndEnglishAsSecondary() {
         CanonicalGame game = new CanonicalGame(
                 "contra", "Contra", "魂斗罗", List.of("Gryzor"));

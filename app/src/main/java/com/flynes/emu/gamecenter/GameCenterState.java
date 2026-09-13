@@ -1,11 +1,14 @@
 package com.flynes.emu.gamecenter;
 
+import com.flynes.emu.Popularity;
+
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.HashSet;
 
 /** Pure, deterministic navigation state for the landscape Game Center. */
 public final class GameCenterState {
@@ -14,6 +17,8 @@ public final class GameCenterState {
     private Category category = Category.ALL;
     private String query = "";
     private final EnumMap<Category, String> selections = new EnumMap<>(Category.class);
+    private List<GameCenterItem> rankedInput = Collections.emptyList();
+    private List<GameCenterItem> rankedItems = Collections.emptyList();
     public GameCenterState() { }
 
     public static GameCenterState restore(
@@ -49,7 +54,10 @@ public final class GameCenterState {
     }
 
     public List<GameCenterItem> itemsFor(Category value, List<GameCenterItem> all) {
+        // Copy the input when caching: callers may replace rows in a mutable list in place.
+        if (value == Category.ALL && rankedInput.equals(all)) return rankedItems;
         ArrayList<GameCenterItem> result = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
         for (GameCenterItem item : all) {
             boolean include = switch (value) {
                 case RECENT -> item.lastPlayedSequence() > 0;
@@ -57,13 +65,32 @@ public final class GameCenterState {
                 case ALL -> true;
                 case BUILTIN -> item.builtin();
             };
-            if (include) result.add(item);
+            // Canonical IDs derive from ROM payload hashes, never from title similarity.
+            if (include && seen.add(item.canonicalId())) result.add(item);
         }
         if (value == Category.RECENT) {
             result.sort((left, right) -> Long.compare(
                     right.lastPlayedSequence(), left.lastPlayedSequence()));
+        } else if (value == Category.ALL) {
+            java.util.HashMap<String, Integer> scores = new java.util.HashMap<>();
+            for (GameCenterItem item : all) {
+                int score = item.popularityScore() >= 0 ? item.popularityScore()
+                        : Math.max(Popularity.score(item.titleEn()), Math.max(
+                        Popularity.score(item.titleZhHans()), Popularity.score(item.originalFilename())));
+                scores.merge(item.canonicalId(), score, Math::max);
+            }
+            result.sort((left, right) -> {
+                int order = Integer.compare(scores.get(right.canonicalId()), scores.get(left.canonicalId()));
+                // Content IDs are stable ASCII hashes: identical tie order on all platforms.
+                return order != 0 ? order : left.canonicalId().compareTo(right.canonicalId());
+            });
         }
-        return Collections.unmodifiableList(result);
+        List<GameCenterItem> immutable = Collections.unmodifiableList(result);
+        if (value == Category.ALL) {
+            rankedInput = new ArrayList<>(all);
+            rankedItems = immutable;
+        }
+        return immutable;
     }
 
     public List<GameCenterItem> filtered(List<GameCenterItem> all) {

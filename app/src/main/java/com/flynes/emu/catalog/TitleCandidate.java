@@ -25,7 +25,8 @@ public record TitleCandidate(
         OUTER_FILENAME,
         ZIP_ENTRY_NAME,
         BUILTIN_MANIFEST,
-        MANUAL_OVERRIDE
+        MANUAL_OVERRIDE,
+        BUILTIN_INDEX
     }
 
     public enum Confidence {

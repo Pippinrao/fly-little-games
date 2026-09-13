@@ -1,5 +1,15 @@
 import nativeProduct, { CatalogUserState, GameCenterRow } from 'libentry.so';
 
+/** Pure projection of cached metadata; changing language never opens a ROM. */
+export function localizedGameTitle(titleEn: string, titleZhHans: string, fallback: string,
+  localeTag: string, systemLanguage: string): string {
+  const effective = (localeTag === 'system' ? systemLanguage : localeTag).toLowerCase();
+  const chinese = effective === 'zh' || effective.startsWith('zh-') || effective.startsWith('zh_');
+  const primary = chinese ? titleZhHans : titleEn;
+  const secondary = chinese ? titleEn : titleZhHans;
+  return primary.length > 0 ? primary : secondary.length > 0 ? secondary : fallback;
+}
+
 /** Collapses the native per-variant snapshot into one card per canonical game. */
 export function uniqueGameCenterRows(snapshot: GameCenterRow[]): GameCenterRow[] {
   const rows: GameCenterRow[] = [];
@@ -14,7 +24,14 @@ export function uniqueGameCenterRows(snapshot: GameCenterRow[]): GameCenterRow[]
   }
   for (let index = 0; index < snapshot.length; index++) {
     const row = snapshot[index];
-    if (row.builtin || seen.indexOf(row.canonicalId) >= 0) {
+    const existing = seen.indexOf(row.canonicalId);
+    if (existing >= 0) {
+      rows[existing].searchAliases = `${rows[existing].searchAliases ?? ''}\n${row.searchAliases ?? ''}\n${row.originalFilename}`;
+      rows[existing].popularityScore = Math.max(rows[existing].popularityScore ?? -1,
+        row.popularityScore ?? -1);
+      continue;
+    }
+    if (row.builtin) {
       continue;
     }
     rows.push(row);
@@ -66,7 +83,7 @@ export class CatalogProductService {
       const detail = error instanceof Error ? error.message : 'user state read failed';
       console.error(`FlyNES builtin user state failed: ${detail}`);
     }
-    // Keep the builtin game first so the default selection matches Android.
+    // Keep the fallback available; gameCenterFilter determines the visible category order.
     rows.unshift(builtinRow);
     return rows;
   }
