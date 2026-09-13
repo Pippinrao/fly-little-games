@@ -7,7 +7,8 @@ import {
   NearbyStageRow,
   nearbyPairingCurrentStage,
   nearbyPairingStages,
-  nearbyString
+  nearbyString,
+  normalizeInviteCode
 } from '../service/NearbyService';
 
 // Android/game-center parity: the same shell colors as pages/NearbyFriends.ets and
@@ -21,11 +22,78 @@ const COLOR_BLOCKED: string = '#FF6B5E';
 @Entry
 @Component
 struct NearbyPairing {
+  // Entry mode (design N01/N02/N03): 'create' | 'join_code' | 'scan'.
+  @State private mode: string = '';
+  @State private inviteCode: string = '';
+  @State private inviteGeneration: number = 0;
+  @State private inviteDeadlineMs: number = 0;
+  @State private joinInput: string = '';
+  @State private joinError: boolean = false;
+  @State private joinSubmitted: boolean = false;
+
+  aboutToAppear(): void {
+    const params = router.getParams() as Record<string, string> | undefined;
+    this.mode = params && params['mode'] ? params['mode'] : '';
+  }
+
+  private remainingInviteSeconds(): number {
+    if (this.inviteDeadlineMs === 0) {
+      return 0;
+    }
+    return Math.max(0, Math.ceil((this.inviteDeadlineMs - Date.now()) / 1000));
+  }
+
+  private regenerateInvite(): void {
+    // N01: regeneration starts a new generation and kills the old code/QR
+    // together; the old generation never comes back (C16).
+    let digits = '';
+    for (let index = 0; index < 6; index++) {
+      digits += String(Math.floor(Math.random() * 10));
+    }
+    this.inviteCode = digits;
+    this.inviteGeneration += 1;
+    this.inviteDeadlineMs = Date.now() + 60000;
+  }
+
+  private cancelInvite(): void {
+    this.inviteCode = '';
+    this.inviteGeneration = 0;
+    this.inviteDeadlineMs = 0;
+  }
+
+  private joinInputChanged(value: string): void {
+    if (this.joinSubmitted) {
+      return;
+    }
+    this.joinInput = value;
+    this.joinError = false;
+  }
+
+  private submitJoin(): void {
+    // C05: no request on incomplete/invalid input; the field error is adjacent
+    // to the input and appears only after a submit attempt. With no discovery
+    // bearer in this build the honest outcome is the discovery-blocked reason,
+    // never a synthetic host approval.
+    const code = normalizeInviteCode(this.joinInput);
+    if (code === '') {
+      this.joinError = true;
+      return;
+    }
+    this.joinSubmitted = true;
+    this.joinError = true;
+  }
+
   build() {
     Column() {
       this.topBar()
       Scroll() {
         Column({ space: 16 }) {
+          if (this.mode === 'create') {
+            this.createBlock()
+          }
+          if (this.mode === 'join_code' || this.mode === 'scan') {
+            this.joinCodeBlock()
+          }
           this.codeBlock()
           this.wifiPathBlock()
           // §4 line 188: the anonymous-join control set (nearby.join.request_anonymous
@@ -74,6 +142,106 @@ struct NearbyPairing {
   // BLE path: one six-digit code, entered on both ends. No code can be generated
   // or verified without the session, so the field and its confirm control are
   // present, disabled, and carry nearby.blocked.auth (§4).
+  // N01 创建联机: generation-bound six-digit code with the 60s continuous clock.
+  @Builder
+  createBlock() {
+    Column({ space: 8 }) {
+      Text($r('app.string.nearby_invite_codeLabel'))
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(COLOR_ON_SURFACE)
+        .width('100%')
+      Text(this.inviteCode === '' ? '· · · · · ·' : this.inviteCode)
+        .fontSize(32)
+        .fontWeight(FontWeight.Bold)
+        .letterSpacing(8)
+        .fontColor(COLOR_ON_SURFACE)
+        .width('100%')
+      if (this.inviteCode !== '') {
+        Text(`${$r('app.string.nearby_invite_validFor')}: ${this.remainingInviteSeconds()}s`)
+          .fontSize(14)
+          .fontColor(COLOR_ON_SURFACE_MUTED)
+          .width('100%')
+      }
+      Row({ space: 8 }) {
+        Button($r('app.string.nearby_action_regenerate'))
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#292B31')
+          .fontColor('#F4EFE6')
+          .onClick(() => this.regenerateInvite())
+        Button($r('app.string.nearby_action_cancelInvite'))
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#292B31')
+          .fontColor('#F4EFE6')
+          .onClick(() => this.cancelInvite())
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(COLOR_SURFACE)
+    .borderRadius(8)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // N02 输入配对码: six digits, leading zeros kept, request never sent on
+  // incomplete input, submit locked while a request is in flight (C05/C16).
+  @Builder
+  joinCodeBlock() {
+    Column({ space: 8 }) {
+      Text($r('app.string.nearby_join_codeLabel'))
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(COLOR_ON_SURFACE)
+        .width('100%')
+      TextInput({ text: this.joinInput })
+        .type(InputType.Number)
+        .maxLength(6)
+        .height(48)
+        .width('100%')
+        .fontColor(COLOR_ON_SURFACE)
+        .onChange((value: string) => this.joinInputChanged(value))
+      if (this.joinError) {
+        Text(this.joinSubmitted
+          ? $r('app.string.nearby_stage_discovery_reason')
+          : $r('app.string.nearby_reason_code_invalidFormat'))
+          .fontSize(14)
+          .fontColor(COLOR_BLOCKED)
+          .width('100%')
+      }
+      Row({ space: 8 }) {
+        Button($r('app.string.nearby_action_submitJoinCode'))
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#FF6B5E')
+          .fontColor('#F4EFE6')
+          .enabled(normalizeInviteCode(this.joinInput) !== '' && !this.joinSubmitted)
+          .onClick(() => this.submitJoin())
+        Button($r('app.string.nearby_action_cancelRequest'))
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#292B31')
+          .fontColor('#F4EFE6')
+          .onClick(() => {
+            this.joinSubmitted = false;
+            this.joinError = false;
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(COLOR_SURFACE)
+    .borderRadius(8)
+    .alignItems(HorizontalAlign.Start)
+  }
+
   @Builder
   codeBlock() {
     Column({ space: 8 }) {

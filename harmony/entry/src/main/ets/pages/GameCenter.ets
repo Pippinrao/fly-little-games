@@ -1,9 +1,11 @@
 import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
 import { router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { i18n } from '@kit.LocalizationKit';
 import nativeProduct, { GameCenterRow } from 'libentry.so';
-import { CatalogProductService, localizedGameTitle } from '../service/CatalogProductService';
+import { applyMultiplayerFilter, CatalogProductService, MultiplayerCapabilityRegistry, localizedGameTitle } from '../service/CatalogProductService';
+import { projectNearbyEntry } from '../service/NearbyService';
 import { mapsToBuiltinFromBelow, takeRomOpenError } from '../service/PlayService';
 import { CoverStore } from '../service/CoverStore';
 
@@ -26,11 +28,18 @@ struct GameCenter {
   @State private searchOpen: boolean = false;
   private allRows: GameCenterRow[] = [];
   @State private visibleRows: GameCenterRow[] = [];
+  // Independent two-player filter (design U04): per-device preference, never
+  // changed by category, query, or connection events.
+  @State private multiplayerOnly: boolean = false;
+  // Capability projection: empty until the shared versioned profile registry
+  // is wired, so every game truthfully reads UNKNOWN (design 3.2).
+  private readonly multiplayerRegistry: MultiplayerCapabilityRegistry = new MultiplayerCapabilityRegistry(1);
 
   aboutToAppear(): void {
     this.ensureApp();
     this.ensureCoverStore();
     this.reloadRows();
+    this.restoreMultiplayerOnly();
     this.readCompactPolicy();
     this.applyFilter();
     this.refreshDetailExtras();
@@ -335,10 +344,43 @@ struct GameCenter {
   @Builder
   libraryPane() {
     Column({ space: 8 }) {
-      Text(this.libraryStatusText())
-        .fontSize(16)
-        .fontColor('#A8B0BD')
-        .width('100%')
+      Row({ space: 8 }) {
+        Text(this.libraryStatusText())
+          .fontSize(16)
+          .fontColor('#A8B0BD')
+          .layoutWeight(1)
+          .maxLines(2)
+        Toggle({ type: ToggleType.Checkbox, isOn: this.multiplayerOnly })
+          .selectedColor('#FF6B5E')
+          .onChange((isOn: boolean) => {
+            this.multiplayerOnly = isOn;
+            this.persistMultiplayerOnly(isOn);
+            this.applyFilter();
+          })
+        Text($r('app.string.nearby_filter_multiplayerOnly'))
+          .fontSize(14)
+          .fontColor('#A8B0BD')
+          .onClick(() => {
+            this.multiplayerOnly = !this.multiplayerOnly;
+            this.persistMultiplayerOnly(this.multiplayerOnly);
+            this.applyFilter();
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      if (this.multiplayerOnly && this.visibleRows.length === 0) {
+        // Zero result keeps the category and offers the contract action (C03).
+        Button($r('app.string.nearby_action_disableMultiplayerFilter'))
+          .height(48)
+          .fontSize(16)
+          .backgroundColor('#292B31')
+          .fontColor('#FF6B5E')
+          .onClick(() => {
+            this.multiplayerOnly = false;
+            this.persistMultiplayerOnly(false);
+            this.applyFilter();
+          })
+      }
       if (this.visibleRows.length === 0) {
         Text(this.emptyMessage())
           .fontSize(18)
@@ -463,12 +505,38 @@ struct GameCenter {
     this.applyFilter();
   }
 
+  private persistMultiplayerOnly(value: boolean): void {
+    AppStorage.setOrCreate('GameCenterMultiplayerOnly', value);
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'game_center_ui' });
+      store.putSync('multiplayerOnly', value);
+      store.flushSync();
+    } catch (error) {
+      console.error(`FlyNES multiplayer filter persist failed: ${error}`);
+    }
+  }
+
+  private restoreMultiplayerOnly(): void {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'game_center_ui' });
+      this.multiplayerOnly = store.getSync('multiplayerOnly', false) as boolean;
+    } catch (error) {
+      this.multiplayerOnly = false;
+    }
+  }
+
   private applyFilter(): void {
     const rows: GameCenterRow[] = [];
     for (let index = 0; index < this.allRows.length; index++) {
       rows.push(this.allRows[index]);
     }
     this.visibleRows = nativeProduct.gameCenterFilter(rows, this.category, this.query);
+    // Stable post-filter (design 3.2): removes non-SUPPORTED rows only, never re-sorts.
+    if (this.multiplayerOnly) {
+      this.visibleRows = applyMultiplayerFilter(this.visibleRows, this.multiplayerRegistry);
+    }
     let stillVisible = false;
     for (let index = 0; index < this.visibleRows.length; index++) {
       if (this.visibleRows[index].canonicalId === this.selectedCanonicalId) {
