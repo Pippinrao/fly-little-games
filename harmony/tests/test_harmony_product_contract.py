@@ -3,6 +3,8 @@
 
 from pathlib import Path
 
+from harmony_contract_matchers import run_game_forwards_locator_and_autosave
+
 text = Path("harmony/entry/src/main/ets/entryability/EntryAbility.ets").read_text(encoding="utf-8")
 assert "pages/GameCenter" in text
 assert "pages/Index" not in text or "GameCenter" in text
@@ -65,8 +67,8 @@ start_end = run.find("private startLoop", start_at)
 start_body = run[start_at:start_end if start_end > start_at else start_at + 700]
 assert "this.locator" in start_body or "canonicalId" in start_body, (
     "RunGame.start must pass or branch on canonicalId")
-assert "play.open(context,this.locator)" in start_body.replace(" ", "").replace("\n", ""), (
-    "RunGame must pass the selected launch locator into PlayService.open")
+assert run_game_forwards_locator_and_autosave(start_body), (
+    "RunGame must forward the selected locator and autosave preference")
 assert "hitMapFromLayout" in overlay or "HitMap" in overlay
 # Canvas buffer is vp-sized while hit-map/draw use px; scale px onto the buffer.
 assert "setTransform" in overlay
