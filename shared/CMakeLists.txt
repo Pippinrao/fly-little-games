@@ -196,6 +196,7 @@ add_library(flynes_product STATIC
     src/product/control_layout.cpp
     src/product/gamepad_hit_map.cpp
     src/product/game_center_state.cpp
+    src/product/nearby_ui_state.cpp
 )
 target_include_directories(flynes_product PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(flynes_product PUBLIC cxx_std_17)
@@ -369,6 +370,11 @@ if(FLYNES_BUILD_TESTS)
     target_link_libraries(flynes_product_pause_actions_test PRIVATE flynes_product)
     flynes_enable_strict_warnings(flynes_product_pause_actions_test)
     add_test(NAME flynes_product_pause_actions COMMAND flynes_product_pause_actions_test)
+
+    add_executable(flynes_product_nearby_ui_test tests/test_product_nearby_ui.cpp)
+    target_link_libraries(flynes_product_nearby_ui_test PRIVATE flynes_product)
+    flynes_enable_strict_warnings(flynes_product_nearby_ui_test)
+    add_test(NAME nearby_product_ui COMMAND flynes_product_nearby_ui_test)
 
     add_executable(flynes_catalog_scan_test
         tests/test_catalog_scan.cpp

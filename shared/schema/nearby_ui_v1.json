@@ -1,0 +1,434 @@
+{
+  "contractId": "flynes-nearby-ui-v1",
+  "description": "Application UI contract for the approved nearby multiplayer UX (design docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md). This is a product UI contract shared by Android, HarmonyOS NEXT and iOS - it is NOT a wire protocol, encodes no network success results, no credentials, and no device identities. The screen/reason/string identifiers here must stay in sync with shared/include/flynes/product/nearby_ui_state.hpp; tools/quality/check_nearby_ui_contract.py enforces platform string coverage and Chinese text equality.",
+  "statusFields": [
+    "connectionStatus",
+    "screenId",
+    "stage",
+    "failureReason",
+    "verifiedPeer",
+    "actions",
+    "pendingConfigId",
+    "generation"
+  ],
+  "connectionStatuses": {
+    "unknown": {
+      "entryKey": "nearby.entry.unavailable"
+    },
+    "disconnected": {
+      "entryKey": "nearby.open"
+    },
+    "pairing": {
+      "entryKey": "nearby.open"
+    },
+    "connected": {
+      "entryKey": "nearby.entry.connected"
+    },
+    "interrupted": {
+      "entryKey": "nearby.entry.interrupted"
+    }
+  },
+  "entryRule": {
+    "connectedRequiresAll": [
+      "connectionEstablished",
+      "peerVerified",
+      "channelBound",
+      "compatibilityVerified"
+    ],
+    "interruptedRequiresAll": [
+      "previousConnectionEstablished",
+      "reconnecting"
+    ],
+    "insufficientFactsProjectUnavailable": true,
+    "neverConnectedFrom": [
+      "scanSuccess",
+      "hostAcceptance",
+      "correctInviteCode",
+      "singleSideSasConfirm",
+      "persistedBoolean",
+      "elapsedTime",
+      "pagePath",
+      "testFlag"
+    ]
+  },
+  "stages": {
+    "order": [
+      "permissions",
+      "discovery",
+      "authentication",
+      "wifi",
+      "quic",
+      "version",
+      "codec"
+    ],
+    "states": [
+      "notStarted",
+      "inProgress",
+      "passed",
+      "failed"
+    ],
+    "failurePolicy": "Show only the first failed stage with its reason; earlier stages render as passed; stages after the first failure render as notStarted and must never be rendered as failed. A timeline contradicting this is invalid and renders nearby.stage.timeline.invalid instead of any success-looking state."
+  },
+  "screens": {
+    "N00": {
+      "titleKey": "nearby.screen.entry",
+      "requiresSelectedGame": false,
+      "actions": [
+        "createInvite",
+        "enterInviteCode",
+        "scanQr",
+        "findDevices",
+        "openFriends",
+        "backToGameCenter"
+      ],
+      "tabs": ["nearby.tab.devices", "nearby.tab.friends"]
+    },
+    "N01": {
+      "titleKey": "nearby.screen.invite",
+      "requiresSelectedGame": false,
+      "actions": ["regenerateInvite", "cancelInvite"],
+      "content": ["nearby.invite.codeLabel", "nearby.invite.qrLabel", "nearby.invite.validFor"]
+    },
+    "N02": {
+      "titleKey": "nearby.screen.joinCode",
+      "requiresSelectedGame": false,
+      "actions": ["submitJoinCode", "switchToScan", "cancelRequest"],
+      "content": ["nearby.join.codeLabel"],
+      "fieldErrorPlacement": "adjacentToInput"
+    },
+    "N03": {
+      "titleKey": "nearby.screen.scan",
+      "requiresSelectedGame": false,
+      "actions": ["switchToJoinCode", "cancel"]
+    },
+    "N04": {
+      "titleKey": "nearby.screen.waitHost",
+      "requiresSelectedGame": false,
+      "actions": ["cancelRequest"],
+      "content": ["nearby.wait.anonymousNote"]
+    },
+    "N05": {
+      "titleKey": "nearby.screen.hostRequest",
+      "requiresSelectedGame": false,
+      "actions": ["acceptRequest", "rejectRequest"],
+      "content": ["nearby.host.anonymousTitle", "nearby.host.sourceNote"]
+    },
+    "N06": {
+      "titleKey": "nearby.screen.sas",
+      "requiresSelectedGame": false,
+      "actions": ["confirmSasMatch", "reportSasMismatch"],
+      "content": ["nearby.sas.digitCount"]
+    },
+    "N07": {
+      "titleKey": "nearby.screen.connecting",
+      "requiresSelectedGame": false,
+      "actions": ["cancelConnecting", "viewDetails"],
+      "content": ["nearby.connecting.stageLabel", "nearby.connecting.wifiPath"]
+    },
+    "N08": {
+      "titleKey": "nearby.screen.connected",
+      "requiresSelectedGame": false,
+      "actions": ["goToGameCenter", "disconnect"],
+      "content": ["nearby.connected.friendLabel", "nearby.connected.shortCodeLabel"]
+    },
+    "G00": {
+      "titleKey": "nearby.screen.gameCenter",
+      "requiresSelectedGame": false,
+      "actions": ["openNearby", "selectGame", "disableMultiplayerFilter"],
+      "categories": ["RECENT", "FAVORITES", "ALL", "BUILTIN"],
+      "categoryLabelAliases": {
+        "RECENT": "category.recent",
+        "FAVORITES": "category.favorites",
+        "ALL": "category.all",
+        "BUILTIN": "category.builtin"
+      }
+    },
+    "N09": {
+      "titleKey": "nearby.screen.gameConfig",
+      "requiresSelectedGame": true,
+      "actions": ["confirmConfig", "backToLobby"],
+      "content": [
+        "nearby.config.hostLabel",
+        "nearby.config.seatLabel",
+        "nearby.config.soundLabel",
+        "nearby.config.shortCodeLabel",
+        "nearby.config.waitingConfirm",
+        "nearby.config.confirmed"
+      ]
+    },
+    "N10": {
+      "titleKey": "nearby.screen.failure",
+      "requiresSelectedGame": false,
+      "actions": ["retry", "newInvite", "backToEntry"],
+      "content": ["nearby.failure.stageLabel", "nearby.failure.reasonLabel"]
+    },
+    "N11": {
+      "titleKey": "nearby.screen.content",
+      "requiresSelectedGame": false,
+      "actions": ["grantSend", "grantReceive", "confirmImport", "cancelTransfer"]
+    },
+    "N12": {
+      "titleKey": "nearby.screen.friends",
+      "requiresSelectedGame": false,
+      "actions": ["renameFriend", "deleteFriend", "blockFriend", "resetIdentity"]
+    }
+  },
+  "actions": {
+    "createInvite": { "labelKey": "nearby.action.create" },
+    "enterInviteCode": { "labelKey": "nearby.action.enterCode" },
+    "scanQr": { "labelKey": "nearby.action.scanQr", "permission": "camera", "requestPolicy": "onFirstUseOnly" },
+    "findDevices": { "labelKey": "nearby.action.findDevices", "permission": "nearbyDiscovery" },
+    "openFriends": { "labelKey": "nearby.action.openFriends" },
+    "backToGameCenter": { "labelKey": "nearby.action.backToGameCenter" },
+    "regenerateInvite": { "labelKey": "nearby.action.regenerate", "invalidatesOldInviteAndQr": true },
+    "cancelInvite": { "labelKey": "nearby.action.cancelInvite", "invalidatesOldInviteAndQr": true },
+    "submitJoinCode": {
+      "labelKey": "nearby.action.submitJoinCode",
+      "requires": ["joinCodeComplete"],
+      "forbiddenWhile": ["joinRequestInFlight"]
+    },
+    "switchToScan": { "labelKey": "nearby.action.switchToScan", "permission": "camera" },
+    "switchToJoinCode": { "labelKey": "nearby.action.switchToJoinCode" },
+    "cancel": { "labelKey": "nearby.action.cancel" },
+    "cancelRequest": { "labelKey": "nearby.action.cancelRequest" },
+    "acceptRequest": { "labelKey": "nearby.action.accept" },
+    "rejectRequest": { "labelKey": "nearby.action.reject" },
+    "confirmSasMatch": { "labelKey": "nearby.action.sasMatch" },
+    "reportSasMismatch": { "labelKey": "nearby.action.sasMismatch", "cancelsGeneration": true },
+    "cancelConnecting": { "labelKey": "nearby.action.cancelConnecting" },
+    "viewDetails": { "labelKey": "nearby.action.viewDetails" },
+    "goToGameCenter": { "labelKey": "nearby.action.goToGameCenter" },
+    "disconnect": { "labelKey": "nearby.action.disconnect" },
+    "openNearby": { "labelKey": "nearby.action.openNearby" },
+    "selectGame": {
+      "labelKey": "nearby.action.selectGame",
+      "connectedBehavior": "proposeCurrentGameIntoConfig",
+      "soloBehavior": "originalSoloPath"
+    },
+    "disableMultiplayerFilter": { "labelKey": "nearby.action.disableMultiplayerFilter", "keepsCategory": true },
+    "confirmConfig": { "labelKey": "nearby.action.confirmConfig", "bindsPendingConfigFingerprint": true },
+    "backToLobby": { "labelKey": "nearby.action.backToLobby", "keepsConnection": true, "invalidatesConfigConfirm": true },
+    "retry": { "labelKey": "nearby.action.retry" },
+    "newInvite": { "labelKey": "nearby.action.newInvite" },
+    "backToEntry": { "labelKey": "nearby.action.backToEntry" },
+    "grantSend": { "labelKey": "nearby.action.grantSend" },
+    "grantReceive": { "labelKey": "nearby.action.grantReceive" },
+    "confirmImport": { "labelKey": "nearby.action.confirmImport", "receiverOnly": true },
+    "cancelTransfer": { "labelKey": "nearby.action.cancelTransfer" },
+    "renameFriend": { "labelKey": "nearby.action.renameFriend" },
+    "deleteFriend": { "labelKey": "nearby.action.deleteFriend" },
+    "blockFriend": { "labelKey": "nearby.action.blockFriend" },
+    "resetIdentity": { "labelKey": "nearby.action.resetIdentity" }
+  },
+  "strings": {
+    "nearby.open": "附近联机",
+    "nearby.entry.connected": "双人联机中",
+    "nearby.entry.interrupted": "联机中断",
+    "nearby.entry.unavailable": "暂时无法确认联机状态",
+    "nearby.screen.entry": "附近联机",
+    "nearby.screen.invite": "创建联机",
+    "nearby.screen.joinCode": "输入配对码",
+    "nearby.screen.scan": "扫码加入",
+    "nearby.screen.waitHost": "等待房主接受",
+    "nearby.screen.hostRequest": "附近设备请求加入",
+    "nearby.screen.sas": "身份校验码",
+    "nearby.screen.connecting": "正在建立联机",
+    "nearby.screen.connected": "双人联机中",
+    "nearby.screen.gameCenter": "游戏大厅",
+    "nearby.screen.gameConfig": "本局配置",
+    "nearby.screen.failure": "联机失败",
+    "nearby.screen.content": "文件补齐",
+    "nearby.screen.friends": "好友管理",
+    "nearby.tab.devices": "附近设备",
+    "nearby.tab.friends": "好友",
+    "nearby.action.create": "创建联机",
+    "nearby.action.enterCode": "输入配对码",
+    "nearby.action.scanQr": "扫码加入",
+    "nearby.action.findDevices": "寻找设备",
+    "nearby.action.openFriends": "好友",
+    "nearby.action.backToGameCenter": "返回游戏大厅",
+    "nearby.action.regenerate": "重新生成",
+    "nearby.action.cancelInvite": "取消作废邀请",
+    "nearby.action.submitJoinCode": "请求加入",
+    "nearby.action.switchToScan": "改用扫码",
+    "nearby.action.switchToJoinCode": "改用输入配对码",
+    "nearby.action.cancel": "取消",
+    "nearby.action.cancelRequest": "取消请求",
+    "nearby.action.accept": "接受，继续验证",
+    "nearby.action.reject": "拒绝",
+    "nearby.action.sasMatch": "数字一致",
+    "nearby.action.sasMismatch": "数字不一致，取消",
+    "nearby.action.cancelConnecting": "取消",
+    "nearby.action.viewDetails": "详情",
+    "nearby.action.goToGameCenter": "去游戏大厅",
+    "nearby.action.disconnect": "断开",
+    "nearby.action.openNearby": "附近联机",
+    "nearby.action.selectGame": "开始游戏",
+    "nearby.action.disableMultiplayerFilter": "关闭支持双人筛选",
+    "nearby.action.confirmConfig": "确认入局",
+    "nearby.action.backToLobby": "返回大厅换游戏",
+    "nearby.action.retry": "重试",
+    "nearby.action.newInvite": "新邀请",
+    "nearby.action.backToEntry": "返回",
+    "nearby.action.grantSend": "许可发送",
+    "nearby.action.grantReceive": "许可接收",
+    "nearby.action.confirmImport": "确认导入",
+    "nearby.action.cancelTransfer": "取消",
+    "nearby.action.renameFriend": "重命名",
+    "nearby.action.deleteFriend": "删除",
+    "nearby.action.blockFriend": "拉黑",
+    "nearby.action.resetIdentity": "重置本机身份",
+    "nearby.invite.codeLabel": "本次六位配对码",
+    "nearby.invite.qrLabel": "邀请二维码",
+    "nearby.invite.validFor": "剩余有效期",
+    "nearby.join.codeLabel": "六位配对码",
+    "nearby.wait.anonymousNote": "已发送请求，等待房主接受",
+    "nearby.host.anonymousTitle": "附近设备请求加入",
+    "nearby.host.sourceNote": "来源：附近设备",
+    "nearby.sas.digitCount": "六位身份校验码",
+    "nearby.connecting.stageLabel": "当前阶段",
+    "nearby.connecting.wifiPath": "Wi-Fi 路径",
+    "nearby.connected.friendLabel": "已验证好友",
+    "nearby.connected.shortCodeLabel": "身份短码",
+    "nearby.config.hostLabel": "主机",
+    "nearby.config.seatLabel": "座位",
+    "nearby.config.soundLabel": "本机声音",
+    "nearby.config.shortCodeLabel": "配置短码",
+    "nearby.config.waitingConfirm": "待确认",
+    "nearby.config.confirmed": "已确认",
+    "nearby.failure.stageLabel": "失败阶段",
+    "nearby.failure.reasonLabel": "失败原因",
+    "nearby.filter.multiplayerOnly": "支持双人",
+    "nearby.capability.unknown": "支持情况待确认",
+    "nearby.stage.permissions": "权限",
+    "nearby.stage.discovery": "发现",
+    "nearby.stage.authentication": "认证",
+    "nearby.stage.wifi": "Wi-Fi",
+    "nearby.stage.quic": "QUIC",
+    "nearby.stage.version": "版本",
+    "nearby.stage.codec": "codec",
+    "nearby.stage.notStarted": "未开始",
+    "nearby.stage.inProgress": "进行中",
+    "nearby.stage.passed": "已通过",
+    "nearby.stage.failed": "失败",
+    "nearby.stage.permissions.failed": "权限阶段失败",
+    "nearby.stage.discovery.failed": "发现阶段失败",
+    "nearby.stage.authentication.failed": "认证阶段失败",
+    "nearby.stage.wifi.failed": "Wi-Fi 阶段失败",
+    "nearby.stage.quic.failed": "QUIC 阶段失败",
+    "nearby.stage.version.failed": "版本阶段失败",
+    "nearby.stage.codec.failed": "codec 阶段失败",
+    "nearby.stage.timeline.invalid": "连接阶段状态异常",
+    "nearby.reason.code.invalidFormat": "配对码格式不正确",
+    "nearby.reason.code.expired": "配对码已过期",
+    "nearby.reason.code.notFound": "未找到对应的邀请",
+    "nearby.reason.host.rejected": "房主已拒绝加入请求",
+    "nearby.reason.request.cancelled": "请求已取消",
+    "nearby.reason.request.staleGeneration": "该邀请已失效",
+    "nearby.reason.sas.mismatch": "身份校验码不一致",
+    "nearby.reason.permission.cameraDenied": "相机权限被拒绝，可改用输入配对码",
+    "nearby.reason.permission.discoveryDenied": "附近发现权限被拒绝",
+    "nearby.reason.permission.wifiDenied": "Wi-Fi 未确认，无法建立连接",
+    "nearby.reason.connection.interrupted": "连接已中断",
+    "nearby.reason.config.changed": "本局配置已变更，需要双方重新确认",
+    "nearby.reason.content.sendDenied": "对方未许可发送文件",
+    "nearby.reason.content.receiveDenied": "对方未许可接收文件"
+  },
+  "categoryAliases": {
+    "category.recent": { "zh": "最近", "android": "category_recent", "harmony": "game_center_recent", "ios": "game_center.recent" },
+    "category.favorites": { "zh": "收藏", "android": "category_favorites", "harmony": "game_center_favorites", "ios": "game_center.favorites" },
+    "category.all": { "zh": "全部", "android": "category_all", "harmony": "game_center_all", "ios": "game_center.all" },
+    "category.builtin": { "zh": "内置", "android": "category_builtin", "harmony": "game_center_builtin", "ios": "game_center.builtin" }
+  },
+  "capability": {
+    "values": ["SUPPORTED", "UNSUPPORTED", "UNKNOWN"],
+    "unknownLabelKey": "nearby.capability.unknown",
+    "unknownExcludedWhenFilterOn": true,
+    "unknownIsNotUnsupported": true,
+    "source": "shared versioned game profile/catalog projection only; never inferred from filename, P2 in the title, or controller count",
+    "zeroResultBehavior": {
+      "keepsCategory": true,
+      "offersAction": "disableMultiplayerFilter"
+    }
+  },
+  "multiplayerFilter": {
+    "independentFrom": ["category", "query", "connectionStatus"],
+    "default": false,
+    "persistedPerDevice": true,
+    "connectionEventsDoNotChangeIt": true
+  },
+  "invite": {
+    "codeLength": 6,
+    "codeAlphabet": "asciiDigits",
+    "leadingZerosPreserved": true,
+    "pasteTrimmedWhitespace": true,
+    "noSilentTruncation": true,
+    "validitySeconds": 60,
+    "regenerateInvalidatesOldInviteAndQr": true,
+    "qrSingleUse": true,
+    "lateCallbacksNeverRevive": true,
+    "codeIsNotSecret": "the code only locates a temporary anonymous invitation; it is never a SAS, password, or session key"
+  },
+  "sas": {
+    "digits": 6,
+    "labelKey": "nearby.screen.sas",
+    "singleSideConfirmInsufficient": true,
+    "mismatchCancelsGeneration": true,
+    "qrPathSkipsForcedSas": true
+  },
+  "anonymousCandidate": {
+    "allowedFields": ["displayName", "rssi"],
+    "forbiddenFields": ["friendNickname", "longTermPublicKey", "stableFingerprint"]
+  },
+  "permissions": {
+    "camera": {
+      "requestWhen": "scanQr first use",
+      "deniedReasonKey": "nearby.reason.permission.cameraDenied",
+      "denialDoesNotDisable": ["enterInviteCode", "findDevices"],
+      "repeatPrompt": false
+    },
+    "nearbyDiscovery": {
+      "requestWhen": "entering nearby pages, per stage",
+      "deniedReasonKey": "nearby.reason.permission.discoveryDenied",
+      "repeatPrompt": false
+    },
+    "wifi": {
+      "requestWhen": "wifi path selected, one system confirmation per session",
+      "deniedReasonKey": "nearby.reason.permission.wifiDenied",
+      "repeatPrompt": false
+    }
+  },
+  "layout": {
+    "unit": "logical dp/vp/pt inside safe area",
+    "topBarBasisDp": 64,
+    "lobbyDetailWidthRatio": 0.3,
+    "lobbyGridWidthRatio": 0.7,
+    "nearbySplitMinWidthDp": 580,
+    "nearbyLeftColumnWidthDp": 224,
+    "nearbyColumnGutterDp": 18,
+    "actionMinHitDp": 48,
+    "bottomActionMinButtonWidthDp": 160,
+    "bottomActionFullWidthForbidden": true,
+    "bottomBarIsSeparateRegionFromBody": true,
+    "gridToleranceDp": 2,
+    "fontScales": [1.0, 1.3, 2.0],
+    "qrSquare": true,
+    "horizontalScrollAllowedOnlyFor": ["lobbyGameGrid"],
+    "colors": {
+      "background": "#121316",
+      "surface": "#1B1D22",
+      "raised": "#292B31",
+      "text": "#F4EFE6",
+      "muted": "#BEB8AE",
+      "primary": "#FF6B5E"
+    },
+    "colorIsNeverTheOnlyStatusSignal": true
+  },
+  "pendingConfig": {
+    "fields": ["gameIdentity", "host", "seat", "modeResult", "soundLocal", "capabilityPlan"],
+    "confirmBindsFullFingerprint": true,
+    "uiShortCodeIsDisplayOnly": true,
+    "anyChangeInvalidatesBothConfirmations": true,
+    "bothConfirmationsRequiredToStart": true
+  }
+}
