@@ -1,6 +1,7 @@
 package com.flynes.emu;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.view.View;
@@ -46,6 +47,11 @@ public final class SettingsActivity extends AppCompatActivity {
         bindSection(R.id.settings_audio_master, SettingsSection.AUDIO);
         bindSection(R.id.settings_game_language, SettingsSection.GAME_LANGUAGE);
         bindSection(R.id.settings_about, SettingsSection.ABOUT);
+        // 好友管理 opens its own page rather than selecting a section: D2 keeps the five settings
+        // roots at five, so this is a leaf destination, not a sixth root, and it is reachable from
+        // the 好友 tab as well.
+        findViewById(R.id.settings_nearby_friends_manage).setOnClickListener(view ->
+                startActivity(new Intent(this, NearbyFriendsManageActivity.class)));
         // A fresh settings visit always opens the primary Display section. Only an in-place
         // recreation (rotation/process state restore) retains the section the user was viewing.
         String saved = state == null ? SettingsSection.DISPLAY.name()

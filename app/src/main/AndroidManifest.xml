@@ -53,5 +53,36 @@
             android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".NearbyFriendsActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <!--
+          配对 and 大厅 are declared because on Android the manifest is the navigation registry: an
+          activity missing here cannot be started at all, not even from a page that exists to
+          explain why it is blocked. They are deliberately not reachable from 好友/附近设备 yet —
+          both sit after discovery, and discovery is blocked at the 权限 stage, so an entry button
+          would be a bypass of the very stage model these pages exist to display (spec §4).
+
+          No permission is declared here. D1 is pages-first: each permission is declared in the
+          change that first uses it, so adding an unused BLE/camera/Wi-Fi permission now would buy
+          nothing and cost store-review risk.
+        -->
+        <activity
+            android:name=".NearbyPairingActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".NearbyLobbyActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".NearbyFriendsManageActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

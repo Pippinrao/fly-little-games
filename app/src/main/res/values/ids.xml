@@ -25,4 +25,47 @@
     <item name="control_layout_default" type="id" />
     <item name="control_layout_save" type="id" />
     <item name="control_layout_discard" type="id" />
+    <!--
+      Nearby 大厅 rows. They are declared here rather than in a layout because the lobby is a
+      table-driven list: NearbyLobbyActivity builds one row per §2.2 field from a single table that
+      pairs the label with the exact blocked reason that field is missing, and a row built in code
+      needs a stable id for instrumentation to address. One id per row keeps that table the only
+      place the field order is written down.
+    -->
+    <item name="nearby_lobby_row_friend_name" type="id" />
+    <item name="nearby_lobby_row_identity_fingerprint" type="id" />
+    <item name="nearby_lobby_row_authority_capability" type="id" />
+    <item name="nearby_lobby_row_resource_risk" type="id" />
+    <item name="nearby_lobby_row_network_owner" type="id" />
+    <item name="nearby_lobby_row_seat" type="id" />
+    <item name="nearby_lobby_row_rom_identity" type="id" />
+    <item name="nearby_lobby_row_rom_local_state" type="id" />
+    <item name="nearby_lobby_row_rom_transfer_confirm" type="id" />
+    <item name="nearby_lobby_row_rom_transfer_progress" type="id" />
+    <item name="nearby_lobby_row_profile_verified" type="id" />
+    <item name="nearby_lobby_row_mode_expected" type="id" />
+    <item name="nearby_lobby_row_local_audio" type="id" />
+    <item name="nearby_lobby_row_confirm_invalidated" type="id" />
+    <!--
+      The in-game status surface. D7: in local single-player there is no nearby status at all, so
+      these ids must be absent from the run surface until a session exists — their presence is the
+      bug, not their absence. D6: the states that demand user action live in a non-dismissible
+      banner pinned to the top of the run surface, never inside the pause drawer, so a frozen end
+      never has to open a drawer to recover.
+    -->
+    <item name="nearby_ingame_status" type="id" />
+    <item name="nearby_ingame_row_mode" type="id" />
+    <item name="nearby_ingame_row_connection_quality" type="id" />
+    <item name="nearby_ingame_row_seat" type="id" />
+    <item name="nearby_ingame_row_pause_state" type="id" />
+    <item name="nearby_ingame_row_branch_reunion" type="id" />
+    <item name="nearby_ingame_row_branch_no_auto_merge" type="id" />
+    <item name="nearby_ingame_row_local_mute" type="id" />
+    <item name="nearby_ingame_banner" type="id" />
+    <item name="nearby_ingame_banner_row_frozen" type="id" />
+    <item name="nearby_ingame_banner_row_reconnect_countdown" type="id" />
+    <item name="nearby_ingame_banner_row_authority_timeout" type="id" />
+    <item name="nearby_ingame_banner_row_takeover" type="id" />
+    <item name="nearby_ingame_banner_row_continue_solo" type="id" />
+    <item name="nearby_ingame_banner_row_save_and_end" type="id" />
 </resources>

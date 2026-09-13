@@ -1,4 +1,6 @@
 #include <flynes/flynes_session.h>
+#include "session_initial_plan.hpp"
+#include "session_receive.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -8,7 +10,172 @@
 struct fly_session_handle
 {
     std::uint64_t last_tick_ns = 0u;
+    bool has_tick = false;
+    std::uint64_t pair_generation = 0u;
+    std::uint64_t original_context_start_ns = 0u;
+    flynes::session::InitialPlanLock initial_plan;
+
+    // Last command the public poll handed out. Mapping only: the wire
+    // transition_id (16 bytes) is not representable in the public 64-bit field
+    // and is never truncated into it. The generation is the one the command was
+    // issued under, not the live handle generation: the seam's fence must stay
+    // meaningful if a later slice ever allows an attempt restart.
+    std::uint64_t polled_command_id = 0u;
+    std::uint64_t polled_command_generation = 0u;
+    bool has_polled_command = false;
+
+    // Diagnostic identification of the last received chunk. Independent of the
+    // trusted reducer: the receive entry points still fail closed and never
+    // route a received byte to the trusted evidence seam.
+    flynes::session::ReceivedFrameSummary last_received;
 };
+
+namespace flynes::session {
+namespace {
+constexpr std::uint64_t pair_timeout_ns = UINT64_C(60000000000);
+
+bool reject(fly_session_t* session)
+{
+    if (session) session->initial_plan.invalidate();
+    return false;
+}
+
+bool active(const fly_session_t* session)
+{
+    return session && session->pair_generation != 0 && !session->initial_plan.failed();
+}
+
+bool require_active(fly_session_t* session)
+{
+    return active(session) || reject(session);
+}
+} // namespace
+
+bool start_initial_pair_attempt(fly_session_t* session, std::uint64_t generation,
+                                std::uint64_t original_context_start_ns)
+{
+    if (!session || !session->has_tick || session->pair_generation != 0 ||
+        session->initial_plan.failed() || generation == 0 ||
+        original_context_start_ns > session->last_tick_ns ||
+        session->last_tick_ns - original_context_start_ns >= pair_timeout_ns) return reject(session);
+    session->pair_generation = generation;
+    session->original_context_start_ns = original_context_start_ns;
+    return true;
+}
+
+bool begin_initial_verified_pair(fly_session_t* session, const VerifiedPairEvidence& evidence)
+{
+    if (!require_active(session)) return false;
+    if (evidence.generation != session->pair_generation) return reject(session);
+    return session->initial_plan.begin(evidence);
+}
+
+bool accept_initial_plan(fly_session_t* session, const VerifiedPlanEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_plan(evidence);
+}
+
+bool accept_initial_ack(fly_session_t* session, const VerifiedPlanEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_ack(evidence);
+}
+
+bool accept_initial_final(fly_session_t* session, const VerifiedPlanEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_final(evidence);
+}
+
+bool accept_initial_credentials(fly_session_t* session, const VerifiedCredentialEvidence& evidence)
+{
+    return require_active(session) && session->initial_plan.accept_credentials(evidence);
+}
+
+std::optional<InitialPlanCommand> poll_initial_plan_command(fly_session_t* session)
+{
+    return active(session) ? session->initial_plan.poll() : std::nullopt;
+}
+
+bool complete_initial_plan_command(fly_session_t* session, std::uint64_t id,
+                                    std::uint64_t generation, bool success)
+{
+    return require_active(session) && session->initial_plan.complete(id, generation, success);
+}
+
+void invalidate_initial_pair_attempt(fly_session_t* session) noexcept
+{
+    if (session) session->initial_plan.invalidate();
+}
+
+std::optional<SessionInitialPlanSnapshot> initial_plan_snapshot(const fly_session_t* session)
+{
+    if (!session) return std::nullopt;
+    const auto& plan = session->initial_plan;
+    return SessionInitialPlanSnapshot{session->pair_generation != 0, active(session),
+        plan.failed(), plan.not_supported(), plan.locked(), plan.mutually_locked(),
+        plan.prompt_consumed(), session->pair_generation, session->original_context_start_ns,
+        plan.selected_plan()};
+}
+
+namespace {
+
+void store_received_frame(fly_session_t* session, std::uint32_t channel,
+                          const wire::AppFrame& frame) noexcept
+{
+    session->last_received.identified = true;
+    session->last_received.channel = channel;
+    session->last_received.frame_type_tag = frame.frame_type_tag;
+    session->last_received.type_name = frame.type_name;
+    session->last_received.object_size = frame.object_size;
+    session->last_received.has_app_frame_hash = frame.has_app_frame_hash;
+    if (frame.has_app_frame_hash)
+    {
+        std::memcpy(session->last_received.app_frame_hash, frame.app_frame_hash, 32u);
+    }
+}
+
+} // namespace
+
+bool record_received_stream(fly_session_t* session, std::uint32_t channel,
+                            const std::uint8_t* bytes, std::size_t size) noexcept
+{
+    if (session == nullptr)
+        return false;
+    // Every call replaces the summary: a rejected chunk must not leave a stale
+    // identification behind.
+    session->last_received = ReceivedFrameSummary{};
+    wire::AppFrameCursor cursor = wire::app_frame_cursor(static_cast<wire::QuicChannel>(channel),
+                                                         bytes, size);
+    wire::AppFrame frame{};
+    bool has_frame = false;
+    if (wire::next_app_frame(&cursor, &frame, &has_frame) != wire::Status::Ok || !has_frame)
+    {
+        return false;
+    }
+    store_received_frame(session, channel, frame);
+    return true;
+}
+
+bool record_received_datagram(fly_session_t* session, std::uint32_t channel,
+                              const std::uint8_t* bytes, std::size_t size) noexcept
+{
+    if (session == nullptr)
+        return false;
+    session->last_received = ReceivedFrameSummary{};
+    wire::AppFrame frame{};
+    if (wire::parse_app_frame(static_cast<wire::QuicChannel>(channel), bytes, size, &frame) !=
+        wire::Status::Ok)
+    {
+        return false;
+    }
+    store_received_frame(session, channel, frame);
+    return true;
+}
+
+ReceivedFrameSummary last_received_frame(const fly_session_t* session) noexcept
+{
+    return session == nullptr ? ReceivedFrameSummary{} : session->last_received;
+}
+} // namespace flynes::session
 
 namespace {
 
@@ -113,9 +280,22 @@ extern "C" fly_result fly_session_submit_event(fly_session_t* session,
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    // The v1 fly_session_event carries only a kind: no payload, no payload
+    // length and no owner/serial token (flynes_session.h:110-116). None of the
+    // private reducer entry points can be reached from it, and synthesising
+    // trusted evidence from a kind is forbidden, so every kind fails closed.
+    // Payload-carrying event DTOs are a versioned ABI addition, not a decision
+    // this slice may take unilaterally.
     return FLY_RESULT_INVALID_STATE;
 }
 
+// Raw transport bytes stay failing closed. The C2b application framing layer can
+// now identify a record's type from its in-band frame type tag (app_frame.hpp)
+// and validates the object with the existing codec, but that identification is
+// recorded for diagnostics only: a validated-and-hashed envelope is NOT
+// authentication (design spec:713), no authenticated decoder exists, and no
+// received byte may reach the trusted evidence seam. Both entry points
+// therefore still reject, and the diagnostic summary is never a decision input.
 extern "C" fly_result fly_session_receive_stream(fly_session_t* session,
                                                  uint32_t channel,
                                                  const uint8_t* bytes,
@@ -129,6 +309,7 @@ extern "C" fly_result fly_session_receive_stream(fly_session_t* session,
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    (void)flynes::session::record_received_stream(session, channel, bytes, size);
     return FLY_RESULT_INVALID_STATE;
 }
 
@@ -137,7 +318,19 @@ extern "C" fly_result fly_session_receive_datagram(fly_session_t* session,
                                                    const uint8_t* bytes,
                                                    size_t size)
 {
-    return fly_session_receive_stream(session, channel, bytes, size);
+    // Same fail-closed contract as the stream entry point; the channel form does
+    // not make an undecodable envelope acceptable. A datagram carries exactly one
+    // record, so it is identified with datagram framing rules.
+    if (session == nullptr || (bytes == nullptr && size != 0u))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (!valid_channel(channel))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    (void)flynes::session::record_received_datagram(session, channel, bytes, size);
+    return FLY_RESULT_INVALID_STATE;
 }
 
 extern "C" fly_result fly_session_poll_command(fly_session_t* session,
@@ -161,6 +354,23 @@ extern "C" fly_result fly_session_poll_command(fly_session_t* session,
     command_out->struct_size = struct_size;
     command_out->version = version;
     command_out->kind = FLY_SESSION_COMMAND_NONE;
+    // The v1 public command struct has no representation for the seam's command
+    // kinds and no room for a 128-bit wire transition_id. Only the seam's local
+    // monotonic id is exposed; transition_id stays exactly zero, never truncated.
+    const auto pending = flynes::session::poll_initial_plan_command(session);
+    if (pending.has_value())
+    {
+        command_out->command_id = pending->id;
+        session->polled_command_id = pending->id;
+        session->polled_command_generation = pending->generation;
+        session->has_polled_command = true;
+    }
+    else
+    {
+        session->polled_command_id = 0u;
+        session->polled_command_generation = 0u;
+        session->has_polled_command = false;
+    }
     return FLY_RESULT_OK;
 }
 
@@ -180,7 +390,23 @@ extern "C" fly_result fly_session_complete_command(
     {
         return FLY_RESULT_UNSUPPORTED_VERSION;
     }
-    return FLY_RESULT_INVALID_STATE;
+    if (result->transition_id != 0u)
+    {
+        // A wire transition id is 16 bytes; the public field must never be used
+        // as a truncated substitute for it.
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (result->command_id == 0u || !session->has_polled_command ||
+        result->command_id != session->polled_command_id)
+    {
+        // Only the command the public poll handed out can be completed; the
+        // seam remains the authority on staleness, duplicates and ordering.
+        return FLY_RESULT_INVALID_STATE;
+    }
+    const bool accepted = flynes::session::complete_initial_plan_command(
+        session, result->command_id, session->polled_command_generation,
+        result->result == FLY_RESULT_OK);
+    return accepted ? FLY_RESULT_OK : FLY_RESULT_INVALID_STATE;
 }
 
 extern "C" fly_result fly_session_tick(fly_session_t* session, uint64_t now_ns)
@@ -189,7 +415,20 @@ extern "C" fly_result fly_session_tick(fly_session_t* session, uint64_t now_ns)
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    if (session->has_tick && now_ns < session->last_tick_ns)
+    {
+        if (flynes::session::active(session)) session->initial_plan.invalidate();
+        return FLY_RESULT_INVALID_STATE;
+    }
     session->last_tick_ns = now_ns;
+    session->has_tick = true;
+    // Start already checked ordering; subtract only after the monotonic check.
+    if (flynes::session::active(session) &&
+        now_ns - session->original_context_start_ns >= flynes::session::pair_timeout_ns)
+    {
+        session->initial_plan.invalidate();
+        return FLY_RESULT_INVALID_STATE;
+    }
     return FLY_RESULT_OK;
 }
 
@@ -213,7 +452,17 @@ extern "C" fly_result fly_session_get_snapshot(fly_session_t* session,
     std::memset(snapshot_out, 0, sizeof(*snapshot_out));
     snapshot_out->struct_size = struct_size;
     snapshot_out->version = version;
-    snapshot_out->ui_state = FLY_SESSION_UI_IDLE;
+    // Projected from the real reducer state. The v1 enum only defines IDLE, so a
+    // live or terminal initial plan is reported as FLY_SESSION_UI_UNSPECIFIED
+    // ("this ABI cannot say") rather than being misreported as idle.
+    // authority_role/mode, frame cursor and evidence cursor stay unspecified
+    // (zero/GENESIS/NONE): the reducer owns no seat, mode or committed-frame
+    // state yet.
+    const auto state = flynes::session::initial_plan_snapshot(session);
+    const bool idle = state.has_value() && !state->started && !state->active &&
+                      !state->failed && !state->not_supported && !state->locked &&
+                      !state->mutually_locked && !state->prompt_consumed;
+    snapshot_out->ui_state = idle ? FLY_SESSION_UI_IDLE : FLY_SESSION_UI_UNSPECIFIED;
     fill_genesis(&snapshot_out->committed_through);
     fill_none_evidence(&snapshot_out->state_verified_through);
     return FLY_RESULT_OK;

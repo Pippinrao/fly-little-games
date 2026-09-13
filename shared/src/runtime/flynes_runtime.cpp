@@ -920,11 +920,11 @@ extern "C" fly_result fly_runtime_pull_pcm(fly_runtime_t* runtime,
     }
     try
     {
-        std::lock_guard<std::mutex> lock(runtime->mutex);
+        std::unique_lock<std::mutex> lock(runtime->mutex, std::try_to_lock);
         fly_pcm_block_v1 block{};
         block.struct_size = block_out->struct_size;
         block.version = block_out->version;
-        if (runtime->pcm_count == 0u)
+        if (!lock.owns_lock() || runtime->pcm_count == 0u)
         {
             std::memset(samples_out, 0, static_cast<std::size_t>(sample_capacity) * sizeof(int16_t));
             block.sample_count = sample_capacity;

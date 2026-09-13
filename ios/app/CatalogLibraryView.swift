@@ -4,6 +4,9 @@ enum LibraryRoute: Hashable {
     /// The resolved ROM travels with the route, so reaching the run screen already
     /// means the game could be opened.
     case run(canonicalId: String, rom: Data, game: CatalogGame)
+    /// 附近联机. A real destination, and the only route on this screen that does not
+    /// need a ROM: the nearby pages exist to render the exact stage that blocks them.
+    case nearby
 }
 
 enum LibraryFilter: String, CaseIterable, Identifiable {
@@ -117,6 +120,7 @@ struct CatalogLibraryView: View {
             .navigationDestination(for: LibraryRoute.self) { route in
                 switch route {
                 case .run(let id, let rom, let game): RunGameContainer(canonicalId: id, romData: rom, game: game, path: $path)
+                case .nearby: NearbyFriendsView()
                 }
             }
             .fullScreenCover(isPresented: $settingsOpen) { SettingsView() }
@@ -161,6 +165,10 @@ struct CatalogLibraryView: View {
             }
             icon("magnifyingglass", "library.search", "open_search") { searchOpen = true; sourcesOpen = false }
             icon("folder", "library.sources", "open_sources") { sourcesOpen = true }
+            // 附近联机 sits with the other header actions on every platform's game center.
+            icon("dot.radiowaves.left.and.right", "nearby.title", "open_nearby") {
+                sourcesOpen = false; searchOpen = false; path.append(LibraryRoute.nearby)
+            }
             icon("gearshape", "settings.title", "open_settings") { settingsOpen = true }
         }.frame(height: largeText ? 80 : 64)
     }

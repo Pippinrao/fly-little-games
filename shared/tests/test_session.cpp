@@ -43,7 +43,7 @@ void test_create_tick_snapshot_and_empty_poll()
     snapshot.struct_size = FLY_SESSION_SNAPSHOT_V1_SIZE;
     snapshot.version = FLY_SESSION_SNAPSHOT_VERSION_1;
     check(fly_session_get_snapshot(session, &snapshot) == FLY_RESULT_OK, "snapshot");
-    check(snapshot.ui_state == FLY_SESSION_UI_IDLE, "idle snapshot");
+    check(snapshot.ui_state == FLY_SESSION_UI_IDLE, "fresh handle with no pair attempt is idle");
     check(snapshot.committed_through.has_frame == 0u, "GENESIS has_frame");
     check(snapshot.committed_through.frame_index == 0u, "GENESIS index");
     check(snapshot.state_verified_through.kind == FLY_EVIDENCE_CURSOR_NONE, "NONE evidence");
@@ -52,23 +52,24 @@ void test_create_tick_snapshot_and_empty_poll()
     command.struct_size = FLY_SESSION_COMMAND_V1_SIZE;
     command.version = FLY_SESSION_COMMAND_VERSION_1;
     check(fly_session_poll_command(session, &command) == FLY_RESULT_OK, "empty poll");
-    check(command.kind == FLY_SESSION_COMMAND_NONE, "poll kind NONE");
-    check(command.command_id == 0u, "poll command_id empty");
+    check(command.kind == FLY_SESSION_COMMAND_NONE, "idle poll reports no command");
+    check(command.command_id == 0u, "idle poll command_id empty");
+    check(command.transition_id == 0u, "poll never fills transition_id");
 
     fly_session_event event{};
     event.struct_size = FLY_SESSION_EVENT_V1_SIZE;
     event.version = FLY_SESSION_EVENT_VERSION_1;
     event.kind = FLY_SESSION_EVENT_USER;
     check(fly_session_submit_event(session, &event) == FLY_RESULT_INVALID_STATE,
-          "unimplemented event");
+          "payload-less event kind fails closed");
 
     uint8_t byte = 0;
     check(fly_session_receive_stream(session, FLY_SESSION_QUIC_CONTROL, &byte, 1u) ==
               FLY_RESULT_INVALID_STATE,
-          "unimplemented stream");
+          "raw stream bytes fail closed");
     check(fly_session_receive_datagram(session, FLY_SESSION_QUIC_INPUT, &byte, 1u) ==
               FLY_RESULT_INVALID_STATE,
-          "unimplemented datagram");
+          "raw datagram bytes fail closed");
     check(fly_session_receive_stream(session, 99u, &byte, 1u) == FLY_RESULT_INVALID_ARGUMENT,
           "bad channel");
 
@@ -76,7 +77,7 @@ void test_create_tick_snapshot_and_empty_poll()
     result.struct_size = FLY_SESSION_COMMAND_RESULT_V1_SIZE;
     result.version = FLY_SESSION_COMMAND_RESULT_VERSION_1;
     check(fly_session_complete_command(session, &result) == FLY_RESULT_INVALID_STATE,
-          "unimplemented complete");
+          "completion with no polled command fails closed");
 
     fly_session_destroy(session);
     fly_session_destroy(nullptr);

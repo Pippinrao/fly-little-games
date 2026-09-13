@@ -12,7 +12,11 @@ Checks (all must PASS for exit 0):
                                   nes_core_test (Release, VS 2022 x64,
                                   NES_BUILD_TESTS=ON) and run it from the repo root;
                                   must print "PASS (0 failures)" and exit 0.
-  4. android build               : gradlew assembleDebug must succeed.
+  4. shared session host test    : same canonical toolchain, configure/build the whole
+                                   shared suite (FLYNES_BUILD_TESTS=ON) and run its CTest
+                                   set. Guards the session/ABI surface, which Check 3
+                                   (core only) never builds.
+  5. android build               : gradlew assembleDebug must succeed.
 
 Exit: 0 when every check PASSes, 1 otherwise.
 
@@ -192,7 +196,7 @@ if ($LASTEXITCODE -ne 0) {
 # Check 3 — host test (configure/build nes_core_test, run from repo root)
 # ============================================================================
 Write-Host ''
-Write-Host '== Check 3/4: host test ==' -ForegroundColor Cyan
+Write-Host '== Check 3/5: host test ==' -ForegroundColor Cyan
 
 $hostDir = Join-Path $root '.artifacts\build\core-host'
 $hostCache = Join-Path $hostDir 'CMakeCache.txt'
@@ -273,10 +277,61 @@ if ($hostOk) {
 }
 
 # ============================================================================
-# Check 4 — android build (gradlew assembleDebug)
+# Check 4 — shared session host test (reuses the Check 3 canonical toolchain)
 # ============================================================================
 Write-Host ''
-Write-Host '== Check 4/4: android build (assembleDebug) ==' -ForegroundColor Cyan
+Write-Host '== Check 4/5: shared session host test ==' -ForegroundColor Cyan
+
+$sharedDir = Join-Path $root '.artifacts\build\shared-host'
+$sharedCache = Join-Path $sharedDir 'CMakeCache.txt'
+
+if (-not $hostTools) {
+    # Check 3 already reported why the canonical toolchain is unavailable.
+    Write-Check 'shared session test' 'FAIL' 'canonical host toolchain unavailable (see host test)'
+} else {
+    $sharedOk = $true
+    $sharedConfigureArgs = @(
+        '-S', (Join-Path $root 'shared'),
+        '-B', $sharedDir,
+        '-G', ([string] $hostTools.Generator),
+        '-A', ([string] $hostTools.Architecture),
+        '-DFLYNES_BUILD_TESTS=ON',
+        "-DZLIB_ROOT=$hostZlibRoot"
+    ) + @($hostTools.CMakeConfigureArguments)
+
+    Write-Host '  configuring shared build with the canonical toolchain...'
+    & $hostCMake @sharedConfigureArgs | Out-Host
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sharedCache -PathType Leaf)) {
+        $sharedOk = $false
+        Write-Check 'shared session test' 'FAIL' 'shared configure failed'
+    }
+
+    if ($sharedOk) {
+        & $hostCMake --build $sharedDir --config Release -j 4 | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Check 'shared session test' 'FAIL' "shared build failed (exit $LASTEXITCODE)"
+        } else {
+            $sharedTestOut = & $hostCTest --test-dir $sharedDir -C Release --output-on-failure 2>&1 | Out-String
+            $sharedTestExit = $LASTEXITCODE
+            $sharedSummary = ($sharedTestOut -split "`r?`n" |
+                Where-Object { $_ -match 'tests passed|tests failed out of' } |
+                Select-Object -Last 1)
+            if ($sharedTestExit -eq 0 -and $sharedTestOut -match '100% tests passed') {
+                Write-Check 'shared session test' 'PASS' ("shared CTest green: " + $sharedSummary.Trim())
+            } else {
+                Write-Check 'shared session test' 'FAIL' `
+                    "shared CTest failed (exit $sharedTestExit)"
+                Write-Host ($sharedTestOut -split "`r?`n" | Select-Object -Last 25 | Out-String)
+            }
+        }
+    }
+}
+
+# ============================================================================
+# Check 5 — android build (gradlew assembleDebug)
+# ============================================================================
+Write-Host ''
+Write-Host '== Check 5/5: android build (assembleDebug) ==' -ForegroundColor Cyan
 
 $gradleOut = & (Join-Path $root 'gradlew.bat') assembleDebug 2>&1 | Out-String
 $gradleExit = $LASTEXITCODE

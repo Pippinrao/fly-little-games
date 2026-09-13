@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  大厅 — the pre-match page where both ends see the same pending configuration (design §22.3).
+
+  The rows themselves are built by NearbyLobbyActivity from one table, because the content of this
+  page is a field list rather than a hand-placed layout: every §22.3 field must be present, in the
+  design's own order, each paired with the exact reason it cannot be shown. Keeping that pairing in
+  one table is what makes "every field is present" checkable instead of a matter of counting rows in
+  XML.
+
+  Only the 确认入局 control is placed here. D8 makes it one primary action per side whose confirm
+  action is bound to a pending-configuration fingerprint rendered identically on both ends; until
+  the session ABI exposes that configuration the button is disabled and names why, rather than
+  confirming a state that was never read.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nearby_lobby_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/fly_background" android:orientation="vertical">
+    <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_lobby_toolbar"
+        android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
+        android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
+        app:title="@string/nearby_lobby_title" app:titleTextColor="@color/fly_on_surface" />
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
+            <LinearLayout android:id="@+id/nearby_lobby_rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_lobby_confirm" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_6" android:enabled="false" android:text="@string/nearby_lobby_confirm" />
+            <TextView android:id="@+id/nearby_lobby_confirm_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_session_read" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

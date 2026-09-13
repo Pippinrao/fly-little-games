@@ -413,6 +413,10 @@ public class MainActivity extends AppCompatActivity {
                 Gravity.TOP | Gravity.END);
         pauseParams.setMargins(pauseMargin, pauseMargin, pauseMargin, pauseMargin);
         root.addView(pauseButton, pauseParams);
+        // The nearby status surface exists only while a nearby session does (D7). Today no session
+        // can exist, so this attaches nothing and local single-player keeps a clean game screen;
+        // the banner is the D6 pinned, non-dismissible element for 冻结 / 重连倒计时 / authority 超时.
+        NearbyInGameStatus.installBanner(this, root);
         pauseButton.setOnApplyWindowInsetsListener((button, insets) -> {
             FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
             params.setMargins(pauseMargin,
@@ -773,6 +777,10 @@ public class MainActivity extends AppCompatActivity {
         Button settingsButton = drawerButton(R.id.pause_settings, R.string.settings, false);
         settingsButton.setOnClickListener(v -> closePauseForNavigation(SettingsActivity.class));
         drawer.addView(settingsButton, matchHeight(dp(48), 0));
+
+        // §22.4's lightweight status rows join the existing drawer rather than a new overlay host
+        // (D6). No session means no rows at all, not blocked rows (D7).
+        NearbyInGameStatus.installDrawerRows(this, drawer);
 
         int screenWidth = getResources().getDisplayMetrics().widthPixels;
         int drawerWidth = Math.min(dp(360), Math.max(dp(280), Math.round(screenWidth * .38f)));

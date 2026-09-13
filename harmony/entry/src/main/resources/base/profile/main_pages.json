@@ -6,6 +6,10 @@
     "pages/Settings",
     "pages/ControlLayout",
     "pages/Licenses",
-    "pages/Index"
+    "pages/Index",
+    "pages/NearbyFriends",
+    "pages/NearbyPairing",
+    "pages/NearbyLobby",
+    "pages/NearbyFriendsManage"
   ]
 }
