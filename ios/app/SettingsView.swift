@@ -1,207 +1,247 @@
 import SwiftUI
 
-/// Settings roots match Android `SettingsSection` order. Layout persist goes
-/// through `FlyNesAppBridge` (`fly_control_layout_*`).
+/// Each change is committed through the validated shared settings repository.
 struct SettingsView: View {
-    @State private var section: String = "section.display"
-    @State private var aspectMode: UInt32 = 1
-    @State private var videoQualityPreset: UInt32 = 2
-    @State private var spatialMode: UInt32 = 2
-    @State private var postEffect: UInt32 = 1
-    @State private var adaptiveProtection: UInt32 = 1
-    @State private var directionMode: UInt32 = 3
-    @State private var hapticLevel: UInt32 = 3
-    @State private var distinctAbHaptics: UInt32 = 0
-    @State private var audioEnabled: UInt32 = 1
-    @State private var audioFocusPolicy: UInt32 = 1
-    @State private var localeTag: String = "system"
-    @State private var autosaveEnabled: UInt32 = 1
-    @State private var status: String = ""
-
-    private let sections = [
-        "section.display",
-        "section.controls",
-        "section.audio",
-        "section.game_language",
-        "section.about",
-    ]
+    @Environment(\.dismiss) private var dismiss
+    @State private var section = "section.display"
+    @State private var snapshot: [String: Any] = [:]
+    @State private var failure: String?
+    private let sections = ["section.display", "section.controls", "section.audio", "section.game_language", "section.about"]
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(sections, id: \.self) { key in
-                    Button {
-                        section = key
-                    } label: {
-                        Text(LocalizedStringKey(key))
-                            .foregroundStyle(section == key ? Color.primary : Color.secondary)
-                    }
-                }
-                Section(LocalizedStringKey(section)) {
-                    switch section {
-                    case "section.display":
-                        displaySection
-                    case "section.controls":
-                        controlsSection
-                    case "section.audio":
-                        audioSection
-                    case "section.game_language":
-                        gameLanguageSection
-                    default:
-                        aboutSection
-                    }
-                }
-                if !status.isEmpty {
-                    Section {
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            HStack(spacing: 0) {
+                List(sections, id: \.self) { key in
+                    Button { section = key } label: {
+                        HStack {
+                            Text(LocalizedStringKey(key))
+                            Spacer()
+                            if section == key { Image(systemName: "checkmark").font(.caption) }
+                        }
+                        .foregroundStyle(section == key ? Color.accentColor : Color.primary)
+                    }.accessibilityIdentifier(key)
+                }.frame(width: 240)
+                Form {
+                    if snapshot.isEmpty {
+                        Text("settings.load_failed")
+                        Button("library.source.retry", action: load)
+                    } else {
+                        Section(LocalizedStringKey(section)) {
+                            switch section {
+                            case "section.display": displaySection
+                            case "section.controls": controlsSection
+                            case "section.audio": audioSection
+                            case "section.game_language": gameLanguageSection
+                            default: aboutSection
+                            }
+                        }
                     }
                 }
             }
             .navigationTitle("settings.title")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                Button("settings.apply") {
-                    apply()
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("common.done") { dismiss() }.accessibilityIdentifier("settings_done")
                 }
             }
             .onAppear(perform: load)
+            .alert("settings.save_failed", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+                Button("common.ok", role: .cancel) { failure = nil }
+            } message: { Text(failure ?? "") }
         }
     }
 
+    private var preset: UInt32 { number("video_quality_preset") }
+    private var spatialSelection: Binding<UInt32> {
+        Binding(get: { preset == 1 ? 1 : preset == 2 || preset == 3 ? 2 : number("custom_spatial_mode") },
+                set: { persist(["custom_spatial_mode": $0]) })
+    }
+    private var postSelection: Binding<UInt32> {
+        Binding(get: { preset == 4 ? number("custom_post_effect") : 1 },
+                set: { persist(["custom_post_effect": $0]) })
+    }
     @ViewBuilder private var displaySection: some View {
-        Picker("settings.aspect", selection: $aspectMode) {
+        Picker("settings.aspect", selection: integer("aspect_mode")) {
             Text("4:3").tag(UInt32(1))
-            Text("Square").tag(UInt32(2))
-            Text("Integer").tag(UInt32(3))
+            Text("settings.aspect_square").tag(UInt32(2))
+            Text("settings.aspect_integer").tag(UInt32(3))
         }
-        Picker("settings.video_quality", selection: $videoQualityPreset) {
-            Text("settings.video_power_saver").tag(UInt32(1))
-            Text("settings.video_balanced").tag(UInt32(2))
-            Text("settings.video_custom").tag(UInt32(4))
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+            presetCard(1, "settings.video_power_saver", "settings.video_power_summary")
+            presetCard(2, "settings.video_balanced", "settings.video_balanced_summary")
+            presetCard(3, "settings.video_extreme_unavailable", "settings.video_extreme_summary")
+            presetCard(4, "settings.video_custom", "settings.video_custom_summary")
+        }.accessibilityIdentifier("settings_video_quality")
+        if preset == 4 {
+            LabeledContent("settings.refresh", value: "60 Hz")
+            LabeledContent("settings.temporal") { Text("settings.temporal_native") }
         }
-        Text("settings.video_extreme_locked")
-            .foregroundStyle(.secondary)
-        Picker("settings.spatial", selection: $spatialMode) {
-            Text("Nearest").tag(UInt32(1))
-            Text("Sharp").tag(UInt32(2))
+        Picker("settings.spatial", selection: spatialSelection) {
+            Text("settings.spatial_nearest").tag(UInt32(1))
+            Text("settings.spatial_sharp").tag(UInt32(2))
             Text("MMPX").tag(UInt32(3))
             Text("ScaleFX").tag(UInt32(4))
-        }
-        .disabled(videoQualityPreset != 4)
-        Picker("settings.crt", selection: $postEffect) {
-            Text("Off").tag(UInt32(1))
-            Text("On").tag(UInt32(2))
-        }
-        .disabled(videoQualityPreset != 4)
-        Toggle("settings.adaptive_protection", isOn: Binding(
-            get: { adaptiveProtection != 0 },
-            set: { adaptiveProtection = $0 ? 1 : 0 }
-        ))
+        }.disabled(preset != 4)
+        Picker("settings.crt", selection: postSelection) {
+            Text("common.off").tag(UInt32(1))
+            Text("common.on").tag(UInt32(2))
+        }.disabled(preset != 4)
+        Text("settings.video_extreme_locked").font(.caption).foregroundStyle(.secondary)
+        Toggle("settings.adaptive_protection", isOn: boolean("adaptive_protection"))
     }
-
+    private func presetCard(_ value: UInt32, _ title: String, _ subtitle: String) -> some View {
+        Button { persist(["video_quality_preset": value]) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top) {
+                    Image(systemName: value == 3 ? "lock.fill" : preset == value ? "checkmark.circle.fill" : "circle")
+                    Text(LocalizedStringKey(title)).font(.subheadline.weight(.semibold))
+                }
+                Text(LocalizedStringKey(subtitle)).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+            .padding(10)
+            .background(preset == value ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(preset == value ? Color.accentColor : Color.clear))
+        }
+        .buttonStyle(.plain)
+        .disabled(value == 3)
+        .accessibilityIdentifier("video_preset_\(value)")
+    }
     @ViewBuilder private var controlsSection: some View {
-        Picker("settings.direction", selection: $directionMode) {
-            Text("Follow joystick").tag(UInt32(1))
-            Text("Fixed joystick").tag(UInt32(2))
-            Text("D-pad").tag(UInt32(3))
+        Picker("settings.direction", selection: integer("direction_mode")) {
+            Text("settings.direction_follow").tag(UInt32(1))
+            Text("settings.direction_fixed").tag(UInt32(2))
+            Text("settings.direction_dpad").tag(UInt32(3))
         }
-        Picker("settings.haptics", selection: $hapticLevel) {
-            Text("Off").tag(UInt32(1))
-            Text("Light").tag(UInt32(2))
-            Text("Standard").tag(UInt32(3))
-            Text("Strong").tag(UInt32(4))
+        NavigationLink { ControlLayoutEditorView() } label: {
+            VStack(alignment: .leading) {
+                Text("control_layout.title")
+                Text("control_layout.summary").font(.caption).foregroundStyle(.secondary)
+            }
+        }.accessibilityIdentifier("settings_layout")
+        if number("direction_mode") != 3 {
+            VStack(alignment: .leading) {
+                Text("settings.dead_zone")
+                Slider(value: decimal("dead_zone"), in: 0.08...0.45)
+            }
         }
-        Toggle("settings.distinct_ab_haptics", isOn: Binding(
-            get: { distinctAbHaptics != 0 },
-            set: { distinctAbHaptics = $0 ? 1 : 0 }
-        ))
-        NavigationLink {
-            ControlLayoutEditorView()
-        } label: {
-            Text("control_layout.title")
+        Picker("settings.haptics", selection: integer("haptic_level")) {
+            Text("common.off").tag(UInt32(1))
+            Text("settings.haptics_light").tag(UInt32(2))
+            Text("settings.haptics_standard").tag(UInt32(3))
+            Text("settings.haptics_strong").tag(UInt32(4))
+        }
+        Toggle("settings.distinct_ab_haptics", isOn: boolean("distinct_ab_haptics"))
+            .disabled(number("haptic_level") == 1)
+        Button("settings.haptic_preview", action: previewHaptics)
+            .disabled(number("haptic_level") == 1)
+        Button("control_layout.recommended") {
+            do {
+                let bridge = FlyNesAppBridge.sharedInstance()
+                // Android controls.reset restores the whole controls section;
+                // the editor's Reset button still changes only its layout draft.
+                try bridge.applySettings(["layout_preset": UInt32(1), "direction_mode": UInt32(2),
+                    "button_scale": 1.0, "vertical_offset": 0.0, "control_opacity": 0.78,
+                    "joystick_scale": 1.0, "dead_zone": 0.18, "haptic_level": UInt32(2),
+                    "distinct_ab_haptics": UInt32(1)])
+                try bridge.controlLayoutApply(ControlLayoutDraft.recommended)
+                load()
+            }
+            catch { failure = error.localizedDescription }
         }
     }
-
     @ViewBuilder private var audioSection: some View {
-        Toggle("settings.audio_enabled", isOn: Binding(
-            get: { audioEnabled != 0 },
-            set: { audioEnabled = $0 ? 1 : 0 }
-        ))
-        Picker("settings.audio_focus", selection: $audioFocusPolicy) {
+        Toggle("settings.audio_enabled", isOn: boolean("audio_enabled"))
+            .accessibilityIdentifier("settings_audio")
+        Picker("settings.audio_focus", selection: integer("audio_focus_policy")) {
             Text("settings.audio_focus_pause").tag(UInt32(1))
             Text("settings.audio_focus_duck").tag(UInt32(2))
             Text("settings.audio_focus_ignore").tag(UInt32(3))
         }
     }
-
     @ViewBuilder private var gameLanguageSection: some View {
-        Picker("settings.app_language", selection: $localeTag) {
+        Picker("settings.app_language", selection: Binding<String>(
+            get: {
+                let tag = snapshot["locale_tag"] as? String ?? "system"
+                return tag.hasPrefix("zh") ? "zh-Hans" : tag.hasPrefix("en") ? "en" : "system"
+            },
+            set: { persist(["locale_tag": $0]) })) {
             Text("settings.language_system").tag("system")
             Text("English").tag("en")
             Text("简体中文").tag("zh-Hans")
-        }
-        Toggle("settings.autosave", isOn: Binding(
-            get: { autosaveEnabled != 0 },
-            set: { autosaveEnabled = $0 ? 1 : 0 }
-        ))
+        }.accessibilityIdentifier("settings_language")
+        Toggle("settings.autosave", isOn: boolean("autosave_enabled"))
+        NavigationLink { CatalogSourceManagementView() } label: { Text("library.sources") }
     }
-
     @ViewBuilder private var aboutSection: some View {
-        Text("settings.about_app")
-        Text("settings.licenses")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        // 好友管理 is a row inside the existing Settings page that opens a page
-        // of its own — never a sixth settings root (spec §10 D2). It stays
-        // enabled because entering the page is real local navigation and the
-        // page is where the blocked friend-store keys are displayed (spec §4).
-        NavigationLink {
-            NearbyFriendsManageView()
-        } label: {
-            Text("nearby.friends.manage")
-        }
+        Text("FlyNES").font(.headline)
+        Text("settings.about_description").foregroundStyle(.secondary)
+        NavigationLink { LicenseListView() } label: { Text("settings.licenses") }
+            .accessibilityIdentifier("settings_licenses")
     }
 
-    private func load() {
-        let snapshot = FlyNesAppBridge.sharedInstance().settingsGet()
-        aspectMode = snapshot["aspect_mode"] as? UInt32 ?? aspectMode
-        videoQualityPreset = snapshot["video_quality_preset"] as? UInt32 ?? videoQualityPreset
-        if videoQualityPreset == 3 {
-            videoQualityPreset = 2
-        }
-        spatialMode = snapshot["custom_spatial_mode"] as? UInt32 ?? spatialMode
-        postEffect = snapshot["custom_post_effect"] as? UInt32 ?? postEffect
-        adaptiveProtection = snapshot["adaptive_protection"] as? UInt32 ?? adaptiveProtection
-        directionMode = snapshot["direction_mode"] as? UInt32 ?? directionMode
-        hapticLevel = snapshot["haptic_level"] as? UInt32 ?? hapticLevel
-        distinctAbHaptics = snapshot["distinct_ab_haptics"] as? UInt32 ?? distinctAbHaptics
-        audioEnabled = snapshot["audio_enabled"] as? UInt32 ?? audioEnabled
-        audioFocusPolicy = snapshot["audio_focus_policy"] as? UInt32 ?? audioFocusPolicy
-        localeTag = snapshot["locale_tag"] as? String ?? localeTag
-        autosaveEnabled = snapshot["autosave_enabled"] as? UInt32 ?? autosaveEnabled
+    private func number(_ key: String) -> UInt32 { (snapshot[key] as? NSNumber)?.uint32Value ?? 0 }
+    private func integer(_ key: String) -> Binding<UInt32> {
+        Binding(get: { number(key) }, set: { persist([key: $0]) })
     }
-
-    private func apply() {
-        let payload: [String: Any] = [
-            "aspect_mode": aspectMode,
-            "video_quality_preset": videoQualityPreset == 3 ? 2 : videoQualityPreset,
-            "custom_spatial_mode": spatialMode,
-            "custom_post_effect": postEffect,
-            "adaptive_protection": adaptiveProtection,
-            "direction_mode": directionMode,
-            "haptic_level": hapticLevel,
-            "distinct_ab_haptics": distinctAbHaptics,
-            "audio_enabled": audioEnabled,
-            "audio_focus_policy": audioFocusPolicy,
-            "locale_tag": localeTag,
-            "autosave_enabled": autosaveEnabled,
-        ]
+    private func boolean(_ key: String) -> Binding<Bool> {
+        Binding(get: { number(key) != 0 }, set: { persist([key: $0 ? UInt32(1) : UInt32(0)]) })
+    }
+    private func decimal(_ key: String) -> Binding<Double> {
+        Binding(get: { (snapshot[key] as? NSNumber)?.doubleValue ?? 0.22 }, set: { persist([key: $0]) })
+    }
+    private func load() { snapshot = FlyNesAppBridge.sharedInstance().settingsGet() }
+    private func persist(_ patch: [String: Any]) {
         do {
-            try FlyNesAppBridge.sharedInstance().applySettings(payload)
-            status = "applied"
-        } catch {
-            status = error.localizedDescription
+            try FlyNesAppBridge.sharedInstance().applySettings(patch)
+            load()
+            if let tag = patch["locale_tag"] as? String {
+                UserDefaults.standard.set(tag, forKey: "FlyNesLocaleTag")
+            }
+        } catch { failure = error.localizedDescription }
+    }
+    private func previewHaptics() {
+        let level = number("haptic_level")
+        guard level > 1 else { return }
+        let distinct = number("distinct_ab_haptics") != 0
+        let intensity: CGFloat = level == 2 ? 0.4 : level == 4 ? 1.0 : 0.7
+        let style: UIImpactFeedbackGenerator.FeedbackStyle = level == 2 ? .light : level == 4 ? .heavy : .medium
+        UIImpactFeedbackGenerator(style: distinct ? .rigid : style).impactOccurred(intensity: intensity)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            UIImpactFeedbackGenerator(style: distinct ? .soft : style).impactOccurred(intensity: intensity)
         }
+    }
+}
+
+private struct LicenseListView: View {
+    private let licenses = [
+        ("FlyNES", "FlyNES-GPL-2.0"),
+        ("Nestopia UE", "Nestopia-GPL-2.0"),
+        ("From Below", "FromBelow-MIT"),
+        ("MMPX", "MMPX-MIT"),
+        ("ScaleFX", "ScaleFX-MIT"),
+        ("zlib", "zlib-license")
+    ]
+    var body: some View {
+        List(licenses, id: \.0) { title, resource in
+            NavigationLink(title) {
+                ScrollView {
+                    Text(contents(resource))
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }.navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            }
+        }.navigationTitle("settings.licenses").navigationBarTitleDisplayMode(.inline)
+    }
+    private func contents(_ name: String) -> String {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return FlyNesLocalizedString("settings.license_missing")
+        }
+        return text
     }
 }

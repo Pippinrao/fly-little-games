@@ -8,6 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// UUID→bookmark map. Security-scoped bookmarks stay in platform code and are
 /// never catalog rows.
 @interface FlyNesBookmarkStore : NSObject
+- (instancetype)initWithDefaults:(NSUserDefaults *)defaults;
 
 - (void)setBookmark:(NSData *)bookmark forUUID:(NSUUID *)uuid;
 - (nullable NSData *)bookmarkForUUID:(NSUUID *)uuid;
@@ -18,6 +19,9 @@ NS_ASSUME_NONNULL_BEGIN
                     didStartAccess:(BOOL * _Nullable)didStartAccess
                              error:(NSError * _Nullable * _Nullable)error;
 - (void)stopAccessing:(NSURL *)url;
+- (nullable NSURL *)resolveUUID:(NSUUID *)uuid
+                didStartAccess:(BOOL * _Nullable)didStartAccess
+                         error:(NSError * _Nullable * _Nullable)error;
 
 @end
 

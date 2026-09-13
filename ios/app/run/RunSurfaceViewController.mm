@@ -3,11 +3,25 @@
 #import "FlyNesAppBridge.h"
 #import "FlyNesRuntimeBridge.h"
 #import "GamepadOverlayView.h"
+#import "FlyNesMetalRenderer.h"
+#import "FlyNesDisplayLinkPacer.h"
+#import "FlyNesAudioPlayer.h"
+#import "AppLocalization.h"
+#import "CoverCapturePolicy.hpp"
+#import "FlyNesCoverStore.h"
+#import "GameCoverPolicy.hpp"
+#import <AVFoundation/AVFoundation.h>
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include <cmath>
+#include <memory>
+#include <string>
+
 #include "flynes/product/pause_actions.hpp"
+#include "PlaybackClock.hpp"
+#include "FrameInputLatch.hpp"
 
 namespace {
 
@@ -32,13 +46,13 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     switch (command)
     {
     case PauseCommand::Resume:
-        return @"Resume";
+        return FlyNesLocalizedString(@"pause.resume");
     case PauseCommand::GameCenter:
-        return @"Game Center";
+        return FlyNesLocalizedString(@"pause.game_center");
     case PauseCommand::Settings:
-        return @"Settings";
+        return FlyNesLocalizedString(@"pause.settings");
     }
-    return @"Resume";
+    return FlyNesLocalizedString(@"pause.resume");
 }
 
 // One in-game status row: the §2.4 label and, while the session ABI has no
@@ -74,11 +88,23 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     UIView *pauseLayer_;
     UIView *nearbyBanner_;
     FlyNesRuntimeBridge *runtime_;
+    FlyNesMetalRenderer *renderer_;
+    FlyNesDisplayLinkPacer *pacer_;
+    FlyNesAudioPlayer *audio_;
+    CAMetalLayer *metalLayer_;
+    flynes::ios::PlaybackClock clock_;
+    flynes::ios::CoverCaptureSession coverSession_;
+    uint32_t buttons_;
+    flynes::ios::FrameInputLatch input_;
+    BOOL visible_;
+    BOOL foreground_;
+    BOOL running_;
+    BOOL audioInterrupted_;
     BOOL paused_;
     BOOL drawerOpen_;
     BOOL checkpointFailed_;
-    BOOL autosaveRestored_;
     BOOL romReady_;
+    BOOL videoFailureShown_;
 }
 
 - (void)viewDidLoad
@@ -89,27 +115,41 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     paused_ = NO;
     drawerOpen_ = NO;
     checkpointFailed_ = NO;
-    autosaveRestored_ = NO;
     romReady_ = NO;
+    foreground_ = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
 
     metalHost_ = [[UIView alloc] initWithFrame:self.view.bounds];
     metalHost_.translatesAutoresizingMaskIntoConstraints = NO;
     metalHost_.backgroundColor = UIColor.blackColor;
     CAMetalLayer *layer = [CAMetalLayer layer];
+    metalLayer_ = layer;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     layer.framebufferOnly = YES;
     metalHost_.layer.sublayers = @[ layer ];
     [self.view addSubview:metalHost_];
+    renderer_ = [[FlyNesMetalRenderer alloc] initWithLayer:layer];
+    audio_ = [[FlyNesAudioPlayer alloc] init];
+    pacer_ = [[FlyNesDisplayLinkPacer alloc] init];
 
     overlay_ = [[GamepadOverlayView alloc] initWithFrame:self.view.bounds];
     overlay_.translatesAutoresizingMaskIntoConstraints = NO;
-    __weak typeof(self) weakSelf = self;
+    __weak __typeof__(self) weakSelf = self;
+    pacer_.onTick = ^(CFTimeInterval timestamp, CFTimeInterval presentedTime) {
+        (void)presentedTime;
+        [weakSelf displayTick:timestamp];
+    };
     overlay_.buttonsChanged = ^(uint32_t buttons) {
       RunSurfaceViewController *strong = weakSelf;
       if (strong == nil)
           return;
       [strong applyOverlayButtons:buttons];
     };
+    overlay_.buttonsReleased = ^(uint32_t buttons, NSTimeInterval downTime, NSTimeInterval upTime) {
+        RunSurfaceViewController *strong = weakSelf;
+        if (strong && strong->running_) strong->input_.release(buttons,downTime,upTime);
+    };
+    overlay_.buttonsCancelled = ^{ RunSurfaceViewController *strong = weakSelf;
+        if (strong) strong->input_.clear(); };
     [self.view addSubview:overlay_];
 
     pauseButton_ = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -122,7 +162,7 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     pauseButton_.layer.borderWidth = 2.0;
     pauseButton_.layer.borderColor = [UIColor colorWithRed:1.0 green:0.42 blue:0.37 alpha:1.0].CGColor;
     pauseButton_.accessibilityIdentifier = @"OPEN_PAUSE";
-    pauseButton_.accessibilityLabel = @"Pause";
+    pauseButton_.accessibilityLabel = FlyNesLocalizedString(@"run.pause");
     [pauseButton_ addTarget:self action:@selector(openPauseDrawer) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:pauseButton_];
     [self buildNearbyBanner];
@@ -145,17 +185,53 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
 
     runtime_ = [[FlyNesRuntimeBridge alloc] init];
     [runtime_ createRuntime:nil];
-    NSData *rom = nil;
-    if ([self canonicalIdMapsToBuiltinFromBelow])
+    NSData *rom = self.romData;
+    if (rom.length == 0 && [self canonicalIdMapsToBuiltinFromBelow])
         rom = [self bundledFromBelowRom];
+    self.romData = rom;
     NSError *romError = nil;
     if (rom.length > 0)
         romReady_ = [runtime_ loadRom:rom error:&romError];
-    if (romReady_)
+    if (romReady_) {
+        [FlyNesAppBridge.sharedInstance markPlayedCanonicalID:self.canonicalId error:nil];
         [self restoreAutosave];
-    else
+    } else
         [self surfaceRomOpenFailure];
     [self reloadProductSettings];
+    NSNotificationCenter *notifications = NSNotificationCenter.defaultCenter;
+    [notifications addObserver:self selector:@selector(applicationWillResignActive:)
+                          name:UIApplicationWillResignActiveNotification object:nil];
+    [notifications addObserver:self selector:@selector(applicationDidBecomeActive:)
+                          name:UIApplicationDidBecomeActiveNotification object:nil];
+    [notifications addObserver:self selector:@selector(audioInterruption:)
+                          name:AVAudioSessionInterruptionNotification object:nil];
+    [notifications addObserver:self selector:@selector(audioRouteChanged:)
+                          name:AVAudioSessionRouteChangeNotification object:nil];
+}
+
+- (void)dealloc
+{
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    [pacer_ invalidate];
+    [audio_ pause];
+    [runtime_ destroyRuntime];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    visible_ = YES;
+    [self drawFrame];
+    foreground_ = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+    [self updatePlayback];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    visible_ = NO;
+    [self stopPlayback];
+    [self saveAutosaveIfEnabled];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -169,12 +245,19 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     [super viewDidLayoutSubviews];
     const UIEdgeInsets insets = self.view.safeAreaInsets;
     overlay_.layoutMargins = insets;
-    CALayer *metal = metalHost_.layer.sublayers.firstObject;
-    metal.frame = metalHost_.bounds;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    metalLayer_.frame = metalHost_.bounds;
+    CGFloat scale = self.view.window.screen.scale > 0 ? self.view.window.screen.scale : UIScreen.mainScreen.scale;
+    metalLayer_.contentsScale = scale;
+    metalLayer_.drawableSize = CGSizeMake(metalHost_.bounds.size.width * scale, metalHost_.bounds.size.height * scale);
+    [CATransaction commit];
+    [self drawFrame];
 }
 
 - (void)reloadProductSettings
 {
+    NSAssert(NSThread.isMainThread, @"Playback settings are main-thread owned");
     NSDictionary<NSString *, id> *snapshot = FlyNesAppBridge.sharedInstance.settingsGet;
     NSNumber *direction = snapshot[@"direction_mode"];
     NSNumber *haptic = snapshot[@"haptic_level"];
@@ -183,9 +266,24 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
         overlay_.joystickMode = static_cast<FlyNesJoystickMode>(direction.unsignedIntValue);
     if (haptic != nil)
         overlay_.hapticLevel = haptic.unsignedIntValue;
+    overlay_.distinctAbHaptics = [snapshot[@"distinct_ab_haptics"] boolValue];
     if (dead != nil)
         overlay_.deadZone = dead.floatValue;
+    NSNumber *opacity = snapshot[@"control_opacity"];
+    if (opacity) overlay_.controlOpacity = opacity.floatValue;
     overlay_.layoutUtf8 = FlyNesAppBridge.sharedInstance.controlLayoutGet;
+    const NSUInteger preset = [snapshot[@"video_quality_preset"] unsignedIntegerValue];
+    FlyNesSpatialMode spatial = preset == 1 ? FlyNesSpatialNearest : FlyNesSpatialSharpBilinear;
+    FlyNesPostEffect post = FlyNesPostNone;
+    if (preset == 4) {
+        spatial = static_cast<FlyNesSpatialMode>([snapshot[@"custom_spatial_mode"] integerValue]);
+        post = static_cast<FlyNesPostEffect>([snapshot[@"custom_post_effect"] integerValue]);
+    }
+    [renderer_ setSpatialMode:spatial postEffect:post];
+    [renderer_ setAspectMode:static_cast<FlyNesAspectMode>([snapshot[@"aspect_mode"] integerValue])];
+    audio_.enabled = snapshot[@"audio_enabled"] == nil || [snapshot[@"audio_enabled"] boolValue];
+    audio_.focusPolicy = snapshot[@"audio_focus_policy"] ? [snapshot[@"audio_focus_policy"] unsignedIntegerValue] : 1;
+    [self updatePlayback];
 }
 
 - (NSData *)bundledFromBelowRom
@@ -255,21 +353,22 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     NSData *blob = [NSData dataWithContentsOfURL:url];
     if (blob.length == 0)
         return;
-    [runtime_ loadCheckpoint:blob error:nil];
+    checkpointFailed_ = ![self restoreCheckpoint:blob error:nil];
 }
 
 - (void)surfaceRomOpenFailure
 {
-    NSString *message = NSLocalizedString(@"library.rom_open_failed", nil);
+    NSString *message = FlyNesLocalizedString(@"library.rom_open_failed");
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:nil
                                             message:message
                                      preferredStyle:UIAlertControllerStyleAlert];
     alert.view.accessibilityIdentifier = @"library_rom_open_failed";
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:NSLocalizedString(@"pause.game_center", nil)
+    __weak __typeof__(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:FlyNesLocalizedString(@"pause.game_center")
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction *_Nonnull action) {
+                                              (void)action;
                                               RunSurfaceViewController *strong = weakSelf;
                                               if (strong == nil || strong.onPauseCommand == nil)
                                                   return;
@@ -415,14 +514,8 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
 
 - (void)applyOverlayButtons:(uint32_t)buttons
 {
-    if (!romReady_ || paused_ || drawerOpen_)
-        return;
-    if (!autosaveRestored_)
-    {
-        [self restoreAutosave];
-        autosaveRestored_ = YES;
-    }
-    [runtime_ stepFrameWithButtons:buttons error:nil];
+    buttons_ = running_ ? buttons : 0;
+    input_.update(buttons_);
 }
 
 - (void)openPauseDrawer
@@ -431,11 +524,10 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
         return;
     paused_ = YES;
     drawerOpen_ = YES;
+    [self stopPlayback];
     overlay_.hidden = YES;
     pauseButton_.hidden = YES;
-    [runtime_ stepFrameWithButtons:0 error:nil];
-    NSData *blob = [runtime_ saveCheckpoint:nil];
-    checkpointFailed_ = blob == nil || ![self persistAutosave:blob];
+    [self saveAutosaveIfEnabled];
 
     pauseLayer_ = [[UIView alloc] initWithFrame:self.view.bounds];
     pauseLayer_.translatesAutoresizingMaskIntoConstraints = NO;
@@ -464,7 +556,7 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     {
         UILabel *failure = [[UILabel alloc] init];
         failure.translatesAutoresizingMaskIntoConstraints = NO;
-        failure.text = NSLocalizedString(@"pause.checkpoint_failed", nil);
+        failure.text = FlyNesLocalizedString(@"pause.checkpoint_failed");
         failure.accessibilityIdentifier = @"pause_checkpoint_failed";
         failure.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightRegular];
         failure.textColor = [UIColor colorWithRed:1.0 green:0.42 blue:0.37 alpha:1.0];
@@ -536,16 +628,19 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
             self.onPauseCommand(commandId);
         return;
     }
-    [self dismissPauseLayerKeepingPaused:NO];
+    [self dismissPauseLayerKeepingPaused:YES];
     if (self.onPauseCommand != nil)
         self.onPauseCommand(commandId);
 }
 
 - (void)resumeFromPause
 {
+    audioInterrupted_ = NO;
     paused_ = NO;
     checkpointFailed_ = NO;
     [self dismissPauseLayerKeepingPaused:NO];
+    [self reloadProductSettings];
+    [self updatePlayback];
 }
 
 - (void)dismissPauseLayerKeepingPaused:(BOOL)keepPaused
@@ -556,6 +651,211 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     drawerOpen_ = NO;
     overlay_.hidden = NO;
     pauseButton_.hidden = NO;
+}
+
+- (void)displayTick:(CFTimeInterval)timestamp
+{
+    NSAssert(NSThread.isMainThread, @"Playback is owned by the main run loop");
+    if (!running_ || ![self isPlaybackAllowed] || !clock_.beginTick(timestamp)) return;
+    BOOL produced = NO;
+    while (clock_.frameDue()) {
+        NSError *error = nil;
+        if (![runtime_ stepFrameWithButtons:input_.sample(NSProcessInfo.processInfo.systemUptime) error:&error]) {
+            paused_ = YES;
+            [self stopPlayback];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:FlyNesLocalizedString(@"run.emulation_paused")
+                message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+            __weak __typeof__(self) weakSelf = self;
+            [alert addAction:[UIAlertAction actionWithTitle:FlyNesLocalizedString(@"pause.game_center")
+                style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                    (void)action;
+                    RunSurfaceViewController *strong = weakSelf;
+                    if (strong.onPauseCommand) strong.onPauseCommand(@"game_center");
+                }]];
+            [self presentViewController:alert animated:YES completion:nil];
+            return;
+        }
+        clock_.didProduceSamples(runtime_.lastFrameSampleCount, 48000);
+        // Always drain the runtime PCM FIFO, including when sound is disabled.
+        NSData *pcm = [runtime_ pullPCM];
+        if (!audioInterrupted_) [audio_ enqueuePCM:pcm];
+        // Sample the produced native frame, including steps display presentation skips.
+        [self captureCoverFrame];
+        produced = YES;
+    }
+    if (produced) {
+        NSData *pixels = [runtime_ copyLatestRgb565Frame];
+        if (pixels.length) [renderer_ uploadRgb565:pixels width:256 height:240];
+    }
+    [self drawFrame];
+}
+
+/// Android `CoverCaptureCoordinator`: sample the game-only native frame at
+/// 2/4/6/8 seconds, score it off the main thread, and persist the best improvement.
+/// The UI, control overlay, CRT output, and pause drawer are never sampled.
+- (void)captureCoverFrame
+{
+    if (self.canonicalId.length == 0) return;
+    uint64_t sequence = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    NSData *pixels = [runtime_ copyLatestRgb565FrameWithSequence:&sequence width:&width height:&height];
+    if (pixels.length == 0 || width == 0 || height == 0) return;
+    if (!coverSession_.note_frame(sequence)) return;
+    const std::string canonical(self.canonicalId.UTF8String ?: "");
+    FlyNesCoverStore *store = FlyNesCoverStore.sharedInstance;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        const double score = flynes::ios::game_cover_score(
+            static_cast<const uint8_t *>(pixels.bytes), pixels.length, width, height);
+        if (!coverSession_.consider(score)) return;
+        [store storeRgb565Frame:pixels canonicalId:@(canonical.c_str()) width:width height:height];
+    });
+}
+
+- (void)drawFrame
+{
+    [renderer_ draw];
+    if (!renderer_.permanentFailure || videoFailureShown_) return;
+    paused_ = YES;
+    [self stopPlayback];
+    if (!visible_ || self.presentedViewController) return;
+    videoFailureShown_ = YES;
+    [self saveAutosaveIfEnabled];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:FlyNesLocalizedString(@"run.video_unavailable")
+        message:FlyNesLocalizedString(@"run.video_unavailable.detail") preferredStyle:UIAlertControllerStyleAlert];
+    __weak __typeof__(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:FlyNesLocalizedString(@"pause.game_center")
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            RunSurfaceViewController *strong = weakSelf;
+            if (strong.onPauseCommand) strong.onPauseCommand(@"game_center");
+        }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (BOOL)isPlaybackAllowed
+{
+    return visible_ && foreground_ && romReady_ && !paused_ && !drawerOpen_
+        && !(audioInterrupted_ && audio_.focusPolicy == 1);
+}
+
+- (void)updatePlayback
+{
+    if (![self isPlaybackAllowed]) { [self stopPlayback]; return; }
+    if (!running_) {
+        [overlay_ releaseAllButtons];
+        buttons_ = 0; input_.clear();
+        clock_.reset();
+        running_ = YES;
+        [pacer_ attachToView:metalHost_];
+    }
+    if (!audioInterrupted_ && audio_.enabled) {
+        NSError *error = nil;
+        if (![audio_ start:&error]) NSLog(@"FlyNES audio unavailable: %@", error.localizedDescription);
+    } else {
+        [audio_ pause];
+    }
+}
+
+- (void)stopPlayback
+{
+    running_ = NO;
+    [pacer_ invalidate];
+    clock_.reset();
+    buttons_ = 0; input_.clear();
+    [overlay_ releaseAllButtons];
+    [runtime_ clearInput];
+    [runtime_ discardAudio];
+    [audio_ pause];
+}
+
+- (void)saveAutosaveIfEnabled
+{
+    if (!romReady_) return;
+    NSNumber *enabled = FlyNesAppBridge.sharedInstance.settingsGet[@"autosave_enabled"];
+    if (enabled != nil && !enabled.boolValue) { checkpointFailed_ = NO; return; }
+    NSData *blob = [runtime_ saveCheckpoint:nil];
+    checkpointFailed_ = blob == nil || ![self persistAutosave:blob];
+}
+
+- (BOOL)restoreCheckpoint:(NSData *)checkpoint error:(NSError **)error
+{
+    NSAssert(NSThread.isMainThread, @"Playback checkpoints are main-thread owned");
+    [self stopPlayback];
+    const BOOL restored = [runtime_ loadCheckpoint:checkpoint error:error];
+    if (restored) {
+        NSData *pixels = [runtime_ copyLatestRgb565Frame];
+        if (pixels.length) [renderer_ uploadRgb565:pixels width:256 height:240];
+        [self drawFrame];
+    }
+    [self updatePlayback];
+    return restored;
+}
+
+- (BOOL)resetGame:(NSError **)error
+{
+    NSAssert(NSThread.isMainThread, @"Playback reset is main-thread owned");
+    [self stopPlayback];
+    romReady_ = self.romData.length > 0 && [runtime_ loadRom:self.romData error:error];
+    // Android restarts the cover best-score gate per play session.
+    coverSession_ = flynes::ios::CoverCaptureSession{};
+    [self updatePlayback];
+    return romReady_;
+}
+
+- (void)applicationWillResignActive:(NSNotification *)notification
+{
+    (void)notification;
+    foreground_ = NO;
+    [self stopPlayback];
+    [self saveAutosaveIfEnabled];
+}
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+    (void)notification;
+    foreground_ = YES;
+    [self reloadProductSettings];
+}
+
+- (void)audioInterruption:(NSNotification *)notification
+{
+    // AVAudioSession notifications can arrive off the UI thread.
+    NSDictionary *info = notification.userInfo;
+    __weak __typeof__(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        RunSurfaceViewController *strong = weakSelf;
+        if (!strong) return;
+        const BOOL began = [info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan;
+        if (began) {
+            strong->audioInterrupted_ = YES;
+            [strong->audio_ pause];
+            [strong->overlay_ releaseAllButtons];
+            strong->buttons_ = 0; strong->input_.clear();
+            [strong->runtime_ clearInput];
+            [strong updatePlayback];
+        } else {
+            const BOOL resume = ([info[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue]
+                                  & AVAudioSessionInterruptionOptionShouldResume) != 0;
+            strong->audioInterrupted_ = NO;
+            if (!resume) [strong openPauseDrawer];
+            else [strong updatePlayback];
+        }
+    });
+}
+
+- (void)audioRouteChanged:(NSNotification *)notification
+{
+    const NSUInteger reason = [notification.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue];
+    __weak __typeof__(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        RunSurfaceViewController *strong = weakSelf;
+        if (!strong) return;
+        if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable && strong->running_) {
+            [strong openPauseDrawer]; // Headphones unplugged: do not unexpectedly use the speaker.
+        } else if (strong->running_) {
+            [strong->audio_ flush];
+        }
+    });
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations

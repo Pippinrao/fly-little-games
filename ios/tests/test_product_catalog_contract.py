@@ -74,7 +74,49 @@ def main() -> int:
 
     row = sources["ios/app/CatalogGameRow.swift"]
     require("struct CatalogGameRow" in row, "game row view is missing")
-    require("displayName" in row, "game row must show displayName")
+    # Android cards render the locale title and the other language as metadata, with
+    # the filename kept only as the untranslated fallback.
+    require("titlePrimary" in row and "titleSecondary" in row,
+            "game row must show the locale title and its secondary language")
+
+    # Automatic covers: the store writes SHA-256-named 320x240 PNGs into
+    # covers/v1, and capture samples the runtime's authoritative frame sequence.
+    store = read("ios/app/platform/FlyNesCoverStore.mm")
+    require("covers/v1" in store, "covers must live in the private covers/v1 directory")
+    require("CC_SHA256" in store, "cover filenames must be SHA-256 of the canonical id")
+    require("kCoverWidth = 320" in store and "kCoverHeight = 240" in store,
+            "covers must be persisted at 320x240")
+    require("std::rename(" in store, "cover writes must be atomic")
+    require("NSURLIsExcludedFromBackupKey" in store,
+            "captured covers must stay out of device backups")
+    require(not re.search(r"\b(NSLog|print)\b.*canonicalId", store),
+            "cover storage must not log canonical ids")
+
+    policy = read("ios/app/platform/CoverCapturePolicy.hpp")
+    require("GameCoverPolicy.hpp" in policy and "note_frame" in policy
+            and "consider" in policy,
+            "capture policy must apply the shared sampling offsets and quality gate")
+    run = read("ios/app/run/RunSurfaceViewController.mm")
+    require("CoverCaptureSession" in run and "captureCoverFrame" in run,
+            "the run surface must own one capture session per play session")
+    require("copyLatestRgb565FrameWithSequence" in run,
+            "capture must sample the runtime frame sequence, not a view counter")
+    require("game_cover_score" in run,
+            "capture must score with the shared Android FrameQuality port")
+    require("QOS_CLASS_UTILITY" in run,
+            "scoring and persistence must not block the display link")
+
+    # The presentation helper must be compiled into the product target.
+    app_cmake = read("ios/app/CMakeLists.txt")
+    for source in ("platform/CatalogPresentation.mm", "platform/FlyNesCoverStore.mm"):
+        require(source in app_cmake, f"{source} must be compiled into the product")
+
+    # Device qualification entry points.
+    require("FLYNES_IOS_SIGNING_TEAM" in app_cmake,
+            "device signing must be an explicit opt-in cache variable")
+    for script in ("ios/scripts/build_device.sh", "ios/scripts/package_device.sh",
+                   "ios/docs/iphone-device-acceptance.md"):
+        require((ROOT / script).is_file(), f"missing device entry point: {script}")
 
     require(not FORBIDDEN.search(combined),
             "product Swift sources imported Stage-1-forbidden networking/runtime APIs")

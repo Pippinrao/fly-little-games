@@ -1,4 +1,6 @@
 #import "FlyNesAppBridge.h"
+#import "platform/AppLocalization.h"
+#import "platform/CatalogPresentation.h"
 
 #include <flynes/flynes_app.h>
 #include "flynes/product/game_center_item.hpp"
@@ -10,6 +12,8 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 
@@ -39,11 +43,21 @@ float float_value(NSDictionary<NSString *, id> *settings, NSString *key, float f
 std::string basename_utf8(const std::string& path)
 {
     const std::size_t slash = path.find_last_of("/\\");
-    if (slash == std::string::npos)
-        return path;
-    return path.substr(slash + 1u);
+    const std::string base = slash == std::string::npos ? path : path.substr(slash + 1u);
+    return base.empty() ? path : base;
 }
 
+BOOL row_bool(NSDictionary<NSString *, id> *row, NSString *key)
+{
+    id value = row[key];
+    return [value isKindOfClass:[NSNumber class]] ? [value boolValue] : NO;
+}
+
+/// Presentation data aligned with Android `RomPackageScanner`/`CanonicalGame`:
+/// raw files name themselves, ZIP snapshots hold the decoded entry path in
+/// `displayName` while `source_relative_path` keeps the outer package, and only
+/// the actual built-in manifest source is trusted for translations. The playable
+/// physical source is never altered here.
 NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& entry,
                                                      const fly_catalog_user_state& user)
 {
@@ -54,9 +68,19 @@ NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& en
     const std::string relative = entry.source_relative_path_utf8 == nullptr
                                      ? std::string{}
                                      : entry.source_relative_path_utf8;
-    const std::string original_filename = !display.empty() ? display : basename_utf8(relative);
-    const std::string title_en = !display.empty() ? display : original_filename;
-    const std::string title_zh_hans;
+    const BOOL builtin = entry.source_scope == FLY_SOURCE_SCOPE_BUILTIN;
+    const BOOL zip = entry.package_format == FLY_PACKAGE_FORMAT_ZIP;
+    const std::string package_filename = basename_utf8(relative);
+    const std::string original_filename = zip ? package_filename
+                                              : (display.empty() ? package_filename : display);
+    const std::string entry_name = zip ? display : std::string{};
+    const std::string search_aliases =
+        display + " " + relative + " " + package_filename + " " + entry_name;
+
+    NSDictionary<NSString *, id> *fields = [FlyNesCatalogPresentation
+        fieldsForFilename:@(original_filename.c_str())
+                entryPath:@(entry_name.c_str())
+           trustedBuiltin:builtin];
     std::int64_t last_played = 0;
     if (user.last_played_sequence > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
         last_played = std::numeric_limits<std::int64_t>::max();
@@ -65,16 +89,26 @@ NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& en
 
     return @{
         @"canonicalId" : @(canonical.c_str()),
-        @"displayName" : @(title_en.c_str()),
-        @"titleEn" : @(title_en.c_str()),
-        @"titleZhHans" : @(title_zh_hans.c_str()),
+        @"displayName" : @(original_filename.c_str()),
+        @"titleEn" : fields[@"titleEn"],
+        @"titleZhHans" : fields[@"titleZhHans"],
+        @"titleUnknown" : fields[@"titleUnknown"],
+        @"titleCandidates" : fields[@"titleCandidates"],
         @"originalFilename" : @(original_filename.c_str()),
+        @"searchAliases" : @(search_aliases.c_str()),
         @"compatibilityState" : @(entry.compatibility_state),
         @"freshness" : @(entry.freshness),
         @"sourceScope" : @(entry.source_scope),
+        @"sourceUUID" : [[[NSUUID alloc] initWithUUIDBytes:entry.source_uuid] UUIDString],
+        @"relativePath" : @(relative.c_str()),
+        @"entryPath" : @(entry_name.c_str()),
+        @"variantId" : @(entry.variant_id_utf8 ?: ""),
+        @"packageFormat" : @(entry.package_format),
+        @"payloadSHA256" : [NSData dataWithBytes:entry.payload_sha256 length:32],
+        @"physicalSHA256" : [NSData dataWithBytes:entry.physical_sha256 length:32],
         @"favorite" : @(user.favorite),
         @"lastPlayedSequence" : @(static_cast<std::uint64_t>(last_played)),
-        @"builtin" : @(entry.source_scope == FLY_SOURCE_SCOPE_BUILTIN ? YES : NO),
+        @"builtin" : @(builtin),
     };
 }
 
@@ -89,10 +123,8 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
     std::int64_t last_played = 0;
     if ([row[@"lastPlayedSequence"] isKindOfClass:[NSNumber class]])
         last_played = [row[@"lastPlayedSequence"] longLongValue];
-    const bool builtin = [row[@"builtin"] respondsToSelector:@selector(boolValue)]
-                             ? [row[@"builtin"] boolValue]
-                             : NO;
-    const bool favorite = [row[@"favorite"] respondsToSelector:@selector(unsignedIntValue)]
+    const bool builtin = row_bool(row, @"builtin");
+    const bool favorite = [row[@"favorite"] isKindOfClass:[NSNumber class]]
                               ? [row[@"favorite"] unsignedIntValue] != 0
                               : NO;
     return flynes::product::GameCenterItem{utf8(row[@"canonicalId"]),
@@ -101,7 +133,36 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
                                            builtin,
                                            favorite,
                                            last_played,
-                                           utf8(row[@"originalFilename"])};
+                                           utf8(row[@"searchAliases"] ?: row[@"originalFilename"])};
+}
+
+/// Android CanonicalGame aggregates every variant's title candidates, so one
+/// canonical game shows one card built from all of its sources. The chosen playable
+/// row supplies identity and play state; the presentation fields are merged across
+/// its variants so a trusted builtin title or a Chinese filename is not shadowed by
+/// whichever variant happened to win the freshness comparison.
+NSDictionary<NSString *, id> *with_merged_presentation(
+    NSDictionary<NSString *, id> *chosen, NSArray<NSDictionary<NSString *, id> *> *variants)
+{
+    if (variants.count < 2u)
+        return chosen;
+    NSMutableArray<NSString *> *aliases = [NSMutableArray array];
+    NSMutableDictionary<NSString *, id> *merged = nil;
+    for (NSDictionary<NSString *, id> *row in variants)
+    {
+        NSDictionary<NSString *, id> *fields = [FlyNesCatalogPresentation
+            mergeFields:merged ?: @{} with:row];
+        merged = [fields mutableCopy];
+        NSString *alias = row[@"searchAliases"];
+        if ([alias isKindOfClass:[NSString class]] && alias.length > 0)
+            [aliases addObject:alias];
+    }
+    NSMutableDictionary<NSString *, id> *result = [chosen mutableCopy];
+    result[@"titleEn"] = merged[@"titleEn"] ?: @"";
+    result[@"titleZhHans"] = merged[@"titleZhHans"] ?: @"";
+    result[@"titleUnknown"] = merged[@"titleUnknown"] ?: @"";
+    result[@"searchAliases"] = [aliases componentsJoinedByString:@" "];
+    return result;
 }
 
 } // namespace
@@ -279,6 +340,11 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
     current.custom_post_effect =
         uint32_value(settings, @"custom_post_effect", current.custom_post_effect);
     current.direction_mode = uint32_value(settings, @"direction_mode", current.direction_mode);
+    current.layout_preset = uint32_value(settings, @"layout_preset", current.layout_preset);
+    current.button_scale = float_value(settings, @"button_scale", current.button_scale);
+    current.joystick_scale = float_value(settings, @"joystick_scale", current.joystick_scale);
+    current.dead_zone = float_value(settings, @"dead_zone", current.dead_zone);
+    current.vertical_offset = float_value(settings, @"vertical_offset", current.vertical_offset);
     current.control_opacity = float_value(settings, @"control_opacity", current.control_opacity);
     current.haptic_level = uint32_value(settings, @"haptic_level", current.haptic_level);
     current.distinct_ab_haptics =
@@ -357,57 +423,172 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
     return games;
 }
 
+- (BOOL)scanFileRecords:(NSArray<NSDictionary<NSString *, id> *> *)records
+             sourceUUID:(NSData *)sourceUUID sourceScope:(uint32_t)sourceScope
+             incomplete:(BOOL)incomplete error:(NSError **)error
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (app_ == nullptr && ![self ensureAppLocked:error])
+        return NO;
+    if (sourceUUID.length != 16) {
+        if (error) *error = flynes_error(FLY_RESULT_INVALID_ARGUMENT, @"Invalid source identifier");
+        return NO;
+    }
+    fly_scan_config config{};
+    config.struct_size = FLY_SCAN_CONFIG_V1_SIZE;
+    config.version = FLY_SCAN_CONFIG_VERSION_1;
+    std::memcpy(config.source_uuid, sourceUUID.bytes, 16);
+    config.source_scope = sourceScope;
+    fly_scan_t *scan = nullptr;
+    fly_result result = fly_scan_begin(app_, &config, &scan);
+    if (result != FLY_RESULT_OK) {
+        if (error) *error = flynes_error(result, @"Cannot begin source scan");
+        return NO;
+    }
+    BOOL partial = incomplete;
+    __block NSString *rejection = nil;
+    for (NSDictionary *record in records) {
+        NSURL *url = record[@"url"];
+        NSString *relative = record[@"relativePath"];
+        NSString *display = record[@"displayName"];
+        if (![url isKindOfClass:NSURL.class] || ![relative isKindOfClass:NSString.class]
+            || ![display isKindOfClass:NSString.class]) {
+            partial = YES;
+            continue;
+        }
+        __block fly_result added = FLY_RESULT_OK;
+        __block BOOL accessed = NO;
+        NSError *coordinationError = nil;
+        NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+        [coordinator coordinateReadingItemAtURL:url options:0 error:&coordinationError
+                                    byAccessor:^(NSURL *coordinatedURL) {
+            const int fd = open(coordinatedURL.fileSystemRepresentation, O_RDONLY);
+            if (fd < 0) return;
+            accessed = YES;
+            fly_scan_file file{};
+            file.struct_size = FLY_SCAN_FILE_V1_SIZE;
+            file.version = FLY_SCAN_FILE_VERSION_1;
+            file.source_relative_path_utf8 = relative.UTF8String;
+            file.source_relative_path_utf8_length = (uint32_t)[relative lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            file.display_name_utf8 = display.UTF8String;
+            file.display_name_utf8_length = (uint32_t)[display lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            file.borrowed_fd = fd;
+            fly_scan_file_result outcome{};
+            outcome.struct_size = FLY_SCAN_FILE_RESULT_V1_SIZE;
+            outcome.version = FLY_SCAN_FILE_RESULT_VERSION_1;
+            added = fly_scan_add_file(scan, &file, &outcome);
+            if (added == FLY_RESULT_OK && outcome.outcome == FLY_SCAN_FILE_OUTCOME_REJECTED) {
+                NSString *reason = FlyNesLocalizedString(@"library.source.read_failed");
+                if (outcome.reason == FLY_SCAN_FILE_REASON_INVALID_ZIP) reason = FlyNesLocalizedString(@"library.source.invalid_zip");
+                else if (outcome.reason == FLY_SCAN_FILE_REASON_PACKAGE_LIMIT_EXCEEDED) reason = FlyNesLocalizedString(@"library.source.too_large");
+                else if (outcome.reason == FLY_SCAN_FILE_REASON_HASH_MISMATCH) reason = FlyNesLocalizedString(@"library.source.changed");
+                rejection = [NSString stringWithFormat:@"%@: %@", display, reason];
+            }
+            close(fd);
+        }];
+        if (added != FLY_RESULT_OK) {
+            fly_scan_abort(scan);
+            if (error) *error = flynes_error(added, @"Cannot scan source file");
+            return NO;
+        }
+        partial = partial || !accessed || coordinationError != nil;
+    }
+    result = fly_scan_commit(scan, partial ? FLY_SCAN_COMPLETENESS_PARTIAL : FLY_SCAN_COMPLETENESS_FULL);
+    fly_scan_abort(scan);
+    if (result == FLY_RESULT_OK && ((partial && !incomplete) || rejection != nil)) {
+        if (error) *error = [NSError errorWithDomain:@"com.flynes.app" code:NSFileReadUnknownError
+            userInfo:@{NSLocalizedDescriptionKey:rejection ?: FlyNesLocalizedString(@"library.source.partial"),
+                       @"scanCommitted":@YES}];
+        return NO;
+    }
+    if (result != FLY_RESULT_OK && error)
+        *error = flynes_error(result, @"Cannot publish source scan");
+    return result == FLY_RESULT_OK;
+}
+
+- (BOOL)setFavorite:(BOOL)favorite canonicalID:(NSString *)canonicalID error:(NSError **)error
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (app_ == nullptr && ![self ensureAppLocked:error]) return NO;
+    const fly_result result = fly_catalog_favorite_set(app_, canonicalID.UTF8String,
+        (uint32_t)[canonicalID lengthOfBytesUsingEncoding:NSUTF8StringEncoding], favorite ? 1 : 0);
+    if (result != FLY_RESULT_OK && error) *error = flynes_error(result, @"Cannot save favorite");
+    return result == FLY_RESULT_OK;
+}
+
+- (BOOL)markPlayedCanonicalID:(NSString *)canonicalID error:(NSError **)error
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (app_ == nullptr && ![self ensureAppLocked:error]) return NO;
+    const fly_result result = fly_catalog_mark_played(app_, canonicalID.UTF8String,
+        (uint32_t)[canonicalID lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
+    if (result != FLY_RESULT_OK && error) *error = flynes_error(result, @"Cannot save play history");
+    return result == FLY_RESULT_OK;
+}
+
+- (BOOL)removeSourceUUID:(NSData *)sourceUUID scope:(uint32_t)scope error:(NSError **)error
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (app_ == nullptr && ![self ensureAppLocked:error]) return NO;
+    if (sourceUUID.length != 16) {
+        if (error) *error = flynes_error(FLY_RESULT_INVALID_ARGUMENT, @"Invalid source identifier");
+        return NO;
+    }
+    const fly_result result = fly_source_remove(app_, (const uint8_t *)sourceUUID.bytes, scope);
+    if (result != FLY_RESULT_OK && error) *error = flynes_error(result, @"Cannot remove source");
+    return result == FLY_RESULT_OK;
+}
+
 - (NSArray<NSDictionary<NSString *, id> *> *)gameCenterFilteredGamesForCategory:(NSString *)category
                                                                          query:(NSString *)query
 {
     NSArray<NSDictionary<NSString *, id> *> *snapshot = [self catalogSnapshotGames];
-    NSMutableArray<NSDictionary<NSString *, id> *> *rows =
-        [NSMutableArray arrayWithCapacity:snapshot.count + 1u];
-    BOOL has_builtin = NO;
-    for (NSDictionary<NSString *, id> *row in snapshot)
-    {
-        [rows addObject:row];
-        if ([row[@"canonicalId"] isEqualToString:@"builtin"])
-            has_builtin = YES;
-    }
-    if (!has_builtin)
-    {
-        [rows insertObject:@{
-            @"canonicalId" : @"builtin",
-            @"displayName" : @"From Below",
-            @"titleEn" : @"From Below",
-            @"titleZhHans" : @"来自下方",
-            @"originalFilename" : @"from_below.nes",
-            @"compatibilityState" : @(FLY_COMPATIBILITY_PLAYABLE),
-            @"freshness" : @(0),
-            @"sourceScope" : @(FLY_SOURCE_SCOPE_BUILTIN),
-            @"favorite" : @(0),
-            @"lastPlayedSequence" : @(0ULL),
-            @"builtin" : @YES,
-        } atIndex:0];
-    }
-
     using flynes::product::GameCenterItem;
     using flynes::product::GameCenterState;
-
+    NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, id> *> *by_id =
+        [NSMutableDictionary dictionaryWithCapacity:snapshot.count];
+    NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, id> *> *> *variants =
+        [NSMutableDictionary dictionaryWithCapacity:snapshot.count];
+    for (NSDictionary<NSString *, id> *row in snapshot) {
+        NSString *canonical = row[@"canonicalId"];
+        if (![canonical isKindOfClass:NSString.class] || canonical.length == 0) continue;
+        NSMutableArray<NSDictionary<NSString *, id> *> *group = variants[canonical];
+        if (group == nil) {
+            group = [NSMutableArray array];
+            variants[canonical] = group;
+        }
+        [group addObject:row];
+        NSMutableDictionary *old = by_id[canonical];
+        if (!old) {
+            old = [row mutableCopy];
+            if (![old[@"searchAliases"] isKindOfClass:[NSString class]])
+                old[@"searchAliases"] = row[@"originalFilename"] ?: @"";
+            by_id[canonical] = old;
+        } else {
+            NSString *aliases = [NSString stringWithFormat:@"%@ %@ %@", old[@"searchAliases"] ?: @"",
+                                 row[@"searchAliases"] ?: @"", row[@"originalFilename"] ?: @""];
+            const BOOL builtin = row_bool(old, @"builtin") || row_bool(row, @"builtin");
+            const BOOL oldFresh = [old[@"freshness"] unsignedIntValue] == 1;
+            const BOOL newFresh = [row[@"freshness"] unsignedIntValue] == 1;
+            if ((!oldFresh && newFresh) || (oldFresh == newFresh
+                && row_bool(row, @"builtin") && !row_bool(old, @"builtin"))) {
+                old = [row mutableCopy];
+                by_id[canonical] = old;
+            }
+            old[@"builtin"] = @(builtin);
+            old[@"searchAliases"] = aliases;
+        }
+    }
+    // One card per canonical game, titled from every variant Android would consider.
+    // Replacing dictionary values invalidates Foundation's fast enumeration.
+    // Enumerate a fixed key snapshot while merging each game's presentation.
+    for (NSString *canonical in [by_id allKeys])
+        by_id[canonical] = [with_merged_presentation(by_id[canonical], variants[canonical]) mutableCopy];
     std::vector<GameCenterItem> items;
-    items.reserve(static_cast<std::size_t>(rows.count));
-    NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *by_id =
-        [NSMutableDictionary dictionaryWithCapacity:rows.count];
-    for (NSDictionary<NSString *, id> *row in rows)
-    {
-        id canonical_value = row[@"canonicalId"];
-        if (![canonical_value isKindOfClass:[NSString class]] || [canonical_value length] == 0)
-            continue;
-        try
-        {
-            items.push_back(game_center_item_from_row(row));
-            by_id[canonical_value] = row;
-        }
-        catch (const std::exception&)
-        {
-            continue;
-        }
+    items.reserve(by_id.count);
+    for (NSString *canonical in [[by_id allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        try { items.push_back(game_center_item_from_row(by_id[canonical])); }
+        catch (const std::exception&) { continue; }
     }
 
     const char *category_utf8 = category.UTF8String;
@@ -485,6 +666,7 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
         return NO;
     }
     result = fly_scan_commit(scan, FLY_SCAN_COMPLETENESS_FULL);
+    fly_scan_abort(scan);
     if (result != FLY_RESULT_OK)
     {
         if (error != nullptr)

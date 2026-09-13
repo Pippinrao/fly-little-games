@@ -29,6 +29,7 @@ typedef NS_ENUM(NSInteger, FlyNesAspectMode) {
 
 @interface FlyNesMetalRenderer : NSObject
 
+@property(nonatomic, readonly) BOOL permanentFailure;
 - (instancetype)initWithLayer:(CAMetalLayer *)layer;
 - (void)setSpatialMode:(FlyNesSpatialMode)spatial postEffect:(FlyNesPostEffect)post;
 - (void)setAspectMode:(FlyNesAspectMode)aspect;

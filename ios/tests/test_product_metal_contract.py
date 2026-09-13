@@ -55,7 +55,7 @@ def read(relative: str) -> str:
 
 
 def sha256_file(relative: str) -> str:
-    return hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+    return hashlib.sha256((ROOT / relative).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def main() -> int:

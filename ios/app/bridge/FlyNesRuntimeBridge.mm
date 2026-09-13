@@ -3,10 +3,16 @@
 #include <flynes/flynes_runtime.h>
 
 #include <vector>
+#include <mutex>
+#include <algorithm>
 
 @implementation FlyNesRuntimeBridge {
     fly_runtime_t *runtime_;
     uint64_t frame_index_;
+    uint64_t timeline_epoch_;
+    uint32_t last_frame_samples_;
+    uint32_t pending_samples_;
+    std::recursive_mutex mutex_;
 }
 
 - (instancetype)init
@@ -16,6 +22,7 @@
     {
         runtime_ = nullptr;
         frame_index_ = 0;
+        timeline_epoch_ = 1;
     }
     return self;
 }
@@ -27,6 +34,7 @@
 
 - (BOOL)createRuntime:(NSError **)error
 {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     [self destroyRuntime];
     fly_runtime_config config{};
     config.struct_size = FLY_RUNTIME_CONFIG_V1_SIZE;
@@ -51,6 +59,7 @@
 
 - (BOOL)loadRom:(NSData *)rom error:(NSError **)error
 {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (runtime_ == nullptr || rom.length == 0)
         return NO;
     const fly_result result = fly_runtime_load_rom(
@@ -66,17 +75,23 @@
         return NO;
     }
     frame_index_ = 0;
+    timeline_epoch_ = 1;
+    pending_samples_ = last_frame_samples_ = 0;
     return YES;
 }
 
 - (BOOL)stepFrameWithButtons:(uint32_t)buttons error:(NSError **)error
 {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (runtime_ == nullptr)
         return NO;
+    // The bridge exposes at most one frame of pending audio. Discard an unconsumed
+    // previous frame instead of letting a muted/slow caller build stale PCM.
+    [self discardAudio];
     fly_frame_input_v1 input{};
     input.struct_size = FLY_FRAME_INPUT_V1_SIZE;
     input.version = FLY_FRAME_INPUT_VERSION_1;
-    input.timeline_epoch = 1;
+    input.timeline_epoch = timeline_epoch_;
     input.frame_index = frame_index_;
     input.buttons[0] = buttons;
     fly_frame_result_v1 result{};
@@ -94,11 +109,15 @@
         return NO;
     }
     frame_index_ += 1;
+    last_frame_samples_ = result.pcm_published
+        ? static_cast<uint32_t>(result.audio_last_sample_sequence - result.audio_first_sample_sequence + 1) : 0;
+    pending_samples_ += last_frame_samples_;
     return YES;
 }
 
 - (NSData *)saveCheckpoint:(NSError **)error
 {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (runtime_ == nullptr)
     {
         if (error != nullptr)
@@ -145,6 +164,7 @@
 
 - (BOOL)loadCheckpoint:(NSData *)blob error:(NSError **)error
 {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (runtime_ == nullptr || blob.length == 0)
     {
         if (error != nullptr)
@@ -173,7 +193,13 @@
     meta.version = FLY_LATEST_FRAME_VERSION_1;
     const fly_result copied = fly_runtime_copy_latest_frame(
         runtime_, pixels.data(), pixels.size(), &meta);
-    if (copied != FLY_RESULT_OK)
+    // A valid checkpoint can precede the very first published frame.
+    if (copied == FLY_RESULT_INVALID_STATE)
+    {
+        frame_index_ = 0;
+        timeline_epoch_ = 1;
+    }
+    else if (copied != FLY_RESULT_OK)
     {
         if (error != nullptr)
         {
@@ -183,12 +209,25 @@
         }
         return NO;
     }
-    frame_index_ = meta.frame_index + 1;
+    else
+    {
+        frame_index_ = meta.frame_index + 1;
+        timeline_epoch_ = meta.timeline_epoch;
+    }
+    pending_samples_ = last_frame_samples_ = 0;
+    [self clearInput];
     return YES;
 }
 
 - (NSData *)copyLatestRgb565Frame
 {
+    return [self copyLatestRgb565FrameWithSequence:nullptr width:nullptr height:nullptr];
+}
+
+- (NSData *)copyLatestRgb565FrameWithSequence:(uint64_t *)sequence
+                                        width:(uint32_t *)width
+                                       height:(uint32_t *)height{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (runtime_ == nullptr)
         return nil;
     std::vector<uint8_t> pixels(FLY_RUNTIME_RGB565_BYTES);
@@ -199,14 +238,55 @@
         runtime_, pixels.data(), pixels.size(), &meta);
     if (status != FLY_RESULT_OK || meta.bytes_written != FLY_RUNTIME_RGB565_BYTES)
         return nil;
+    if (sequence != nullptr) *sequence = meta.frame_sequence;
+    if (width != nullptr) *width = meta.width;
+    if (height != nullptr) *height = meta.height;
     return [NSData dataWithBytes:pixels.data() length:pixels.size()];
 }
 
 - (void)destroyRuntime
 {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     fly_runtime_destroy(runtime_);
     runtime_ = nullptr;
     frame_index_ = 0;
+    timeline_epoch_ = 1;
+    pending_samples_ = last_frame_samples_ = 0;
+}
+
+- (uint32_t)lastFrameSampleCount
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return last_frame_samples_;
+}
+
+- (NSData *)pullPCM
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!runtime_ || pending_samples_ == 0) return [NSData data];
+    std::vector<int16_t> samples(std::min(pending_samples_, uint32_t(4096)));
+    fly_pcm_block_v1 block{};
+    block.struct_size = FLY_PCM_BLOCK_V1_SIZE;
+    block.version = FLY_PCM_BLOCK_VERSION_1;
+    if (fly_runtime_pull_pcm(runtime_, samples.data(), static_cast<uint32_t>(samples.size()), &block) != FLY_RESULT_OK)
+        return [NSData data];
+    pending_samples_ -= std::min(pending_samples_, block.sample_count);
+    return [NSData dataWithBytes:samples.data() length:block.sample_count * sizeof(int16_t)];
+}
+
+- (void)discardAudio
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    while (pending_samples_ > 0) {
+        if ([self pullPCM].length == 0) { pending_samples_ = 0; break; }
+    }
+}
+
+- (void)clearInput
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (runtime_) fly_runtime_clear_input_ports(runtime_, (1u << FLY_RUNTIME_PORT_COUNT) - 1,
+                                                FLY_RUNTIME_CLEAR_PAUSE);
 }
 
 @end

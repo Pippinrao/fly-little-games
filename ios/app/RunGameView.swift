@@ -3,6 +3,7 @@ import SwiftUI
 /// Hosts the UIKit run surface so landscape safe areas and multi-touch stay in UIKit.
 struct RunGameView: UIViewControllerRepresentable {
     let canonicalId: String
+    let romData: Data
     var onPauseCommand: (String) -> Void = { _ in }
     var overlayReloadGeneration: Int = 0
 
@@ -13,6 +14,7 @@ struct RunGameView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> RunSurfaceViewController {
         let controller = RunSurfaceViewController()
         controller.canonicalId = canonicalId
+        controller.romData = romData
         controller.onPauseCommand = { command in
             context.coordinator.onPauseCommand(command)
         }
@@ -41,27 +43,25 @@ struct RunGameView: UIViewControllerRepresentable {
 }
 
 /// Pause drawer Resume / Game Center / Settings. Game Center pops to the library root.
+/// The ROM is already resolved by the Game Center before this screen is pushed, which
+/// is what keeps a launch failure inside the library instead of a separate error page.
 struct RunGameContainer: View {
     let canonicalId: String
+    let romData: Data
     @Binding var path: NavigationPath
     @State private var showSettings = false
     @State private var overlayReloadGeneration = 0
 
     var body: some View {
-        RunGameView(
-            canonicalId: canonicalId,
-            overlayReloadGeneration: overlayReloadGeneration
-        ) { command in
-            if command == "game_center" {
-                path = NavigationPath()
-            } else if command == "settings" {
-                showSettings = true
-            }
-        }
+        RunGameView(canonicalId: canonicalId, romData: romData,
+                    onPauseCommand: { command in
+            if command == "game_center" { path = NavigationPath() }
+            else if command == "settings" { showSettings = true }
+        }, overlayReloadGeneration: overlayReloadGeneration)
         .ignoresSafeArea()
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .sheet(isPresented: $showSettings, onDismiss: {
+        .fullScreenCover(isPresented: $showSettings, onDismiss: {
             overlayReloadGeneration += 1
         }) {
             SettingsView()

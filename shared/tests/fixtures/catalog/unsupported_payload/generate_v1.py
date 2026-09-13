@@ -231,7 +231,7 @@ def compare_corpus(expected_files: dict[str, bytes]) -> CorpusDiff:
             changed.append(name)
             continue
         try:
-            if path.stat(follow_symlinks=False).st_nlink != 1:
+            if path.lstat().st_nlink != 1:
                 changed.append(name)
             elif path.read_bytes() != expected_files[name]:
                 changed.append(name)

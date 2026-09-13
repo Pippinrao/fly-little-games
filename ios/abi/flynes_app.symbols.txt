@@ -17,3 +17,5 @@ fly_settings_get
 fly_source_status_count
 fly_source_status_get
 fly_source_remove
+fly_control_layout_apply
+fly_control_layout_get

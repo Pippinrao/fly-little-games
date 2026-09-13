@@ -1,0 +1,91 @@
+Internal ctest changing into directory: /Users/apple/Developer/fly-little-games-ios/build/shared-host
+Test project /Users/apple/Developer/fly-little-games-ios/build/shared-host
+      Start  1: flynes_runtime
+ 1/38 Test  #1: flynes_runtime ....................................   Passed    0.54 sec
+      Start  2: flynes_app_contract
+ 2/38 Test  #2: flynes_app_contract ...............................   Passed    0.02 sec
+      Start  3: flynes_product_game_center
+ 3/38 Test  #3: flynes_product_game_center ........................   Passed    0.02 sec
+      Start  4: flynes_product_control_layout
+ 4/38 Test  #4: flynes_product_control_layout .....................   Passed    0.02 sec
+      Start  5: flynes_product_gamepad_hit_map
+ 5/38 Test  #5: flynes_product_gamepad_hit_map ....................   Passed    0.02 sec
+      Start  6: flynes_product_pause_actions
+ 6/38 Test  #6: flynes_product_pause_actions ......................   Passed    0.01 sec
+      Start  7: flynes_catalog_scan
+ 7/38 Test  #7: flynes_catalog_scan ...............................   Passed    0.70 sec
+      Start  8: flynes_catalog_persist
+ 8/38 Test  #8: flynes_catalog_persist ............................   Passed    0.04 sec
+      Start  9: flynes_catalog_user
+ 9/38 Test  #9: flynes_catalog_user ...............................   Passed    0.03 sec
+      Start 10: flynes_catalog_source_remove
+10/38 Test #10: flynes_catalog_source_remove ......................   Passed    0.04 sec
+      Start 11: flynes_settings
+11/38 Test #11: flynes_settings ...................................   Passed    0.02 sec
+      Start 12: flynes_control_layout_persist
+12/38 Test #12: flynes_control_layout_persist .....................   Passed    0.02 sec
+      Start 13: flynes_c_header
+13/38 Test #13: flynes_c_header ...................................   Passed    0.02 sec
+      Start 14: flynes_rom_payload_parser
+14/38 Test #14: flynes_rom_payload_parser .........................   Passed    0.50 sec
+      Start 15: flynes_content_identity
+15/38 Test #15: flynes_content_identity ...........................   Passed    0.40 sec
+      Start 16: flynes_identity_fixture_loader
+16/38 Test #16: flynes_identity_fixture_loader ....................   Passed    0.11 sec
+      Start 17: flynes_unsupported_payload_classifier
+17/38 Test #17: flynes_unsupported_payload_classifier .............   Passed    0.04 sec
+      Start 18: flynes_unsupported_payload_fixture_loader
+18/38 Test #18: flynes_unsupported_payload_fixture_loader .........   Passed    0.29 sec
+      Start 19: flynes_rom_fixture_loader
+19/38 Test #19: flynes_rom_fixture_loader .........................   Passed    0.25 sec
+      Start 20: flynes_bounded_zip_archive
+20/38 Test #20: flynes_bounded_zip_archive ........................   Passed    0.06 sec
+      Start 21: flynes_bounded_zip_archive_edges
+21/38 Test #21: flynes_bounded_zip_archive_edges ..................   Passed    0.02 sec
+      Start 22: flynes_bounded_zip_payload
+22/38 Test #22: flynes_bounded_zip_payload ........................   Passed    0.03 sec
+      Start 23: flynes_bounded_zip_payload_edges
+23/38 Test #23: flynes_bounded_zip_payload_edges ..................   Passed    0.02 sec
+      Start 24: flynes_zip_payload_fixture_loader
+24/38 Test #24: flynes_zip_payload_fixture_loader .................   Passed    0.43 sec
+      Start 25: flynes_zip_open_fixture_loader
+25/38 Test #25: flynes_zip_open_fixture_loader ....................   Passed    1.12 sec
+      Start 26: flynes_rom_fixture_generator
+26/38 Test #26: flynes_rom_fixture_generator ......................   Passed    1.42 sec
+      Start 27: flynes_zip_open_fixture_generator
+27/38 Test #27: flynes_zip_open_fixture_generator .................   Passed    1.72 sec
+      Start 28: flynes_zip_open_fixture_corpus_check
+28/38 Test #28: flynes_zip_open_fixture_corpus_check ..............   Passed    0.11 sec
+      Start 29: flynes_zip_payload_fixture_generator
+29/38 Test #29: flynes_zip_payload_fixture_generator ..............   Passed    1.66 sec
+      Start 30: flynes_zip_payload_fixture_corpus_check
+30/38 Test #30: flynes_zip_payload_fixture_corpus_check ...........***Failed    0.09 sec
+changed fixture corpus entry: deflate_large_signed_descriptor_exact_limits.zip
+changed fixture corpus entry: directory_payload_not_rejected.zip
+changed fixture corpus entry: manifest.tsv
+changed fixture corpus entry: truncated_deflate_incomplete.zip
+
+      Start 31: flynes_identity_fixture_corpus_check
+31/38 Test #31: flynes_identity_fixture_corpus_check ..............   Passed    0.12 sec
+      Start 32: flynes_identity_fixture_generator
+32/38 Test #32: flynes_identity_fixture_generator .................   Passed    1.90 sec
+      Start 33: flynes_unsupported_payload_fixture_corpus_check
+33/38 Test #33: flynes_unsupported_payload_fixture_corpus_check ...   Passed    0.08 sec
+      Start 34: flynes_unsupported_payload_fixture_generator
+34/38 Test #34: flynes_unsupported_payload_fixture_generator ......   Passed    1.61 sec
+      Start 35: flynes_session_schema_registry
+35/38 Test #35: flynes_session_schema_registry ....................   Passed    0.05 sec
+      Start 36: flynes_session_codec
+36/38 Test #36: flynes_session_codec ..............................   Passed    0.14 sec
+      Start 37: flynes_session_codec_loopback
+37/38 Test #37: flynes_session_codec_loopback .....................   Passed    0.13 sec
+      Start 38: flynes_session
+38/38 Test #38: flynes_session ....................................   Passed    0.02 sec
+
+97% tests passed, 1 tests failed out of 38
+
+Total Test time (real) =  13.88 sec
+
+The following tests FAILED:
+	 30 - flynes_zip_payload_fixture_corpus_check (Failed)
+Errors while running CTest

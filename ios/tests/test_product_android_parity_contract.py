@@ -107,11 +107,16 @@ def main() -> int:
     open_pause_at = run.find("- (void)openPauseDrawer")
     require(open_pause_at >= 0, "run surface must implement openPauseDrawer")
     open_pause_body = run[open_pause_at:open_pause_at + 1800]
-    require("saveCheckpoint" in open_pause_body,
-            "openPauseDrawer must auto-checkpoint via saveCheckpoint")
-    require("autosave.nst" in open_pause_body or "persistAutosave" in open_pause_body
-            or "writeAutosave" in open_pause_body,
-            "openPauseDrawer must persist the checkpoint blob, not drop it")
+    require("saveAutosaveIfEnabled" in open_pause_body,
+            "openPauseDrawer must use the autosave setting before checkpointing")
+    save_at = run.find("- (void)saveAutosaveIfEnabled")
+    require(save_at >= 0, "run surface must implement the autosave helper")
+    save_end = run.find("\n- (", save_at + 1)
+    save_body = run[save_at:save_end if save_end > save_at else len(run)]
+    require("autosave_enabled" in save_body and "return" in save_body,
+            "autosave helper must skip disabled autosave")
+    require("saveCheckpoint" in save_body and "persistAutosave" in save_body,
+            "enabled autosave must persist the checkpoint blob")
     view_load_at = run.find("- (void)viewDidLoad")
     require(view_load_at >= 0, "run surface must implement viewDidLoad")
     view_will_at = run.find("- (void)viewWillAppear")
@@ -200,7 +205,8 @@ def main() -> int:
     require("FlyNesAppBridge" in settings,
             "settings must bind through FlyNesAppBridge")
 
-    editor = read("ios/app/ControlLayoutEditorView.swift")
+    editor = (read("ios/app/ControlLayoutEditorView.swift")
+              + "\n" + read("ios/app/platform/ControlLayoutDraft.swift"))
     require("FlyNesAppBridge" in editor,
             "layout editor must write shared persist via FlyNesAppBridge")
     require("controlLayoutApply" in editor or "fly_control_layout_apply" in editor,
@@ -219,28 +225,38 @@ def main() -> int:
             "iOS must call GameCenterState::filtered")
     require("items_for" in bridge or "filtered(" in bridge,
             "iOS must call GameCenterState::filtered / items_for")
-    require("title_en" in bridge and "title_zh_hans" in bridge
-            and "original_filename" in bridge,
-            "Game Center search must use title_en / title_zh_hans / original_filename")
+    # Android GameCenterItem carries title_en / title_zh_hans / original_filename and
+    # GameCenterState::filtered matches all three. The iOS bridge must populate the
+    # corresponding row keys from the presentation helper rather than passing a raw
+    # filename as a title.
+    item_body = bridge[bridge.find("game_center_item_from_row"):]
+    require("title_en" in item_body or "titleEn" in item_body,
+            "GameCenterItem must receive title_en")
+    require("title_zh_hans" in item_body or "titleZhHans" in item_body,
+            "GameCenterItem must receive title_zh_hans")
+    require("searchAliases" in item_body or "original_filename" in item_body
+            or "originalFilename" in item_body,
+            "GameCenterItem must receive filename aliases")
+    require("CatalogPresentation.h" in bridge,
+            "catalog rows must derive titles from FlyNesCatalogPresentation")
+    require("fieldsForFilename" in bridge and "trustedBuiltin" in bridge,
+            "catalog titles must come from the trusted-builtin aware helper")
+    require("titleZhHans" in bridge and "titleEn" in bridge and "searchAliases" in bridge,
+            "catalog rows must publish titleEn / titleZhHans / searchAliases")
     gc_at = bridge.rfind("gameCenterFilteredGamesForCategory")
     require(gc_at >= 0, "app bridge must implement gameCenterFilteredGamesForCategory")
     scan_at = bridge.find("scanBorrowedFd", gc_at)
     gc_body = bridge[gc_at:scan_at if scan_at > gc_at else gc_at + 3500]
-    require("From Below" in gc_body,
-            "Game Center must inject builtin From Below when the snapshot omits it")
-    require("from_below.nes" in gc_body,
-            "injected From Below row must use from_below.nes")
-    require('"builtin"' in gc_body or "@\"builtin\"" in gc_body,
-            "injected From Below row must use canonicalId builtin")
-    inject_at = gc_body.find("From Below")
-    filtered_at = gc_body.find("filtered(")
-    require(inject_at >= 0 and filtered_at >= 0 and inject_at < filtered_at,
-            "Game Center must inject builtin From Below before GameCenterState::filtered")
-    require("FLY_COMPATIBILITY_PLAYABLE" in gc_body
-            or "compatibilityState" in gc_body and "@(1)" in gc_body
-            or "compatibilityState" in gc_body and "PLAYABLE" in gc_body,
-            "injected From Below row must be playable (compatibilityState == 1)")
-
+    source_service = read("ios/app/platform/CatalogSourceService.mm")
+    source_model = read("ios/app/CatalogSourceManagementView.swift")
+    require("prepareBuiltin" in source_model and "prepareBuiltin" in source_service,
+            "Game Center must prepare the real bundled catalog source")
+    require("scanURL:builtinURL_ uuid:BuiltinUUID scope:1" in source_service,
+            "builtin must use the same validated scanner as external sources")
+    require("library.source.builtin_missing" in source_service,
+            "missing builtin must report failure, not inject a fake playable row")
+    require("From Below" not in gc_body and "from_below.nes" not in gc_body,
+            "filtered snapshots must not fabricate builtin playable entries")
     cmake = read("ios/app/CMakeLists.txt")
     require("flynes_product" in cmake, "product CMake must link flynes_product")
     require("ControlLayoutEditorView.swift" in cmake,
@@ -282,11 +298,10 @@ def main() -> int:
 
     run_swift = read("ios/app/RunGameView.swift")
     detail = read("ios/app/CatalogGameDetailView.swift")
-    require("library.rom_open_failed" in detail,
-            "Game Center detail must explain when Launch is refused")
-    require("from_below" in detail.lower() or "from-below" in detail.lower()
-            or "builtin" in detail.lower(),
-            "detail Play must branch on builtin mapping, not launch every id")
+    require("library.source.game_unsupported" in detail and "library.source.game_stale" in detail,
+            "selected detail must explain compatibility and freshness launch refusal")
+    require("compatibilityState != 1" in detail and "freshness != 1" in detail and ".disabled" in detail,
+            "Play must require a fresh compatible variant for builtins and imports")
     review_errors = []
 
     def review_require(condition: bool, message: str) -> None:
@@ -308,8 +323,19 @@ def main() -> int:
     if gc_at >= 0:
         review_require("dismiss()" not in run_swift[gc_at:gc_at + 180],
                        "pause Game Center must not dismiss() a single NavigationLink")
-    review_require("LibraryRoute" in detail or "navigationDestination" in detail,
-                   "Play must push run as a path value, not a nested NavigationLink destination")
+    # Android resolves and commits the selection before leaving the Game Center, so a
+    # launch failure stays in the library. Play therefore hands the resolved ROM to the
+    # library, which owns the path value, instead of a self-contained NavigationLink.
+    review_require("LibraryRoute" in library and "navigationDestination" in library,
+                   "Play must push run as a path value owned by the Game Center")
+    review_require("onLaunch" in detail,
+                   "selected detail must hand Play to the Game Center launch resolver")
+    review_require("romData" in library and "romData" in run_swift,
+                   "the resolved ROM must travel with the run route")
+    review_require("library.launch_failed" in source_model or "launch_failed" in source_model,
+                   "a failed launch must report in the Game Center status line")
+    review_require("NavigationLink" not in detail,
+                   "Play must not navigate before the game is known to be openable")
 
     uses_named_space = "coordinateSpace" in editor and ".named" in editor
     uses_translation = "translation" in editor

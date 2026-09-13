@@ -19,8 +19,14 @@ typedef NS_ENUM(NSInteger, FlyNesJoystickMode) {
 @property(nonatomic) FlyNesJoystickMode joystickMode;
 @property(nonatomic) float deadZone;
 @property(nonatomic) uint32_t hapticLevel;
+@property(nonatomic) BOOL distinctAbHaptics;
 @property(nonatomic, copy) NSString *layoutUtf8;
 @property(nonatomic, copy, nullable) void (^buttonsChanged)(uint32_t buttons);
+@property(nonatomic, copy, nullable) void (^buttonsReleased)(uint32_t buttons, NSTimeInterval downTime, NSTimeInterval upTime);
+// Global resets only. A canceled individual touch must not erase another touch's completed tap.
+@property(nonatomic, copy, nullable) void (^buttonsCancelled)(void);
+
+- (void)releaseAllButtons;
 
 @end
 

@@ -22,6 +22,7 @@ import com.flynes.emu.catalog.persistence.CatalogPackage;
 import com.flynes.emu.catalog.persistence.CatalogState;
 import com.flynes.emu.catalog.persistence.SourceCatalogState;
 import com.flynes.emu.catalog.persistence.SourceScanResult;
+import com.flynes.emu.catalog.source.DocumentLocatorShape;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -36,7 +37,26 @@ import java.util.Objects;
 public final class NativeCatalogProjector {
     private static final int FLAG_ZIP_ENTRY = 0x00000010;
 
+    /**
+     * Locator placeholder for a package whose document locator could not be resolved. It is
+     * deliberately not a content URI: the package is projected as unavailable, and an accidental
+     * open attempt fails the shape check instead of provoking an "Invalid URI" provider fault.
+     */
+    private static final String UNRESOLVED_LOCATOR_PREFIX = "unresolved://";
+
     private NativeCatalogProjector() {
+    }
+
+    /**
+     * Platform seam used when the scan-time locator map has no entry for a package, which is the
+     * normal cold-start case: locators are process-local while the native catalog is persisted.
+     */
+    public interface LocatorResolver {
+        /** Resolver that never derives a locator, leaving the package unavailable. */
+        LocatorResolver NONE = (treeLocator, relativePath) -> null;
+
+        /** Returns an openable document locator, or {@code null} when none can be derived. */
+        String resolve(String treeLocator, String relativePath);
     }
 
     public static CatalogState project(
@@ -45,12 +65,14 @@ public final class NativeCatalogProjector {
             Map<String, CanonicalUserState> users,
             long lastPlayedSequence,
             AndroidUuidSafMap uuidMap,
-            AndroidPackageLocatorMap locators) {
+            AndroidPackageLocatorMap locators,
+            LocatorResolver locatorResolver) {
         Objects.requireNonNull(entries, "entries");
         Objects.requireNonNull(sources, "sources");
         Objects.requireNonNull(users, "users");
         Objects.requireNonNull(uuidMap, "uuid map");
         Objects.requireNonNull(locators, "locators");
+        Objects.requireNonNull(locatorResolver, "locator resolver");
         LinkedHashMap<String, SourceBuilder> builders = new LinkedHashMap<>();
         RomSource builtin = AndroidBuiltinCatalogAdapter.SOURCE;
         builders.put(builtin.id(), new SourceBuilder(builtin, SourceScanResult.Completeness.FULL));
@@ -67,7 +89,7 @@ public final class NativeCatalogProjector {
             RomSource source = sourceFor(entry.sourceUuid(), entry.sourceScope(), uuidMap);
             SourceBuilder builder = builders.computeIfAbsent(
                     source.id(), ignored -> new SourceBuilder(source, SourceScanResult.Completeness.FULL));
-            addVariant(builder, source, entry, locators);
+            addVariant(builder, source, entry, locators, locatorResolver);
         }
         LinkedHashMap<String, SourceCatalogState> projected = new LinkedHashMap<>();
         for (SourceBuilder builder : builders.values()) {
@@ -84,14 +106,24 @@ public final class NativeCatalogProjector {
 
     private static void addVariant(
             SourceBuilder builder, RomSource source, NativeCatalogEntry entry,
-            AndroidPackageLocatorMap locators) {
+            AndroidPackageLocatorMap locators, LocatorResolver locatorResolver) {
         String relative = entry.relativePath();
         String packageId = StableIds.packageId(source.id(), relative);
         String locator = locators.get(entry.sourceUuid(), relative);
-        if (locator == null || locator.trim().isEmpty()) {
-            locator = source.type() == RomSource.Type.BUILTIN
-                    ? AndroidBuiltinCatalogAdapter.ASSET_LOCATOR : source.uri() + "/" + relative;
+        if (source.type() == RomSource.Type.BUILTIN) {
+            if (locator == null || locator.trim().isEmpty()) {
+                locator = AndroidBuiltinCatalogAdapter.ASSET_LOCATOR;
+            }
+        } else {
+            if (!DocumentLocatorShape.isOpenableDocumentLocator(locator)) {
+                locator = locatorResolver.resolve(source.uri(), relative);
+            }
+            if (!DocumentLocatorShape.isOpenableDocumentLocator(locator)) {
+                locator = UNRESOLVED_LOCATOR_PREFIX + source.id() + "/" + relative;
+            }
         }
+        boolean resolved = DocumentLocatorShape.isOpenableDocumentLocator(locator)
+                || source.type() == RomSource.Type.BUILTIN;
         PackageFormat format = entry.packageFormat() == 2 || (entry.flags() & FLAG_ZIP_ENTRY) != 0
                 ? PackageFormat.ZIP : PackageFormat.RAW;
         String sha1 = hex(entry.payloadSha1());
@@ -130,7 +162,7 @@ public final class NativeCatalogProjector {
         variants.add(variant);
         PhysicalPackage physicalPackage = new PhysicalPackage(
                 packageId, source, locator, fileName(relative), format, physical, variants);
-        CatalogPackage.Freshness freshness = entry.freshness() == 2
+        CatalogPackage.Freshness freshness = entry.freshness() == 2 || !resolved
                 ? CatalogPackage.Freshness.PRESERVED_STALE : CatalogPackage.Freshness.FRESH;
         builder.packages.put(packageId, new CatalogPackage(physicalPackage, freshness));
     }

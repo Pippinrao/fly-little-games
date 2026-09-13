@@ -44,7 +44,7 @@ vertex FlyNesVertexOut flynes_scalefx_pass4_vs(uint vid [[vertex_id]]) {
     };
     FlyNesVertexOut out;
     out.position = float4(positions[vid], 0.0, 1.0);
-    out.texcoord = (positions[vid] + 1.0) * 0.5;
+    out.texcoord = float2((positions[vid].x + 1.0) * 0.5, (1.0 - positions[vid].y) * 0.5);
     return out;
 }
 

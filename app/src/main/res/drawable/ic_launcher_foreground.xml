@@ -1,19 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="@color/fly_primary"
-        android:pathData="M24,43 C24,34 31,28 40,28 L68,28 C77,28 84,34 84,43 L88,65 C90,74 81,79 75,73 L67,64 L41,64 L33,73 C27,79 18,74 20,65 Z" />
-    <path
-        android:fillColor="@color/fly_on_primary"
-        android:pathData="M34,42 L40,42 L40,36 L47,36 L47,42 L53,42 L53,49 L47,49 L47,55 L40,55 L40,49 L34,49 Z" />
-    <path
-        android:fillColor="@color/fly_on_primary"
-        android:pathData="M67,39 A4,4 0,1 0,67,47 A4,4 0,1 0,67,39 M76,48 A4,4 0,1 0,76,56 A4,4 0,1 0,76,48" />
-    <path
-        android:fillColor="@color/fly_secondary"
-        android:pathData="M76,39 A4,4 0,1 0,76,47 A4,4 0,1 0,76,39" />
-</vector>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_artwork" android:gravity="fill"
+    android:filter="true" android:mipMap="true" />

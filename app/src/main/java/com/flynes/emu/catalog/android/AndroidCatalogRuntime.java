@@ -24,6 +24,7 @@ import com.flynes.emu.catalog.persistence.SourceScanResult;
 import com.flynes.emu.catalog.scan.PackageCandidate;
 import com.flynes.emu.catalog.scan.RomPackageScanner;
 import com.flynes.emu.catalog.scan.ScanLimits;
+import com.flynes.emu.catalog.source.DocumentLocatorShape;
 import com.flynes.emu.catalog.source.SourceEnumerator;
 import com.flynes.emu.catalog.source.SourceRegistry;
 import com.flynes.emu.settings.ControlLayoutRepository;
@@ -332,7 +333,8 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             sequence = Math.max(sequence, user.lastPlayedSequence());
         }
         CatalogState projected = NativeCatalogProjector.project(
-                entries, nativeApp.sourceStatuses(), users, sequence, uuidMap, locators);
+                entries, nativeApp.sourceStatuses(), users, sequence, uuidMap, locators,
+                AndroidDocumentLocators::documentUriFor);
         nativeView.writeAtomically(CatalogStateCodec.encode(projected));
         return repository.load();
     }
@@ -412,7 +414,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         HashSet<String> usedNames = new HashSet<>();
         try {
             for (PackageCandidate candidate : enumeration.candidates()) {
-                String relative = uniqueRelative(candidate.displayFilename(), usedNames);
+                String relative = sourceRelative(candidate, source.uri(), usedNames);
                 locators.put(uuid, relative, candidate.contentLocator());
                 try (ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(
                         Uri.parse(candidate.contentLocator()), "r")) {
@@ -455,8 +457,16 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                         copied.delete();
                     });
         }
-        ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(
-                Uri.parse(pkg.sourceUri()), "r");
+        if (!DocumentLocatorShape.isOpenableDocumentLocator(pkg.sourceUri())) {
+            throw new IOException("package locator is not an openable document URI");
+        }
+        ParcelFileDescriptor pfd;
+        try {
+            pfd = context.getContentResolver().openFileDescriptor(
+                    Uri.parse(pkg.sourceUri()), "r");
+        } catch (IllegalArgumentException malformed) {
+            throw new IOException("provider rejected the package locator", malformed);
+        }
         if (pfd == null) throw new IOException("provider returned no fd");
         locators.put(
                 uuidMap.uuidForLocator(pkg.source().uri()) == null
@@ -529,15 +539,32 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         return bytes;
     }
 
-    private static String uniqueRelative(String displayFilename, HashSet<String> used) {
+    /**
+     * Prefers the canonical tree-relative path so a cold start can rebuild the document locator
+     * for nested libraries, and falls back to the display name for providers whose document ids
+     * are not rooted at the tree.
+     */
+    private static String sourceRelative(
+            PackageCandidate candidate, String treeLocator, HashSet<String> used) {
+        String relative = AndroidDocumentLocators.relativePathFor(
+                treeLocator, candidate.stableDocumentKey());
+        if (relative == null) relative = sourceRelativeDisplayName(candidate.displayFilename());
+        return uniqueRelative(relative, used);
+    }
+
+    private static String sourceRelativeDisplayName(String displayFilename) {
         String name = displayFilename.replace('\\', '_');
         int slash = name.lastIndexOf('/');
         if (slash >= 0) name = name.substring(slash + 1);
         if (name.isEmpty() || ".".equals(name) || "..".equals(name)) name = "rom";
-        String candidate = name;
+        return name;
+    }
+
+    private static String uniqueRelative(String relative, HashSet<String> used) {
+        String candidate = relative;
         int serial = 1;
         while (!used.add(candidate)) {
-            candidate = serial++ + "-" + name;
+            candidate = serial++ + "-" + relative;
         }
         return candidate;
     }

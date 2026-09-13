@@ -1,12 +1,12 @@
 # iOS Metal quality: hashes and fallback
 
-Windows host contracts cannot compile these shaders. macOS CI with Xcode 26.6
-is the only place that produces a Metal library. Do not treat a Windows
+Windows host contracts cannot compile these shaders. macOS with Xcode 14.3.1 or newer
+produces the Metal library. Do not treat a Windows
 workspace as Mach-O evidence.
 
 ## Algorithm origin
 
-- Nearest / Sharp Bilinear / CRT: ported from `app/src/main/cpp/video/baseline_pipeline.cpp`
+- Nearest / Sharp Bilinear / CRT: ported from `app/src/main/java/com/flynes/emu/video/FrameRenderer.java`
 - MMPX 2x: ported from `app/src/main/assets/shaders/mmpx/mmpx_2x.frag` (Morgan McGuire / Mara Gagiu, MIT)
 - ScaleFX: ported from `app/src/main/assets/shaders/scalefx/scalefx-pass0.glsl` … `pass4.glsl` (Sp00kyFox, MIT)
 
@@ -17,17 +17,21 @@ produced those pixels.
 
 ## Source SHA-256
 
+Hashes use UTF-8 source with LF line endings so Windows and macOS checkouts
+verify the same shader text. The table includes the RGB565 and precision fixes
+already present in the baseline; updating this manifest does not qualify a device.
+
 | Shader | SHA-256 |
 |--------|---------|
-| Nearest.metal | ac7aa8308399372d27782173c813ddb89ff4bd3fb49bb3080a79409ff6cc0d2f |
-| SharpBilinear.metal | d6c687a794903469d17a00af46888c675e4797617aeb2205510d8bdf3d89eb09 |
-| Crt.metal | 67b0248a41d28c747370b92cf77182a9596f69d673839d263ae8326166cdcca2 |
-| Mmpx2x.metal | d575c05687988f16b4dba85247e81a98546320c75e11bfc9d2f8beb903343a34 |
-| ScaleFxPass0.metal | 80284ae73e2bd4c945f3d291bb7f652ad8e5fac71819d3e110cc8491340b6a95 |
-| ScaleFxPass1.metal | 0dc847e6ac280aeaccd1f97d8d18915e5860c8900978d4d229c92f013f6ad1d0 |
-| ScaleFxPass2.metal | b72fa05f10cc6213dc86c171b918eb12101d7d089be1197ae33fb210fddc6192 |
-| ScaleFxPass3.metal | ecb8a9875bb29752c8f352dd839f752fda07edbc7ea6cd9dd2df343047ad17d4 |
-| ScaleFxPass4.metal | 2df0e3b1c9b1949ac321facf92fd2a16236568f0cdb8d941fd5b60dc4ad60b3c |
+| Nearest.metal | b41a43c2d1f6c3c4f5e5110d4880227da1ef01df25d0a4d3fa9eadd53ffb4b6b |
+| SharpBilinear.metal | 3a2723ebad1a4a2eb60faff1344140f4002a2c332db0e9411f1f3fb8c5b27dac |
+| Crt.metal | 497b923723b87b21005acba0bce35361c6803cbe470443ca9fe9738bba979abb |
+| Mmpx2x.metal | afb22e38fe34ca4545bb069a787fba2e5e1433b69465edbce9c0179de39ee9f1 |
+| ScaleFxPass0.metal | 457f90c1fed76fa91f1057d657c98b06d22ddf6d0cbc6ad68b729738dea6c6c0 |
+| ScaleFxPass1.metal | 8f092a60f8db003afa5daac3cec9b70b4f838a77671d128432234dd01e45d70c |
+| ScaleFxPass2.metal | 904e79202f399ef2c7002a8ac44cb4240ddd643dfd321c3d8f37f0826d07ebb5 |
+| ScaleFxPass3.metal | d748a28e5af300b76f656fab7ec5426a42b5e71bd01f1ef10b745f5286d45cc4 |
+| ScaleFxPass4.metal | 84e4a92537ef15c14b1e1e0110c8fcb995cc5a1766895fd971664a3f35379796 |
 
 Rebuild of a shader requires updating this table in the same change.
 
@@ -51,10 +55,12 @@ succeeds. MMPX and ScaleFX never stay half-initialized.
 Enable 60→120 interpolation **only** when:
 
 - `CADisplayLink` timestamps show a stable ~120 Hz interval, **and**
-- present stats (`targetTimestamp` / presented frame counts) agree
+- actual drawable presentation timestamps and counts agree (targetTimestamp is only a prediction)
 
 Never treat `UIScreen.maximumFramesPerSecond` as 120 Hz evidence. That
 property is a capability advertisement, not a measured cadence.
 
-RGB565 upload uses `MTLPixelFormatB5G6R5Unorm`. Presentation aspect modes are
+RGB565 upload uses Simulator-compatible RGBA8. Advanced spatial shaders reconstruct original normalized RGB565 before their comparisons; ScaleFX intermediates use RGBA32Float. Presentation aspect modes are
 4:3, square-pixel, and integer scale.
+
+Actual presentation stats must come from completed drawable presentations, not display-link target predictions.

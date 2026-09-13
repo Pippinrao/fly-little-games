@@ -34,8 +34,8 @@ struct ScaleFxUniforms {
     float2 textureSize;
 };
 
-float4 GE(float4 x, float4 y) { return step(y, x); }
-float4 LE(float4 x, float4 y) { return step(x, y); }
+float4 GE(float4 x, float4 y) { return 1. - step(x, y); }
+float4 LE(float4 x, float4 y) { return 1. - step(y, x); }
 float4 LEQ(float4 x, float4 y) { return step(x, y); }
 float4 NOT4(float4 x) { return 1. - x; }
 
@@ -54,7 +54,7 @@ vertex FlyNesVertexOut flynes_scalefx_pass2_vs(uint vid [[vertex_id]]) {
     };
     FlyNesVertexOut out;
     out.position = float4(positions[vid], 0.0, 1.0);
-    out.texcoord = (positions[vid] + 1.0) * 0.5;
+    out.texcoord = float2((positions[vid].x + 1.0) * 0.5, (1.0 - positions[vid].y) * 0.5);
     return out;
 }
 

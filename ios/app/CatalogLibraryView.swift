@@ -1,19 +1,14 @@
 import SwiftUI
 
 enum LibraryRoute: Hashable {
-    case detail(CatalogGame)
-    case run(String)
-    case nearby
+    /// The resolved ROM travels with the route, so reaching the run screen already
+    /// means the game could be opened.
+    case run(canonicalId: String, rom: Data)
 }
 
 enum LibraryFilter: String, CaseIterable, Identifiable {
-    case recent = "RECENT"
-    case favorites = "FAVORITES"
-    case all = "ALL"
-    case builtin = "BUILTIN"
-
+    case recent = "RECENT", favorites = "FAVORITES", all = "ALL", builtin = "BUILTIN"
     var id: String { rawValue }
-
     var titleKey: LocalizedStringKey {
         switch self {
         case .recent: return "game_center.recent"
@@ -24,112 +19,189 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// Game Center: four categories, search, landscape-first, no extra tabs.
-/// Scanning still happens through borrowed FDs in platform code; this view
-/// never holds security-scoped bookmarks.
+/// Mirrors Android HomeActivity: selected detail on the left, two-row horizontal
+/// card grid on the right. Selecting a card never navigates away from the grid.
 struct CatalogLibraryView: View {
     @State private var snapshot: CatalogSnapshot
-    @State private var filter: LibraryFilter = .all
-    @State private var searchText = ""
+    @AppStorage("GameCenterCategory") private var category = LibraryFilter.all.rawValue
+    @AppStorage("GameCenterQuery") private var searchText = ""
+    @AppStorage("GameCenterSelected.ALL") private var allSelection = ""
+    @AppStorage("GameCenterSelected.RECENT") private var recentSelection = ""
+    @AppStorage("GameCenterSelected.FAVORITES") private var favoriteSelection = ""
+    @AppStorage("GameCenterSelected.BUILTIN") private var builtinSelection = ""
+    @State private var searchOpen = false
+    @State private var sourcesOpen = false
+    @State private var settingsOpen = false
     @State private var path = NavigationPath()
+    @ObservedObject private var sources = CatalogSourceModel.shared
+    @ObservedObject private var covers = GameCoverModel.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.locale) private var locale
 
     init(snapshot: CatalogSnapshot = CatalogSnapshot(generation: 0, games: [])) {
         _snapshot = State(initialValue: snapshot)
     }
 
-    var body: some View {
-        NavigationStack(path: $path) {
-            Group {
-                if visibleGames.isEmpty {
-                    ContentUnavailableView(
-                        "library.no_games",
-                        systemImage: "square.stack",
-                        description: Text("library.no_games.detail")
-                    )
-                } else {
-                    List(visibleGames) { game in
-                        NavigationLink(value: LibraryRoute.detail(game)) {
-                            CatalogGameRow(game: game)
-                        }
-                    }
-                }
+    private var largeText: Bool { typeSize.isAccessibilitySize }
+    private var selectedID: String {
+        get {
+            switch LibraryFilter(rawValue: category) ?? .all {
+            case .all: return allSelection
+            case .recent: return recentSelection
+            case .favorites: return favoriteSelection
+            case .builtin: return builtinSelection
             }
-            .navigationTitle("game_center.title")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: Text("library.search"))
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("game_center.title", selection: $filter) {
-                        ForEach(LibraryFilter.allCases) { item in
-                            Text(item.titleKey).tag(item)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 520)
-                    .frame(minHeight: 44)
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    NavigationLink {
-                        CatalogSourceManagementView()
-                    } label: {
-                        Text("library.sources")
-                    }
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Text("settings.title")
-                    }
-                    NavigationLink {
-                        NearbyFriendsView()
-                    } label: {
-                        Text("nearby.title")
-                    }
-                }
-            }
-            .navigationDestination(for: LibraryRoute.self) { route in
-                switch route {
-                case .detail(let game):
-                    CatalogGameDetailView(game: game)
-                case .run(let canonicalId):
-                    RunGameContainer(canonicalId: canonicalId, path: $path)
-                case .nearby:
-                    NearbyFriendsView()
-                }
-            }
-            .onAppear(perform: reloadSnapshot)
-            .onChange(of: filter) { _, _ in
-                reloadSnapshot()
-            }
-            .onChange(of: searchText) { _, _ in
-                reloadSnapshot()
+        }
+        nonmutating set {
+            switch LibraryFilter(rawValue: category) ?? .all {
+            case .all: allSelection = newValue
+            case .recent: recentSelection = newValue
+            case .favorites: favoriteSelection = newValue
+            case .builtin: builtinSelection = newValue
             }
         }
     }
+    private var compactHeader: Bool { largeText || locale.identifier == "en_XA" }
+    private var selectedGame: CatalogGame? { snapshot.games.first { $0.id == selectedID } }
 
-    private var visibleGames: [CatalogGame] {
-        snapshot.games
+    var body: some View {
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                header
+                if searchOpen {
+                    HStack {
+                        TextField("library.search", text: $searchText)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("search_input")
+                        icon("xmark", "common.cancel", "close_search") {
+                            searchText = ""; searchOpen = false
+                        }
+                    }.frame(minHeight: 56)
+                }
+                if sourcesOpen {
+                    CatalogSourceManagementView(onClose: { sourcesOpen = false })
+                } else {
+                    GeometryReader { geometry in
+                        HStack(spacing: 8) {
+                            CatalogGameDetailView(game: selectedGame, largeText: largeText,
+                                                  cover: selectedGame.flatMap { covers.image(for: $0.id) },
+                                                  onLaunch: launch)
+                                .frame(width: max(0, (geometry.size.width - 8) * 0.3))
+                            VStack(alignment: .leading, spacing: 4) {
+                                status.lineLimit(2).frame(minHeight: 32, alignment: .leading)
+                                ScrollView(.horizontal) {
+                                    LazyHGrid(rows: Array(repeating: GridItem(.flexible(), spacing: 8),
+                                                         count: largeText ? 1 : 2), spacing: 8) {
+                                        ForEach(snapshot.games) { game in
+                                            Button { selectedID = game.id } label: {
+                                                CatalogGameRow(game: game, selected: selectedID == game.id,
+                                                               largeText: largeText,
+                                                               cover: covers.image(for: game.id))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityIdentifier("game_card_" + game.id)
+                                        }
+                                    }.padding(4)
+                                }
+                                .accessibilityIdentifier("game_grid")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(8)
+            .background(Color(uiColor: .systemGroupedBackground))
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: LibraryRoute.self) { route in
+                switch route {
+                case .run(let id, let rom): RunGameContainer(canonicalId: id, romData: rom, path: $path)
+                }
+            }
+            .fullScreenCover(isPresented: $settingsOpen) { SettingsView() }
+            .onAppear {
+                searchOpen = !searchText.isEmpty
+                sources.initialize()
+                reloadSnapshot()
+            }
+            .onReceive(sources.$generation) { _ in reloadSnapshot() }
+            .onChange(of: category) { _ in sourcesOpen = false; reloadSnapshot() }
+            .onChange(of: searchText) { _ in reloadSnapshot() }
+            .onChange(of: locale) { _ in reloadSnapshot() }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 4) {
+            if !compactHeader {
+                Text("game_center.title").font(.headline).lineLimit(1)
+                    .accessibilityAddTraits(.isHeader).padding(.trailing, 8)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(LibraryFilter.allCases) { item in
+                        Button {
+                            category = item.rawValue
+                            sourcesOpen = false
+                        } label: {
+                            Text(item.titleKey).lineLimit(1)
+                                .padding(.horizontal, 14)
+                                .frame(minWidth: 72, minHeight: largeText ? 64 : 48)
+                                .foregroundColor(category == item.rawValue ? .white : .primary)
+                                .background(category == item.rawValue ? Color.accentColor : Color.clear)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("category_" + item.rawValue.lowercased())
+                        .accessibilityAddTraits(category == item.rawValue ? .isSelected : [])
+                    }
+                }
+                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            icon("magnifyingglass", "library.search", "open_search") { searchOpen = true; sourcesOpen = false }
+            icon("folder", "library.sources", "open_sources") { sourcesOpen = true }
+            icon("gearshape", "settings.title", "open_settings") { settingsOpen = true }
+        }.frame(height: largeText ? 80 : 64)
+    }
+
+    @ViewBuilder private var status: some View {
+        if sources.busy {
+            HStack { ProgressView(); Text("library.source.working") }
+        } else if let launching = sources.launching {
+            HStack { ProgressView(); Text(String(format: FlyNesLocalizedString("library.launching_game"), launching)) }
+        } else if let error = sources.error {
+            Text(error).foregroundColor(.red)
+        } else if snapshot.games.isEmpty {
+            Text(searchText.isEmpty ? "library.no_games" : "library.search.empty")
+                .foregroundColor(.secondary)
+        } else if sources.sources.isEmpty {
+            Text("library.source.add_hint").foregroundColor(.secondary)
+        } else {
+            Text(String(format: FlyNesLocalizedString("library.game_count"), snapshot.games.count))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func icon(_ image: String, _ label: LocalizedStringKey, _ id: String,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: image).frame(width: 48, height: 48) }
+            .accessibilityLabel(Text(label)).accessibilityIdentifier(id)
+    }
+
+    /// Android resolves and commits the selected game before leaving the Game
+    /// Center; a failure is reported in the status line with the grid still visible.
+    private func launch(_ game: CatalogGame) {
+        sources.launch(canonicalID: game.id, title: game.titlePrimary) { rom in
+            path.append(LibraryRoute.run(canonicalId: game.id, rom: rom))
+        }
     }
 
     private func reloadSnapshot() {
         let rows = FlyNesAppBridge.sharedInstance().gameCenterFilteredGames(
-            forCategory: filter.rawValue,
-            query: searchText
-        )
-        let games: [CatalogGame] = rows.compactMap { row in
-            guard let canonicalId = row["canonicalId"] as? String,
-                  let displayName = row["displayName"] as? String else {
-                return nil
-            }
-            return CatalogGame(
-                canonicalId: canonicalId,
-                displayName: displayName,
-                compatibilityState: (row["compatibilityState"] as? NSNumber)?.uint32Value ?? 0,
-                freshness: (row["freshness"] as? NSNumber)?.uint32Value ?? 0,
-                sourceScope: (row["sourceScope"] as? NSNumber)?.uint32Value ?? 0,
-                favorite: (row["favorite"] as? NSNumber)?.uint32Value ?? 0,
-                lastPlayedSequence: (row["lastPlayedSequence"] as? NSNumber)?.uint64Value ?? 0
-            )
-        }
+            forCategory: LibraryFilter(rawValue: category)?.rawValue ?? "ALL", query: searchText)
+        let games = rows.compactMap { CatalogGameFactory.game(from: $0, localeIdentifier: locale.identifier) }
         snapshot = CatalogSnapshot(generation: snapshot.generation &+ 1, games: games)
+        if !games.contains(where: { $0.id == selectedID }) { selectedID = games.first?.id ?? "" }
+        covers.preload(canonicalIds: games.map(\.id))
     }
 }

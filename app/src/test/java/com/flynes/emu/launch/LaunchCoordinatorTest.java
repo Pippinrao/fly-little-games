@@ -104,6 +104,26 @@ public final class LaunchCoordinatorTest {
     }
 
     @Test
+    public void unexpectedSourceFailureIsReportedInsteadOfKillingTheLaunchThread() {
+        byte[] rom = bytes("valid-rom");
+        GameCatalog catalog = catalogForSaf(identity(rom), CompatibilityState.PLAYABLE,
+                RomSource.PermissionState.GRANTED);
+        ExactRomLoader loader = new ExactRomLoader((sourceId, sourceUri) -> {
+            throw new IllegalArgumentException("Invalid URI: " + sourceUri);
+        });
+        RecordingHistory history = new RecordingHistory();
+        LaunchCoordinator coordinator = new LaunchCoordinator(
+                catalog, loader, new RecordingGateway(false), history);
+
+        LaunchResult result = coordinator.launch("variant-a");
+
+        assertEquals(LaunchResult.Code.SOURCE_OPEN_FAILED, result.code());
+        assertFalse(result.sessionCommitted());
+        assertTrue(history.requests.isEmpty());
+        assertEquals(0, catalog.canonicalEntries().get(0).playCount());
+    }
+
+    @Test
     public void sessionFailurePreservesHistoryAndCatalog() {
         byte[] rom = bytes("valid-rom");
         GameCatalog catalog = catalogFor(identity(rom), CompatibilityState.PLAYABLE);

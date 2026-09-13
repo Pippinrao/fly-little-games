@@ -35,6 +35,8 @@ struct ScaleFxUniforms {
 };
 
 float dist(float3 A, float3 B) {
+    A = round(A * float3(31., 63., 31.)) / float3(31., 63., 31.);
+    B = round(B * float3(31., 63., 31.)) / float3(31., 63., 31.);
     float r = 0.5 * (A.r + B.r);
     float3 d = A - B;
     float3 c = float3(2. + r, 4., 3. - r);
@@ -47,8 +49,8 @@ vertex FlyNesVertexOut flynes_scalefx_pass0_vs(uint vid [[vertex_id]]) {
         float2(-1.0,  1.0), float2(1.0,  1.0)
     };
     const float2 uvs[4] = {
-        float2(0.0, 0.0), float2(1.0, 0.0),
-        float2(0.0, 1.0), float2(1.0, 1.0)
+        float2(0.0, 1.0), float2(1.0, 1.0),
+        float2(0.0, 0.0), float2(1.0, 0.0)
     };
     FlyNesVertexOut out;
     out.position = float4(positions[vid], 0.0, 1.0);
