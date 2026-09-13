@@ -12,7 +12,10 @@ public record CanonicalGame(
         List<String> aliases) {
 
     private static final Comparator<TitleCandidate> TITLE_PREFERENCE = Comparator
-            .comparingInt((TitleCandidate value) -> value.reviewState().ordinal()).reversed()
+            .comparingInt((TitleCandidate value) ->
+                    value.origin() == TitleCandidate.Origin.MANUAL_OVERRIDE ? 0 : 1)
+            .thenComparing(Comparator.comparingInt(
+                    (TitleCandidate value) -> value.reviewState().ordinal()).reversed())
             .thenComparing(Comparator.comparingInt(
                     (TitleCandidate value) -> value.confidence().ordinal()).reversed())
             .thenComparing(TitleCandidate::origin)

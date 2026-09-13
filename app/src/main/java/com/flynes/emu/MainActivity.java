@@ -95,11 +95,27 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Stage-0 vertical slice: load the bundled homebrew ROM, render via
- * sequenced OpenGL presentation, audio-master-clock playback, touch input,
- * touch input, and auto-save on pause.
+ * The play surface: load a ROM the caller staged, render via sequenced OpenGL
+ * presentation, audio-master-clock playback, touch input, and auto-save on pause.
  */
 public class MainActivity extends AppCompatActivity {
+    // Resolved from the staged launch request, so no game is named here.
+    private com.flynes.emu.catalog.CanonicalGame currentGameTitle =
+            new com.flynes.emu.catalog.CanonicalGame("", "", "", java.util.List.of());
+    private byte[] currentRom;
+    private String currentCoverGameId = "";
+    private record RetainedGame(byte[] rom, com.flynes.emu.catalog.CanonicalGame title,
+            String coverGameId) { }
+
+    @Override public Object onRetainCustomNonConfigurationInstance() {
+        return currentRom == null ? null : new RetainedGame(currentRom, currentGameTitle,
+                currentCoverGameId);
+    }
+
+    private String currentGameDisplayTitle() {
+        return com.flynes.emu.gamecenter.GameTitlePresentation.forLocale(currentGameTitle,
+                getResources().getConfiguration().getLocales().get(0)).primary();
+    }
 
     private static final String TAG = "FlyNES";
     private static final int AUDIO_SAMPLE_RATE = 48000;
@@ -395,6 +411,10 @@ public class MainActivity extends AppCompatActivity {
                 Gravity.TOP | Gravity.END);
         pauseParams.setMargins(pauseMargin, pauseMargin, pauseMargin, pauseMargin);
         root.addView(pauseButton, pauseParams);
+        // The nearby status surface exists only while a nearby session does (D7). Today no session
+        // can exist, so this attaches nothing and local single-player keeps a clean game screen;
+        // the banner is the D6 pinned, non-dismissible element for 冻结 / 重连倒计时 / authority 超时.
+        NearbyInGameStatus.installBanner(this, root);
         pauseButton.setOnApplyWindowInsetsListener((button, insets) -> {
             FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
             params.setMargins(pauseMargin,
@@ -429,18 +449,32 @@ public class MainActivity extends AppCompatActivity {
         }
 
         PendingGameLaunch.Payload pending = PendingGameLaunch.consume();
-        if (pending == null) {
-            // The play surface only runs a game the caller explicitly asked for.
-            // Silently booting into one arbitrary bundled ROM is not acceptable
-            // now that several are bundled.
-            toastAndFinish(getString(R.string.missing_builtin_game));
-            return;
+        RetainedGame retained = getLastCustomNonConfigurationInstance() instanceof RetainedGame game
+                ? game : null;
+        if (pending == null && retained != null) currentGameTitle = retained.title();
+        if (pending != null) {
+            if (pending.title() != null) {
+                currentGameTitle = pending.title();
+            } else {
+                var metadata = com.flynes.emu.app.FlyNesApp.resolveGameTitle(
+                        LegacyGameTitles.parseHash(pending.request().hashes().payloadSha256()),
+                        pending.request().entryPath());
+                currentGameTitle = new com.flynes.emu.catalog.CanonicalGame(
+                        pending.request().canonicalGameId(), metadata.english(), metadata.chinese(),
+                        metadata.aliases());
+            }
         }
-        String coverGameId = pending.request().canonicalGameId();
+        // Nothing here names a bundled game: a direct launch with no request falls
+        // back to whatever the shared manifest lists first, which is what keeps
+        // single-activity instrumentation able to reach the play surface.
+        String coverGameId = pending != null ? pending.request().canonicalGameId()
+                : retained != null ? retained.coverGameId() : bundledFallbackCanonicalId();
+        currentCoverGameId = coverGameId;
         coverCapture = new CoverCaptureCoordinator(coverGameId,
                 new AndroidCoverRepository(this), coverExecutor);
         framePublisher.addObserver(coverCapture);
-        byte[] rom = pending.bytes();
+        byte[] rom = pending != null ? pending.bytes()
+                : retained != null ? retained.rom() : bundledFallbackRom();
         if (rom == null) {
             toastAndFinish(getString(R.string.missing_builtin_game));
             return;
@@ -482,6 +516,14 @@ public class MainActivity extends AppCompatActivity {
         if (startPlaying(rom) < 0) {
             Toast.makeText(this, R.string.load_game_failed, Toast.LENGTH_LONG).show();
             return;
+        }
+        if (data != null) {
+            String english = data.getStringExtra("gameTitleEn");
+            String chinese = data.getStringExtra("gameTitleZh");
+            String fallback = data.getStringExtra("gameTitleFallback");
+            currentGameTitle = new com.flynes.emu.catalog.CanonicalGame("legacy-running-game",
+                    english == null || english.isEmpty() ? fallback : english, chinese,
+                    java.util.List.of());
         }
         // onResume() (which follows immediately) starts a fresh AudioThread and
         // rendering; startPlaying() only loads the ROM and records its hash.
@@ -717,9 +759,12 @@ public class MainActivity extends AppCompatActivity {
         drawer.addView(eyebrow, matchWrap(dp(8)));
         TextView title = new TextView(this);
         title.setId(R.id.pause_game_title);
-        title.setText(R.string.builtin_game_name);
+        title.setText(currentGameDisplayTitle());
         title.setTextColor(0xFFF4EFE6);
         title.setTextSize(28);
+        title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setContentDescription(currentGameDisplayTitle());
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         ViewCompat.setAccessibilityHeading(title, true);
         drawer.addView(title, matchWrap(dp(24)));
@@ -733,6 +778,10 @@ public class MainActivity extends AppCompatActivity {
         Button settingsButton = drawerButton(R.id.pause_settings, R.string.settings, false);
         settingsButton.setOnClickListener(v -> closePauseForNavigation(SettingsActivity.class));
         drawer.addView(settingsButton, matchHeight(dp(48), 0));
+
+        // §22.4's lightweight status rows join the existing drawer rather than a new overlay host
+        // (D6). No session means no rows at all, not blocked rows (D7).
+        NearbyInGameStatus.installDrawerRows(this, drawer);
 
         int screenWidth = getResources().getDisplayMetrics().widthPixels;
         int drawerWidth = Math.min(dp(360), Math.max(dp(280), Math.round(screenWidth * .38f)));
@@ -853,6 +902,7 @@ public class MainActivity extends AppCompatActivity {
             return -1;
         }
         Log.i(TAG, "ROM loaded, sequenced GPU presenter ready");
+        currentRom = rom;
         return 0;
     }
 
@@ -1648,6 +1698,32 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------------
     // Assets / autosave
     // ------------------------------------------------------------------
+
+    /**
+     * Canonical id of the first game the shared manifest declares, or an empty
+     * string when the manifest cannot be read. A direct launch with no staged
+     * request uses this so the play surface is still reachable; it deliberately
+     * names no game, so adding or removing one stays a manifest edit.
+     */
+    private String bundledFallbackCanonicalId() {
+        java.util.List<com.flynes.emu.catalog.BuiltinGames.Entry> games = bundledManifestGames();
+        return games.isEmpty() ? "" : games.get(0).canonicalId;
+    }
+
+    /** ROM bytes of the same manifest-first game, or null when unavailable. */
+    private byte[] bundledFallbackRom() {
+        java.util.List<com.flynes.emu.catalog.BuiltinGames.Entry> games = bundledManifestGames();
+        return games.isEmpty() ? null : readAsset(games.get(0).assetPath());
+    }
+
+    private java.util.List<com.flynes.emu.catalog.BuiltinGames.Entry> bundledManifestGames() {
+        try {
+            return com.flynes.emu.catalog.BuiltinGames.fromAssets(this).all();
+        } catch (IOException | RuntimeException failure) {
+            Log.w(TAG, "bundled manifest unavailable for a direct launch", failure);
+            return java.util.List.of();
+        }
+    }
 
     private byte[] readAsset(String path) {
         try (InputStream in = getAssets().open(path);

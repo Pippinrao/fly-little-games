@@ -15,6 +15,7 @@ struct GameCenterItem final
     bool favorite = false;
     std::int64_t last_played_sequence = 0;
     std::string original_filename;
+    int popularity_score = -1;
 
     GameCenterItem(std::string canonical_id_value,
                    std::string title_en_value,
@@ -22,7 +23,8 @@ struct GameCenterItem final
                    bool builtin_value,
                    bool favorite_value,
                    std::int64_t last_played_sequence_value,
-                   std::string original_filename_value)
+                   std::string original_filename_value,
+                   int popularity_score_value = -1)
         : canonical_id(std::move(canonical_id_value))
         , title_en(std::move(title_en_value))
         , title_zh_hans(std::move(title_zh_hans_value))
@@ -30,6 +32,7 @@ struct GameCenterItem final
         , favorite(favorite_value)
         , last_played_sequence(last_played_sequence_value)
         , original_filename(std::move(original_filename_value))
+        , popularity_score(popularity_score_value)
     {
         if (is_blank(canonical_id))
         {
@@ -39,6 +42,8 @@ struct GameCenterItem final
         {
             throw std::invalid_argument("last played sequence must not be negative");
         }
+        if (popularity_score < -1 || popularity_score > 100)
+            throw std::invalid_argument("popularity score");
     }
 
 private:

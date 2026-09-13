@@ -398,6 +398,11 @@ struct Settings {
     this.actionRow($r('app.string.license_information'), $r('app.string.licenses_summary'), () => {
       void router.pushUrl({ url: 'pages/Licenses' });
     })
+    // D2: 好友管理 is a row inside this existing Settings page that opens the
+    // dedicated page. Do not add a sixth settings root for it.
+    this.actionRow($r('app.string.nearby_friends_manage'), $r('app.string.nearby_blocked_friend_store'), () => {
+      void router.pushUrl({ url: 'pages/NearbyFriendsManage' });
+    })
     Text($r('app.string.project_source'))
       .fontSize(16)
       .fontColor(COLOR_ON_SURFACE)

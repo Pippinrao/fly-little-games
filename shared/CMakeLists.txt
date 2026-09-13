@@ -5,6 +5,7 @@ project(flynes_shared LANGUAGES CXX)
 option(FLYNES_BUILD_TESTS "Build FlyNES shared-layer host tests" OFF)
 
 add_library(flynes_app STATIC
+    src/catalog/game_title_index.cpp
     src/catalog/bounded_zip_archive.cpp
     src/catalog/content_identity.cpp
     src/catalog/rom_payload_parser.cpp
@@ -21,6 +22,9 @@ target_include_directories(flynes_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_features(flynes_app PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(flynes_app PRIVATE /utf-8)
+endif()
 set_target_properties(flynes_app PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE YES
@@ -201,6 +205,8 @@ target_link_libraries(flynes_app PUBLIC flynes_product)
 add_library(flynes_session_codec STATIC
     src/session/wire/sha256.cpp
     src/session/wire/session_codec.cpp
+    src/session/wire/app_frame.cpp
+    src/session/wire/pair_capability.cpp
 )
 target_include_directories(flynes_session_codec PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
@@ -212,6 +218,13 @@ set_target_properties(flynes_session_codec PROPERTIES
 )
 flynes_enable_strict_warnings(flynes_session_codec)
 
+add_library(flynes_initial_plan_lock STATIC src/session/initial_plan_lock.cpp)
+target_link_libraries(flynes_initial_plan_lock PUBLIC flynes_session_codec)
+target_include_directories(flynes_initial_plan_lock PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+target_compile_features(flynes_initial_plan_lock PUBLIC cxx_std_17)
+set_target_properties(flynes_initial_plan_lock PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+flynes_enable_strict_warnings(flynes_initial_plan_lock)
+
 add_library(flynes_session STATIC
     src/session/flynes_session.cpp
 )
@@ -219,6 +232,7 @@ target_include_directories(flynes_session PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_features(flynes_session PRIVATE cxx_std_17)
+target_link_libraries(flynes_session PRIVATE flynes_initial_plan_lock)
 set_target_properties(flynes_session PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE YES
@@ -252,6 +266,13 @@ if(FLYNES_BUILD_TESTS)
     enable_testing()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+    add_test(NAME flynes_game_title_data_check
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/game_titles/game_titles.py check)
+    add_test(NAME flynes_game_title_generator
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/game_titles/test_game_titles.py)
+
     if(NOT TARGET nes_abi)
         set(NES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../core"
@@ -271,6 +292,17 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_runtime_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_runtime_test)
     add_test(NAME flynes_runtime COMMAND flynes_runtime_test)
+
+    find_package(Threads REQUIRED)
+    add_executable(flynes_runtime_pcm_contention_test tests/test_runtime_pcm_contention.cpp)
+    target_include_directories(flynes_runtime_pcm_contention_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(flynes_runtime_pcm_contention_test PRIVATE nes_abi Threads::Threads)
+    target_compile_features(flynes_runtime_pcm_contention_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_runtime_pcm_contention_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_runtime_pcm_contention_test)
+    add_test(NAME flynes_runtime_pcm_contention COMMAND flynes_runtime_pcm_contention_test)
+    set_tests_properties(flynes_runtime_pcm_contention PROPERTIES TIMEOUT 15)
 
     set(FLYNES_ANDROID_NDK_ROOT "" CACHE PATH
         "Android NDK root for the cross-sysroot policy regression test")
@@ -299,6 +331,15 @@ if(FLYNES_BUILD_TESTS)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_android_hmos_overlay_policy.cmake"
         )
     endif()
+
+    add_executable(flynes_game_title_index_test tests/test_game_title_index.cpp)
+    target_link_libraries(flynes_game_title_index_test PRIVATE flynes_app)
+    target_compile_features(flynes_game_title_index_test PRIVATE cxx_std_17)
+    flynes_enable_strict_warnings(flynes_game_title_index_test)
+    if(MSVC)
+        target_compile_options(flynes_game_title_index_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME flynes_game_title_index COMMAND flynes_game_title_index_test)
 
     add_executable(flynes_app_contract_test
         tests/test_app.cpp
@@ -708,6 +749,20 @@ if(FLYNES_BUILD_TESTS)
     )
     add_test(NAME flynes_session_codec COMMAND flynes_session_codec_test)
 
+    add_executable(flynes_pair_capability_test tests/test_pair_capability.cpp)
+    target_link_libraries(flynes_pair_capability_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_pair_capability_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_capability_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_capability_test)
+    add_test(NAME flynes_pair_capability COMMAND flynes_pair_capability_test)
+
+    add_executable(flynes_initial_plan_lock_test tests/test_initial_plan_lock.cpp)
+    target_link_libraries(flynes_initial_plan_lock_test PRIVATE flynes_initial_plan_lock)
+    target_compile_features(flynes_initial_plan_lock_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_initial_plan_lock_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_initial_plan_lock_test)
+    add_test(NAME flynes_initial_plan_lock COMMAND flynes_initial_plan_lock_test)
+
     add_executable(flynes_session_codec_loopback_test
         tests/test_session_codec_loopback.cpp
     )
@@ -735,6 +790,60 @@ if(FLYNES_BUILD_TESTS)
     )
     flynes_enable_strict_warnings(flynes_session_test)
     add_test(NAME flynes_session COMMAND flynes_session_test)
+
+    add_executable(flynes_session_initial_plan_test tests/test_session_initial_plan.cpp)
+    target_link_libraries(flynes_session_initial_plan_test PRIVATE flynes_session flynes_session_codec)
+    target_include_directories(flynes_session_initial_plan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_session_initial_plan_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_initial_plan_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_initial_plan_test)
+    add_test(NAME flynes_session_initial_plan COMMAND flynes_session_initial_plan_test)
+
+    add_executable(flynes_session_public_path_test tests/test_session_public_path.cpp)
+    target_link_libraries(flynes_session_public_path_test PRIVATE flynes_session flynes_session_codec)
+    target_include_directories(flynes_session_public_path_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_session_public_path_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_public_path_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_public_path_test)
+    target_compile_definitions(flynes_session_public_path_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_public_path COMMAND flynes_session_public_path_test)
+
+    add_executable(flynes_session_receive_seam_test tests/test_session_receive_seam.cpp)
+    target_link_libraries(flynes_session_receive_seam_test PRIVATE flynes_session flynes_session_codec)
+    target_include_directories(flynes_session_receive_seam_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_session_receive_seam_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_receive_seam_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_receive_seam_test)
+    target_compile_definitions(flynes_session_receive_seam_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_receive_seam COMMAND flynes_session_receive_seam_test)
+
+    add_executable(flynes_session_app_frame_test tests/test_app_frame.cpp)
+    target_link_libraries(flynes_session_app_frame_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_session_app_frame_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_app_frame_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_app_frame_test)
+    target_compile_definitions(flynes_session_app_frame_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_session_app_frame COMMAND flynes_session_app_frame_test)
+
+    add_executable(flynes_session_app_frame_consistency_test
+        tests/test_app_frame_consistency.cpp
+    )
+    target_link_libraries(flynes_session_app_frame_consistency_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_session_app_frame_consistency_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_app_frame_consistency_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_app_frame_consistency_test)
+    target_compile_definitions(flynes_session_app_frame_consistency_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+        FLYNES_SESSION_SCHEMA_FILE="${CMAKE_CURRENT_SOURCE_DIR}/schema/flynes_session_v1.schema"
+    )
+    add_test(NAME flynes_session_app_frame_consistency
+        COMMAND flynes_session_app_frame_consistency_test)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library

@@ -51,8 +51,16 @@ enum fly_session_command_kind
     FLY_SESSION_COMMAND_NONE = 0
 };
 
+/*
+ * Snapshot UI state. FLY_SESSION_UI_UNSPECIFIED (0) means this v1 ABI cannot
+ * represent the current state (for example a live, failed or otherwise terminal
+ * initial-plan attempt); it never means idle. The real lifecycle states are the
+ * approved design's §2 table and require a versioned ABI addition
+ * (struct_size/abi_version) instead of overloading 0.
+ */
 enum fly_session_ui_state
 {
+    FLY_SESSION_UI_UNSPECIFIED = 0,
     FLY_SESSION_UI_IDLE = 1
 };
 
@@ -141,6 +149,14 @@ typedef struct fly_session_command_result
     uint32_t reserved;
 } fly_session_command_result;
 
+/*
+ * result.result follows fly_result_code: FLY_RESULT_OK (0) reports success, and
+ * any other value is an executor failure. A failed or stale completion is
+ * rejected as terminal and never authorizes an effect. transition_id must be 0;
+ * a 128-bit wire transition id is not representable here and is never truncated
+ * into this field.
+ */
+
 #define FLY_SESSION_COMMAND_RESULT_V1_SIZE \
     ((uint32_t)(offsetof(fly_session_command_result, reserved) + sizeof(uint32_t)))
 
@@ -176,8 +192,21 @@ FLYNES_API fly_result fly_session_receive_datagram(fly_session_t* session,
                                                    const uint8_t* bytes,
                                                    size_t size);
 
+/*
+ * Copies the immutable pending command, if any, into command_out.
+ * A nonzero command_id together with kind == FLY_SESSION_COMMAND_NONE means a
+ * command is pending whose kind has no v1 representation; command_id == 0 means
+ * nothing is pending. Polling repeats the same id until it is completed.
+ * transition_id is always 0: the wire transition id is not representable in
+ * this 64-bit field and is never truncated into it.
+ */
 FLYNES_API fly_result fly_session_poll_command(fly_session_t* session,
                                                fly_session_command* command_out);
+/*
+ * Completes exactly the command_id returned by the last poll. Stale, duplicate,
+ * unpolled or failed completions are rejected; the reducer's own generation
+ * fence decides staleness.
+ */
 FLYNES_API fly_result fly_session_complete_command(
     fly_session_t* session,
     const fly_session_command_result* result);

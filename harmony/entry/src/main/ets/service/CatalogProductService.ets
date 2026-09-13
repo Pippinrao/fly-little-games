@@ -1,6 +1,16 @@
 import nativeProduct, { CatalogUserState, GameCenterRow } from 'libentry.so';
 import { BuiltinGame, BuiltinGames } from './BuiltinGames';
 
+/** Pure projection of cached metadata; changing language never opens a ROM. */
+export function localizedGameTitle(titleEn: string, titleZhHans: string, fallback: string,
+  localeTag: string, systemLanguage: string): string {
+  const effective = (localeTag === 'system' ? systemLanguage : localeTag).toLowerCase();
+  const chinese = effective === 'zh' || effective.startsWith('zh-') || effective.startsWith('zh_');
+  const primary = chinese ? titleZhHans : titleEn;
+  const secondary = chinese ? titleEn : titleZhHans;
+  return primary.length > 0 ? primary : secondary.length > 0 ? secondary : fallback;
+}
+
 /**
  * Collapses the native per-variant snapshot into one card per canonical game,
  * with every bundled game first and the rest in snapshot order.

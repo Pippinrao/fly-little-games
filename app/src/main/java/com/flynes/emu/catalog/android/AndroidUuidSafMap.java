@@ -1,6 +1,5 @@
 package com.flynes.emu.catalog.android;
 
-import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BiConsumer;
@@ -76,12 +75,7 @@ public final class AndroidUuidSafMap {
     }
 
     public static String toHex(byte[] uuid) {
-        byte[] checked = requireUuid(uuid);
-        StringBuilder hex = new StringBuilder(32);
-        for (byte value : checked) {
-            hex.append(String.format(Locale.ROOT, "%02x", value & 0xFF));
-        }
-        return hex.toString();
+        return com.flynes.emu.catalog.HexEncoding.lower(requireUuid(uuid));
     }
 
     public static byte[] parseHex(String hex) {

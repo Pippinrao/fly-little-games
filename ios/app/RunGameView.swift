@@ -4,6 +4,7 @@ import SwiftUI
 struct RunGameView: UIViewControllerRepresentable {
     let canonicalId: String
     let romData: Data
+    var gameTitle: String = ""
     var onPauseCommand: (String) -> Void = { _ in }
     var overlayReloadGeneration: Int = 0
 
@@ -15,6 +16,7 @@ struct RunGameView: UIViewControllerRepresentable {
         let controller = RunSurfaceViewController()
         controller.canonicalId = canonicalId
         controller.romData = romData
+        controller.gameTitle = gameTitle
         controller.onPauseCommand = { command in
             context.coordinator.onPauseCommand(command)
         }
@@ -23,6 +25,7 @@ struct RunGameView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: RunSurfaceViewController, context: Context) {
         uiViewController.canonicalId = canonicalId
+        uiViewController.gameTitle = gameTitle
         context.coordinator.onPauseCommand = onPauseCommand
         uiViewController.onPauseCommand = { command in
             context.coordinator.onPauseCommand(command)
@@ -48,12 +51,14 @@ struct RunGameView: UIViewControllerRepresentable {
 struct RunGameContainer: View {
     let canonicalId: String
     let romData: Data
+    let game: CatalogGame
+    @Environment(\.locale) private var locale
     @Binding var path: NavigationPath
     @State private var showSettings = false
     @State private var overlayReloadGeneration = 0
 
     var body: some View {
-        RunGameView(canonicalId: canonicalId, romData: romData,
+        RunGameView(canonicalId: canonicalId, romData: romData, gameTitle: localizedTitle,
                     onPauseCommand: { command in
             if command == "game_center" { path = NavigationPath() }
             else if command == "settings" { showSettings = true }
@@ -66,5 +71,11 @@ struct RunGameContainer: View {
         }) {
             SettingsView()
         }
+    }
+
+    private var localizedTitle: String {
+        FlyNesCatalogPresentation.title(forFields: ["titleEn": game.titleEn,
+            "titleZhHans": game.titleZhHans, "titleUnknown": game.titleUnknown],
+            locale: locale.identifier)["primary"] ?? game.displayName
     }
 }

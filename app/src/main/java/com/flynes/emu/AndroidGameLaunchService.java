@@ -34,7 +34,13 @@ public final class AndroidGameLaunchService {
             LaunchCoordinator coordinator = new LaunchCoordinator(
                     runtime.gameCatalog(),
                     new ExactRomLoader(runtime.streamOpener()),
-                    PendingGameLaunch::stage,
+                    (request, bytes) -> {
+                        var title = runtime.gameCatalog().canonicalEntries().stream()
+                                .filter(entry -> entry.canonicalGame().id().equals(request.canonicalGameId()))
+                                .map(com.flynes.emu.catalog.GameCatalogEntry::canonicalGame)
+                                .findFirst().orElse(null);
+                        PendingGameLaunch.stage(request, bytes, title);
+                    },
                     request -> {
                         try {
                             if (!runtime.recordSuccessfulLaunch(request.canonicalGameId()).get()) {

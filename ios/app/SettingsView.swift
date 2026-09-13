@@ -180,6 +180,11 @@ struct SettingsView: View {
         Text("settings.about_description").foregroundStyle(.secondary)
         NavigationLink { LicenseListView() } label: { Text("settings.licenses") }
             .accessibilityIdentifier("settings_licenses")
+        // 好友管理 opens its own page rather than adding a sixth settings section (spec §10 D2);
+        // the same row exists on the 好友 tab. Identifier matches Android's for cross-platform
+        // test parity.
+        NavigationLink { NearbyFriendsManageView() } label: { Text("nearby.friends.manage") }
+            .accessibilityIdentifier("settings_nearby_friends_manage")
     }
 
     private func number(_ key: String) -> UInt32 { (snapshot[key] as? NSNumber)?.uint32Value ?? 0 }

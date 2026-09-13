@@ -6,8 +6,11 @@ fly_catalog_snapshot
 fly_catalog_snapshot_count
 fly_catalog_snapshot_generation
 fly_catalog_snapshot_get
+fly_catalog_snapshot_get_title
+fly_catalog_snapshot_get_zip_locator
 fly_catalog_snapshot_release
 fly_catalog_user_state_get
+fly_game_title_resolve
 fly_scan_abort
 fly_scan_add_file
 fly_scan_begin

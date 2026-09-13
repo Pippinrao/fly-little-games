@@ -1,8 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
+import { i18n } from '@kit.LocalizationKit';
 import nativeProduct, { GameCenterRow } from 'libentry.so';
-import { CatalogProductService } from '../service/CatalogProductService';
+import { CatalogProductService, localizedGameTitle } from '../service/CatalogProductService';
 import { takeRomOpenError, builtinGamesSync } from '../service/PlayService';
 import { BuiltinGames } from '../service/BuiltinGames';
 import { CoverStore } from '../service/CoverStore';
@@ -14,6 +15,8 @@ struct GameCenter {
   private coverStore: CoverStore | undefined = undefined;
   @State private category: string = 'ALL';
   @State private query: string = '';
+  @State private localeTag: string = 'system';
+  @State private systemLanguage: string = 'en';
   @State private selectedCanonicalId: string = '';
   @State private compactHeader: boolean = false;
   @State private fontScale: number = 1.0;
@@ -227,6 +230,13 @@ struct GameCenter {
       .onClick(() => {
         void router.pushUrl({ url: 'pages/Settings' });
       })
+    // 附近联机 entry: real local navigation into the friends/nearby-devices page.
+    Button($r('app.string.nearby_title'))
+      .height(this.compactHeader ? 56 : 48)
+      .fontSize(16)
+      .onClick(() => {
+        void router.pushUrl({ url: 'pages/NearbyFriends' });
+      })
   }
 
   private openSearch(): void {
@@ -435,6 +445,8 @@ struct GameCenter {
   }
 
   private readCompactPolicy(): void {
+    this.localeTag = nativeProduct.settingsGet().localeTag;
+    this.systemLanguage = i18n.System.getSystemLanguage();
     const host = this.getUIContext().getHostContext();
     if (host === undefined) {
       this.compactHeader = false;
@@ -506,7 +518,9 @@ struct GameCenter {
         'sourceRelativePath': row.sourceRelativePath,
         'packageFormat': `${row.packageFormat}`,
         'zipEntryName': row.originalFilename,
-        'title': this.displayTitle(row)
+        'title': this.displayTitle(row),
+        'titleEn': row.titleEn,
+        'titleZhHans': row.titleZhHans
       }
     });
   }
@@ -547,22 +561,8 @@ struct GameCenter {
   }
 
   private displayTitle(row: GameCenterRow): string {
-    if (row.titleZhHans.length > 0 && this.preferZh()) {
-      return row.titleZhHans;
-    }
-    return row.titleEn;
-  }
-
-  private preferZh(): boolean {
-    const host = this.getUIContext().getHostContext();
-    if (host === undefined) {
-      return false;
-    }
-    const language = (host as common.UIAbilityContext).config.language;
-    if (language === undefined) {
-      return false;
-    }
-    return language === 'zh' || language.startsWith('zh-') || language.startsWith('zh_');
+    return localizedGameTitle(row.titleEn, row.titleZhHans, row.originalFilename,
+      this.localeTag, this.systemLanguage);
   }
 
   private emptyMessage(): Resource {

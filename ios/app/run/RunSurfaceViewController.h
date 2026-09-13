@@ -8,6 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface RunSurfaceViewController : UIViewController
 
 @property(nonatomic, copy) NSString *canonicalId;
+@property(nonatomic, copy) NSString *gameTitle;
 // Canonical ROM bytes resolved by the app bridge before presenting this controller.
 @property(nonatomic, copy, nullable) NSData *romData;
 @property(nonatomic, copy, nullable) void (^onPauseCommand)(NSString *commandId);

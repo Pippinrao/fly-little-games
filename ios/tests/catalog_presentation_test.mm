@@ -3,9 +3,19 @@
 #include <cassert>
 #include <cstdio>
 int main() { @autoreleasepool {
+    // A trusted bundled row takes its titles from the shared manifest, so this
+    // names a manifest-declared game instead of a hardcoded pair.
     auto builtin=[FlyNesCatalogPresentation fieldsForFilename:@"thwaite.nes" entryPath:@"" trustedBuiltin:YES];
     assert([builtin[@"titleEn"] isEqual:@"Thwaite"]);
     assert([builtin[@"titleZhHans"] isEqual:@"护村记"]);
+    // An indexed (non-bundled) row keeps its own metadata, aliases and search.
+    auto indexed=[FlyNesCatalogPresentation fieldsForFilename:@"renamed.nes" entryPath:@"" trustedBuiltin:NO
+        indexedTitleEn:@"Contra" indexedTitleZhHans:@"魂斗罗" aliases:@"Gryzor\n魂斗羅"];
+    assert([indexed[@"titleEn"] isEqual:@"Contra"] && [indexed[@"titleZhHans"] isEqual:@"魂斗罗"]);
+    assert([FlyNesCatalogPresentation fields:indexed matchQuery:@"Gryzor"]);
+    assert([FlyNesCatalogPresentation fields:indexed matchQuery:@"renamed.nes"]);
+    assert([[FlyNesCatalogPresentation titleForFields:indexed locale:@"zh-Hans"][@"primary"] isEqual:@"魂斗罗"]);
+    assert([[FlyNesCatalogPresentation titleForFields:indexed locale:@"fr"][@"primary"] isEqual:@"Contra"]);
     auto english=[FlyNesCatalogPresentation titleForFields:builtin locale:@"en-US"];
     auto chinese=[FlyNesCatalogPresentation titleForFields:builtin locale:@"zh-CN"];
     assert([english[@"primary"] isEqual:@"Thwaite"] && [english[@"secondary"] isEqual:@"护村记"]);

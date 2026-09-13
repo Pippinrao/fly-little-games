@@ -7,6 +7,7 @@
 #include "flynes/product/game_center_state.hpp"
 
 #include <cstring>
+#include <algorithm>
 #include <exception>
 #include <limits>
 #include <mutex>
@@ -59,7 +60,8 @@ BOOL row_bool(NSDictionary<NSString *, id> *row, NSString *key)
 /// the actual built-in manifest source is trusted for translations. The playable
 /// physical source is never altered here.
 NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& entry,
-                                                     const fly_catalog_user_state& user)
+                                                     const fly_catalog_user_state& user,
+                                                     const fly_game_title& title)
 {
     const std::string canonical = entry.canonical_id_utf8 == nullptr ? std::string{}
                                                                     : entry.canonical_id_utf8;
@@ -80,7 +82,10 @@ NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& en
     NSDictionary<NSString *, id> *fields = [FlyNesCatalogPresentation
         fieldsForFilename:@(original_filename.c_str())
                 entryPath:@(entry_name.c_str())
-           trustedBuiltin:builtin];
+           trustedBuiltin:builtin
+           indexedTitleEn:@(title.title_en_utf8 ?: "")
+       indexedTitleZhHans:@(title.title_zh_hans_utf8 ?: "")
+                  aliases:@(title.aliases_utf8 ?: "")];
     std::int64_t last_played = 0;
     if (user.last_played_sequence > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
         last_played = std::numeric_limits<std::int64_t>::max();
@@ -95,7 +100,8 @@ NSDictionary<NSString *, id> *catalog_row_dictionary(const fly_catalog_entry& en
         @"titleUnknown" : fields[@"titleUnknown"],
         @"titleCandidates" : fields[@"titleCandidates"],
         @"originalFilename" : @(original_filename.c_str()),
-        @"searchAliases" : @(search_aliases.c_str()),
+        @"popularityScore" : @(flynes::product::popularity_for_package(relative, display)),
+        @"searchAliases" : [NSString stringWithFormat:@"%@ %@", @(search_aliases.c_str()), fields[@"searchAliases"]],
         @"compatibilityState" : @(entry.compatibility_state),
         @"freshness" : @(entry.freshness),
         @"sourceScope" : @(entry.source_scope),
@@ -133,7 +139,8 @@ flynes::product::GameCenterItem game_center_item_from_row(NSDictionary<NSString 
                                            builtin,
                                            favorite,
                                            last_played,
-                                           utf8(row[@"searchAliases"] ?: row[@"originalFilename"])};
+                                           utf8(row[@"searchAliases"] ?: row[@"originalFilename"]),
+                                           [row[@"popularityScore"] intValue]};
 }
 
 /// Android CanonicalGame aggregates every variant's title candidates, so one
@@ -148,8 +155,10 @@ NSDictionary<NSString *, id> *with_merged_presentation(
         return chosen;
     NSMutableArray<NSString *> *aliases = [NSMutableArray array];
     NSMutableDictionary<NSString *, id> *merged = nil;
+    int popularity = 0;
     for (NSDictionary<NSString *, id> *row in variants)
     {
+        popularity = std::max(popularity, [row[@"popularityScore"] intValue]);
         NSDictionary<NSString *, id> *fields = [FlyNesCatalogPresentation
             mergeFields:merged ?: @{} with:row];
         merged = [fields mutableCopy];
@@ -162,6 +171,7 @@ NSDictionary<NSString *, id> *with_merged_presentation(
     result[@"titleZhHans"] = merged[@"titleZhHans"] ?: @"";
     result[@"titleUnknown"] = merged[@"titleUnknown"] ?: @"";
     result[@"searchAliases"] = [aliases componentsJoinedByString:@" "];
+    result[@"popularityScore"] = @(popularity);
     return result;
 }
 
@@ -412,12 +422,14 @@ NSDictionary<NSString *, id> *with_merged_presentation(
         entry.source_relative_path_capacity = static_cast<uint32_t>(sizeof(relative));
         if (fly_catalog_snapshot_get(snapshot, index, &entry) != FLY_RESULT_OK)
             continue;
+        fly_game_title title{};
+        fly_catalog_snapshot_get_title(snapshot, index, &title);
         fly_catalog_user_state user{};
         user.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE;
         user.version = FLY_CATALOG_USER_STATE_VERSION_1;
         fly_catalog_user_state_get(app_, canonical,
                                    static_cast<uint32_t>(std::strlen(canonical)), &user);
-        [games addObject:catalog_row_dictionary(entry, user)];
+        [games addObject:catalog_row_dictionary(entry, user, title)];
     }
     fly_catalog_snapshot_release(snapshot);
     return games;

@@ -63,6 +63,10 @@ set(FLYNES_PRODUCT_SWIFT
     CatalogGameDetailView.swift
     CatalogSourceManagementView.swift
     SettingsView.swift
+    NearbyFriendsView.swift
+    NearbyPairingView.swift
+    NearbyLobbyView.swift
+    NearbyFriendsManageView.swift
     ControlLayoutEditorView.swift
     RunGameView.swift
     platform/ControlLayoutDraft.swift

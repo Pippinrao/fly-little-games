@@ -48,6 +48,19 @@ NSData *flat_frame(unsigned value)
 
 #pragma mark - Android title presentation
 
+- (void)testIndexedMetadataSurvivesRenameAndProjectsBothLocales
+{
+    NSDictionary *fields = [FlyNesCatalogPresentation fieldsForFilename:@"renamed.nes"
+        entryPath:@"" trustedBuiltin:NO indexedTitleEn:@"Contra" indexedTitleZhHans:@"魂斗罗"
+        aliases:@"Gryzor\n魂斗羅"];
+    XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"zh-Hans"][@"primary"], @"魂斗罗");
+    XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"en"][@"primary"], @"Contra");
+    XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"fr"][@"primary"], @"Contra");
+    XCTAssertTrue([FlyNesCatalogPresentation fields:fields matchQuery:@"renamed.nes"]);
+    XCTAssertTrue([FlyNesCatalogPresentation fields:fields matchQuery:@"Gryzor"]);
+    XCTAssertTrue([FlyNesCatalogPresentation fields:fields matchQuery:@"魂斗羅"]);
+}
+
 - (void)testTrustedBuiltinPresentsAndroidBilingualTitle
 {
     NSDictionary *fields = [FlyNesCatalogPresentation fieldsForFilename:@"thwaite.nes"

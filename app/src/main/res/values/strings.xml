@@ -217,4 +217,104 @@
     <string name="video_extreme_locked_title">Extreme is not qualified on this device</string>
     <string name="video_extreme_locked_message">This build has no exact device-lab certificate for the current phone, driver, display mode and algorithm combination. Balanced remains fully available.</string>
     <string name="ok">OK</string>
+
+    <!-- Nearby multiplayer (spec docs/superpowers/plans/2026-09-11-nearby-ui-spine-slice-spec.md §2).
+         Ids are verbatim from the spec with "." -> "_" (Android resource transform). -->
+    <string name="nearby_title">Nearby multiplayer</string>
+    <string name="nearby_open">Nearby</string>
+    <!-- Page titles. §2 lists no title for the 配对 and 大厅 pages, but a sub-page showing the
+         feature's own name as its title is a real hierarchy defect, and the 附近设备 tab needs a
+         label for the one navigation entry §4 permits into 配对. Two keys, A1 addition. -->
+    <string name="nearby_pairing_title">Pairing</string>
+    <string name="nearby_lobby_title">Lobby</string>
+    <string name="nearby_tab_friends">Friends</string>
+    <string name="nearby_tab_devices">Nearby devices</string>
+    <string name="nearby_find_devices">Find devices</string>
+    <string name="nearby_scan_host_qr">Scan host QR code</string>
+    <string name="nearby_friends_empty">No friends saved on this device</string>
+    <string name="nearby_devices_empty">No nearby devices found</string>
+    <string name="nearby_stage_permission">Permission</string>
+    <string name="nearby_stage_permission_reason">Nearby permissions are not declared in this build, so the pairing stages cannot start.</string>
+    <string name="nearby_stage_discovery">Discovery</string>
+    <string name="nearby_stage_discovery_reason">No local discovery bearer is available: this build has no Bluetooth or QR discovery path.</string>
+    <string name="nearby_stage_auth">Authentication</string>
+    <string name="nearby_stage_auth_reason">Device authentication is not connected to the session yet.</string>
+    <string name="nearby_stage_wifi">Wi-Fi</string>
+    <string name="nearby_stage_wifi_reason">No Wi-Fi path has been selected or confirmed yet.</string>
+    <string name="nearby_stage_quic">QUIC</string>
+    <string name="nearby_stage_quic_reason">The production QUIC channel is not connected to the session yet.</string>
+    <string name="nearby_stage_version">Version</string>
+    <string name="nearby_stage_version_reason">Version negotiation needs a live session, which this build does not have yet.</string>
+    <string name="nearby_stage_codec">Codec</string>
+    <string name="nearby_stage_codec_reason">Codec capability exchange needs a live session, which this build does not have yet.</string>
+    <string name="nearby_blocked_discovery">Unavailable: this build has no discovery bearer, so it cannot search for peers.</string>
+    <string name="nearby_blocked_friend_store">Unavailable: this build has no local friend store, so saved friends cannot be listed, renamed, or removed.</string>
+    <string name="nearby_stage_status_passed">Passed</string>
+    <string name="nearby_stage_status_current">Current stage</string>
+    <string name="nearby_stage_status_not_reached">Not yet reached</string>
+    <!--
+      The remainder of the §2 vocabulary. Every id in the spec's §2.1 + §2.2 + §2.3 tables exists in
+      this file and in values-zh-rCN/strings.xml under the same `.` -> `_` transform, because a key
+      missing from one locale is a silent English fallback rather than a visible bug. Keys whose
+      capability is not built yet are declared anyway: they are the exact reason text a blocked row
+      shows, so no page ever has to invent one.
+    -->
+    <string name="nearby_stage_permission_reason_ios">This app declares no usage keys yet, so iOS cannot query this stage at all.</string>
+    <string name="nearby_lobby_friend_name">Friend name</string>
+    <string name="nearby_lobby_identity_fingerprint">Identity fingerprint</string>
+    <string name="nearby_lobby_authority_capability">Authority candidate capability</string>
+    <string name="nearby_lobby_resource_risk">Resource risk</string>
+    <string name="nearby_lobby_network_owner">Current network owner</string>
+    <string name="nearby_lobby_seat">Seat (P1/P2)</string>
+    <string name="nearby_lobby_rom_identity">ROM identity</string>
+    <string name="nearby_lobby_rom_local_state">Whether each end already has this ROM</string>
+    <string name="nearby_lobby_rom_transfer_confirm">ROM transfer confirmation</string>
+    <string name="nearby_lobby_rom_transfer_progress">ROM transfer progress</string>
+    <string name="nearby_lobby_profile_verified">MultiplayerProfile verified</string>
+    <string name="nearby_lobby_mode_expected">Expected mode (DUAL or HOST_STREAM)</string>
+    <string name="nearby_lobby_local_audio">Local audio on this device</string>
+    <string name="nearby_lobby_confirm">Confirm and join</string>
+    <string name="nearby_lobby_confirm_invalidated">Confirmation invalidated</string>
+    <string name="nearby_ingame_mode">Mode</string>
+    <string name="nearby_ingame_connection_quality">Connection quality</string>
+    <string name="nearby_ingame_seat">Seat</string>
+    <string name="nearby_ingame_pause_state">Pause / reconnect state</string>
+    <string name="nearby_ingame_frozen">Frozen</string>
+    <string name="nearby_ingame_reconnect_countdown">Reconnect countdown</string>
+    <string name="nearby_ingame_authority_timeout">Authority timeout</string>
+    <string name="nearby_ingame_takeover">Take over</string>
+    <string name="nearby_ingame_continue_solo">Continue solo</string>
+    <string name="nearby_ingame_save_and_end">Save and end</string>
+    <string name="nearby_ingame_option_unavailable_reason">Why this option is unavailable</string>
+    <string name="nearby_ingame_branch_reunion">Branch reunion</string>
+    <string name="nearby_ingame_branch_no_auto_merge">Branches are never merged automatically</string>
+    <string name="nearby_ingame_local_mute">Mute this device</string>
+    <string name="nearby_join_request_anonymous">Anonymous join request</string>
+    <string name="nearby_join_accept">Accept</string>
+    <string name="nearby_join_reject">Reject</string>
+    <string name="nearby_code_label">Six-digit code</string>
+    <string name="nearby_code_confirm">Confirm code</string>
+    <string name="nearby_wifi_path_building">Building the Wi-Fi direct path</string>
+    <string name="nearby_wifi_system_confirm_once">The system may ask once whether to allow the connection</string>
+    <string name="nearby_friends_section">Friends</string>
+    <string name="nearby_friends_manage">Manage friends</string>
+    <string name="nearby_friends_saved_after_auth">Friends saved after authentication appear here</string>
+    <string name="nearby_friends_rename">Rename</string>
+    <string name="nearby_friends_delete">Delete</string>
+    <string name="nearby_friends_block">Block</string>
+    <string name="nearby_friends_identity_reset">Reset identity on this device</string>
+    <string name="nearby_blocked_permissions">Unavailable: this build declares no nearby permission.</string>
+    <string name="nearby_blocked_auth">Unavailable: device authentication is not connected to the session yet.</string>
+    <string name="nearby_blocked_wifi">Unavailable: no Wi-Fi path has been selected or confirmed yet.</string>
+    <string name="nearby_blocked_quic">Unavailable: the production QUIC channel is not connected to the session yet.</string>
+    <string name="nearby_blocked_version">Unavailable: version negotiation needs a live session.</string>
+    <string name="nearby_blocked_codec">Unavailable: codec capability exchange needs a live session.</string>
+    <string name="nearby_blocked_rom_transfer">Unavailable: ROM identity and transfer are not connected to the session yet.</string>
+    <string name="nearby_blocked_profile_verify">Unavailable: this build cannot verify a MultiplayerProfile.</string>
+    <string name="nearby_blocked_mode_gate">Unavailable: the mode gate needs a live session, so DUAL versus HOST_STREAM cannot be decided.</string>
+    <string name="nearby_blocked_connection_quality">Unavailable: connection quality needs a live session.</string>
+    <string name="nearby_blocked_authority_recovery">Unavailable: takeover and save need the authority timeline of a live session.</string>
+    <string name="nearby_blocked_branch_merge">Unavailable: this build has no branch identity, so a branch reunion cannot be shown.</string>
+    <string name="nearby_blocked_local_mute">Unavailable: muting this device needs a nearby session first.</string>
+    <string name="nearby_blocked_session_read">Unavailable: the session state is not connected to this device yet.</string>
 </resources>

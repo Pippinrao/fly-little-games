@@ -154,6 +154,14 @@ public final class CatalogRepository {
             catch (CatalogStateCodec.CodecException corrupt) {
                 return new LoadResult(LoadStatus.RECOVERY_NEEDED, state, corrupt.code());
             }
+            return loadProjection(decoded);
+        }
+    }
+
+    /** Publishes an already persisted native snapshot without an FNCA encode/decode round trip. */
+    public LoadResult loadProjection(CatalogState decoded) {
+        if (decoded == null) throw new NullPointerException("projected state");
+        synchronized (transactionGate) {
             SourceCatalogState decodedBuiltin = decoded.sources().get(decoded.builtinSourceId());
             if (!decoded.builtinSourceId().equals(fixedBuiltinSource.id())
                     || decodedBuiltin == null
@@ -163,13 +171,14 @@ public final class CatalogRepository {
                         CatalogStateCodec.ErrorCode.INVALID_FIELD);
             }
             try {
-                preflight(decoded);
+                // GameCatalog builds and validates the next snapshot before its atomic assignment.
+                // An invalid projection therefore preserves both the live catalog and repository.
+                publish(decoded);
             } catch (RuntimeException invalid) {
                 return new LoadResult(
                         LoadStatus.RECOVERY_NEEDED, state,
                         CatalogStateCodec.ErrorCode.INVALID_FIELD);
             }
-            publish(decoded);
             state = decoded;
             return new LoadResult(LoadStatus.LOADED, decoded, null);
         }

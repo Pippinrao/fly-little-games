@@ -1,0 +1,719 @@
+{
+  "review_scope": "Targeted bilingual sequel, retitle, English fan-translation and contradictory-region audit. This is not a claim of perfect historical review of all source labels.",
+  "references": [
+    {
+      "url": "https://terminus.romhack.net/projects/adisland/",
+      "author": "Terminus Traduction",
+      "supports": "Adventure Island IV French patch derives from Neo Demiforce English translation; the corpus English v1.0 metadata denotes a translation, not US publication."
+    },
+    {
+      "url": "https://fcgamer.files.wordpress.com/2014/11/waixing-game-guide.pdf",
+      "author": "Dave R. Allwein",
+      "supports": "Original-research collector catalog, page 20: Chinese Dragon Quest VI translates III and VII translates IV. The guide does not establish the specific full-ROM SHA256 of this corpus."
+    }
+  ],
+  "corrections": [
+    {
+      "sha256": "014b12015258e307d6f6bec622f9cc961ad4e109a9239cf4d9e4a5e88b5f26bd",
+      "before": {
+        "en": "Technos Samurai - Downtown Special (English v1.0)",
+        "zh": "热血时代剧美版(热血道中记美版)"
+      },
+      "after": {
+        "en": "Technos Samurai - Downtown Special (English translation v1.0)",
+        "zh": "热血时代剧英译版(热血道中记英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "063951548426f1cf9f39339b55d7933e7f426d67bf70df08a316069147f809be",
+      "before": {
+        "en": "Trolls in Crazyland (PAL)",
+        "zh": "游园地(美版)"
+      },
+      "after": {
+        "en": "Trolls in Crazyland",
+        "zh": "游园地"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "0b907e9d87d15ba3b058947c792adf0383d8fcb680998903272d678d80169524",
+      "before": {
+        "en": "Rainbow Silkroad (J)",
+        "zh": "彩虹之路美版"
+      },
+      "after": {
+        "en": "Rainbow Silkroad",
+        "zh": "彩虹之路"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "1d90fdd966b9e77e45b6c5bb1e23ede834f629e8b2583f8e49e27778f95f4c11",
+      "before": {
+        "en": "Kero Kero Keroppi's Great Big Adventure 2 (English v0.9) (English v0 9)",
+        "zh": "青蛙大冒险美版2(大眼蛙大冒险美版2)"
+      },
+      "after": {
+        "en": "Kero Kero Keroppi's Great Big Adventure 2 (English translation v0.9)",
+        "zh": "青蛙大冒险英译版2(大眼蛙大冒险英译版2)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "25687d6c3a52486da5333e22bb891d8f74c49839f9bb68e8f752393cfebd3517",
+      "before": {
+        "en": "Keroppi & Keroleen's Splash Bomb! (English v1.0) (English v1 0)",
+        "zh": "大眼蛙方块(美版)"
+      },
+      "after": {
+        "en": "Keroppi & Keroleen's Splash Bomb! (English translation v1.0)",
+        "zh": "大眼蛙方块(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "287d529545043992b9a611602b865e27fd04a503626ccb1eb1691e2223c12f63",
+      "before": {
+        "en": "Warrior of Argos (English v0.9)",
+        "zh": "未来战士(美版)2"
+      },
+      "after": {
+        "en": "Warrior of Argos (English translation v0.9)",
+        "zh": "未来战士(英译版)2"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "2e2810c5f122f2370302e3aef6ed270005091f31b6299e17cd4460336bee7134",
+      "before": {
+        "en": "Final Fantasy II (English translation)",
+        "zh": "最终幻想2美版(太空战士2美版)"
+      },
+      "after": {
+        "en": "Final Fantasy II (English translation)",
+        "zh": "最终幻想2英译版(太空战士2英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "2f43167f0578e66c902ae24e9f138c62d9857569a55102083589266396dfa9ee",
+      "before": {
+        "en": "Banana Prince (PAL)",
+        "zh": "香蕉王子大冒险(美版)"
+      },
+      "after": {
+        "en": "Banana Prince",
+        "zh": "香蕉王子大冒险"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "499439e11488d57b6a87b4be2120f7715985a2bc358b290a83caaf50349c2c03",
+      "before": {
+        "en": "Hyper Olympic - Tonosama Ban (J)",
+        "zh": "超级奥林匹克美版(金牌奥运美版)"
+      },
+      "after": {
+        "en": "Hyper Olympic - Tonosama Ban",
+        "zh": "超级奥林匹克(金牌奥运)"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "56a43ae661f61db290c0c1d09c8608ff96a240b1a96a17e46db38d2445681c93",
+      "before": {
+        "en": "Fire Emblem Gaiden (English v97b2)",
+        "zh": "火炎之纹章外传美版(圣火徽章外传美版)"
+      },
+      "after": {
+        "en": "Fire Emblem Gaiden (English translation v97b2)",
+        "zh": "火炎之纹章外传英译版(圣火徽章外传英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "5e83e26e2c28a1f65c33cdf9b9794ddd90f022df4cdb900e2ec0be75376a87b3",
+      "before": {
+        "en": "Lode Runner (J)",
+        "zh": "金块美版(淘金者美版)"
+      },
+      "after": {
+        "en": "Lode Runner",
+        "zh": "金块(淘金者)"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "709b3542fab21df192f13528427b235b419c08abb0c7e1d2b04735d70040313a",
+      "before": {
+        "en": "Dragon Slayer 4 - Drasle Family",
+        "zh": "屠龙剑1"
+      },
+      "after": {
+        "en": "Dragon Slayer 4 - Drasle Family",
+        "zh": "屠龙记4：德拉斯雷家族"
+      },
+      "reason": "Same-hash corpus alias 屠龙记4, full source filename and CRC database agree on Dragon Slayer IV; prefer that over mislabeled 屠龙剑1.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "719604875a8a501c19be40b772178292eda4adfbde82957485eead781e629675",
+      "before": {
+        "en": "Technos Ice Hockey (English v1.0-BRC)",
+        "zh": "热血曲棍球美版(热血冰球美版)"
+      },
+      "after": {
+        "en": "Technos Ice Hockey (English translation v1.0-BRC)",
+        "zh": "热血曲棍球英译版(热血冰球英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "7304c1667478d6dcb59c2689296c5f5e99fdd9ea19650c6d9629b58cfff5f0df",
+      "before": {
+        "en": "Sted - Starfield of Memorable Relics (J)",
+        "zh": "STED-惑星之野望(美版)"
+      },
+      "after": {
+        "en": "Sted - Starfield of Memorable Relics",
+        "zh": "STED-惑星之野望"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "8105819eeeeefcd2bc1d963ec0e64250938f3b6f66ab7af65303532a10666d99",
+      "before": {
+        "en": "Moon Crystal (English v1.0) (English v1 0)",
+        "zh": "月光宝石(美版)"
+      },
+      "after": {
+        "en": "Moon Crystal (English translation v1.0)",
+        "zh": "月光宝石(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "847680c912e1e1b6787dda6632544755fe3bcbb7c5b6750a3b641755903cf784",
+      "before": {
+        "en": "Kero Kero Keroppi's Big Adventure (English v1.0) (English v1 0)",
+        "zh": "青蛙大冒险美版(大眼蛙大冒险美版)"
+      },
+      "after": {
+        "en": "Kero Kero Keroppi's Big Adventure (English translation v1.0)",
+        "zh": "青蛙大冒险英译版(大眼蛙大冒险英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "84f36856fda314c5744d6e500ae67a760b288514e80c0a2a967959230afd123f",
+      "before": {
+        "en": "Venus Wars (J)",
+        "zh": "维纳斯战记美版(金星战记美版)"
+      },
+      "after": {
+        "en": "Venus Wars",
+        "zh": "维纳斯战记(金星战记)"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "90287279af6ad9f48140b09f6c79b1b32a7265a96cd85e0ddb4de587dcb4db54",
+      "before": {
+        "en": "Deep Dungeon 4 - The Black Sorcerer (English v1.0) (English v1 0)",
+        "zh": "深入地底4-黑暗妖术师(美版)"
+      },
+      "after": {
+        "en": "Deep Dungeon 4 - The Black Sorcerer (English translation v1.0)",
+        "zh": "深入地底4-黑暗妖术师(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "975b568adf30790c90ad29f10045e0b50e6a98581f2dfdbf819bf9a0f29ab948",
+      "before": {
+        "en": "Dezaemon (English v1.1) (English v1 1)",
+        "zh": "描绘卫门美版(设计卫门美版)"
+      },
+      "after": {
+        "en": "Dezaemon (English translation v1.1)",
+        "zh": "描绘卫门英译版(设计卫门英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "9de123f61454cc7a9ce133d68c85047b717dc864c7eb954a714a7dd8effea6f2",
+      "before": {
+        "en": "Adventure Island 4 (English v1.0) (English v1 0)",
+        "zh": "高桥名人的冒险岛4(美版)"
+      },
+      "after": {
+        "en": "Adventure Island 4 (English translation v1.0)",
+        "zh": "高桥名人的冒险岛4(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "9de123f61454cc7a9ce133d68c85047b717dc864c7eb954a714a7dd8effea6f2",
+      "before": {
+        "en": "Adventure Island 4 (English translation v1.0)",
+        "zh": "高桥名人的冒险岛4(英译版)"
+      },
+      "after": {
+        "en": "Adventure Island IV (English translation v1.0)",
+        "zh": "高桥名人的冒险岛4(英译版v1.0)"
+      },
+      "reason": "Source filename and CRC title identify an English translation; the translation team credits Neo Demiforce as the English patch author.",
+      "evidence_level": "source_metadata_and_primary_translation_team"
+    },
+    {
+      "sha256": "9ec48b25d8ca3b197f68edc2749581e82763fd60133b3d16737de3280d157d81",
+      "before": {
+        "en": "Splatterhouse - Wanpaku Graffiti (English v2.0) (English v2 0)",
+        "zh": "鬼屋冒险(美版)"
+      },
+      "after": {
+        "en": "Splatterhouse - Wanpaku Graffiti (English translation v2.0)",
+        "zh": "鬼屋冒险(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "9f86da2377ea7fbd2969f95e62b1ff90320c0308c07ebbe2a92e2c1a9a57a54d",
+      "before": {
+        "en": "Hello Kitty World (English v1.0) (English v1 0)",
+        "zh": "凯蒂猫气球世界美版(Q版气球世界美版)"
+      },
+      "after": {
+        "en": "Hello Kitty World (English translation v1.0)",
+        "zh": "凯蒂猫气球世界英译版(Q版气球世界英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "af990738a3feac1614f1da54df1f06bfe3b3bab8e9d02fcf82d9a5ca99c30fe2",
+      "before": {
+        "en": "Naitou 9 Dan - Shougi Hiden",
+        "zh": "本将棋内藤九段将棋秘传2"
+      },
+      "after": {
+        "en": "Naitou 9 Dan - Shougi Hiden",
+        "zh": "本将棋内藤九段将棋秘传"
+      },
+      "reason": "Two identical-hash archives have identical Naitou 9 Dan source filenames; the trailing 2 in one Chinese archive is duplicate labeling, not a sequel.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "b09c4d3f242ea5740009aa14d1099dd92fa4a0df28a649bddecf6b3170918351",
+      "before": {
+        "en": "Riki Kunio (English v0.95)",
+        "zh": "热血格斗传说(美版)"
+      },
+      "after": {
+        "en": "Riki Kunio (English translation v0.95)",
+        "zh": "热血格斗传说(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "b566e19239452764bbcff8db3d1dde33f6dfe992e896c4a17799ca20debcf33f",
+      "before": {
+        "en": "Metal Max (J)",
+        "zh": "重装机兵(美版)"
+      },
+      "after": {
+        "en": "Metal Max",
+        "zh": "重装机兵"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "be6de2b65467e3efba53481bfcca623e017c06b9e0002dc1243675355757fd5f",
+      "before": {
+        "en": "Nadia - Secret of the Blue Water (English v1.3) (English v1 3)",
+        "zh": "不可思议的海-莱利娅(美版)"
+      },
+      "after": {
+        "en": "Nadia - Secret of the Blue Water (English translation v1.3)",
+        "zh": "不可思议的海-莱利娅(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "c2efeb3595194b81840d36d44ef6cbee08f644f440f8abce60e8ac75d48d8a6c",
+      "before": {
+        "en": "Yong Zhe Dou E Long - Dragon Quest 6 (Chinese translation)",
+        "zh": "勇者斗恶龙3(中文)"
+      },
+      "after": {
+        "en": "Dragon Quest III (Chinese translation; retitled Yong Zhe Dou E Long VI)",
+        "zh": "勇者斗恶龙3(中文改名版：勇者斗恶龙VI)"
+      },
+      "reason": "Collector original-research guide identifies the Chinese VI as a translation of Dragon Quest III; corpus and CRC title preserve both naming systems.",
+      "evidence_level": "source_metadata_and_original_research"
+    },
+    {
+      "sha256": "cde78af13ef5f158be691d473e1e49338cecffe1a9c83ec4bb6dc12baa4c8205",
+      "before": {
+        "en": "Final Fantasy 3 (English v0 xx) (2)",
+        "zh": "最终幻想3美版(太空战士3美版)"
+      },
+      "after": {
+        "en": "Final Fantasy 3 (English translation v0 xx) (2)",
+        "zh": "最终幻想3英译版(太空战士3英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "d36e5390e5cd5369da7ab2190b192d7dbe5b8b6b124d7888088910d5583e7519",
+      "before": {
+        "en": "Mari Street Fighter 3 Turbo",
+        "zh": "马里奥街霸2(56人街霸)"
+      },
+      "after": {
+        "en": "Mari Street Fighter 3 Turbo",
+        "zh": "马里奥街霸3 Turbo"
+      },
+      "reason": "Full source title and full-payload CRC title both identify Mari Street Fighter 3 Turbo; keep corpus 马里奥街霸2 as an alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "d706755657faa2ac008a1db4e241e5cef0e726536485c28e1281ec6fb6c77dee",
+      "before": {
+        "en": "Final Fantasy II (Alternate English translation)",
+        "zh": "最终幻想2(另一个美版)"
+      },
+      "after": {
+        "en": "Final Fantasy II (Alternate English translation)",
+        "zh": "最终幻想2(另一个英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "daaf7635d714132bba327b15cf35c79491dfbcb1bcbde3103ed480c8931ca3d2",
+      "before": {
+        "en": "Jackie Chan (J)",
+        "zh": "成龙(美版)"
+      },
+      "after": {
+        "en": "Jackie Chan",
+        "zh": "成龙"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "dec38cc62965e18c1ceefc32da076ee4ac16912a479b07c2e7f3ec0951763af2",
+      "before": {
+        "en": "Destiny of an Emperor II (English translation)",
+        "zh": "吞食天地2-诸葛孔明传(美版)"
+      },
+      "after": {
+        "en": "Destiny of an Emperor II (English translation)",
+        "zh": "吞食天地2-诸葛孔明传(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "e72ef2c1ac1302c626e620512cb05555e97c4fbfb769c4d895159e0063620ec7",
+      "before": {
+        "en": "Yong Zhe Dou E Long - Dragon Quest 7 (Chinese translation)",
+        "zh": "勇者斗恶龙4(中文)"
+      },
+      "after": {
+        "en": "Dragon Quest IV (Chinese translation; retitled Yong Zhe Dou E Long VII)",
+        "zh": "勇者斗恶龙4(中文改名版：勇者斗恶龙VII)"
+      },
+      "reason": "Collector original-research guide identifies the Chinese VII as a translation of Dragon Quest IV; DQ4C filename independently corroborates the underlying work.",
+      "evidence_level": "source_metadata_and_original_research"
+    },
+    {
+      "sha256": "e87e4f070910959bac43f985d89c69887b65cbcd774d557940c2dfb808d93287",
+      "before": {
+        "en": "Sugoro Quest - The Quest of Dice Heros (English)",
+        "zh": "赌神(美版)"
+      },
+      "after": {
+        "en": "Sugoro Quest - The Quest of Dice Heros (English translation)",
+        "zh": "赌神(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "eef12f9fe27db34804beb38fe6cf822e55ce69947edcc4a3615b0a512c20fad0",
+      "before": {
+        "en": "TwinBee 3 (English v1.02) (English v1 02)",
+        "zh": "兵蜂3(美版)"
+      },
+      "after": {
+        "en": "TwinBee 3 (English translation v1.02)",
+        "zh": "兵蜂3(英译版)"
+      },
+      "reason": "Explicit English translation/version metadata supersedes the corpus US-release label; original label retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "f07b82c21c8f0309c19dcc2804a477123f65aa1be42b50e5e7c43c7923ce08bb",
+      "before": {
+        "en": "Ghostbusters 2",
+        "zh": "鬼屋3(恶魔克星3，小鬼巴斯特3)"
+      },
+      "after": {
+        "en": "Ghostbusters 2",
+        "zh": "捉鬼敢死队2"
+      },
+      "reason": "GBUSTER2 source filename and full-payload CRC title agree on Ghostbusters 2; the corpus Chinese nickname numbers it 3.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "f13bc164e07f3bc9f6791f559c8ed8daea8d19d76028c310f86c7b1c289f7e5a",
+      "before": {
+        "en": "Yong Zhe Dou E Long - Dragon Quest 5 (Chinese translation)",
+        "zh": "勇者斗恶龙2(中文)"
+      },
+      "after": {
+        "en": "Dragon Quest II (Chinese translation; retitled Yong Zhe Dou E Long V)",
+        "zh": "勇者斗恶龙2(中文改名版：勇者斗恶龙V)"
+      },
+      "reason": "DQ2C source and Chinese corpus title identify the underlying sequel; local CRC database uses the Chinese retitle V. Keep the retitle explicit instead of presenting it as official sequel V.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "fcf847a34a060dd0abd9f0ed07c1af563f1914e77d4afb5dd9cedd0a82e6f558",
+      "before": {
+        "en": "Doraemon - The Revenge of Giga Zombie (J)",
+        "zh": "机器猫小叮当冒险RPG(美版)"
+      },
+      "after": {
+        "en": "Doraemon - The Revenge of Giga Zombie",
+        "zh": "机器猫小叮当冒险RPG"
+      },
+      "reason": "Manifest US label conflicts with source-member region tag. Neither is promoted as verified; conflicting labels retained as aliases pending independent release/patch identification.",
+      "evidence_level": "region_unresolved"
+    },
+    {
+      "sha256": "053b2ff64e7ad5d6e524b47c94846d3db026de62dafae57c7de1da2be158808f",
+      "before": {
+        "en": "Gomoku Narabe",
+        "zh": "五子棋2"
+      },
+      "after": {
+        "en": "Gomoku Narabe",
+        "zh": "五子棋"
+      },
+      "reason": "Source filename and CRC database agree on Gomoku Narabe; numeric archive suffix retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "21883c06b80031c53ae38c3cbbfffc85a632bb814699f342b117b9e8a9d34183",
+      "before": {
+        "en": "Star Baseball",
+        "zh": "明星棒球"
+      },
+      "after": {
+        "en": "Baseball Stars",
+        "zh": "棒球明星"
+      },
+      "reason": "Complete iNES payload excluding 128 trailing bytes matches Baseball Stars; expand starbaseball using corroborated title.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "287d529545043992b9a611602b865e27fd04a503626ccb1eb1691e2223c12f63",
+      "before": {
+        "en": "Warrior of Argos (English translation v0.9)",
+        "zh": "未来战士(英译版)2"
+      },
+      "after": {
+        "en": "Warrior of Argos (English translation v0.9)",
+        "zh": "阿尔戈斯战士(英译版v0.9)"
+      },
+      "reason": "Source filename and CRC English translation title do not identify a sequel 2; align the translated Chinese display with the full title.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "29e4b8174f12720e148873d7179e3e6c920ec250d44467d4a2eefd18dbd81140",
+      "before": {
+        "en": "Cobra Triangle",
+        "zh": "眼镜蛇自升机"
+      },
+      "after": {
+        "en": "Cobra Command",
+        "zh": "眼镜蛇指挥官"
+      },
+      "reason": "Complete iNES payload excluding 128 trailing bytes matches Cobra Command; vague COBRA source abbreviation does not establish Cobra Triangle.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "317ad23a86798c08ec2c88012edb1a52f00504cfddf70f7ecc002e8c54d95df4",
+      "before": {
+        "en": "Peter Pan",
+        "zh": "彼得.潘"
+      },
+      "after": {
+        "en": "Peter Pan & The Pirates",
+        "zh": "彼得·潘与海盗"
+      },
+      "reason": "Complete iNES payload excluding 128 trailing bytes corroborates the full title Peter Pan & The Pirates.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "363580d8f91fc8ce3cf27edaf7a1064e2c39c42b928c82207c1807cc61ce4a69",
+      "before": {
+        "en": "The Lion King",
+        "zh": "狮子王2"
+      },
+      "after": {
+        "en": "The Lion King",
+        "zh": "狮子王"
+      },
+      "reason": "TheLionKing source filename and full-payload CRC agree on The Lion King; source sequel 2 retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "608a8c542e49d5fa500634aa49ee96921d52c49c6e1646db7ca21ac7682ce4ba",
+      "before": {
+        "en": "Circus Charlie",
+        "zh": "马戏团2"
+      },
+      "after": {
+        "en": "Circus Charlie",
+        "zh": "马戏团"
+      },
+      "reason": "Source filename and CRC database agree on Circus Charlie; numeric archive suffix retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "609400c9db178c612f1f0b846e4bf399ea0a86ac98e1025e623e6b09737a63f4",
+      "before": {
+        "en": "Ice Hockey",
+        "zh": "冰上曲棍球"
+      },
+      "after": {
+        "en": "Blades of Steel (Pirate)",
+        "zh": "钢铁冰球(盗版)"
+      },
+      "reason": "Complete iNES payload excluding 127 trailing bytes matches Blades of Steel (Pirate), agreeing with BLADES same-hash alias instead of ambiguous icehokey.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "6c8e13693ee665d9d7f9b46ae80947f413fd3a4f40b26a44152a52503494f9c6",
+      "before": {
+        "en": "Tennis",
+        "zh": "网球2"
+      },
+      "after": {
+        "en": "Tennis",
+        "zh": "网球"
+      },
+      "reason": "Same-hash source includes 网球; complete payload CRC agrees with Tennis, not a sequel 2.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "808916b412cd7bcf804b76b968d37b0b750edf6b14d677a5fd6516e6d544bb49",
+      "before": {
+        "en": "Three Stooges",
+        "zh": "鬼屋2(魔鬼克星2)"
+      },
+      "after": {
+        "en": "The Three Stooges",
+        "zh": "三个臭皮匠"
+      },
+      "reason": "3STOOGES source filename and full-payload CRC identify The Three Stooges, not a Ghostbusters sequel.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "8668043095c107f1fca8a0b4869867b71a56075563faf8ffda1daf4835a95692",
+      "before": {
+        "en": "Dudes With Attitude",
+        "zh": "态度小子2"
+      },
+      "after": {
+        "en": "Dudes With Attitude",
+        "zh": "态度小子"
+      },
+      "reason": "Source filename and CRC database agree on Dudes With Attitude; numeric archive suffix retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "af499ff7afd42ce24e5affad73ef1a1e4e90db562d22010b148cc95b662370f6",
+      "before": {
+        "en": "Street Fighter I (Unlicensed)",
+        "zh": "魂斗罗3(魂斗罗外传)"
+      },
+      "after": {
+        "en": "Contra Force (Pirate)",
+        "zh": "魂斗罗外传(盗版)"
+      },
+      "reason": "Complete iNES payload excluding 128 trailing bytes matches local CRC title Contra Force (Pirate), agreeing with same-hash ContraForce source alias; misleading 000/Street Fighter label must not win.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "bbef22965c6dfd4b6d297eb98fdb6f435859a44a81dd5fbc9f2846ef87d9dd37",
+      "before": {
+        "en": "Star Wars",
+        "zh": "星球大战2"
+      },
+      "after": {
+        "en": "Star Wars",
+        "zh": "星球大战"
+      },
+      "reason": "Source filename and CRC database agree on Star Wars; numeric archive suffix retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "cfd0d58490caaa2333b42e8362f19b3b86591118df1c885519c21b51c356bc9d",
+      "before": {
+        "en": "Baseball",
+        "zh": "棒球5"
+      },
+      "after": {
+        "en": "Baseball",
+        "zh": "棒球"
+      },
+      "reason": "Source filename and CRC database agree on Baseball; numeric archive suffix retained as alias.",
+      "evidence_level": "local_metadata_corroboration"
+    },
+    {
+      "sha256": "f9e1c791c69030d97517c91e2b22162ed0b827f35f7194ff3235a1265c1a5415",
+      "before": {
+        "en": "Bomberman",
+        "zh": "炸弹人合集"
+      },
+      "after": {
+        "en": "Bomberman Collection (Pirate Cart)",
+        "zh": "炸弹人合集(盗版合卡)"
+      },
+      "reason": "Complete iNES payload excluding 127 trailing bytes matches Bomberman Collection (Pirate Cart), corroborating the Chinese collection label.",
+      "evidence_level": "local_metadata_corroboration"
+    }
+  ]
+}

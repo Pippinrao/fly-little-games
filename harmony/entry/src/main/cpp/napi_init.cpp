@@ -8,6 +8,7 @@
 #include "scan_job_queue.hpp"
 
 #include <flynes/flynes_app.h>
+#include "flynes/product/game_center_state.hpp"
 
 #include "napi/native_api.h"
 
@@ -458,12 +459,22 @@ flynes::harmony::GameCenterRow read_game_center_row(napi_env env, napi_value val
         env, named_property(env, value, "lastPlayedSequence"), "lastPlayedSequence");
     row.original_filename = read_utf8_string(
         env, named_property(env, value, "originalFilename"), "originalFilename");
+    bool has_aliases = false;
+    require_napi(napi_has_named_property(env, value, "searchAliases", &has_aliases), "inspect searchAliases");
+    if (has_aliases)
+        row.search_aliases = read_utf8_string(env, named_property(env, value, "searchAliases"), "searchAliases");
     row.source_uuid_hex = read_utf8_string(
         env, named_property(env, value, "sourceUuidHex"), "sourceUuidHex");
     row.source_relative_path = read_utf8_string(
         env, named_property(env, value, "sourceRelativePath"), "sourceRelativePath");
     row.package_format = read_int32(
         env, named_property(env, value, "packageFormat"), "packageFormat");
+    bool has_popularity = false;
+    require_napi(napi_has_named_property(env, value, "popularityScore", &has_popularity),
+                 "inspect popularityScore");
+    if (has_popularity)
+        row.popularity_score = read_int32(
+            env, named_property(env, value, "popularityScore"), "popularityScore");
     return row;
 }
 
@@ -471,6 +482,8 @@ napi_value make_game_center_row(napi_env env, const flynes::harmony::GameCenterR
 {
     napi_value result = nullptr;
     require_napi(napi_create_object(env, &result), "create GameCenterRow");
+    require_napi(napi_set_named_property(env, result, "searchAliases",
+        create_string(env, row.search_aliases, "create searchAliases")), "set searchAliases");
     require_napi(napi_set_named_property(
                      env, result, "canonicalId",
                      create_string(env, row.canonical_id, "create canonicalId")),
@@ -508,6 +521,10 @@ napi_value make_game_center_row(napi_env env, const flynes::harmony::GameCenterR
                      env, result, "packageFormat",
                      create_int64(env, row.package_format, "create packageFormat")),
                  "set packageFormat");
+    require_napi(napi_set_named_property(
+                     env, result, "popularityScore",
+                     create_int64(env, row.popularity_score, "create popularityScore")),
+                 "set popularityScore");
     return result;
 }
 
@@ -2248,6 +2265,7 @@ flynes::harmony::GameCenterRow row_from_catalog_entry(fly_app_t& app, const fly_
                                      ? std::string{}
                                      : entry.source_relative_path_utf8;
     row.original_filename = !display.empty() ? display : basename_utf8(relative);
+    row.popularity_score = flynes::product::popularity_for_package(relative, display);
     row.title_en = !display.empty() ? display : row.original_filename;
     // Android RomPackageScanner.titleLanguage parity: a title containing HAN
     // script characters is a zh-Hans title; Latin-only titles stay EN.
@@ -2316,8 +2334,14 @@ napi_value CatalogSnapshot(napi_env env, napi_callback_info info)
             entry.source_relative_path_capacity = static_cast<std::uint32_t>(relative.size());
             require_fly(fly_catalog_snapshot_get(snapshot.get(), index, &entry),
                         "fly_catalog_snapshot_get");
+            fly_game_title title{};
+            require_fly(fly_catalog_snapshot_get_title(snapshot.get(), index, &title),
+                        "fly_catalog_snapshot_get_title");
+            auto row = row_from_catalog_entry(app, entry);
+            flynes::harmony::apply_game_title(row, title);
+            row.search_aliases += "\n" + basename_utf8(relative.data());
             require_napi(napi_set_element(env, result, static_cast<std::uint32_t>(index),
-                                          make_game_center_row(env, row_from_catalog_entry(app, entry))),
+                                          make_game_center_row(env, row)),
                          "set catalogSnapshot row");
         }
         return result;

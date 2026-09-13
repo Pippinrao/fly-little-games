@@ -4,7 +4,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
 
 /** Privacy-safe persistent IDs. Display names and raw provider identifiers never appear in IDs. */
 public final class StableIds {
@@ -47,11 +46,7 @@ public final class StableIds {
                 digest.update(ByteBuffer.allocate(4).putInt(encoded.length).array());
                 digest.update(encoded);
             }
-            StringBuilder hex = new StringBuilder(64);
-            for (byte value : digest.digest()) {
-                hex.append(String.format(Locale.ROOT, "%02X", value & 0xFF));
-            }
-            return hex.toString();
+            return HexEncoding.upper(digest.digest());
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is required", impossible);
         }

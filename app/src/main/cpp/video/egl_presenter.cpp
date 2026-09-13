@@ -22,8 +22,11 @@ std::int64_t monotonic_now_ns() {
 }
 
 EglPresenter::EglPresenter(AAssetManager* assets, bool swappy_initialized)
-        : assets_(assets), thread_(&EglPresenter::thread_main, this),
-          swappy_initialized_(swappy_initialized) {}
+        : assets_(assets), swappy_initialized_(swappy_initialized) {
+    // thread_ precedes the queues and worker flags in declaration order. Start only after
+    // every member is initialized, so thread_main cannot inspect an unconstructed deque.
+    thread_ = std::thread(&EglPresenter::thread_main, this);
+}
 
 EglPresenter::~EglPresenter() {
     if (thread_.joinable()) thread_.join();

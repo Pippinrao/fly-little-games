@@ -1121,6 +1121,7 @@ void test_zip_exact_identity_replacement_and_skip()
     check(snapshot_count(duplicate_snapshot) == 2u,
           "duplicate-name ZIP publishes two variants");
     std::vector<std::string> exact_ids;
+    std::vector<std::int32_t> exact_offsets;
     for (std::uint64_t index = 0u; index < 2u; ++index)
     {
         EntryValue entry = read_entry(duplicate_snapshot, index);
@@ -1129,7 +1130,32 @@ void test_zip_exact_identity_replacement_and_skip()
               "ZIP variant retains the outer physical source path");
         check(entry.display_name == "same.nes",
               "decoded ZIP entry name is display-only metadata");
+        std::uint32_t required = 0u;
+        std::int32_t offset = -99;
+        check(fly_catalog_snapshot_get_zip_locator(duplicate_snapshot, index,
+                  nullptr, 0u, &required, &offset) == FLY_RESULT_BUFFER_TOO_SMALL &&
+                  required == 8u && offset == -99,
+              "ZIP locator size query preserves the offset output");
+        std::array<std::uint8_t, 8> raw_name{};
+        check(fly_catalog_snapshot_get_zip_locator(duplicate_snapshot, index,
+                  raw_name.data(), 8u, &required, &offset) == FLY_RESULT_OK &&
+                  std::string(raw_name.begin(), raw_name.end()) == "same.nes",
+              "ZIP locator exposes exact raw name bytes");
+        exact_offsets.push_back(offset);
     }
+    std::sort(exact_offsets.begin(), exact_offsets.end());
+    check(exact_offsets == std::vector<std::int32_t>{0, static_cast<std::int32_t>(38u + rom.size())},
+          "duplicate ZIP names expose distinct real local-header offsets");
+    std::uint32_t untouched_size = 99u;
+    std::int32_t untouched_offset = -99;
+    check(fly_catalog_snapshot_get_zip_locator(duplicate_snapshot, 2u, nullptr, 0u,
+              &untouched_size, &untouched_offset) == FLY_RESULT_OUT_OF_RANGE &&
+              untouched_size == 99u && untouched_offset == -99,
+          "out-of-range ZIP locator leaves outputs untouched");
+    check(fly_catalog_snapshot_get_zip_locator(duplicate_snapshot, 0u, nullptr, 1u,
+              &untouched_size, &untouched_offset) == FLY_RESULT_INVALID_ARGUMENT &&
+              untouched_size == 99u && untouched_offset == -99,
+          "invalid ZIP locator buffer leaves outputs untouched");
     const std::vector<std::string> expected_ids = {
         "variant:0086DB6524CAE6D4A598FB6C23AB0AFCE8F0F3D29B5F4A28C49EBFA72213479A",
         "variant:47F24DEA0E348F0BDFDE2A0E220E458C5741C7117178EEB9D6527A80A402DBCC",
@@ -1316,11 +1342,46 @@ void test_scan_begin_validation()
     fly_app_destroy(app);
 }
 
+void test_title_snapshot_metadata_and_zip_member_fallback()
+{
+    fly_app_t* app = make_app();
+    const auto rom = make_nes();
+    const auto zip = make_stored_zip({{"Balloon Fight.nes", rom}});
+    TempFile file(zip);
+    fly_scan_t* scan = begin_scan(app);
+    const auto candidate = make_scan_file("Unknown.zip", "Unrelated Outer.zip", file.fd(), zip.size());
+    check(recorded_add(scan, candidate).outcome == FLY_SCAN_FILE_OUTCOME_INDEXED, "title fixture indexed");
+    check(fly_scan_commit(scan, FLY_SCAN_COMPLETENESS_FULL) == FLY_RESULT_OK, "title fixture committed");
+    fly_catalog_snapshot_t* snapshot = snapshot_of(app);
+    const EntryValue before = read_entry(snapshot, 0u);
+    fly_game_title title{"sentinel", "sentinel", "sentinel", "sentinel", 99};
+    check(fly_catalog_snapshot_get_title(nullptr, 0u, &title) == FLY_RESULT_INVALID_ARGUMENT && title.match_kind == 99,
+          "null title snapshot leaves output unchanged");
+    check(fly_catalog_snapshot_get_title(snapshot, 0u, nullptr) == FLY_RESULT_INVALID_ARGUMENT,
+          "null snapshot title output rejected");
+    check(fly_catalog_snapshot_get_title(snapshot, UINT64_MAX, &title) == FLY_RESULT_OUT_OF_RANGE &&
+              title.match_kind == 99 && std::strcmp(title.index_id_utf8, "sentinel") == 0,
+          "out-of-range title query leaves output unchanged");
+    fly_app_destroy(app);
+    check(fly_catalog_snapshot_get_title(snapshot, 0u, &title) == FLY_RESULT_OK && title.match_kind == 2 &&
+              std::strcmp(title.title_en_utf8, "Balloon Fight") == 0,
+          "snapshot uses inner ZIP member alias after app destruction");
+    const EntryValue after = read_entry(snapshot, 0u);
+    check(before.canonical_id == after.canonical_id && before.variant_id == after.variant_id &&
+              before.display_name == after.display_name && before.source_relative_path == after.source_relative_path,
+          "title lookup does not mutate IDs or stored filenames");
+    fly_catalog_snapshot_release(snapshot);
+    check(title.title_en_utf8 != nullptr && std::strcmp(title.title_en_utf8, "Balloon Fight") == 0,
+          "title strings outlive snapshot release");
+    fly_scan_abort(scan);
+}
+
 } // namespace
 
 int main()
 {
     test_abi_values();
+    test_title_snapshot_metadata_and_zip_member_fallback();
     test_scan_begin_validation();
     test_raw_commit_hashes_snapshot_and_fd_ownership();
     test_expected_hash_and_failure_preservation();

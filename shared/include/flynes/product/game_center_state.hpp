@@ -1,4 +1,5 @@
 #pragma once
+#include <string_view>
 
 #include "flynes/product/game_center_item.hpp"
 
@@ -7,6 +8,9 @@
 #include <vector>
 
 namespace flynes::product {
+
+// Use leaf filenames from every content-equivalent variant; never search aliases/directories.
+[[nodiscard]] int popularity_for_package(std::string_view outer_filename, std::string_view entry_path);
 
 class GameCenterState final
 {

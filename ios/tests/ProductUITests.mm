@@ -262,4 +262,172 @@ static NSString *installedDataContainer(void)
     [app launch];
     XCTAssertTrue([game waitForExistenceWithTimeout:10]);
 }
+
+#pragma mark - Nearby multiplayer (slice A1c)
+
+/// Any element carrying an accessibility identifier, whatever its type. SwiftUI
+/// exposes a List as a collection view and a row as a cell or an other-element
+/// depending on the modifiers applied, so matching on the identifier across all
+/// types is the only query that does not depend on SwiftUI's internal shape.
+static XCUIElement *identified(XCUIApplication *app, NSString *identifier)
+{
+    return [[app descendantsMatchingType:XCUIElementTypeAny]
+        elementMatchingType:XCUIElementTypeAny identifier:identifier];
+}
+
+/// Swipes up until the element exists. SwiftUI renders List and Form rows lazily,
+/// so a row below the fold is absent from the accessibility tree entirely and
+/// waiting for it can never succeed — it has to be scrolled into existence.
+static BOOL revealElement(XCUIApplication *app, XCUIElement *element, int swipes)
+{
+    for (int attempt = 0; attempt < swipes; ++attempt) {
+        if (element.exists) return YES;
+        [app swipeUp];
+    }
+    return element.exists;
+}
+
+/// Launches the app on the game center in English and landscape, which is what
+/// every UI test here assumes.
+static XCUIApplication *launchGameCenter(void)
+{
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
+    XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
+    app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
+    [app launch];
+    XCTAssertTrue([app.buttons[@"open_nearby"] waitForExistenceWithTimeout:15],
+                  @"The game center must offer the 附近联机 entry");
+    return app;
+}
+
+/// A1c: the entry is real navigation, the page opens on 附近设备 because no friend
+/// is saved, and the discovery controls are present but disabled with a reason.
+- (void)testNearbyEntryOpensThePageOnTheDevicesTabWithDisabledDiscovery {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = launchGameCenter();
+    [app.buttons[@"open_nearby"] tap];
+    XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
+    // No friend is saved anywhere in this build, so the tab opens on 附近设备: the
+    // pipeline is what the user lands on, and the 好友 empty state is absent.
+    XCTAssertTrue([identified(app, @"nearby_stage_permission") waitForExistenceWithTimeout:5]);
+    XCTAssertFalse(identified(app, @"nearby_friends_empty").exists);
+    XCTAssertTrue(revealElement(app, identified(app, @"nearby_devices_empty"), 6),
+                  @"The devices empty state must be reachable by scrolling");
+    // The pipeline's own end-to-end shape (a later stage marked not-reached, and
+    // no reason rendered for it) is asserted by
+    // testNearbyPipelineMarksOnlyTheFirstFailingStage; asserting the last stage
+    // row here as well would only re-test the scroll position, because by the
+    // time this list is scrolled to the empty state that row is above the fold.
+    XCUIElement *find = identified(app, @"nearby_find_devices");
+    XCTAssertTrue(revealElement(app, find, 6), @"寻找设备 must be reachable");
+    XCTAssertFalse(find.enabled, @"No bearer exists, so 寻找设备 must not act");
+    XCTAssertTrue(identified(app, @"nearby_find_devices_reason").exists);
+    XCUIElement *scan = identified(app, @"nearby_scan_host_qr");
+    XCTAssertTrue(revealElement(app, scan, 4), @"扫描房主二维码 must be reachable");
+    XCTAssertFalse(scan.enabled);
+    XCTAssertTrue(identified(app, @"nearby_scan_host_qr_reason").exists);
+    XCTAttachment *shot = [XCTAttachment attachmentWithScreenshot:app.screenshot];
+    shot.name = @"nearby-devices"; shot.lifetime = XCTAttachmentLifetimeKeepAlways;
+    [self addAttachment:shot];
+}
+
+/// A1c: only the first failing stage explains itself. The later stages carry no
+/// reason at all, which is what decision D5 requires and what a review cannot
+/// check by reading the design.
+- (void)testNearbyPipelineMarksOnlyTheFirstFailingStage {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = launchGameCenter();
+    [app.buttons[@"open_nearby"] tap];
+    XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
+    XCUIElement *permission = identified(app, @"nearby_stage_permission");
+    XCTAssertTrue([permission waitForExistenceWithTimeout:5]);
+    XCTAssertEqualObjects(permission.value, @"Current stage",
+                          @"权限 is the first failing stage and must be marked as current");
+    XCUIElement *discovery = identified(app, @"nearby_stage_discovery");
+    XCTAssertTrue([discovery waitForExistenceWithTimeout:5]);
+    XCTAssertEqualObjects(discovery.value, @"Not yet reached",
+                          @"A later stage is neutral, not blocked");
+    // iOS declares no usage key, so the permission reason is its own static key.
+    XCTAssertTrue([app.staticTexts[@"Not requested yet: this build declares no Bluetooth, camera or local-network usage, so no permission state can be reported."] exists],
+                  @"The first failing stage must explain itself");
+    // The codec reason belongs to a stage that is not current, so it must not be
+    // rendered anywhere on the page — the check the design's D5 actually needs,
+    // and one that does not depend on the row being scrolled into view: a reason
+    // rendered for a later stage would be found wherever it sat.
+    XCTAssertFalse([app.staticTexts[@"No codec negotiation result is available."] exists],
+                   @"Only the first failing stage may render a reason");
+}
+
+/// A1c: the 好友 tab shows the empty state with its blocked key and reaches
+/// 好友管理, where every action is disabled with the friend-store reason.
+- (void)testNearbyFriendsTabOpensTheManagePageWithDisabledActions {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = launchGameCenter();
+    [app.buttons[@"open_nearby"] tap];
+    XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
+    [app.buttons[@"Friends"] tap];
+    XCTAssertTrue([identified(app, @"nearby_friends_empty") waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(identified(app, @"nearby_friends_blocked").exists);
+    XCUIElement *manage = identified(app, @"nearby_friends_manage");
+    XCTAssertTrue([manage waitForExistenceWithTimeout:5]);
+    [manage tap];
+    XCTAssertTrue([identified(app, @"nearby_manage_root") waitForExistenceWithTimeout:10]);
+    for (NSString *action in @[@"rename", @"delete", @"block", @"identityReset"]) {
+        XCUIElement *control = identified(app, [@"nearby_manage_" stringByAppendingString:action]);
+        XCTAssertTrue([control waitForExistenceWithTimeout:5], @"%@ must be present", action);
+        XCTAssertFalse(control.enabled, @"%@ has no store to act on", action);
+        XCTAssertTrue(identified(app, [NSString stringWithFormat:@"nearby_manage_%@_reason", action]).exists);
+    }
+    XCTAttachment *shot = [XCTAttachment attachmentWithScreenshot:app.screenshot];
+    shot.name = @"nearby-friends-manage"; shot.lifetime = XCTAttachmentLifetimeKeepAlways;
+    [self addAttachment:shot];
+}
+
+/// A1c: 配对 is the one navigate-only entry spec §4 permits, and its page shows
+/// both approved paths with the reason they cannot act.
+- (void)testNearbyPairingEntryOpensThePairingPage {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = launchGameCenter();
+    [app.buttons[@"open_nearby"] tap];
+    XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
+    XCUIElement *entry = identified(app, @"nearby_open_pairing");
+    XCTAssertTrue(revealElement(app, entry, 8), @"The 配对 entry must be reachable by scrolling");
+    [entry tap];
+    // The pairing page opens with the same seven-stage pipeline, so both blocks
+    // sit below it and have to be scrolled into existence.
+    XCUIElement *confirm = identified(app, @"nearby_code_confirm");
+    XCTAssertTrue(revealElement(app, confirm, 6), @"Six-digit-code confirm must be reachable");
+    XCTAssertFalse(confirm.enabled);
+    XCTAssertTrue(identified(app, @"nearby_code_confirm_reason").exists);
+    XCUIElement *wifi = identified(app, @"nearby_wifi_system_confirm");
+    XCTAssertTrue(revealElement(app, wifi, 4), @"The Wi-Fi path block must be reachable");
+    XCTAssertFalse(wifi.enabled);
+    // The anonymous-join control set is deliberately not built (spec §4), so the
+    // page must not offer an accept or reject action.
+    XCTAssertFalse(app.buttons[@"Accept"].exists);
+    XCTAssertFalse(app.buttons[@"Reject"].exists);
+    XCTAttachment *shot = [XCTAttachment attachmentWithScreenshot:app.screenshot];
+    shot.name = @"nearby-pairing"; shot.lifetime = XCTAttachmentLifetimeKeepAlways;
+    [self addAttachment:shot];
+}
+
+/// A1c-6 / D2: Settings carries a 好友管理 row that opens the same page, and it
+/// is a row inside the existing page rather than a sixth settings root.
+- (void)testSettingsRowOpensTheNearbyManagePage {
+    self.continueAfterFailure = NO;
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
+    XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
+    app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
+    [app launch];
+    XCTAssertTrue([app.buttons[@"open_settings"] waitForExistenceWithTimeout:15]);
+    [app.buttons[@"open_settings"] tap];
+    // Settings is master-detail: the 好友管理 row lives in the About section's
+    // content, so the section has to be selected before the row can exist.
+    XCTAssertTrue([app.buttons[@"section.about"] waitForExistenceWithTimeout:10]);
+    [app.buttons[@"section.about"] tap];
+    XCUIElement *row = identified(app, @"settings_nearby_friends_manage");
+    XCTAssertTrue(revealElement(app, row, 8), @"The 好友管理 row must be reachable by scrolling");
+    [row tap];
+    XCTAssertTrue([identified(app, @"nearby_manage_root") waitForExistenceWithTimeout:10]);
+}
 @end

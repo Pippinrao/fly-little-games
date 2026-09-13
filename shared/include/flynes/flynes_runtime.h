@@ -163,6 +163,15 @@ FLYNES_API fly_result fly_runtime_copy_latest_frame(fly_runtime_t* runtime,
                                                     size_t cap,
                                                     fly_latest_frame_v1* meta_out);
 
+/*
+ * Attempts the runtime mutex once without waiting. If it is busy or the PCM
+ * queue is empty, returns OK with sample_capacity zero-valued samples, sample_count
+ * equal to sample_capacity, and first_sample_sequence/media_time_ns both zero.
+ * This fallback silence does not consume queued PCM or advance producer time;
+ * it is not canonical content. Zero sequence/time alone does not identify it.
+ * Otherwise sample_count reports only the queued samples copied, which may be
+ * less than sample_capacity; the unused output buffer is left untouched.
+ */
 FLYNES_API fly_result fly_runtime_pull_pcm(fly_runtime_t* runtime,
                                            int16_t* samples_out,
                                            uint32_t sample_capacity,

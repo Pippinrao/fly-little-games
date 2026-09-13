@@ -555,6 +555,358 @@
     {
       "name": "permission_vibrate",
       "value": "按键反馈震动"
+    },
+    {
+      "name": "nearby_title",
+      "value": "附近联机"
+    },
+    {
+      "name": "nearby_tab_friends",
+      "value": "好友"
+    },
+    {
+      "name": "nearby_tab_devices",
+      "value": "附近设备"
+    },
+    {
+      "name": "nearby_friends_empty",
+      "value": "尚无已保存的好友。"
+    },
+    {
+      "name": "nearby_blocked_friend_store",
+      "value": "本版本尚未接入好友存储。"
+    },
+    {
+      "name": "nearby_devices_empty",
+      "value": "暂无附近设备。"
+    },
+    {
+      "name": "nearby_find_devices",
+      "value": "寻找设备"
+    },
+    {
+      "name": "nearby_scan_host_qr",
+      "value": "扫描房主二维码"
+    },
+    {
+      "name": "nearby_blocked_discovery",
+      "value": "本版本尚未接入附近设备发现。"
+    },
+    {
+      "name": "nearby_stage_permission",
+      "value": "权限"
+    },
+    {
+      "name": "nearby_stage_permission_reason",
+      "value": "附近联机所需权限尚未授予。"
+    },
+    {
+      "name": "nearby_stage_discovery",
+      "value": "发现"
+    },
+    {
+      "name": "nearby_stage_discovery_reason",
+      "value": "本版本尚未接入附近设备发现。"
+    },
+    {
+      "name": "nearby_stage_auth",
+      "value": "认证"
+    },
+    {
+      "name": "nearby_stage_wifi",
+      "value": "Wi-Fi"
+    },
+    {
+      "name": "nearby_stage_quic",
+      "value": "QUIC"
+    },
+    {
+      "name": "nearby_stage_version",
+      "value": "版本"
+    },
+    {
+      "name": "nearby_stage_codec",
+      "value": "codec"
+    },
+    {
+      "name": "nearby_stage_status_passed",
+      "value": "已通过"
+    },
+    {
+      "name": "nearby_stage_status_current",
+      "value": "当前阶段"
+    },
+    {
+      "name": "nearby_stage_status_not_reached",
+      "value": "尚未到达"
+    },
+    {
+      "name": "nearby_stage_auth_reason",
+      "value": "设备认证尚未接入会话。"
+    },
+    {
+      "name": "nearby_stage_wifi_reason",
+      "value": "尚未选择或确认 Wi-Fi 路径。"
+    },
+    {
+      "name": "nearby_stage_quic_reason",
+      "value": "生产 QUIC 通道尚未接入会话。"
+    },
+    {
+      "name": "nearby_stage_version_reason",
+      "value": "版本协商需要活动会话，本构建尚不具备。"
+    },
+    {
+      "name": "nearby_stage_codec_reason",
+      "value": "codec 能力交换需要活动会话，本构建尚不具备。"
+    },
+    {
+      "name": "nearby_open",
+      "value": "附近"
+    },
+    {
+      "name": "nearby_pairing_title",
+      "value": "配对"
+    },
+    {
+      "name": "nearby_lobby_title",
+      "value": "大厅"
+    },
+    {
+      "name": "nearby_join_request_anonymous",
+      "value": "申请免账号加入"
+    },
+    {
+      "name": "nearby_join_accept",
+      "value": "接受"
+    },
+    {
+      "name": "nearby_join_reject",
+      "value": "拒绝"
+    },
+    {
+      "name": "nearby_code_label",
+      "value": "6 位加入码"
+    },
+    {
+      "name": "nearby_code_confirm",
+      "value": "确认加入码"
+    },
+    {
+      "name": "nearby_wifi_path_building",
+      "value": "正在建立 Wi-Fi 路径"
+    },
+    {
+      "name": "nearby_wifi_system_confirm_once",
+      "value": "只需确认一次系统 Wi-Fi 提示"
+    },
+    {
+      "name": "nearby_friends_section",
+      "value": "已保存的好友"
+    },
+    {
+      "name": "nearby_friends_manage",
+      "value": "好友管理"
+    },
+    {
+      "name": "nearby_friends_saved_after_auth",
+      "value": "认证成功后才会保存好友。"
+    },
+    {
+      "name": "nearby_friends_rename",
+      "value": "重命名"
+    },
+    {
+      "name": "nearby_friends_delete",
+      "value": "删除"
+    },
+    {
+      "name": "nearby_friends_block",
+      "value": "拉黑"
+    },
+    {
+      "name": "nearby_friends_identity_reset",
+      "value": "重置本机身份"
+    },
+    {
+      "name": "nearby_blocked_permissions",
+      "value": "不可用：本构建未声明附近联机权限，配对无法开始。"
+    },
+    {
+      "name": "nearby_blocked_auth",
+      "value": "不可用：设备认证尚未接入会话。"
+    },
+    {
+      "name": "nearby_blocked_wifi",
+      "value": "不可用：尚未选择或确认 Wi-Fi 路径。"
+    },
+    {
+      "name": "nearby_blocked_quic",
+      "value": "不可用：生产 QUIC 通道尚未接入会话。"
+    },
+    {
+      "name": "nearby_blocked_version",
+      "value": "不可用：版本协商需要活动会话。"
+    },
+    {
+      "name": "nearby_blocked_codec",
+      "value": "不可用：codec 能力交换需要活动会话。"
+    },
+    {
+      "name": "nearby_blocked_rom_transfer",
+      "value": "不可用：会话尚未提供 ROM 身份与传输信息。"
+    },
+    {
+      "name": "nearby_blocked_profile_verify",
+      "value": "不可用：会话尚未提供 MultiplayerProfile 验证结果。"
+    },
+    {
+      "name": "nearby_blocked_mode_gate",
+      "value": "不可用：会话尚未定义 DUAL / STREAM 模式取值。"
+    },
+    {
+      "name": "nearby_blocked_connection_quality",
+      "value": "不可用：会话尚未上报连接质量。"
+    },
+    {
+      "name": "nearby_blocked_authority_recovery",
+      "value": "不可用：authority 恢复尚未接入会话。"
+    },
+    {
+      "name": "nearby_blocked_branch_merge",
+      "value": "不可用：会话尚无 branch 身份与重逢信息。"
+    },
+    {
+      "name": "nearby_blocked_local_mute",
+      "value": "不可用：会话尚未提供每端独立静音。"
+    },
+    {
+      "name": "nearby_blocked_session_read",
+      "value": "不可用：会话状态尚未接入本端。"
+    },
+    {
+      "name": "nearby_lobby_friend_name",
+      "value": "好友昵称"
+    },
+    {
+      "name": "nearby_lobby_identity_fingerprint",
+      "value": "identity fingerprint 短码"
+    },
+    {
+      "name": "nearby_lobby_authority_capability",
+      "value": "authority 候选能力"
+    },
+    {
+      "name": "nearby_lobby_resource_risk",
+      "value": "资源风险"
+    },
+    {
+      "name": "nearby_lobby_network_owner",
+      "value": "当前网络 owner"
+    },
+    {
+      "name": "nearby_lobby_seat",
+      "value": "P1/P2 seat"
+    },
+    {
+      "name": "nearby_lobby_rom_identity",
+      "value": "ROM 身份"
+    },
+    {
+      "name": "nearby_lobby_rom_local_state",
+      "value": "两端各自是否已有"
+    },
+    {
+      "name": "nearby_lobby_rom_transfer_confirm",
+      "value": "传输确认"
+    },
+    {
+      "name": "nearby_lobby_rom_transfer_progress",
+      "value": "传输进度"
+    },
+    {
+      "name": "nearby_lobby_profile_verified",
+      "value": "MultiplayerProfile 是否已验证"
+    },
+    {
+      "name": "nearby_lobby_mode_expected",
+      "value": "预计 DUAL 或 STREAM"
+    },
+    {
+      "name": "nearby_lobby_local_audio",
+      "value": "两端本地声音开关"
+    },
+    {
+      "name": "nearby_lobby_confirm",
+      "value": "确认入局"
+    },
+    {
+      "name": "nearby_lobby_confirm_invalidated",
+      "value": "authority 或 seat 变化后确认已失效。"
+    },
+    {
+      "name": "nearby_ingame_mode",
+      "value": "当前模式"
+    },
+    {
+      "name": "nearby_ingame_connection_quality",
+      "value": "连接质量"
+    },
+    {
+      "name": "nearby_ingame_seat",
+      "value": "P1/P2"
+    },
+    {
+      "name": "nearby_ingame_pause_state",
+      "value": "暂停/重连状态"
+    },
+    {
+      "name": "nearby_ingame_frozen",
+      "value": "冻结"
+    },
+    {
+      "name": "nearby_ingame_frozen_reason",
+      "value": "在做出连接决定前，会话保持冻结。"
+    },
+    {
+      "name": "nearby_ingame_reconnect_countdown",
+      "value": "重连倒计时"
+    },
+    {
+      "name": "nearby_ingame_reconnect_countdown_reason",
+      "value": "正在重连，剩余秒数尚未接入本端。"
+    },
+    {
+      "name": "nearby_ingame_authority_timeout",
+      "value": "authority 超时"
+    },
+    {
+      "name": "nearby_ingame_takeover",
+      "value": "接管"
+    },
+    {
+      "name": "nearby_ingame_continue_solo",
+      "value": "继续单人"
+    },
+    {
+      "name": "nearby_ingame_save_and_end",
+      "value": "保存结束"
+    },
+    {
+      "name": "nearby_ingame_option_unavailable_reason",
+      "value": "不可用：会话尚未上报该选项不可用的原因。"
+    },
+    {
+      "name": "nearby_ingame_branch_reunion",
+      "value": "多 branch 重逢"
+    },
+    {
+      "name": "nearby_ingame_branch_no_auto_merge",
+      "value": "两端 branch 明确不会自动合并。"
+    },
+    {
+      "name": "nearby_ingame_local_mute",
+      "value": "每端独立静音"
     }
   ]
 }

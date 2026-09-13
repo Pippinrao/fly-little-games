@@ -27,6 +27,11 @@ public class GameEntry {
     public int popularity;
     /** Asset path inside the APK for a bundled game; null for user files. */
     public String assetPath;
+    /** Cached complete ROM content hash; unrelated to the archive hash or display language. */
+    public String payloadSha256 = "";
+    public String romName = "";
+    public com.flynes.emu.app.NativeGameTitle titleMetadata =
+            com.flynes.emu.app.NativeGameTitle.UNKNOWN;
 
     public GameEntry() {
     }
