@@ -228,8 +228,31 @@ Evidence from this session (commands actually run, newest last):
 | Harmony Hypium, emulator | `hdc … aa test -b com.flynes.emu -m entry_test -s unittest OpenHarmonyTestRunner` | **31/31 passed** |
 | Versioning regression | `Invoke-Pester tools\versioning\tests\Versioning.Tests.ps1` | **5/5 passed** |
 
-Explicitly **not** verified: iOS compiles nothing on this machine (no Xcode, no Apple SDK, no generated project). A1c evidence is static only — file registration, route wiring, key-count parity (94 nearby keys in each locale, key sets identical) and a syntax review. The iOS binary, the Harmony page rendering beyond the Hypium-covered service logic, and any human walkthrough of the pages remain unverified.
+Explicitly **not** verified when the A1 commit was made: iOS. That is now superseded — see "iOS on the Mac" below, which built and exercised the A1c pages on the real simulator and found a genuine defect. Still unverified: the Harmony page rendering beyond the Hypium-covered service logic, and any human walkthrough of the pages on any platform.
 
 The two Android e2e failures are pre-existing and independent of this slice. `SettingsMasterDetailTest.twoHundredPercentFontKeepsMasterTargetsVisible` and `FirstRunNavigationTest.largeFontKeepsStatusCardAndCtaFullyVisible` both call `shell("settings put system font_scale …")` as their **first** statement, and that call throws `IllegalStateException: Not connected!` / `…already registered!` from `UiAutomation`, so neither test ever reaches a layout assertion; the run then dies at teardown with `Cannot call disconnect() while connecting UiAutomation`. The three excluded classes need EGL/GL, which this emulator does not provide (`EGL_CONTEXT_UNAVAILABLE`). Emulator animations must be off (`window_animation_scale` etc. = 0) or the haptic RecyclerView scroll assertion fails on its own.
 
 Version alignment. The worktree was on `1.0.4` while the mainline is `1.1.4`, and Harmony was still at `1.0.0` inside that same worktree. Root cause: this branch's `tools/versioning/Versioning.ps1` predates mainline `abcde1b`, whose Harmony regex tolerates the trailing comma plus CRLF that `harmony/AppScope/app.json5` actually has — so `Sync-Version.ps1` matched Android and silently skipped Harmony. `VERSION` is now `1.1.4`, all three platform metadata sets are synchronized, and `abcde1b`'s fix plus its Pester regression test are ported so every later commit here keeps them in step. This was a targeted port of one mainline commit, not a merge: the branch is still 15 commits behind mainline.
+
+## iOS on the Mac — built, exercised, and one regression found and fixed (2026-09-13)
+
+The A1c pages could not be compiled at all before this. This branch's `ios/app` was an older state that rejects every architecture except arm64 (so an Intel Mac cannot build a simulator app from it) and has no XCTest harness. The iOS port — 13 mainline commits — was already in `origin/main`, which this branch was 17 commits behind, so the branch was merged with `origin/main` (`4690b98`): mainline's newer iOS files were taken wholesale and the nearby wiring was re-applied on top of them (`08135c4`).
+
+Procedure that works on this Mac (Xcode 14.3.1, iOS 16.4 simulator, x86_64):
+
+```
+cmake -S ios/app -B build/ios-simulator -G Xcode -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+  -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.4 \
+  -DFLYNES_IOS_BUILD_XCTESTS=ON
+cmake --build build/ios-simulator --config Debug --target FlyNES FlyNESRuntimeTests FlyNESUITests --parallel 2
+python3 ios/scripts/run_simulator_tests.py <udid> [FlyNESRuntimeTests|FlyNESUITests]
+```
+
+Two transfer details, each of which fails the build if missed: `git archive` does not carry the `core/vendor/nestopiaue` submodule (CMake then stops with "No SOURCES given to target: nestopia"), and the source must be extracted into a fresh directory because a stale `build/ios-simulator` elsewhere is not this revision.
+
+Evidence: **FlyNESRuntimeTests 49/49 passed**, including the 172-second sustained-playback soak. **FlyNESUITests 10 of 13 passed**, of which five are the new nearby tests — the entry opening 附近设备 with the discovery controls disabled and each naming its reason, the pipeline marking only 权限 while a later stage carries no reason, the 好友 tab's empty state, 好友管理 with all four actions disabled, the 配对 entry with the six-digit-code and Wi-Fi blocks, and the Settings 好友管理 row. Each nearby test attaches a screenshot of the page it asserted.
+
+The three failures are not this slice's. Two `ProductImportUITests` cases fail identically on a clean `origin/main` build of the same revision range: "Files cannot find FlyNES-Import-E2E-v1. Stage fixtures and verify the local provider root first" — that suite needs the documented manual fixture staging (`ios/scripts/stage_import_fixtures.py`) on a dedicated simulator. Nothing was changed to make them pass.
+
+**One regression was introduced by this slice and is fixed.** `RunSurfaceViewController.buildNearbyBanner` activated the banner's constraints against `self.view` while the banner still had no superview, which raises `NSGenericException` ("no common ancestor") and aborted the app in `viewDidLoad`: every game launch crashed, so `OPEN_PAUSE` never appeared and two unrelated UI tests failed. The Mac crash report `FlyNES-2026-09-13-110522.ips` names `-[NSLayoutConstraint setActive:]` under `-[RunSurfaceViewController buildNearbyBanner]`, and a control build of `origin/main` on the same simulator passed both tests — which is what proved a regression rather than an environment problem. The fix activates the constraints only in the attach path, after `addSubview:`; the two tests pass again and the suite now matches mainline plus the nearby tests.

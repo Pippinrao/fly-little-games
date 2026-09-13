@@ -42,7 +42,8 @@ struct NearbyPairingView: View {
         Section("nearby.code.label") {
             DisabledActionRow(
                 titleKey: "nearby.code.confirm",
-                reasonKey: "nearby.blocked.auth"
+                reasonKey: "nearby.blocked.auth",
+                identifier: "nearby_code_confirm"
             )
         }
     }
@@ -58,7 +59,8 @@ struct NearbyPairingView: View {
         Section("nearby.wifi.path_building") {
             DisabledActionRow(
                 titleKey: "nearby.wifi.system_confirm_once",
-                reasonKey: "nearby.blocked.wifi"
+                reasonKey: "nearby.blocked.wifi",
+                identifier: "nearby_wifi_system_confirm"
             )
             Text("nearby.pairing.wifi.blocked")
                 .font(.footnote)
@@ -68,18 +70,22 @@ struct NearbyPairingView: View {
 }
 
 /// A control that cannot act is shown disabled with its visible reason, never
-/// as a fake action (spec §4).
+/// as a fake action (spec §4). The identifier is on the control and its reason
+/// carries the `_reason` suffix, matching the Android resource ids.
 private struct DisabledActionRow: View {
     let titleKey: LocalizedStringKey
     let reasonKey: LocalizedStringKey
+    let identifier: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(titleKey) {}
                 .disabled(true)
+                .accessibilityIdentifier(identifier)
             Text(reasonKey)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier(identifier + "_reason")
         }
         .padding(.vertical, 2)
     }
@@ -166,6 +172,7 @@ private struct PairingStageRow: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(stage.titleKey))
             .accessibilityValue(Text(state.statusKey))
+            .accessibilityIdentifier("nearby_stage_" + stage.rawValue)
             if state == .failing, let reasonKey = stage.failingReasonKey {
                 Text(reasonKey)
                     .font(.footnote)

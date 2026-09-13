@@ -52,6 +52,7 @@ struct NearbyFriendsView: View {
                 devicesTab
             }
         }
+        .accessibilityIdentifier("nearby_root")
         .navigationTitle("nearby.title")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -67,9 +68,11 @@ struct NearbyFriendsView: View {
         Section {
             Text("nearby.friends.empty")
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("nearby_friends_empty")
             Text("nearby.blocked.friend_store")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("nearby_friends_blocked")
         }
         Section("nearby.friends.section") {
             NavigationLink {
@@ -77,6 +80,7 @@ struct NearbyFriendsView: View {
             } label: {
                 Text("nearby.friends.manage")
             }
+            .accessibilityIdentifier("nearby_friends_manage")
         }
     }
 
@@ -92,6 +96,7 @@ struct NearbyFriendsView: View {
         Section {
             Text("nearby.devices.empty")
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("nearby_devices_empty")
         }
         Section {
             Label {
@@ -104,11 +109,13 @@ struct NearbyFriendsView: View {
                 .foregroundStyle(.secondary)
             DisabledActionRow(
                 titleKey: "nearby.find_devices",
-                reasonKey: "nearby.blocked.discovery"
+                reasonKey: "nearby.blocked.discovery",
+                identifier: "nearby_find_devices"
             )
             DisabledActionRow(
                 titleKey: "nearby.scan_host_qr",
-                reasonKey: "nearby.blocked.discovery"
+                reasonKey: "nearby.blocked.discovery",
+                identifier: "nearby_scan_host_qr"
             )
         }
         // 配对 is the only navigate-only entry on this tab: spec §4 permits a
@@ -129,23 +136,29 @@ struct NearbyFriendsView: View {
             } label: {
                 Text("nearby.pairing.title")
             }
+            .accessibilityIdentifier("nearby_open_pairing")
         }
     }
 }
 
 /// A control that cannot act is shown disabled with its visible reason, never
-/// as a fake action (spec §4).
+/// as a fake action (spec §4). The identifier is on the control and its reason
+/// carries the `_reason` suffix, matching the Android resource ids so one test
+/// vocabulary describes all three platforms.
 private struct DisabledActionRow: View {
     let titleKey: LocalizedStringKey
     let reasonKey: LocalizedStringKey
+    let identifier: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(titleKey) {}
                 .disabled(true)
+                .accessibilityIdentifier(identifier)
             Text(reasonKey)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier(identifier + "_reason")
         }
         .padding(.vertical, 2)
     }
@@ -230,6 +243,7 @@ private struct PairingStageRow: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(stage.titleKey))
             .accessibilityValue(Text(state.statusKey))
+            .accessibilityIdentifier("nearby_stage_" + stage.rawValue)
             if state == .failing, let reasonKey = stage.failingReasonKey {
                 Text(reasonKey)
                     .font(.footnote)

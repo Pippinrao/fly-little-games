@@ -21,29 +21,36 @@ struct NearbyFriendsManageView: View {
                 ForEach(ManageAction.allCases) { action in
                     DisabledActionRow(
                         titleKey: action.titleKey,
-                        reasonKey: "nearby.blocked.friend_store"
+                        reasonKey: "nearby.blocked.friend_store",
+                        identifier: "nearby_manage_" + action.rawValue
                     )
                 }
             }
         }
+        .accessibilityIdentifier("nearby_manage_root")
         .navigationTitle("nearby.friends.manage")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 /// A control that cannot act is shown disabled with its visible reason, never
-/// as a fake action (spec §4).
+/// as a fake action (spec §4). The identifier is on the control and its reason
+/// carries the `_reason` suffix, matching the Android resource ids so one test
+/// vocabulary describes all three platforms.
 private struct DisabledActionRow: View {
     let titleKey: LocalizedStringKey
     let reasonKey: LocalizedStringKey
+    let identifier: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(titleKey) {}
                 .disabled(true)
+                .accessibilityIdentifier(identifier)
             Text(reasonKey)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier(identifier + "_reason")
         }
         .padding(.vertical, 2)
     }

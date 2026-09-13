@@ -87,6 +87,7 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     UIButton *pauseButton_;
     UIView *pauseLayer_;
     UIView *nearbyBanner_;
+    NSArray<NSLayoutConstraint *> *nearbyBannerConstraints_;
     FlyNesRuntimeBridge *runtime_;
     FlyNesMetalRenderer *renderer_;
     FlyNesDisplayLinkPacer *pacer_;
@@ -416,7 +417,12 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
     [self populateNearbyBanner:stack];
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[
+    // Built here, activated only in `updateNearbyBanner` once the banner is
+    // actually in the hierarchy. Activating these while `nearbyBanner_` still has
+    // no superview raises "Unable to activate constraint ... because they have no
+    // common ancestor", which aborted the run surface on every game launch in
+    // local single-player — the one state this build is always in (spec §10 D7).
+    nearbyBannerConstraints_ = @[
         [nearbyBanner_.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [nearbyBanner_.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [nearbyBanner_.topAnchor constraintEqualToAnchor:safe.topAnchor],
@@ -430,7 +436,7 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
         [stack.topAnchor constraintEqualToAnchor:scroll.topAnchor constant:10.0],
         [stack.bottomAnchor constraintEqualToAnchor:scroll.bottomAnchor constant:-10.0],
         [stack.widthAnchor constraintEqualToAnchor:scroll.widthAnchor constant:-32.0],
-    ]];
+    ];
     // Attached only while a session exists, so local single-player loses no
     // vertical play space to an empty band (spec §10 D7).
     [self updateNearbyBanner];
@@ -465,9 +471,14 @@ void add_nearby_status_row(UIStackView *stack, NSString *labelKey, NSString *rea
         return;
     if ([self nearbySessionActive])
     {
-        nearbyBanner_.hidden = NO;
         if (nearbyBanner_.superview == nil)
+        {
             [self.view addSubview:nearbyBanner_];
+            // The constraints only become valid here: they tie the banner to
+            // `self.view`, so both must already share an ancestor.
+            [NSLayoutConstraint activateConstraints:nearbyBannerConstraints_];
+        }
+        nearbyBanner_.hidden = NO;
         return;
     }
     nearbyBanner_.hidden = YES;
