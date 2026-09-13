@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.flynes.emu",
     "vendor": "FlyNES",
-    "versionCode": 1001008,
-    "versionName": "1.1.8",
+    "versionCode": 1001009,
+    "versionName": "1.1.9",
     "icon": "$media:app_icon",
     "label": "$string:app_name",
     "configuration": "$profile:configuration"
