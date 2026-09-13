@@ -3,6 +3,8 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction, router } from '@kit.ArkUI';
 import { util } from '@kit.ArkTS';
 import { LicenseEntry, LicenseModel } from './LicenseModel';
+import { builtinGamesSync } from '../service/PlayService';
+import { BuiltinGames } from '../service/BuiltinGames';
 
 const COLOR_BACKGROUND: string = '#121316';
 const COLOR_SURFACE: string = '#1B1D22';
@@ -14,13 +16,23 @@ const COLOR_ON_PRIMARY: string = '#121316';
 @Entry
 @Component
 struct Licenses {
-  @State private entries: LicenseEntry[] = LicenseModel.all();
+  @State private entries: LicenseEntry[] = [];
   @State private selectedFile: string = '';
   @State private body: string = '';
   @State private loadFailed: boolean = false;
   @State private status: string = '';
 
+  /** The bundled games come from the shared manifest, never from this page. */
+  private bundledGames(): BuiltinGames {
+    const host = this.getUIContext().getHostContext();
+    if (host === undefined) {
+      return BuiltinGames.empty();
+    }
+    return builtinGamesSync(host as common.UIAbilityContext);
+  }
+
   aboutToAppear(): void {
+    this.entries = LicenseModel.all(this.bundledGames());
     if (this.entries.length > 0) {
       void this.selectEntry(this.entries[0].fileName);
     }
@@ -131,12 +143,12 @@ struct Licenses {
   }
 
   private selectedHeading(): string {
-    const entry = LicenseModel.byFileName(this.selectedFile);
+    const entry = LicenseModel.byFileName(this.selectedFile, this.bundledGames());
     return entry === undefined ? 'Licenses' : entry.displayName;
   }
 
   private selectedHasUrl(): boolean {
-    const entry = LicenseModel.byFileName(this.selectedFile);
+    const entry = LicenseModel.byFileName(this.selectedFile, this.bundledGames());
     return entry !== undefined && entry.hasSourceUrl();
   }
 
@@ -153,7 +165,7 @@ struct Licenses {
     try {
       const bytes = await context.resourceManager.getRawFileContent(fileName);
       const text = util.TextDecoder.create('utf-8', { ignoreBOM: true }).decodeWithStream(bytes);
-      const entry = LicenseModel.byFileName(fileName);
+      const entry = LicenseModel.byFileName(fileName, this.bundledGames());
       let body = LicenseModel.resolveBody(fileName, text);
       if (entry !== undefined && entry.hasSourceUrl()) {
         body = `${body}\n\n${entry.sourceUrl}`;
@@ -169,7 +181,7 @@ struct Licenses {
   }
 
   private copyLink(): void {
-    const entry = LicenseModel.byFileName(this.selectedFile);
+    const entry = LicenseModel.byFileName(this.selectedFile, this.bundledGames());
     if (entry === undefined || !entry.hasSourceUrl()) {
       this.status = 'Source link not configured';
       return;

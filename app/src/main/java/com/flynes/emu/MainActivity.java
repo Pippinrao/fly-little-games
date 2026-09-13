@@ -102,7 +102,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "FlyNES";
-    private static final String ROM_ASSET = "roms/from_below.nes";
     private static final int AUDIO_SAMPLE_RATE = 48000;
     private static final int REQ_LIBRARY = 1001;
 
@@ -430,12 +429,18 @@ public class MainActivity extends AppCompatActivity {
         }
 
         PendingGameLaunch.Payload pending = PendingGameLaunch.consume();
-        String coverGameId = pending == null
-                ? "builtin:from-below" : pending.request().canonicalGameId();
+        if (pending == null) {
+            // The play surface only runs a game the caller explicitly asked for.
+            // Silently booting into one arbitrary bundled ROM is not acceptable
+            // now that several are bundled.
+            toastAndFinish(getString(R.string.missing_builtin_game));
+            return;
+        }
+        String coverGameId = pending.request().canonicalGameId();
         coverCapture = new CoverCaptureCoordinator(coverGameId,
                 new AndroidCoverRepository(this), coverExecutor);
         framePublisher.addObserver(coverCapture);
-        byte[] rom = pending == null ? readAsset(ROM_ASSET) : pending.bytes();
+        byte[] rom = pending.bytes();
         if (rom == null) {
             toastAndFinish(getString(R.string.missing_builtin_game));
             return;

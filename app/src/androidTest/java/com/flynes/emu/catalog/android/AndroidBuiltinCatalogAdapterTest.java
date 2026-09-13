@@ -12,6 +12,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import com.flynes.emu.catalog.GameCatalog;
 import com.flynes.emu.catalog.GameVariant;
+import com.flynes.emu.catalog.PhysicalPackage;
 import com.flynes.emu.catalog.ScanResult;
 import com.flynes.emu.catalog.RomSource;
 import com.flynes.emu.catalog.TitleCandidate;
@@ -31,23 +32,27 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class AndroidBuiltinCatalogAdapterTest {
     @Test
-    public void licensedBuiltinUsesSharedScannerVerifiedBilingualTitlesAndStrictLoader()
+    public void licensedBuiltinsUseSharedScannerVerifiedBilingualTitlesAndStrictLoader()
             throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
         AndroidBuiltinCatalogAdapter adapter = new AndroidBuiltinCatalogAdapter(context);
         ScanResult scanned = adapter.scan();
-        assertEquals(1, scanned.packages().size());
-        assertEquals(1, scanned.packages().get(0).variants().size());
-        assertTrue(scanned.packages().get(0).variants().get(0)
-                .compatibilityDecision().isPlayable());
-        assertEquals("From Below", scanned.packages().get(0).variants().get(0)
-                .canonicalGame().englishTitle());
-        assertEquals("来自下方", scanned.packages().get(0).variants().get(0)
-                .canonicalGame().zhHansTitle());
-        assertTrue(scanned.packages().get(0).variants().get(0).canonicalGame()
-                .titleCandidates().stream().allMatch(item ->
-                        item.origin() == TitleCandidate.Origin.BUILTIN_MANIFEST
-                                && item.reviewState() == TitleCandidate.ReviewState.VERIFIED));
+        // Every game the shared manifest declares, each pointing at its own asset.
+        assertEquals(7, scanned.packages().size());
+        for (PhysicalPackage pkg : scanned.packages()) {
+            assertEquals(1, pkg.variants().size());
+            var variant = pkg.variants().get(0);
+            assertTrue("bundled ROM must be playable: " + pkg.originalFilename(),
+                    variant.compatibilityDecision().isPlayable());
+            assertTrue("bundled ids are namespaced: " + variant.canonicalGame().id(),
+                    variant.canonicalGame().id().startsWith("builtin:"));
+            assertTrue("each game needs its own asset locator: " + pkg.sourceUri(),
+                    pkg.sourceUri().startsWith(AndroidBuiltinCatalogAdapter.ASSET_ROOT));
+            assertTrue("titles must come from the builtin manifest",
+                    variant.canonicalGame().titleCandidates().stream().allMatch(item ->
+                            item.origin() == TitleCandidate.Origin.BUILTIN_MANIFEST
+                                    && item.reviewState() == TitleCandidate.ReviewState.VERIFIED));
+        }
 
         GameCatalog catalog = new GameCatalog();
         CatalogRepository repository = new CatalogRepository(
@@ -55,7 +60,8 @@ public final class AndroidBuiltinCatalogAdapterTest {
                 new MemoryStore(), catalog);
         repository.commitScan(SourceScanResult.from(
                 AndroidBuiltinCatalogAdapter.SOURCE, repository.state().revision(), 1,
-                SourceScanResult.Completeness.FULL, scanned, 1));
+                SourceScanResult.Completeness.FULL, scanned, scanned.packageOutcomes().size()));
+        assertEquals(7, catalog.canonicalEntries().size());
         GameVariant variant = catalog.canonicalEntries().get(0).variants().get(0);
         byte[] loaded = new ExactRomLoader(new AndroidCatalogStreamOpener(
                 context, repository, locator -> true)).load(LaunchRequest.forVariant(variant));

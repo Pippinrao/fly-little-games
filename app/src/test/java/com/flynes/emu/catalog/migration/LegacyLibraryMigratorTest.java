@@ -31,7 +31,7 @@ public final class LegacyLibraryMigratorTest {
                 new LegacyLibraryMigrator.LegacyRow(
                         "Zip", "content://provider/document/archive", "saf", true),
                 new LegacyLibraryMigrator.LegacyRow(
-                        "Builtin", "asset:///roms/from_below.nes", "assets", false)));
+                        "Builtin", "asset:///roms/thwaite.nes", "assets", false)));
         List<PackageCandidate> enumerated = List.of(
                 PackageCandidate.bytes("raw-id", "actual-name.nes", ines),
                 new PackageCandidate("zip-id", "archive.zip",
@@ -123,7 +123,7 @@ public final class LegacyLibraryMigratorTest {
                 new RomPackageScanner(ScanLimits.defaults()));
         Fixture() {
             RomSource builtin = new RomSource(
-                    "builtin", RomSource.Type.BUILTIN, "asset:///roms/from_below.nes",
+                    "builtin", RomSource.Type.BUILTIN, "asset:///roms/thwaite.nes",
                     RomSource.PermissionState.NOT_REQUIRED);
             repository = new CatalogRepository(
                     CatalogState.empty(builtin), store, new GameCatalog());

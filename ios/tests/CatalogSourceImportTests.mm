@@ -46,7 +46,7 @@ static int run_zip(NSString *workingDirectory, NSArray<NSString *> *arguments)
 
 - (NSData *)romFixture
 {
-    NSURL *url = [NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"];
+    NSURL *url = [NSBundle.mainBundle URLForResource:@"thwaite" withExtension:@"nes"];
     NSData *rom = url == nil ? nil : [NSData dataWithContentsOfURL:url];
     XCTAssertNotNil(rom, @"the repository ROM fixture must be bundled for this test");
     return rom;
@@ -346,13 +346,27 @@ static int run_zip(NSString *workingDirectory, NSArray<NSString *> *arguments)
     [self verifyDistinctLibraryWithCount:2];
 }
 
+- (NSUInteger)bundledGameCount
+{
+    NSURL *url = [NSBundle.mainBundle URLForResource:@"builtin-games" withExtension:@"json"];
+    NSData *data = url == nil ? nil : [NSData dataWithContentsOfURL:url];
+    if (data == nil) return 0;
+    NSDictionary *root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    NSArray *games = root[@"games"];
+    return [games isKindOfClass:NSArray.class] ? games.count : 0;
+}
+
 - (void)testBuiltinPlusOneImportedGamePresentsWithoutCollectionMutation
 {
     self.continueAfterFailure = NO;
-    NSURL *builtin = [NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"];
+    NSURL *builtin = [NSBundle.mainBundle URLForResource:@"thwaite" withExtension:@"nes"];
     service_ = [[CatalogSourceService alloc] initWithBridge:bridge_ defaults:defaults_ builtinURL:builtin];
     XCTAssertTrue([service_ prepareBuiltin:nil]);
-    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, 1u);
+    // The builtin source is the shared manifest, not the single injected URL, so
+    // the expected count comes from the manifest itself.
+    const NSUInteger bundled = [self bundledGameCount];
+    XCTAssertGreaterThan(bundled, 0u, @"the app bundle must declare its bundled games");
+    XCTAssertEqual([bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""].count, bundled);
     NSMutableData *rom = [[self romFixture] mutableCopy];
     static_cast<uint8_t *>(rom.mutableBytes)[rom.length - 1] ^= 1;
     NSURL *single = [sources_ URLByAppendingPathComponent:@"single-import.nes"];
@@ -361,11 +375,11 @@ static int run_zip(NSString *workingDirectory, NSArray<NSString *> *arguments)
     XCTAssertNotNil([service_ addURL:single directory:NO error:&failure], @"%@", failure);
     NSArray *cards = nil;
     XCTAssertNoThrow(cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""]);
-    XCTAssertEqual(cards.count, 2u, @"a single import joins the existing builtin card");
+    XCTAssertEqual(cards.count, bundled + 1, @"a single import joins the existing builtin cards");
     bridge_ = [[FlyNesAppBridge alloc] init];
     XCTAssertTrue([bridge_ createWithDataRoot:root_.path cacheRoot:root_.path error:nil]);
     XCTAssertNoThrow(cards = [bridge_ gameCenterFilteredGamesForCategory:@"ALL" query:@""]);
-    XCTAssertEqual(cards.count, 2u);
+    XCTAssertEqual(cards.count, bundled + 1);
 }
 
 - (void)testHundredDistinctGamesWithDuplicateVariantsSearchFavoriteAndRestart

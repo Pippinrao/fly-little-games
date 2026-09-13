@@ -50,27 +50,27 @@ NSData *flat_frame(unsigned value)
 
 - (void)testTrustedBuiltinPresentsAndroidBilingualTitle
 {
-    NSDictionary *fields = [FlyNesCatalogPresentation fieldsForFilename:@"from_below.nes"
+    NSDictionary *fields = [FlyNesCatalogPresentation fieldsForFilename:@"thwaite.nes"
                                                               entryPath:@""
                                                          trustedBuiltin:YES];
-    XCTAssertEqualObjects(fields[@"titleEn"], @"From Below");
-    XCTAssertEqualObjects(fields[@"titleZhHans"], @"来自下方");
+    XCTAssertEqualObjects(fields[@"titleEn"], @"Thwaite");
+    XCTAssertEqualObjects(fields[@"titleZhHans"], @"护村记");
     XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"en-US"][@"primary"],
-                          @"From Below");
+                          @"Thwaite");
     XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"en-US"][@"secondary"],
-                          @"来自下方");
+                          @"护村记");
     XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"zh-Hans-CN"][@"primary"],
-                          @"来自下方");
+                          @"护村记");
     XCTAssertEqualObjects([FlyNesCatalogPresentation titleForFields:fields locale:@"zh-Hans-CN"][@"secondary"],
-                          @"From Below");
+                          @"Thwaite");
 }
 
 - (void)testExternalFilenamesNeverBecomeTranslations
 {
-    NSDictionary *fields = [FlyNesCatalogPresentation fieldsForFilename:@"from_below.nes"
+    NSDictionary *fields = [FlyNesCatalogPresentation fieldsForFilename:@"thwaite.nes"
                                                               entryPath:@""
                                                          trustedBuiltin:NO];
-    XCTAssertEqualObjects(fields[@"titleEn"], @"from_below");
+    XCTAssertEqualObjects(fields[@"titleEn"], @"thwaite");
     XCTAssertEqualObjects(fields[@"titleZhHans"], @"");
     // Underscores and region tags survive; only the final extension is dropped.
     NSDictionary *tagged = [FlyNesCatalogPresentation fieldsForFilename:@"Super_Game (USA).nes"
@@ -163,7 +163,7 @@ NSData *flat_frame(unsigned value)
     FlyNesCoverStore *store = [[FlyNesCoverStore alloc] init];
     [store configureWithCacheRoot:root];
     NSData *pixels = pattern_frame();
-    XCTAssertTrue([store storeRgb565Frame:pixels canonicalId:@"builtin:from-below"
+    XCTAssertTrue([store storeRgb565Frame:pixels canonicalId:@"builtin:thwaite"
                                     width:256u height:240u]);
 
     NSString *directory = store.directory;
@@ -171,13 +171,13 @@ NSData *flat_frame(unsigned value)
     NSArray<NSString *> *entries = [NSFileManager.defaultManager contentsOfDirectoryAtPath:directory error:nil];
     XCTAssertEqual(entries.count, 1u);
     // The filename must not reveal the canonical id.
-    XCTAssertFalse([entries.firstObject containsString:@"from-below"]);
+    XCTAssertFalse([entries.firstObject containsString:@"thwaite"]);
     XCTAssertEqualObjects(entries.firstObject.pathExtension, @"png");
 
     // A fresh store instance must read the same durable file, not a memory cache.
     FlyNesCoverStore *reopened = [[FlyNesCoverStore alloc] init];
     [reopened configureWithCacheRoot:root];
-    UIImage *cover = [reopened coverForCanonicalId:@"builtin:from-below"];
+    UIImage *cover = [reopened coverForCanonicalId:@"builtin:thwaite"];
     XCTAssertNotNil(cover);
     XCTAssertEqualWithAccuracy(cover.size.width, 320.0, 0.001);
     XCTAssertEqualWithAccuracy(cover.size.height, 240.0, 0.001);
@@ -202,9 +202,9 @@ NSData *flat_frame(unsigned value)
     XCTAssertEqualWithAccuracy(read[2], expected_blue, 1);
     CFRelease(raw);
 
-    XCTAssertTrue([reopened hasCoverForCanonicalId:@"builtin:from-below"]);
-    [reopened removeCoverForCanonicalId:@"builtin:from-below"];
-    XCTAssertFalse([reopened hasCoverForCanonicalId:@"builtin:from-below"]);
+    XCTAssertTrue([reopened hasCoverForCanonicalId:@"builtin:thwaite"]);
+    [reopened removeCoverForCanonicalId:@"builtin:thwaite"];
+    XCTAssertFalse([reopened hasCoverForCanonicalId:@"builtin:thwaite"]);
     [NSFileManager.defaultManager removeItemAtPath:root error:nil];
 }
 

@@ -154,35 +154,28 @@ def main() -> int:
     require("debugHud" not in run and "debug_hud" not in run.lower()
             and "Debug HUD" not in run,
             "ROM open failure must not dump into a debug HUD")
-    require("from_below" in run,
-            "run start must load the bundled From Below fixture")
-    require("canonicalId" in run and "builtin" in run,
-            "prefer canonical id when it maps to the From Below builtin")
-    first_bundled = view_load_body.find("bundledFromBelowRom")
-    require(first_bundled >= 0, "builtin path must still load bundled From Below")
-    second_bundled = view_load_body.find("bundledFromBelowRom", first_bundled + 1)
+    require("bundledRomForCanonicalId" in run,
+            "run start must resolve a bundled ROM from the shared manifest")
+    require("BuiltinGames" in run,
+            "run start must consult the bundled-game manifest")
+    require("byCanonicalId" in run,
+            "run start must resolve the bundled game by canonical id")
+    first_bundled = view_load_body.find("bundledRomForCanonicalId")
+    require(first_bundled >= 0, "the builtin path must resolve the bundled ROM once")
+    second_bundled = view_load_body.find("bundledRomForCanonicalId", first_bundled + 1)
     require(second_bundled < 0,
-            "non-builtin ids must not load bundled From Below as fallback")
-    maps_at = run.find("canonicalIdMapsToBuiltinFromBelow")
-    require(maps_at >= 0, "run start must map canonicalId onto the From Below builtin")
-    maps_end = run.find("autosaveURL", maps_at)
-    maps_fn = run[maps_at:maps_end if maps_end > maps_at else maps_at + 500]
-    empty_at = maps_fn.find("length == 0")
-    if empty_at < 0:
-        empty_at = maps_fn.find("length==0")
-    if empty_at >= 0:
-        empty_branch = maps_fn[empty_at:empty_at + 80].replace(" ", "")
-        require("returnYES" not in empty_branch,
-                "empty canonicalId must not map to bundled From Below")
+            "a non-builtin id must not fall back to a bundled ROM")
+    require("canonicalIdMapsToBuiltinFromBelow" not in run,
+            "the retired single-game canonical-id mapping must be gone")
     cmake = read("ios/app/CMakeLists.txt")
-    require("from_below.nes" in cmake,
-            "product CMake must package from_below.nes into the app bundle")
-    require("LICENSE-from-below" in cmake,
-            "product CMake must package the From Below LICENSE")
+    require("content/assets" in cmake and "builtin-games.json" in cmake,
+            "product CMake must package the shared bundled content")
+    require("FLYNES_IOS_BUNDLED_ROMS" in cmake,
+            "product CMake must package every bundled ROM")
     require("MACOSX_PACKAGE_LOCATION" in cmake and "Resources" in cmake,
-            "from_below.nes must be packaged as a bundle resource")
-    require((ROOT / "harmony/entry/src/main/resources/rawfile/from_below.nes").is_file(),
-            "Harmony From Below fixture must remain the legal bundled ROM")
+            "bundled content must be packaged as bundle resources")
+    require((ROOT / "content/assets/roms/thwaite.nes").is_file(),
+            "Harmony and iOS hosts must share the manifest's ROM fixture")
     strings = read("ios/app/en.lproj/Localizable.strings")
     require("pause.checkpoint_failed" in strings,
             "pause checkpoint failure must be localized")
@@ -251,11 +244,13 @@ def main() -> int:
     source_model = read("ios/app/CatalogSourceManagementView.swift")
     require("prepareBuiltin" in source_model and "prepareBuiltin" in source_service,
             "Game Center must prepare the real bundled catalog source")
-    require("scanURL:builtinURL_ uuid:BuiltinUUID scope:1" in source_service,
+    require("scanFileRecords:" in source_service,
             "builtin must use the same validated scanner as external sources")
+    require("BuiltinGames" in source_service,
+            "the builtin source must be prepared from the shared manifest")
     require("library.source.builtin_missing" in source_service,
             "missing builtin must report failure, not inject a fake playable row")
-    require("From Below" not in gc_body and "from_below.nes" not in gc_body,
+    require("Thwaite" not in gc_body and "thwaite.nes" not in gc_body,
             "filtered snapshots must not fabricate builtin playable entries")
     cmake = read("ios/app/CMakeLists.txt")
     require("flynes_product" in cmake, "product CMake must link flynes_product")

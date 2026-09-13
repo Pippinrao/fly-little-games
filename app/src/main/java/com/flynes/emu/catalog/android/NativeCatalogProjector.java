@@ -3,6 +3,7 @@ package com.flynes.emu.catalog.android;
 import com.flynes.emu.app.FlyCatalogCommands;
 import com.flynes.emu.app.NativeCatalogEntry;
 import com.flynes.emu.app.NativeSourceStatus;
+import com.flynes.emu.catalog.BuiltinGames;
 import com.flynes.emu.catalog.CanonicalGame;
 import com.flynes.emu.catalog.CompatibilityDecision;
 import com.flynes.emu.catalog.CompatibilityReason;
@@ -66,13 +67,15 @@ public final class NativeCatalogProjector {
             long lastPlayedSequence,
             AndroidUuidSafMap uuidMap,
             AndroidPackageLocatorMap locators,
-            LocatorResolver locatorResolver) {
+            LocatorResolver locatorResolver,
+            BuiltinGames builtinGames) {
         Objects.requireNonNull(entries, "entries");
         Objects.requireNonNull(sources, "sources");
         Objects.requireNonNull(users, "users");
         Objects.requireNonNull(uuidMap, "uuid map");
         Objects.requireNonNull(locators, "locators");
         Objects.requireNonNull(locatorResolver, "locator resolver");
+        Objects.requireNonNull(builtinGames, "builtin games");
         LinkedHashMap<String, SourceBuilder> builders = new LinkedHashMap<>();
         RomSource builtin = AndroidBuiltinCatalogAdapter.SOURCE;
         builders.put(builtin.id(), new SourceBuilder(builtin, SourceScanResult.Completeness.FULL));
@@ -89,7 +92,7 @@ public final class NativeCatalogProjector {
             RomSource source = sourceFor(entry.sourceUuid(), entry.sourceScope(), uuidMap);
             SourceBuilder builder = builders.computeIfAbsent(
                     source.id(), ignored -> new SourceBuilder(source, SourceScanResult.Completeness.FULL));
-            addVariant(builder, source, entry, locators, locatorResolver);
+            addVariant(builder, source, entry, locators, locatorResolver, builtinGames);
         }
         LinkedHashMap<String, SourceCatalogState> projected = new LinkedHashMap<>();
         for (SourceBuilder builder : builders.values()) {
@@ -104,15 +107,39 @@ public final class NativeCatalogProjector {
                 builtin.id(), projected, users, lastPlayedSequence);
     }
 
+    /**
+     * Titles for a bundled game come from the shared manifest. A Java-side scan
+     * already carries the manifest id; a native scan derives a content id and
+     * names the entry by its asset filename, so that is the second lookup. An
+     * unrecognised builtin id must never be given an invented title.
+     */
+    private static CanonicalGame builtinGame(BuiltinGames games, String canonicalId, String relative) {
+        BuiltinGames.Entry entry = games.byCanonicalId(canonicalId);
+        if (entry == null) {
+            entry = games.byAssetFilename(relative);
+        }
+        if (entry != null) {
+            // Titles come from the manifest, but the identity stays whatever the
+            // scan assigned: the native catalog keys favourites and play marks by
+            // that id, so renaming it here would orphan them.
+            return new CanonicalGame(canonicalId, entry.titleEn, entry.titleZhHans,
+                    Collections.emptyList());
+        }
+        return new CanonicalGame(canonicalId, relative, "", Collections.emptyList());
+    }
+
     private static void addVariant(
             SourceBuilder builder, RomSource source, NativeCatalogEntry entry,
-            AndroidPackageLocatorMap locators, LocatorResolver locatorResolver) {
+            AndroidPackageLocatorMap locators, LocatorResolver locatorResolver,
+            BuiltinGames builtinGames) {
         String relative = entry.relativePath();
         String packageId = StableIds.packageId(source.id(), relative);
         String locator = locators.get(entry.sourceUuid(), relative);
         if (source.type() == RomSource.Type.BUILTIN) {
             if (locator == null || locator.trim().isEmpty()) {
-                locator = AndroidBuiltinCatalogAdapter.ASSET_LOCATOR;
+                // Bundled assets are addressed by their own filename, so a cold
+                // start can always rebuild the locator without a scan.
+                locator = AndroidBuiltinCatalogAdapter.assetLocator(relative);
             }
         } else {
             if (!DocumentLocatorShape.isOpenableDocumentLocator(locator)) {
@@ -132,8 +159,7 @@ public final class NativeCatalogProjector {
         String crc = hex(entry.payloadCrc32());
         RomHashes hashes = new RomHashes(sha1, sha256, physical, crc);
         CanonicalGame game = source.type() == RomSource.Type.BUILTIN
-                ? new CanonicalGame(entry.canonicalId(), "From Below", "来自下方",
-                        Collections.emptyList())
+                ? builtinGame(builtinGames, entry.canonicalId(), relative)
                 : new CanonicalGame(entry.canonicalId(), entry.displayName(), "",
                         Collections.emptyList());
         RomFormat romFormat = romFormat(entry.romFormat());

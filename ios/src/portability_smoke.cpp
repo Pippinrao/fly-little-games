@@ -21,9 +21,9 @@ namespace flynes::ios {
 namespace {
 
 constexpr std::string_view kExpectedFullFileSha256 =
-    "1A3AC4FAF4B35640505344059AE5D91DAE07CD47E1FB4D9D2A33C76391F1C555";
+    "EE51CD9562F28195BA015D9857C6C4FC9BF67CDFB213E95F655E586B92195173";
 constexpr std::string_view kExpectedCoreCartridgeSha1 =
-    "77C42676DB38D384C1D6B00090ADBC820BF70AB0";
+    "81A5AC43BE5BD26615FC89E7EFE0337E309C16E7";
 constexpr std::uint32_t kSmokeFrameCount = 60u;
 constexpr std::uint32_t kAudioCapacityPerFrame = 1024u;
 constexpr std::size_t kMaxSmokeStateBytes = 8u * 1024u * 1024u;

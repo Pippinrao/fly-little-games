@@ -1,4 +1,5 @@
 #import "CatalogPresentation.h"
+#import "BuiltinGames.h"
 
 namespace {
 NSString *title_from_path(NSString *value) {
@@ -40,9 +41,14 @@ NSDictionary *fields(NSArray<NSDictionary *> *candidates, NSString *aliases) {
 + (NSDictionary *)fieldsForFilename:(NSString *)filename entryPath:(NSString *)entryPath trustedBuiltin:(BOOL)trustedBuiltin {
     NSMutableArray *candidates = [NSMutableArray array];
     if (trustedBuiltin) {
-        // These are the only translations in AndroidBuiltinCatalogAdapter's manifest.
-        [candidates addObject:candidate(@"From Below", @"en", -1)];
-        [candidates addObject:candidate(@"来自下方", @"zh", -1)];
+        // The trusted titles of a bundled game come from the shared manifest, so
+        // adding one never needs a code change here.
+        NSString *name = filename.lastPathComponent ?: filename;
+        FlyNesBuiltinGame *game = [FlyNesBuiltinGames.shared byAssetFilename:name];
+        if (game != nil) {
+            [candidates addObject:candidate(game.titleEn, @"en", -1)];
+            [candidates addObject:candidate(game.titleZhHans, @"zh", -1)];
+        }
     } else {
         if (filename.length) {
             NSString *title = title_from_path(filename);

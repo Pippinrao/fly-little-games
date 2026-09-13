@@ -87,7 +87,7 @@ void test_executor_indexes_real_rom_off_caller_thread()
     request.source_uuid_hex = "1234567890abcdef1234567890abcdef";
     request.source_scope = FLY_SOURCE_SCOPE_MANAGED_LIBRARY;
     request.final_completeness = FLY_SCAN_COMPLETENESS_FULL;
-    request.files.push_back({"from_below.nes", "From Below", fd,
+    request.files.push_back({"thwaite.nes", "Thwaite", fd,
                              std::filesystem::file_size(rom)});
 
     const std::thread::id caller = std::this_thread::get_id();

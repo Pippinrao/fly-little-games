@@ -265,7 +265,7 @@ if(FLYNES_BUILD_TESTS)
     target_link_libraries(flynes_runtime_test PRIVATE flynes_runtime)
     target_compile_features(flynes_runtime_test PRIVATE cxx_std_17)
     target_compile_definitions(flynes_runtime_test PRIVATE
-        FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/fixtures/from_below.nes"
+        FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes"
         FLYNES_RUNTIME_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/include/flynes/flynes_runtime.h"
     )
     set_target_properties(flynes_runtime_test PROPERTIES CXX_EXTENSIONS NO)

@@ -1,13 +1,16 @@
-﻿FlyNES — 安卓离线红白机模拟器
+FlyNES — 安卓离线红白机模拟器
 Copyright (C) 2026 FlyNES contributors
 License: GNU GPL v2 (全文见下)
 
 组件与许可（Component Licenses）:
 - NestopiaUE (core/vendor/nestopiaue): GNU GPL v2
 - zlib (构建期依赖): zlib 许可 (https://www.zlib.net/zlib_license.html)
-- From Below (内置示例 ROM, Matt Hughson): MIT
+- 内置自制游戏（7 款，逐款许可全文见 content/assets/licenses/）:
+  Super Tilt Bro. (WTFPL) / Twin Dragons (zlib + CC-BY) / RHDE (FSFAP) /
+  Zap Ruder (FSFAP) / Concentration Room (GPL-3.0-or-later) /
+  Thwaite (GPL-3.0-or-later) / DABG (zlib)
 - 其余为本项目自有代码: GNU GPL v2
-完整 SBOM 见 docs/COMPLIANCE.md
+完整 SBOM 与每款游戏的源码 revision 见 docs/COMPLIANCE.md 与 content/sources.lock.json
 
 		    GNU GENERAL PUBLIC LICENSE
 		       Version 2, June 1991

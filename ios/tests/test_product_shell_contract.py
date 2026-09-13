@@ -153,10 +153,10 @@ def main() -> int:
     require("APPEX" not in cmake.upper() and "app_extension" not in cmake.lower(),
             "product must not add app extensions")
     require("MACOSX_BUNDLE" in cmake, "product must be a launchable app bundle")
-    require("from_below.nes" in cmake,
-            "product CMake must package the From Below NES fixture")
-    require("LICENSE-from-below" in cmake,
-            "product CMake must package the From Below LICENSE")
+    require("content/assets" in cmake and "builtin-games.json" in cmake,
+            "product CMake must package the shared bundled content")
+    require("FLYNES_IOS_BUNDLED_LICENSES" in cmake,
+            "product CMake must package every bundled licence text")
 
     plist = texts["ios/app/Info.plist.in"]
     require("CFBundleIdentifier" in plist, "product Info.plist must declare a bundle id")

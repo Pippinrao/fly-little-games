@@ -2,7 +2,7 @@
  * core/tests/test_core.cpp — headless smoke test (Task 6)
  *
  * First runtime validation of the whole NestopiaUE core through the C ABI
- * (core/include/nes/nes.h). Loads a real NES ROM ("From Below", MIT homebrew),
+ * (core/include/nes/nes.h). Loads a real NES ROM ("Thwaite", MIT homebrew),
  * runs 60 frames, and verifies video / audio / save-state behavior:
  *
  *   load ROM -> run 60 frames -> video non-blank -> audio non-silent
@@ -100,7 +100,7 @@ int main(int argc, char** argv)
 		check(error < 1.0, "30-minute audio cadence stays within one sample");
 	}
 
-	const char* rom_path = (argc > 1) ? argv[1] : "core/tests/fixtures/from_below.nes";
+	const char* rom_path = (argc > 1) ? argv[1] : "content/assets/roms/thwaite.nes";
 	const char* db_path  = (argc > 2) ? argv[2] : "core/tests/fixtures/NstDatabase.xml";
 	std::printf("=== FlyNES headless smoke test (Task 6) ===\n");
 	std::printf("ROM path: %s\n", rom_path);
@@ -406,7 +406,7 @@ int main(int argc, char** argv)
 	}
 
 	// ---- 7. audio check --------------------------------------------------
-	// From Below's intro is silent for several seconds (verified empirically:
+	// the fixture ROM's intro is silent for several seconds (verified empirically:
 	// sound first appears ~frame 440 without input, ~frame 130 with START).
 	// So the non-silence assertion is checked over a tolerance window of up to
 	// 600 frames (10s @60fps) while the 60-frame run contract above stays exact.

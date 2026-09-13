@@ -29,7 +29,7 @@ import subprocess
 import sys
 
 FOLDER = "FlyNES-Import-E2E-v1"
-FIXTURE_SHA256 = "1a3ac4faf4b35640505344059ae5d91dae07cd47e1fb4d9d2a33c76391f1c555"
+FIXTURE_SHA256 = "ee51cd9562f28195ba015d9857c6c4fc9bf67cdfb213e95f655e586b92195173"
 
 
 def sha256(data):
@@ -38,10 +38,10 @@ def sha256(data):
 
 def fixture_files():
     repo = Path(__file__).resolve().parents[2]
-    fixture = (repo / "core/tests/fixtures/from_below.nes").read_bytes()
+    fixture = (repo / "content/assets/roms/thwaite.nes").read_bytes()
     if sha256(fixture) != FIXTURE_SHA256 or fixture[:4] != b"NES\x1a":
-        raise ValueError("repository From Below fixture changed; review before updating the expected hash")
-    files = {"LICENSE-from-below.txt": (repo / "core/tests/fixtures/LICENSE-from-below.txt").read_bytes()}
+        raise ValueError("repository Thwaite fixture changed; review before updating the expected hash")
+    files = {"thwaite.txt": (repo / "content/assets/licenses/thwaite.txt").read_bytes()}
 
     def variant(number):
         # Match CatalogSourceImportTests: change the last two payload bytes only.

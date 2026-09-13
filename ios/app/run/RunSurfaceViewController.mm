@@ -1,4 +1,5 @@
 #import "RunSurfaceViewController.h"
+#import "BuiltinGames.h"
 
 #import "FlyNesAppBridge.h"
 #import "FlyNesRuntimeBridge.h"
@@ -160,8 +161,8 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     runtime_ = [[FlyNesRuntimeBridge alloc] init];
     [runtime_ createRuntime:nil];
     NSData *rom = self.romData;
-    if (rom.length == 0 && [self canonicalIdMapsToBuiltinFromBelow])
-        rom = [self bundledFromBelowRom];
+    if (rom.length == 0)
+        rom = [self bundledRomForCanonicalId:self.canonicalId];
     self.romData = rom;
     NSError *romError = nil;
     if (rom.length > 0)
@@ -260,21 +261,17 @@ NSString *pause_command_title(flynes::product::PauseCommand command)
     [self updatePlayback];
 }
 
-- (NSData *)bundledFromBelowRom
+/** Bytes of a bundled game's ROM, resolved from the shared manifest. */
+- (nullable NSData *)bundledRomForCanonicalId:(nullable NSString *)canonicalId
 {
-    NSString *path = [NSBundle.mainBundle pathForResource:@"from_below" ofType:@"nes"];
+    FlyNesBuiltinGame *game = [FlyNesBuiltinGames.shared byCanonicalId:canonicalId];
+    if (game == nil)
+        return nil;
+    NSString *resource = [FlyNesBuiltinGames resourceNameForAssetFilename:game.assetFilename];
+    NSString *path = [NSBundle.mainBundle pathForResource:resource ofType:@"nes"];
     if (path == nil)
         return nil;
     return [NSData dataWithContentsOfFile:path];
-}
-
-- (BOOL)canonicalIdMapsToBuiltinFromBelow
-{
-    NSString *cid = self.canonicalId.lowercaseString;
-    if (cid.length == 0)
-        return NO;
-    return [cid isEqualToString:@"builtin"] || [cid containsString:@"from_below"]
-        || [cid containsString:@"from-below"];
 }
 
 - (NSURL *)autosaveURL

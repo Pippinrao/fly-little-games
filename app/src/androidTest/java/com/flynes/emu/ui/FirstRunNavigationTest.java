@@ -35,6 +35,18 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class FirstRunNavigationTest {
+
+    /**
+     * Game Center state (category, query, selection) is persisted, so a test
+     * that leaves a query behind would silently empty every later test. Each
+     * test starts from a clean Game Center.
+     */
+    @org.junit.Before public void resetGameCenterState() {
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                .getTargetContext()
+                .getSharedPreferences("game_center_ui", android.content.Context.MODE_PRIVATE)
+                .edit().clear().commit();
+    }
     @Test
     public void firstRunShowsBuiltinLibraryAndSettingsActions() {
         try (ActivityScenario<HomeActivity> ignored = ActivityScenario.launch(HomeActivity.class)) {
@@ -118,6 +130,12 @@ public final class FirstRunNavigationTest {
             waitUntilEnabled(scenario, R.id.favorite_toggle);
             String addFavorite = scenarioText(scenario, R.string.add_favorite);
             String removeFavorite = scenarioText(scenario, R.string.remove_favorite);
+            // Remember which game is selected: the Game Center orders titles
+            // alphabetically, so no bundled game's name may be hardcoded here.
+            final String[] selectedTitle = {""};
+            scenario.onActivity(activity -> selectedTitle[0] =
+                    ((android.widget.TextView) activity.findViewById(R.id.detail_title))
+                            .getText().toString());
             final boolean[] alreadyFavorite = {false};
             scenario.onActivity(activity -> alreadyFavorite[0] = removeFavorite.contentEquals(
                     activity.findViewById(R.id.favorite_toggle).getContentDescription()));
@@ -129,7 +147,7 @@ public final class FirstRunNavigationTest {
             onView(withId(R.id.favorite_toggle)).perform(click());
             waitForContentDescription(scenario, R.id.favorite_toggle, removeFavorite);
             onView(withId(R.id.category_favorites)).perform(click());
-            onView(withId(R.id.detail_title)).check(matches(withText("From Below")));
+            onView(withId(R.id.detail_title)).check(matches(withText(selectedTitle[0])));
         }
     }
 

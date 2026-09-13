@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "note": "Single source of truth for the bundled homebrew games. Adding a game means editing this file and dropping its ROM plus license text into content/assets; no platform code may need to change. Every field is gated by content/tests/test_builtin_manifest_contract.py.",
+  "games": [
+    {
+      "canonicalId": "builtin:super-tilt-bro",
+      "assetFilename": "super_tilt_bro.nes",
+      "titleEn": "Super Tilt Bro.",
+      "titleZhHans": "倾斜兄弟",
+      "mapper": 2,
+      "romSha256": "6f80d56ce0b242a4faceafafea321feb1c364ab8e7937646e8580ae9289a4ec3",
+      "credit": "Sylvain Gadrat (sgadrat)",
+      "sortOrder": 10,
+      "playNoteEn": "Two-player Smash-style fighting, built from the offline UNROM variant.",
+      "playNoteZhHans": "双人对战（大乱斗风格），基于离线 UNROM 变体编译。",
+      "coverEligible": false,
+      "license": {
+        "spdx": "WTFPL",
+        "file": "super_tilt_bro.txt",
+        "sourceUrl": "https://github.com/sgadrat/super-tilt-bro",
+        "sourceRevision": "b132fd25add46f816e04be64c434386743b84b8b"
+      }
+    },
+    {
+      "canonicalId": "builtin:twin-dragons",
+      "assetFilename": "twin_dragons.nes",
+      "titleEn": "Twin Dragons",
+      "titleZhHans": "双子龙",
+      "mapper": 0,
+      "romSha256": "dc03a714636b0fd0cf2246475073baba1fcc82ba9d4ac7e55cac5ea8804f0598",
+      "credit": "Garydos (art by surt, music by Shiru and others)",
+      "sortOrder": 20,
+      "coverEligible": false,
+      "license": {
+        "spdx": "Zlib AND CC-BY-3.0 AND CC-BY-4.0 AND LicenseRef-PublicDomain",
+        "file": "twin_dragons.txt",
+        "sourceUrl": "https://github.com/Garydos/twin-dragons-nes",
+        "sourceRevision": "bcf27d0c5117a2aac19e6c33bdb3c776ada069fb"
+      }
+    },
+    {
+      "canonicalId": "builtin:rhde",
+      "assetFilename": "rhde.nes",
+      "titleEn": "RHDE: Furniture Fight",
+      "titleZhHans": "抢家具大作战",
+      "mapper": 0,
+      "romSha256": "a6131a45fe5ec5f8e5778abfcd2031477231a023f30af8533c6d25acf8297a43",
+      "credit": "Damian Yerrick (Tepples)",
+      "sortOrder": 30,
+      "playNoteEn": "Two-player real-time race to grab the furniture.",
+      "playNoteZhHans": "双人实时抢家具对战。",
+      "coverEligible": false,
+      "license": {
+        "spdx": "FSFAP",
+        "file": "rhde.txt",
+        "sourceUrl": "https://github.com/pinobatch/rhde-nes",
+        "sourceRevision": "376204907155d15bb13018e5f9b231c8511d5333"
+      }
+    },
+    {
+      "canonicalId": "builtin:zap-ruder",
+      "assetFilename": "zap_ruder.nes",
+      "titleEn": "Zap Ruder",
+      "titleZhHans": "扎普鲁德",
+      "mapper": 0,
+      "romSha256": "31811aef54bc433d0d8b9344e0d5ab6417d9f06d97b743abdddfc9b3cab719ff",
+      "credit": "Damian Yerrick (Tepples)",
+      "sortOrder": 40,
+      "playNoteEn": "Zapper light-gun test patterns plus two-player air hockey; the light-gun part needs a Zapper.",
+      "playNoteZhHans": "光枪（Zapper）测试图案 + 双人空气曲棍球；光枪部分需要 Zapper。",
+      "coverEligible": false,
+      "license": {
+        "spdx": "FSFAP",
+        "file": "zap_ruder.txt",
+        "sourceUrl": "https://github.com/pinobatch/zap-ruder",
+        "sourceRevision": "1b22babdf324fd1e840dfa26ffcc34c75f4e422f"
+      }
+    },
+    {
+      "canonicalId": "builtin:concentration-room",
+      "assetFilename": "concentration_room.nes",
+      "titleEn": "Concentration Room",
+      "titleZhHans": "记忆翻牌屋",
+      "mapper": 0,
+      "romSha256": "3958bb569466b4f8894955b384f756681ecca1dc601d4ea373052371213f9061",
+      "credit": "Damian Yerrick (Tepples)",
+      "sortOrder": 50,
+      "coverEligible": false,
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "file": "concentration_room.txt",
+        "sourceUrl": "https://github.com/pinobatch/croom-nes",
+        "sourceRevision": "ed19c3c07ca389b70cf2e0dd2ce0320df28d511d",
+        "sourceOffer": "This ROM is GPL-3.0-or-later. The complete corresponding source is the upstream repository at the pinned revision recorded here, and the exact build recipe is content/sources.lock.json. FlyNES will supply the corresponding source on request."
+      }
+    },
+    {
+      "canonicalId": "builtin:thwaite",
+      "assetFilename": "thwaite.nes",
+      "titleEn": "Thwaite",
+      "titleZhHans": "护村记",
+      "mapper": 0,
+      "romSha256": "ee51cd9562f28195ba015d9857c6c4fc9bf67cdfb213e95f655e586b92195173",
+      "credit": "Damian Yerrick (Tepples)",
+      "sortOrder": 60,
+      "coverEligible": true,
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "file": "thwaite.txt",
+        "sourceUrl": "https://github.com/pinobatch/thwaite-nes",
+        "sourceRevision": "00e36745188bc165990f60eed6b093c3ce6ad0e3",
+        "sourceOffer": "This ROM is GPL-3.0-or-later. The complete corresponding source is the upstream repository at the pinned revision recorded here, and the exact build recipe is content/sources.lock.json. FlyNES will supply the corresponding source on request."
+      }
+    },
+    {
+      "canonicalId": "builtin:dabg",
+      "assetFilename": "dabg.nes",
+      "titleEn": "DABG: Double Action Blaster Guys",
+      "titleZhHans": "双动爆破小队",
+      "mapper": 0,
+      "romSha256": "eca79b9d0b546e96c1bc73099e239539fb9c7773ff10a431bb3a9cd6763208ca",
+      "credit": "NovaSquirrel",
+      "sortOrder": 70,
+      "coverEligible": false,
+      "license": {
+        "spdx": "Zlib",
+        "file": "dabg.txt",
+        "sourceUrl": "https://github.com/NovaSquirrel/DABG",
+        "sourceRevision": "5ecc60b6af3f726851bfeb1c2555388c5953e0c0"
+      }
+    }
+  ]
+}

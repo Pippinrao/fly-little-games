@@ -55,7 +55,7 @@ public final class DocumentLocatorShapeTest {
         assertFalse(DocumentLocatorShape.isOpenableDocumentLocator(null));
         assertFalse(DocumentLocatorShape.isOpenableDocumentLocator(""));
         assertFalse(DocumentLocatorShape.isOpenableDocumentLocator("   "));
-        assertFalse(DocumentLocatorShape.isOpenableDocumentLocator("asset:///roms/from_below.nes"));
+        assertFalse(DocumentLocatorShape.isOpenableDocumentLocator("asset:///roms/thwaite.nes"));
         assertFalse(DocumentLocatorShape.isOpenableDocumentLocator(
                 "unresolved://saf-source/game.nes"));
         assertFalse(DocumentLocatorShape.isOpenableDocumentLocator("content://provider"));

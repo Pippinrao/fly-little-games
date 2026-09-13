@@ -18,7 +18,6 @@ import java.util.zip.ZipInputStream;
 public class RomLoader {
 
     private static final String TAG = "FlyNES";
-    private static final String ASSET_ROM_PATH = "roms/from_below.nes";
 
     private RomLoader() {
     }
@@ -28,7 +27,13 @@ public class RomLoader {
         if (ctx == null || g == null || g.uri == null) return null;
         try {
             if ("assets".equals(g.source)) {
-                try (InputStream in = ctx.getAssets().open(ASSET_ROM_PATH)) {
+                // Bundled games are located by the manifest, never by a fixed name.
+                String assetPath = g.assetPath;
+                if (assetPath == null || assetPath.isEmpty()) {
+                    assetPath = assetPathFromUri(g.uri);
+                }
+                if (assetPath == null) return null;
+                try (InputStream in = ctx.getAssets().open(assetPath)) {
                     return RomScanner.readFully(in, RomScanner.MAX_ROM_BYTES);
                 }
             }
@@ -41,6 +46,15 @@ public class RomLoader {
             Log.e(TAG, "RomLoader.load failed: " + g.uri, e);
             return null;
         }
+    }
+
+    /** Derives an asset path from a file:///android_asset/... uri, or null. */
+    private static String assetPathFromUri(String uri) {
+        String prefix = "file:///android_asset/";
+        if (uri != null && uri.startsWith(prefix) && uri.length() > prefix.length()) {
+            return uri.substring(prefix.length());
+        }
+        return null;
     }
 
     /** Unzips and returns the first entry whose name ends with ".nes". */

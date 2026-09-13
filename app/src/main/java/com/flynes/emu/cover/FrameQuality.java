@@ -6,21 +6,34 @@ public final class FrameQuality {
 
     private FrameQuality() {}
 
+    /**
+     * Scores one frame on a 32x30 grid of block averages.
+     *
+     * <p>Each grid cell averages its pixels instead of sampling a single one.
+     * Homebrew titles open on a black screen carrying a few lines of one-pixel
+     * white credit text; sampling one pixel out of every 64 grid-stepped pixel
+     * stepped over those strokes, scored the frame as an empty black screen, and
+     * refused every bundled game a cover. Averaging keeps thin text energy while
+     * a blank screen still averages to a flat, rejected grid.
+     */
     public static double score(CoverFrame frame) {
         byte[] pixels = frame.pixelsUnsafe();
-        int stepX = Math.max(1, frame.width() / 32);
-        int stepY = Math.max(1, frame.height() / 30);
+        final int columns = 32;
+        final int rows = 30;
+        final int blockWidth = Math.max(1, frame.width() / columns);
+        final int blockHeight = Math.max(1, frame.height() / rows);
         double sum = 0.0;
         double sumSquares = 0.0;
         double transitions = 0.0;
         int count = 0;
-        for (int y = 0; y < frame.height(); y += stepY) {
-            int previous = -1;
-            for (int x = 0; x < frame.width(); x += stepX) {
-                int luma = luma(frame, pixels, x, y);
+        for (int blockY = 0; blockY < rows; blockY++) {
+            double previous = -1.0;
+            for (int blockX = 0; blockX < columns; blockX++) {
+                double luma = blockLuma(frame, pixels, blockX * blockWidth, blockY * blockHeight,
+                        blockWidth, blockHeight);
                 sum += luma;
-                sumSquares += (double) luma * luma;
-                if (previous >= 0 && Math.abs(luma - previous) >= 20) transitions += 1.0;
+                sumSquares += luma * luma;
+                if (previous >= 0.0 && Math.abs(luma - previous) >= 20.0) transitions += 1.0;
                 previous = luma;
                 count++;
             }
@@ -32,6 +45,22 @@ public final class FrameQuality {
         double transitionRatio = transitions / count;
         double exposurePenalty = mean < 8.0 || mean > 247.0 ? 20.0 : 0.0;
         return standardDeviation + transitionRatio * 45.0 - exposurePenalty;
+    }
+
+    /** Mean luma over one grid cell, clamped to the frame for non-divisible sizes. */
+    private static double blockLuma(CoverFrame frame, byte[] pixels, int originX, int originY,
+                                    int blockWidth, int blockHeight) {
+        double total = 0.0;
+        int samples = 0;
+        final int endY = Math.min(frame.height(), originY + blockHeight);
+        final int endX = Math.min(frame.width(), originX + blockWidth);
+        for (int y = originY; y < endY; y++) {
+            for (int x = originX; x < endX; x++) {
+                total += luma(frame, pixels, x, y);
+                samples++;
+            }
+        }
+        return samples == 0 ? 0.0 : total / samples;
     }
 
     private static int luma(CoverFrame frame, byte[] pixels, int x, int y) {

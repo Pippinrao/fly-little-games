@@ -1,9 +1,9 @@
 package com.flynes.emu;
 
 /**
- * A single entry in the game library: a ROM found on the device (SAF) or the
- * bundled From Below asset. Plain data holder with public fields, matching the
- * simple style of the rest of the app.
+ * A single entry in the game library: a ROM found on the device (SAF) or one of
+ * the bundled homebrew games described by the shared manifest. Plain data holder
+ * with public fields, matching the simple style of the rest of the app.
  */
 public class GameEntry {
 
@@ -25,6 +25,8 @@ public class GameEntry {
     public boolean zipped;
     /** Popularity score 0..100 from {@link Popularity}, 0 when unmatched. */
     public int popularity;
+    /** Asset path inside the APK for a bundled game; null for user files. */
+    public String assetPath;
 
     public GameEntry() {
     }
@@ -42,15 +44,17 @@ public class GameEntry {
         this.popularity = popularity;
     }
 
-    /** The bundled From Below homebrew, pinned to the top of the library. */
-    public static GameEntry builtinFromBelow() {
-        return new GameEntry(
-                "From Below",
-                "file:///android_asset/roms/from_below.nes",
+    /** The bundled homebrew games, as described by the shared manifest. */
+    public static GameEntry builtin(com.flynes.emu.catalog.BuiltinGames.Entry game) {
+        GameEntry entry = new GameEntry(
+                game.titleEn,
+                game.assetUri(),
                 "assets",
                 0,
-                -1, -1, -1,
+                game.mapper, -1, -1,
                 false,
                 0);
+        entry.assetPath = game.assetPath();
+        return entry;
     }
 }

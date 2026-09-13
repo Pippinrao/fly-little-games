@@ -27,7 +27,7 @@ public final class NesFrameSnapshotTest {
         assertTrue(core.create());
         try {
             assertTrue(core.loadDatabase(readAsset(context, "NstDatabase.xml")) >= 0);
-            assertTrue(core.loadRom(readAsset(context, "roms/from_below.nes")) >= 0);
+            assertTrue(core.loadRom(readAsset(context, "roms/thwaite.nes")) >= 0);
             assertTrue(core.runOneFrame() > 0);
 
             NativeFrameSource source = new NativeFrameSource(core, 4 * 1024 * 1024);

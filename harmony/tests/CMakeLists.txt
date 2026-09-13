@@ -73,7 +73,7 @@ target_include_directories(flynes_harmony_runtime_smoke_test PRIVATE
 target_compile_features(flynes_harmony_runtime_smoke_test PRIVATE cxx_std_17)
 set_target_properties(flynes_harmony_runtime_smoke_test PROPERTIES CXX_EXTENSIONS NO)
 target_compile_definitions(flynes_harmony_runtime_smoke_test PRIVATE
-    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../core/tests/fixtures/from_below.nes"
+    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../content/assets/roms/thwaite.nes"
 )
 target_link_libraries(flynes_harmony_runtime_smoke_test PRIVATE flynes_runtime)
 if(MSVC)
@@ -99,7 +99,7 @@ target_include_directories(flynes_harmony_play_session_test PRIVATE
 target_compile_features(flynes_harmony_play_session_test PRIVATE cxx_std_17)
 set_target_properties(flynes_harmony_play_session_test PROPERTIES CXX_EXTENSIONS NO)
 target_compile_definitions(flynes_harmony_play_session_test PRIVATE
-    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../core/tests/fixtures/from_below.nes"
+    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../content/assets/roms/thwaite.nes"
 )
 target_link_libraries(flynes_harmony_play_session_test PRIVATE flynes_runtime)
 if(MSVC)
@@ -170,7 +170,7 @@ target_include_directories(flynes_harmony_scan_job_executor_test PRIVATE
 target_compile_features(flynes_harmony_scan_job_executor_test PRIVATE cxx_std_17)
 set_target_properties(flynes_harmony_scan_job_executor_test PROPERTIES CXX_EXTENSIONS NO)
 target_compile_definitions(flynes_harmony_scan_job_executor_test PRIVATE
-    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../core/tests/fixtures/from_below.nes"
+    FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../content/assets/roms/thwaite.nes"
 )
 target_link_libraries(flynes_harmony_scan_job_executor_test PRIVATE flynes_app)
 if(MSVC)

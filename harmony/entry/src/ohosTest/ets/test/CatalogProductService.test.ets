@@ -24,13 +24,28 @@ export default function catalogProductServiceTest() {
         row('game:a', false, 'a-copy-1.nes'),
         row('game:b', false, 'b.nes'),
         row('game:a', false, 'a-copy-2.nes'),
-        row('game:builtin', true, 'from_below.nes')
+        row('builtin:thwaite', true, 'thwaite.nes')
       ]);
 
       expect(rows.length).assertEqual(3);
-      expect(rows[0].canonicalId).assertEqual('game:builtin');
+      expect(rows[0].canonicalId).assertEqual('builtin:thwaite');
       expect(rows[1].sourceRelativePath).assertEqual('a-copy-1.nes');
       expect(rows[2].canonicalId).assertEqual('game:b');
+    });
+
+    it('keeps_every_bundled_game_before_user_games', 0, () => {
+      const rows = uniqueGameCenterRows([
+        row('game:a', false, 'a.nes'),
+        row('builtin:dabg', true, 'dabg.nes'),
+        row('builtin:rhde', true, 'rhde.nes'),
+        row('builtin:thwaite', true, 'thwaite.nes')
+      ]);
+
+      expect(rows.length).assertEqual(4);
+      expect(rows[0].canonicalId).assertEqual('builtin:dabg');
+      expect(rows[1].canonicalId).assertEqual('builtin:rhde');
+      expect(rows[2].canonicalId).assertEqual('builtin:thwaite');
+      expect(rows[3].canonicalId).assertEqual('game:a');
     });
   });
 }

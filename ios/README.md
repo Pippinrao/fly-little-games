@@ -5,14 +5,14 @@ Metal, audio-device, runtime/session, nearby-networking, or public bridge API.
 The launchable Objective-C++ bundle calls the existing `flynes_app` C ABI and
 the existing `nes_*` C ABI, then exits after writing structured smoke evidence.
 
-The smoke embeds the repository's existing `from_below.nes` test fixture and
-`LICENSE-from-below.txt`. The notice records the repository's present license
-claim and provenance gap: the referenced upstream source repository does not
-contain a verbatim license file. This gate therefore does not treat its own
-hash check as legal clearance. Before distributing an app/IPA that contains
-this ROM, archive adequate author/license evidence or replace the fixture with
-one whose redistribution grant is unambiguous. CI uploads text evidence only;
-it never uploads the ROM-bearing app bundle.
+The smoke embeds the same shared bundled content as the product: the manifest
+`content/assets/builtin-games.json` plus every ROM and licence text it declares.
+The old single fixture was replaced because its provenance gap was unresolvable
+(see `docs/legal-nes-homebrew-preship-research.md`); every bundled game now has
+a verifiable upstream licence and a pinned revision, recorded in
+`docs/COMPLIANCE.md` and `content/sources.lock.json`. This gate still does not
+treat its own hash check as legal clearance. CI uploads text evidence only; it
+never uploads the ROM-bearing app bundle.
 
 On macOS with Xcode 26.6 selected, the two configurations are intentionally
 separate:

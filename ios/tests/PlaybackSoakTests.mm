@@ -52,7 +52,7 @@ NSString *describe(const std::vector<uint64_t>& values)
     FlyNesRuntimeBridge *runtime = [[FlyNesRuntimeBridge alloc] init];
     XCTAssertTrue([runtime createRuntime:nil]);
     NSData *rom = [NSData dataWithContentsOfURL:
-        [NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"]];
+        [NSBundle.mainBundle URLForResource:@"thwaite" withExtension:@"nes"]];
     XCTAssertTrue([runtime loadRom:rom error:nil]);
 
     flynes::ios::CoverCaptureSession covers;
@@ -149,7 +149,7 @@ NSString *describe(const std::vector<uint64_t>& values)
     FlyNesRuntimeBridge *runtime = [[FlyNesRuntimeBridge alloc] init];
     XCTAssertTrue([runtime createRuntime:nil]);
     NSData *rom = [NSData dataWithContentsOfURL:
-        [NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"]];
+        [NSBundle.mainBundle URLForResource:@"thwaite" withExtension:@"nes"]];
     XCTAssertTrue([runtime loadRom:rom error:nil]);
 
     NSUInteger baseline = [app catalogSnapshotGames].count;

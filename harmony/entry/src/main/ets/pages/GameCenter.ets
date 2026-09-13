@@ -3,7 +3,8 @@ import { router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import nativeProduct, { GameCenterRow } from 'libentry.so';
 import { CatalogProductService } from '../service/CatalogProductService';
-import { mapsToBuiltinFromBelow, takeRomOpenError } from '../service/PlayService';
+import { takeRomOpenError, builtinGamesSync } from '../service/PlayService';
+import { BuiltinGames } from '../service/BuiltinGames';
 import { CoverStore } from '../service/CoverStore';
 
 @Entry
@@ -426,7 +427,11 @@ struct GameCenter {
   }
 
   private reloadRows(): void {
-    this.allRows = this.catalog.loadRows();
+    const host = this.getUIContext().getHostContext();
+    const games = host === undefined
+      ? BuiltinGames.empty()
+      : builtinGamesSync(host as common.UIAbilityContext);
+    this.allRows = this.catalog.loadRows(games);
   }
 
   private readCompactPolicy(): void {
@@ -474,7 +479,7 @@ struct GameCenter {
     if (row === undefined) {
       return false;
     }
-    if (mapsToBuiltinFromBelow(row.canonicalId) || row.builtin) {
+    if (row.builtin) {
       return true;
     }
     return row.sourceUuidHex.length === 32 && row.sourceRelativePath.length > 0;

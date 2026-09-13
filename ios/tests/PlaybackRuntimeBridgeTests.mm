@@ -10,7 +10,7 @@
 - (FlyNesRuntimeBridge *)loadedRuntime {
     FlyNesRuntimeBridge *runtime = [[FlyNesRuntimeBridge alloc] init];
     XCTAssertTrue([runtime createRuntime:nil]);
-    NSURL *url = [NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"];
+    NSURL *url = [NSBundle.mainBundle URLForResource:@"thwaite" withExtension:@"nes"];
     NSData *rom = [NSData dataWithContentsOfURL:url];
     XCTAssertNotNil(rom);
     XCTAssertTrue([runtime loadRom:rom error:nil]);
@@ -60,7 +60,7 @@
 }
 - (void)testCheckpointRestoresAnExternalTimelineEpoch {
     FlyNesRuntimeBridge *runtime = [self loadedRuntime];
-    NSData *rom = [NSData dataWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"]];
+    NSData *rom = [NSData dataWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"thwaite" withExtension:@"nes"]];
     fly_runtime_config config{};
     config.struct_size = FLY_RUNTIME_CONFIG_V1_SIZE;
     config.version = FLY_RUNTIME_CONFIG_VERSION_1;

@@ -53,3 +53,27 @@ jobs:
           int main() { nes_t* nes = nes_create(0); if (nes) nes_destroy(nes); return 0; }
           EOF
           clang++ -std=c++17 -I core/include -c /tmp/nes_min_consumer.cpp -o /tmp/nes_min_consumer.o
+
+  content-gate:
+    name: content-gate (bundled homebrew)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      # The bundled games live once, under content/assets, and every platform
+      # reads them from there. These contracts fail when that stops being true.
+      - name: Manifest contract
+        run: python3 content/tests/test_builtin_manifest_contract.py
+      - name: Compliance documents contract
+        run: python3 content/tests/test_compliance_docs.py
+      - name: HarmonyOS and iOS consumption contracts
+        run: |
+          python3 harmony/tests/test_builtin_games_contract.py
+          python3 ios/tests/test_builtin_games_contract.py
+      - name: Content gate (single source of truth)
+        shell: pwsh
+        run: ./tools/content/verify-builtin-content.ps1
+      - name: Content pipeline unit tests
+        shell: pwsh
+        run: ./tools/quality/invoke_pester_gate.ps1 -Path tools/content/tests/BuiltinContent.Tests.ps1

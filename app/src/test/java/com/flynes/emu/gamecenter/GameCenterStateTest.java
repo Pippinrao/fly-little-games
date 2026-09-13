@@ -9,7 +9,7 @@ import static org.junit.Assert.assertEquals;
 
 public final class GameCenterStateTest {
     private static final GameCenterItem BUILTIN = new GameCenterItem(
-            "builtin", "From Below", "", true, false, 0, "from_below.nes");
+            "builtin", "Thwaite", "", true, false, 0, "thwaite.nes");
     private static final GameCenterItem FAVORITE = new GameCenterItem(
             "mario", "Super Mario Bros.", "超级马里奥", false, true, 7, "mario.nes");
     private static final GameCenterItem OTHER = new GameCenterItem(

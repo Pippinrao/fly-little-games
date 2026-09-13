@@ -46,7 +46,7 @@ endif()
 add_test(
     NAME flynes_ios_portability_smoke_host
     COMMAND flynes_ios_portability_smoke_host_test
-            "${CMAKE_CURRENT_LIST_DIR}/../../core/tests/fixtures/from_below.nes"
+            "${CMAKE_CURRENT_LIST_DIR}/../../content/assets/roms/thwaite.nes"
 )
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

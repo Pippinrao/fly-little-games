@@ -262,25 +262,41 @@ public class GameLibraryActivity extends AppCompatActivity {
     }
 
     // ------------------------------------------------------------------
-    // Data: stored games + the bundled From Below entry
+    // Data: stored games + the bundled games from the shared manifest
     // ------------------------------------------------------------------
+
+    /** The bundled games, in manifest order. A broken manifest yields none. */
+    private List<GameEntry> bundledGames() {
+        List<GameEntry> games = new ArrayList<>();
+        try {
+            for (com.flynes.emu.catalog.BuiltinGames.Entry game
+                    : com.flynes.emu.catalog.BuiltinGames.fromAssets(this).all()) {
+                games.add(GameEntry.builtin(game));
+            }
+        } catch (java.io.IOException failure) {
+            android.util.Log.w("FlyNES", "bundled game manifest is unreadable", failure);
+        }
+        return games;
+    }
 
     private void reloadData() {
         List<GameEntry> stored = RomStore.loadGames(this);
         allGames.clear();
-        allGames.add(GameEntry.builtinFromBelow());
+        allGames.addAll(bundledGames());
         if (stored != null) {
             allGames.addAll(stored);
         }
-        boolean hasUserGames = stored != null && !stored.isEmpty();
+        // The bundled games are playable on their own, so the library is never
+        // "empty" just because the user has not added a directory yet.
+        boolean hasAnyGames = !allGames.isEmpty();
         titleCount.setText(getString(R.string.library_game_count, allGames.size()));
-        if (hasUserGames) {
+        if (hasAnyGames) {
             searchAndSort.setVisibility(View.VISIBLE);
             listView.setVisibility(View.VISIBLE);
             emptyState.setVisibility(View.GONE);
             applyFilterAndSort();
         } else {
-            // Nothing scanned yet: offer the directory picker instead of the list.
+            // Nothing at all to show: offer the directory picker instead of the list.
             searchAndSort.setVisibility(View.GONE);
             listView.setVisibility(View.GONE);
             emptyState.setVisibility(View.VISIBLE);

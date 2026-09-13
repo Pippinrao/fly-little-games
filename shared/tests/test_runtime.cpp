@@ -100,13 +100,21 @@ fly_runtime_t* create_runtime()
 bool load_fixture_rom(fly_runtime_t* runtime, const std::uint8_t* expected_sha256)
 {
     const std::vector<std::uint8_t> rom = read_file(FLYNES_RUNTIME_ROM_FIXTURE);
-    check(!rom.empty(), "from_below.nes fixture is readable");
+    check(!rom.empty(), "thwaite.nes fixture is readable");
     if (rom.empty())
     {
         return false;
     }
     const fly_result result =
         fly_runtime_load_rom(runtime, rom.data(), rom.size(), expected_sha256);
+    if (result != FLY_RESULT_OK)
+    {
+        // The core returns the Nestopia result code verbatim, so print it: a
+        // failing fixture must say why, not just that it failed.
+        std::fprintf(stderr, "fixture load rejected: %s (rc=%d, %zu bytes, sha256 pin=%s)\n",
+                     FLYNES_RUNTIME_ROM_FIXTURE, static_cast<int>(result), rom.size(),
+                     expected_sha256 == nullptr ? "none" : "set");
+    }
     check(result == FLY_RESULT_OK, "fly_runtime_load_rom accepts the fixture");
     return result == FLY_RESULT_OK;
 }
@@ -169,7 +177,7 @@ void test_create_load_and_symbols()
 
     std::uint8_t expected[32];
     check(decode_sha256_hex(
-              "1A3AC4FAF4B35640505344059AE5D91DAE07CD47E1FB4D9D2A33C76391F1C555",
+              "EE51CD9562F28195BA015D9857C6C4FC9BF67CDFB213E95F655E586B92195173",
               expected),
           "fixture SHA-256 hex decodes");
     fly_runtime_destroy(runtime);

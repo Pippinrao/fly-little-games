@@ -81,6 +81,9 @@ public final class AndroidCoverRepository implements CoverCaptureCoordinator.Sin
 
     public File fileForTest(String canonicalId) { return file(canonicalId); }
 
+    /** The cover directory itself, so a test can see covers it does not name. */
+    public File directoryForTest() { return directory; }
+
     private File file(String canonicalId) {
         if (canonicalId == null || canonicalId.isBlank()) {
             throw new IllegalArgumentException("canonical id must not be blank");

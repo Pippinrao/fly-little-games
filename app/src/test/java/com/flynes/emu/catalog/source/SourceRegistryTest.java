@@ -24,7 +24,7 @@ public final class SourceRegistryTest {
     public void sameTreeReusesIdPermissionLossIsTypedAndRemoveCommitsBeforeRelease()
             throws Exception {
         RomSource builtin = new RomSource(
-                "builtin", RomSource.Type.BUILTIN, "asset:///roms/from_below.nes",
+                "builtin", RomSource.Type.BUILTIN, "asset:///roms/thwaite.nes",
                 RomSource.PermissionState.NOT_REQUIRED);
         CatalogRepository repository = new CatalogRepository(
                 CatalogState.empty(builtin), new MemoryStore(), new GameCatalog());
@@ -239,7 +239,7 @@ public final class SourceRegistryTest {
         final CatalogRepository repository = new CatalogRepository(
                 CatalogState.empty(new RomSource(
                         "builtin", RomSource.Type.BUILTIN,
-                        "asset:///roms/from_below.nes",
+                        "asset:///roms/thwaite.nes",
                         RomSource.PermissionState.NOT_REQUIRED)),
                 store, new GameCatalog());
         final FakePermissions permissions = new FakePermissions();

@@ -108,14 +108,11 @@ jobs:
             test -n "$app"
             binary="$app/FlyNESPortabilitySmoke"
             test -f "$binary"
-            test "$(find "$app" -name from_below.nes -type f | wc -l | tr -d ' ')" = "1"
-            test "$(find "$app" -name LICENSE-from-below.txt -type f | wc -l | tr -d ' ')" = "1"
-            rom_resource="$(find "$app" -name from_below.nes -type f -print -quit)"
-            license_resource="$(find "$app" -name LICENSE-from-below.txt -type f -print -quit)"
-            test "$(shasum -a 256 "$rom_resource" | awk '{print toupper($1)}')" = \
-              "1A3AC4FAF4B35640505344059AE5D91DAE07CD47E1FB4D9D2A33C76391F1C555"
-            shasum -a 256 "$rom_resource" "$license_resource" \
-              > "$EVIDENCE_DIR/$label-resource-hashes.txt"
+            # The bundle ships whatever the shared manifest declares, so the
+            # expected ROM set comes from the manifest rather than a fixed file.
+            test -f "$app/Resources/builtin-games.json"
+            python3 ios/scripts/verify_bundled_resources.py "$app" \
+              "$EVIDENCE_DIR/$label-resource-hashes.txt"
 
             file "$binary" | tee "$EVIDENCE_DIR/$label-file.txt"
             xcrun lipo -archs "$binary" | tee "$EVIDENCE_DIR/$label-architectures.txt"

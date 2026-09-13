@@ -34,7 +34,7 @@ public final class NativeCatalogProjectorTest {
         locators.put(tree, "game.nes", "content://provider/tree/roms/document/game.nes");
 
         NativeCatalogEntry builtinEntry = entry(builtin, FlyCatalogCommands.SOURCE_SCOPE_BUILTIN,
-                "builtin:from-below", "from_below.nes", 1);
+                "builtin:thwaite", "thwaite.nes", 1);
         NativeCatalogEntry userEntry = entry(tree, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY,
                 "canonical-a", "game.nes", 2);
         CatalogState state = NativeCatalogProjector.project(
@@ -44,15 +44,16 @@ public final class NativeCatalogProjectorTest {
                         new NativeSourceStatus(tree, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY,
                                 FlyCatalogCommands.SCAN_FULL, 1)),
                 Map.of("canonical-a", new CanonicalUserState(true, 1, 1, 1)),
-                1, map, locators, NativeCatalogProjector.LocatorResolver.NONE);
+                1, map, locators, NativeCatalogProjector.LocatorResolver.NONE,
+                com.flynes.emu.catalog.TestManifest.load());
 
         assertEquals("builtin", state.builtinSourceId());
         assertEquals(RomSource.Type.BUILTIN, state.sources().get("builtin").source().type());
         CatalogPackage builtinPkg = state.sources().get("builtin")
                 .packages().values().iterator().next();
-        assertEquals("From Below", builtinPkg.physicalPackage().variants().get(0)
+        assertEquals("Thwaite", builtinPkg.physicalPackage().variants().get(0)
                 .canonicalGame().englishTitle());
-        assertEquals("来自下方", builtinPkg.physicalPackage().variants().get(0)
+        assertEquals("护村记", builtinPkg.physicalPackage().variants().get(0)
                 .canonicalGame().zhHansTitle());
         assertEquals("content://provider/tree/roms",
                 state.sources().values().stream()
@@ -75,19 +76,19 @@ public final class NativeCatalogProjectorTest {
         AndroidUuidSafMap map = new AndroidUuidSafMap(backing::get, backing::put, backing::remove);
         byte[] builtin = map.builtinUuid();
         NativeCatalogEntry builtinEntry = entry(builtin, FlyCatalogCommands.SOURCE_SCOPE_BUILTIN,
-                "builtin:from-below", "from_below.nes", 1);
+                "builtin:thwaite", "thwaite.nes", 1);
 
         CatalogState state = NativeCatalogProjector.project(
                 List.of(builtinEntry),
                 List.of(new NativeSourceStatus(builtin, FlyCatalogCommands.SOURCE_SCOPE_BUILTIN,
                         FlyCatalogCommands.SCAN_FULL, 1)),
-                Map.of("builtin:from-below", new CanonicalUserState(true, 3, 0, 0)),
+                Map.of("builtin:thwaite", new CanonicalUserState(true, 3, 0, 0)),
                 0, map, new AndroidPackageLocatorMap(),
-                NativeCatalogProjector.LocatorResolver.NONE);
+                NativeCatalogProjector.LocatorResolver.NONE, com.flynes.emu.catalog.TestManifest.load());
 
         assertEquals(3, state.revision());
         assertEquals(0, state.lastPlayedSequence());
-        assertTrue(state.userStates().get("builtin:from-below").favorite());
+        assertTrue(state.userStates().get("builtin:thwaite").favorite());
     }
 
     @Test
@@ -104,7 +105,7 @@ public final class NativeCatalogProjectorTest {
                 List.of(new NativeSourceStatus(tree, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY,
                         FlyCatalogCommands.SCAN_FULL, 1)),
                 Map.of(), 0, map, new AndroidPackageLocatorMap(),
-                NativeCatalogProjector.LocatorResolver.NONE);
+                NativeCatalogProjector.LocatorResolver.NONE, com.flynes.emu.catalog.TestManifest.load());
 
         CatalogPackage projected = safPackage(state);
         String locator = projected.physicalPackage().sourceUri();
@@ -132,7 +133,8 @@ public final class NativeCatalogProjectorTest {
                         FlyCatalogCommands.SCAN_FULL, 1)),
                 Map.of(), 0, map, new AndroidPackageLocatorMap(),
                 (treeLocator, relativePath) -> "content://com.android.externalstorage.documents"
-                        + "/tree/primary%3AROMs/document/primary%3AROMs%2F" + relativePath);
+                        + "/tree/primary%3AROMs/document/primary%3AROMs%2F" + relativePath,
+                com.flynes.emu.catalog.TestManifest.load());
 
         CatalogPackage projected = safPackage(state);
         assertEquals("content://com.android.externalstorage.documents/tree/primary%3AROMs"

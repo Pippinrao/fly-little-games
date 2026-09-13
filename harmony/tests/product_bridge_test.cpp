@@ -23,8 +23,10 @@ void expect(bool condition, std::string_view message)
 
 std::vector<flynes::harmony::GameCenterRow> task1_items()
 {
+    // Rows are synthetic fixtures: the product never names a bundled game, so
+    // nothing here may mirror the shared manifest's titles or filenames.
     return {
-        {"builtin", "From Below", "", true, false, 0, "from_below.nes"},
+        {"builtin:sample", "Sample Bundle", "示例内置", true, false, 0, "sample.nes"},
         {"mario", "Super Mario Bros.", "超级马里奥", false, true, 7, "mario.nes"},
         {"contra", "Contra", "魂斗罗", false, false, 0, "contra.zip"},
     };

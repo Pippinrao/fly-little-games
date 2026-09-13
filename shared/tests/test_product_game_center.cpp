@@ -35,7 +35,7 @@ void check_items_equal(const std::vector<flynes::product::GameCenterItem>& left,
 flynes::product::GameCenterItem make_builtin()
 {
     return flynes::product::GameCenterItem{
-        "builtin", "From Below", "", true, false, 0, "from_below.nes"};
+        "builtin", "Thwaite", "", true, false, 0, "thwaite.nes"};
 }
 
 flynes::product::GameCenterItem make_favorite()

@@ -31,7 +31,10 @@ public final class AndroidCatalogRuntimeTest {
         delete(state); delete(new File(state.getPath() + ".bak"));
         try (AndroidCatalogRuntime first = new AndroidCatalogRuntime(context, state)) {
             first.bootstrap().get(30, TimeUnit.SECONDS);
-            assertEquals(1, first.gameCatalog().canonicalEntries().size());
+            // Every bundled game is projected, so the expected count comes from the
+            // shared manifest rather than a number that froze the old single title.
+            assertEquals(bundledGameCount(context),
+                    first.gameCatalog().canonicalEntries().size());
             String id = first.gameCatalog().canonicalEntries().get(0).canonicalGame().id();
             assertTrue(first.setFavorite(id, true).get(30, TimeUnit.SECONDS));
         }
@@ -52,6 +55,14 @@ public final class AndroidCatalogRuntimeTest {
             assertArrayEquals(corrupt, Files.readAllBytes(state.toPath()));
         }
         delete(state); delete(new File(state.getPath() + ".bak"));
+    }
+
+    /** Bundled games the shared manifest declares, which the catalog must project. */
+    private static int bundledGameCount(Context context) throws Exception {
+        try (java.io.InputStream manifest =
+                     context.getAssets().open(com.flynes.emu.catalog.BuiltinGames.ASSET_NAME)) {
+            return com.flynes.emu.catalog.BuiltinGames.parse(manifest).all().size();
+        }
     }
 
     private static void delete(File file) {

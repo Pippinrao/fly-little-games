@@ -30,6 +30,36 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
         @"identifier BEGINSWITH %@", @"game_card_"]];
 }
 
+/// The games the shared manifest bundles, read from this test bundle. Asserting
+/// against it means adding a bundled game needs no test edit.
+- (NSArray<NSDictionary *> *)bundledGames
+{
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"builtin-games"
+                                                       withExtension:@"json"];
+    NSData *data = url == nil ? nil : [NSData dataWithContentsOfURL:url];
+    if (data == nil) return @[];
+    NSDictionary *root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    NSArray *games = [root[@"games"] isKindOfClass:NSArray.class] ? root[@"games"] : @[];
+    return games;
+}
+
+- (NSUInteger)bundledCount
+{
+    return [self bundledGames].count;
+}
+
+- (BOOL)label:(NSString *)label matchesABundledTitle:(NSString *)titleKey
+{
+    for (NSDictionary *game in [self bundledGames]) {
+        NSString *title = game[titleKey];
+        if ([title isKindOfClass:NSString.class] && title.length > 0
+                && [label containsString:title]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 - (void)closeSearch
 {
     if (self.app.buttons[@"close_search"].exists) [self.app.buttons[@"close_search"] tap];
@@ -62,8 +92,8 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
                    @"Use a dedicated simulator with no imported sources; existing sources are preserved.");
     [self.app.buttons[@"close_sources"] tap];
     XCTAssertTrue([self.cards.firstMatch waitForExistenceWithTimeout:15]);
-    XCTAssertEqual(self.cards.count, 1u, @"the real bundled From Below game must already exist");
-    XCTAssertTrue([self.cards.firstMatch.label containsString:@"From Below"]);
+    XCTAssertEqual(self.cards.count, self.bundledCount, @"every bundled game must already exist");
+    XCTAssertTrue([self label:self.cards.firstMatch.label matchesABundledTitle:@"titleEn"], @"the first builtin card must carry a manifest title, was %@", self.cards.firstMatch.label);
 }
 
 // Source rows currently lack stable identifiers. Resolve a row by its exact
@@ -204,9 +234,9 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
 {
     NSString *builtinID = self.cards.firstMatch.identifier;
     [self importSource:SingleSource directory:NO];
-    [self expectGameCount:2];
+    [self expectGameCount:(1 + self.bundledCount)];
     [self importSource:SingleSource directory:NO];
-    [self expectGameCount:2];
+    [self expectGameCount:(1 + self.bundledCount)];
     [self openSources];
     XCTAssertEqual([self.app.scrollViews[@"source_list"].buttons matchingIdentifier:@"Remove"].count, 1u,
                    @"picking the same file twice must leave one removable source");
@@ -252,19 +282,19 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
     [self removeOwnedSource:SingleSource];
     [self waitFor:^BOOL { return !self.app.buttons[importID].exists && self.app.buttons[builtinID].exists; }
             reason:@"removing the imported source preserves the builtin" timeout:15];
-    XCTAssertEqual(self.cards.count, 1u);
+    XCTAssertEqual(self.cards.count, self.bundledCount);
     [self.app terminate];
     [self.app launch];
     XCTAssertTrue([self.app.buttons[builtinID] waitForExistenceWithTimeout:15]);
     XCTAssertFalse(self.app.buttons[importID].exists);
-    XCTAssertEqual(self.cards.count, 1u, @"repeated import removal persists across restart");
+    XCTAssertEqual(self.cards.count, self.bundledCount, @"repeated import removal persists across restart");
 }
 
 - (void)testHundredGameDirectoryDuplicateAliasesSearchRescanRestartAndRemove
 {
     NSString *builtinID = self.cards.firstMatch.identifier;
     [self importSource:HundredSource directory:YES];
-    [self expectGameCount:101]; // 200 directory files => 100 canonical games + builtin.
+    [self expectGameCount:(100 + self.bundledCount)]; // 200 directory files => 100 canonical games + every bundled game.
     [self search:@"FlyNES-E2E-Game"];
     [self expectGameCount:100];
     [self search:@"FlyNES-E2E-Game-099"];
@@ -292,7 +322,7 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
     [self waitFor:^BOOL { return self.app.buttons[@"close_sources"].enabled; }
             reason:@"directory rescan finished" timeout:45];
     [self.app.buttons[@"close_sources"] tap];
-    [self expectGameCount:101];
+    [self expectGameCount:(100 + self.bundledCount)];
     [self search:@"FlyNES-E2E-Alias-099"];
     [self expectGameCount:1];
     XCTAssertEqualObjects(self.cards.firstMatch.identifier, canonicalID);
@@ -306,11 +336,11 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
     XCTAssertEqual(self.cards.count, 0u);
     [self closeSearch];
     XCTAssertTrue([self.app.buttons[builtinID] waitForExistenceWithTimeout:10]);
-    XCTAssertEqual(self.cards.count, 1u);
+    XCTAssertEqual(self.cards.count, self.bundledCount);
     [self.app terminate];
     [self.app launch];
     XCTAssertTrue([self.app.buttons[builtinID] waitForExistenceWithTimeout:15]);
-    XCTAssertEqual(self.cards.count, 1u, @"source removal persists across restart");
+    XCTAssertEqual(self.cards.count, self.bundledCount, @"source removal persists across restart");
 }
 
 - (void)testCancelFilesPickerPreservesExistingLibrary
@@ -325,6 +355,6 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
     XCTAssertEqual([self.app.scrollViews[@"source_list"].buttons matchingIdentifier:@"Remove"].count, 0u);
     [self.app.buttons[@"close_sources"] tap];
     XCTAssertTrue([self.app.buttons[builtinID] waitForExistenceWithTimeout:10]);
-    XCTAssertEqual(self.cards.count, 1u);
+    XCTAssertEqual(self.cards.count, self.bundledCount);
 }
 @end

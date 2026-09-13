@@ -50,7 +50,11 @@ public final class AndroidCatalogStreamOpener implements ExactRomLoader.StreamOp
             throw failure(FailureCode.SOURCE_STALE);
         }
         if (source.source().type() == RomSource.Type.BUILTIN) {
-            if (!sourceUri.startsWith("asset:///") || !sourceUri.equals(source.source().uri())) {
+            // The builtin source root ends in a slash and each bundled game
+            // appends its own filename, so the locator must be a child of it.
+            String root = source.source().uri();
+            if (!sourceUri.startsWith("asset:///") || !sourceUri.startsWith(root)
+                    || sourceUri.length() <= root.length()) {
                 throw failure(FailureCode.LOCATOR_UNKNOWN);
             }
             return context.getAssets().open(sourceUri.substring("asset:///".length()));

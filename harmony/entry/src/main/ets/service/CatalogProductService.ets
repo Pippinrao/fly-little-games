@@ -1,74 +1,105 @@
 import nativeProduct, { CatalogUserState, GameCenterRow } from 'libentry.so';
+import { BuiltinGame, BuiltinGames } from './BuiltinGames';
 
-/** Collapses the native per-variant snapshot into one card per canonical game. */
+/**
+ * Collapses the native per-variant snapshot into one card per canonical game,
+ * with every bundled game first and the rest in snapshot order.
+ */
 export function uniqueGameCenterRows(snapshot: GameCenterRow[]): GameCenterRow[] {
-  const rows: GameCenterRow[] = [];
-  const seen: string[] = [];
+  const merged: GameCenterRow[] = [];
+  const indexByCanonicalId: Map<string, number> = new Map();
   for (let index = 0; index < snapshot.length; index++) {
     const row = snapshot[index];
-    if (row.builtin && seen.indexOf(row.canonicalId) < 0) {
-      rows.unshift(row);
-      seen.push(row.canonicalId);
-      break;
-    }
-  }
-  for (let index = 0; index < snapshot.length; index++) {
-    const row = snapshot[index];
-    if (row.builtin || seen.indexOf(row.canonicalId) >= 0) {
+    const existing = indexByCanonicalId.get(row.canonicalId);
+    if (existing === undefined) {
+      indexByCanonicalId.set(row.canonicalId, merged.length);
+      merged.push(row);
       continue;
     }
-    rows.push(row);
-    seen.push(row.canonicalId);
+    const target = merged[existing];
+    target.builtin = target.builtin || row.builtin;
   }
-  return rows;
+  const builtinRows: GameCenterRow[] = [];
+  const otherRows: GameCenterRow[] = [];
+  for (let index = 0; index < merged.length; index++) {
+    if (merged[index].builtin) {
+      builtinRows.push(merged[index]);
+    } else {
+      otherRows.push(merged[index]);
+    }
+  }
+  return builtinRows.concat(otherRows);
 }
 
-/** Catalog projection for Game Center. Builtin From Below is always present. */
+/**
+ * Catalog projection for Game Center.
+ *
+ * The bundled games come from the shared manifest, never from code: every game
+ * the manifest declares is present even before the native scan has produced a
+ * row for it, and the manifest owns the trusted bilingual titles.
+ */
 export class CatalogProductService {
-  loadRows(): GameCenterRow[] {
+  loadRows(games: BuiltinGames): GameCenterRow[] {
     let snapshot: GameCenterRow[] = [];
     try {
       snapshot = nativeProduct.catalogSnapshot();
     } catch (error) {
       snapshot = [];
     }
-    // The snapshot is the source of truth: builtin entries carry their real
-    // canonical id (e.g. "game:<sha256>"), not the literal "builtin". Only
-    // inject the fallback row when the scan has not produced a builtin entry
-    // yet. The fallback's user state (favorite / last played) is overlaid from
-    // the native catalog so the UI reflects persisted toggles and play marks.
+
     const rows: GameCenterRow[] = uniqueGameCenterRows(snapshot);
-    let builtinRow: GameCenterRow | undefined = undefined;
-    if (rows.length > 0 && rows[0].builtin) {
-      builtinRow = rows[0];
-      rows.shift();
+    const bundled: BuiltinGame[] = games.all();
+    const bundledRows: GameCenterRow[] = [];
+    const claimed: string[] = [];
+    for (let index = 0; index < bundled.length; index++) {
+      const game = bundled[index];
+      let row: GameCenterRow | undefined = undefined;
+      for (let scan = 0; scan < rows.length; scan++) {
+        if (rows[scan].canonicalId === game.canonicalId) {
+          row = rows[scan];
+          break;
+        }
+      }
+      if (row === undefined) {
+        row = {
+          canonicalId: game.canonicalId,
+          titleEn: game.titleEn,
+          titleZhHans: game.titleZhHans,
+          builtin: true,
+          favorite: false,
+          lastPlayedSequence: 0,
+          originalFilename: game.assetFilename,
+          sourceUuidHex: '',
+          sourceRelativePath: '',
+          packageFormat: 0
+        };
+      } else {
+        // The manifest owns the trusted titles of a bundled game.
+        row.titleEn = game.titleEn;
+        row.titleZhHans = game.titleZhHans;
+        row.builtin = true;
+      }
+      try {
+        const user: CatalogUserState = nativeProduct.catalogUserStateGet(game.canonicalId);
+        row.favorite = user.favorite;
+        row.lastPlayedSequence = user.lastPlayedSequence;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'user state read failed';
+        console.error(`FlyNES builtin user state failed: ${detail}`);
+      }
+      claimed.push(game.canonicalId);
+      bundledRows.push(row);
     }
-    if (builtinRow === undefined) {
-      builtinRow = {
-        canonicalId: 'builtin',
-        titleEn: 'From Below',
-        titleZhHans: '来自下方',
-        builtin: true,
-        favorite: false,
-        lastPlayedSequence: 0,
-        originalFilename: 'from_below.nes',
-        sourceUuidHex: '',
-        sourceRelativePath: '',
-        packageFormat: 0
-      };
+
+    const rest: GameCenterRow[] = [];
+    for (let index = 0; index < rows.length; index++) {
+      if (rows[index].builtin || claimed.indexOf(rows[index].canonicalId) >= 0) {
+        continue;
+      }
+      rest.push(rows[index]);
     }
-    try {
-      const user: CatalogUserState =
-        nativeProduct.catalogUserStateGet(builtinRow.canonicalId);
-      builtinRow.favorite = user.favorite;
-      builtinRow.lastPlayedSequence = user.lastPlayedSequence;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'user state read failed';
-      console.error(`FlyNES builtin user state failed: ${detail}`);
-    }
-    // Keep the builtin game first so the default selection matches Android.
-    rows.unshift(builtinRow);
-    return rows;
+    // Bundled games stay first so the default selection matches Android.
+    return bundledRows.concat(rest);
   }
 
   /** Matches Android HomeHeaderLayoutPolicy.compact (fontScale >= 1.8 or en-XA). */

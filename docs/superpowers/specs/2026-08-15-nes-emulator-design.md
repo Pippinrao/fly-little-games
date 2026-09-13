@@ -179,7 +179,7 @@ assets/SAF → 字节[] → `nes_load_rom(bytes, len)`（流适配器藏 C++ 内
 ## 11. 合规基线
 
 - **整体 GPLv2 开源**：`.so` 静态/动态链接均构成「结合作品」，规避不了 GPL；接受开源，GitHub 公开源码 + CI 可复现构建 + App 内许可页。
-- **内置 homebrew 仅 CC0/MIT 且无任天堂素材**：候选 **From Below（MIT）、Super Sunny World（MIT）、Lan Master（CC0）、Lawn Mower（CC0）**，Streemerz 视 license 确认；逐个 LICENSE 文件 + 署名页。
+- **内置 homebrew 仅限许可可一手核实的作品，且无任天堂素材**（本条原候选清单已于 2026-09-13 作废：其许可线索未经核实，见 `docs/legal-nes-homebrew-preship-research.md`）。实际内置清单以 `content/assets/builtin-games.json` 为准：7 款均为许可原文可核实、允许再分发的自制游戏，逐款 LICENSE 文件 + 署名页；其中 2 款为 GPL-3.0-or-later（聚合分发，见 `docs/COMPLIANCE.md`）。
 - **内容红线**：不内置商业 ROM/BIOS（FDS disksys.rom 用户自备）/作弊码 DB/商业补丁库；金手指只做「手动输入/导入」；坚持「工具-only、不分发内容」。
 - **命名/商标**：App 名与图标避开任天堂商标（慎用「NES/FC/任天堂」）。
 - **依赖许可**：GPLv2 与 GPLv3 不兼容，核查所有 C++ 依赖许可；构建时生成 SBOM。

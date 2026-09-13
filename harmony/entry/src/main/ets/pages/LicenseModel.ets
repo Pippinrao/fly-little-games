@@ -1,3 +1,5 @@
+import { BuiltinGames } from '../service/BuiltinGames';
+
 export class LicenseEntry {
   fileName: string = '';
   displayName: string = '';
@@ -17,16 +19,35 @@ export class LicenseEntry {
 const ENTRIES: LicenseEntry[] = [
   new LicenseEntry('nestopiaue-gplv2.txt', 'Nestopia UE (GPLv2)', 'https://github.com/0ldsk00l/nestopia'),
   new LicenseEntry('own-gplv2.txt', 'FlyNES (GPLv2)', ''),
-  new LicenseEntry('zlib-license.txt', 'zlib', 'https://zlib.net'),
-  new LicenseEntry('LICENSE-from-below.txt', 'From Below', 'https://mhughson.itch.io/from-below')
+  new LicenseEntry('zlib-license.txt', 'zlib', 'https://zlib.net')
 ];
 
 export class LicenseModel {
-  static all(): LicenseEntry[] {
-    return ENTRIES.slice();
+  /**
+   * Every licence in the module's rawfile directory: the fixed component
+   * licences plus one row per bundled game, taken from the shared manifest.
+   */
+  static all(bundled: BuiltinGames): LicenseEntry[] {
+    const entries: LicenseEntry[] = ENTRIES.slice();
+    const games = bundled.all();
+    for (let index = 0; index < games.length; index++) {
+      const game = games[index];
+      if (game.licenseFile.length === 0) {
+        continue;
+      }
+      entries.push(new LicenseEntry(game.licenseFile, game.titleEn, game.licenseSourceUrl));
+    }
+    return entries;
   }
 
-  static byFileName(fileName: string): LicenseEntry | undefined {
+  static byFileName(fileName: string, bundled: BuiltinGames): LicenseEntry | undefined {
+    const games = bundled.all();
+    for (let index = 0; index < games.length; index++) {
+      if (games[index].licenseFile === fileName) {
+        return new LicenseEntry(
+          games[index].licenseFile, games[index].titleEn, games[index].licenseSourceUrl);
+      }
+    }
     for (let index = 0; index < ENTRIES.length; index++) {
       if (ENTRIES[index].fileName === fileName) {
         return ENTRIES[index];

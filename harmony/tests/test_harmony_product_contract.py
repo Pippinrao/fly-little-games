@@ -29,8 +29,8 @@ assert "play_save" not in run.lower()
 assert "Save" not in overlay
 assert "pauseCommands" in run or "PauseCommand" in run
 # Spec §5 launch-by-canonical-id; §6 ROM-open failure stays in Game Center.
-# Builtin From Below loads the bundled rawfile. Scanned titles open via source
-# map + borrowed file bytes (ZIP decoded to NES payload), not From Below.
+# Scanned titles open via source map + borrowed file bytes (ZIP decoded to NES
+# payload); bundled titles are projected from the shared manifest.
 assert "game_center_rom_open_failed" in strings
 assert "game_center_rom_open_failed" in gc
 launch_at = gc.find("private launchSelected")
@@ -42,17 +42,14 @@ launch_body = gc[launch_at:launch_end if launch_end > launch_at else launch_at +
 assert "pushUrl" in launch_body
 assert "canOpenSelected" in launch_body
 assert "mapsToBuiltinFromBelow" not in launch_body, (
-    "Launch must push RunGame for scanned catalog rows, not only builtin From Below")
-assert "from_below.nes" in play
+    "Launch must push RunGame for scanned catalog rows, not only a builtin game")
 open_at = play.find("async open")
 open_end = play.find("setButtons", open_at)
 play_open = play[open_at:open_end if open_end > open_at else open_at + 2200]
-rom_at = play_open.find("from_below.nes")
-assert rom_at >= 0, "PlayService must still load bundled From Below for builtin"
-before_rom = play_open[:rom_at]
-assert "canonicalId" in play_open and (
-    "canonicalId" in before_rom or "builtin" in before_rom or "from-below" in before_rom
-), "PlayService must not open from_below.nes unless canonicalId maps to builtin"
+assert "BuiltinGames" in play or "builtinGamesSync" in play, (
+    "PlayService must resolve a bundled launch from the shared manifest")
+assert "byCanonicalId" in play_open, (
+    "PlayService must resolve the bundled asset by canonical id")
 assert "playDecodePackage" in play_open or "playDecodePackage" in play
 assert "sourceRelativePath" in play or "sourceUuidHex" in play
 assert "filesDir" in gc or "roms" in gc
@@ -114,7 +111,10 @@ assert "catalogSnapshot" in catalog or "catalogRows" in catalog
 snapshot_export = "catalogSnapshot" if "catalogSnapshot" in catalog else "catalogRows"
 assert snapshot_export in dts
 assert "return [builtin]" not in catalog
-assert "From Below" in catalog
+assert "From Below" not in catalog, (
+    "the catalog must project the shared manifest, not a hardcoded single game")
+assert "loadRows" in catalog and "BuiltinGames" in catalog, (
+    "CatalogProductService must project the bundled games from the shared manifest")
 assert "sourceUuidHex" in dts
 assert "sourceRelativePath" in dts
 assert "packageFormat" in dts

@@ -216,14 +216,20 @@ struct SettingsView: View {
 }
 
 private struct LicenseListView: View {
-    private let licenses = [
-        ("FlyNES", "FlyNES-GPL-2.0"),
-        ("Nestopia UE", "Nestopia-GPL-2.0"),
-        ("From Below", "FromBelow-MIT"),
-        ("MMPX", "MMPX-MIT"),
-        ("ScaleFX", "ScaleFX-MIT"),
-        ("zlib", "zlib-license")
-    ]
+    /// The component licences plus one row per bundled game, from the manifest.
+    private let licenses: [(String, String)] = {
+        var entries: [(String, String)] = [
+            ("FlyNES", "FlyNES-GPL-2.0"),
+            ("Nestopia UE", "Nestopia-GPL-2.0"),
+            ("MMPX", "MMPX-MIT"),
+            ("ScaleFX", "ScaleFX-MIT"),
+            ("zlib", "zlib-license")
+        ]
+        for game in FlyNesBuiltinGames.shared().all() where !game.licenseFile.isEmpty {
+            entries.append((game.titleEn, (game.licenseFile as NSString).deletingPathExtension))
+        }
+        return entries
+    }()
     var body: some View {
         List(licenses, id: \.0) { title, resource in
             NavigationLink(title) {

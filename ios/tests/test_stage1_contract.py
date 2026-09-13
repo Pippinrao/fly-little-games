@@ -54,12 +54,13 @@ def main() -> int:
     for relative in required_files:
         require((ROOT / relative).is_file(), f"missing required Stage-1 file: {relative}")
 
-    fixture = (ROOT / "core/tests/fixtures/from_below.nes").read_bytes()
-    license_text = read("core/tests/fixtures/LICENSE-from-below.txt")
+    fixture = (ROOT / "content/assets/roms/thwaite.nes").read_bytes()
+    license_text = read("content/assets/licenses/thwaite.txt")
     require(fixture[:4] == b"NES\x1a", "Stage-1 fixture is not an iNES ROM")
-    require("MIT License" in license_text, "ROM fixture must retain its MIT license")
+    require("GNU GENERAL PUBLIC LICENSE" in license_text,
+            "ROM fixture must retain its licence text")
     require(
-        "1A3AC4FAF4B35640505344059AE5D91DAE07CD47E1FB4D9D2A33C76391F1C555"
+        "EE51CD9562F28195BA015D9857C6C4FC9BF67CDFB213E95F655E586B92195173"
         in read("ios/src/portability_smoke.cpp"),
         "consumer must pin the ROM full-file SHA-256",
     )
@@ -92,10 +93,10 @@ def main() -> int:
     require("MACOSX_BUNDLE" in ios_cmake, "consumer must be a launchable iOS app bundle")
     require("flynes_app" in ios_cmake and "nes_abi" in ios_cmake,
             "final consumer must link both shared app/catalog and emulator ABI")
-    require("from_below.nes" in ios_cmake,
-            "licensed ROM fixture must be embedded as an app resource")
-    require("LICENSE-from-below.txt" in ios_cmake,
-            "the fixture provenance notice must travel with both bundles")
+    require("content/assets" in ios_cmake and "builtin-games.json" in ios_cmake,
+            "the shared bundled content must be embedded as app resources")
+    require("FLYNES_IOS_BUNDLED_LICENSES" in ios_cmake,
+            "every bundled licence text must travel with the bundle")
     require("CMAKE_OSX_SYSROOT" in core_cmake and "FLYNES_IOS" in core_cmake,
             "core must reject zlib outside the selected Apple SDK")
     for label, cmake_text in (("core", core_cmake), ("shared", shared_cmake)):

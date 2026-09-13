@@ -3,6 +3,7 @@ import { image } from '@kit.ImageKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { HarmonySourceMap } from '../platform/HarmonySourceMap';
+import { BuiltinGames } from './BuiltinGames';
 import { CheckpointStore } from './CheckpointStore';
 
 export const NES_BTN_A = 0x01;
@@ -26,9 +27,24 @@ export function takeRomOpenError(): string {
   return value;
 }
 
-export function mapsToBuiltinFromBelow(canonicalId: string): boolean {
-  const id = canonicalId.trim().toLowerCase();
-  return id === 'builtin' || id.indexOf('from_below') >= 0 || id.indexOf('from-below') >= 0;
+let cachedBuiltinGames: BuiltinGames | undefined = undefined;
+
+/**
+ * The bundled games, loaded once per process from the shared manifest. A missing
+ * or broken manifest yields an empty list rather than taking playback down.
+ * Synchronous so catalog projection can stay on the UI thread.
+ */
+export function builtinGamesSync(context: common.UIAbilityContext): BuiltinGames {
+  if (cachedBuiltinGames === undefined) {
+    try {
+      cachedBuiltinGames = BuiltinGames.loadSync(context);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'builtin manifest unreadable';
+      console.error(`FlyNES builtin manifest failed: ${detail}`);
+      cachedBuiltinGames = BuiltinGames.empty();
+    }
+  }
+  return cachedBuiltinGames;
 }
 
 export class RomLaunchLocator {
@@ -51,9 +67,11 @@ export class PlayService {
     restoreCheckpoint: boolean = true): Promise<void> {
     lastRomOpenError = '';
     let rom: Uint8Array | ArrayBuffer;
-    if (mapsToBuiltinFromBelow(locator.canonicalId)) {
+    const games = builtinGamesSync(context);
+    const bundled = games.byCanonicalId(locator.canonicalId);
+    if (bundled !== undefined) {
       try {
-        rom = context.resourceManager.getRawFileContentSync('from_below.nes');
+        rom = context.resourceManager.getRawFileContentSync(bundled.assetPath());
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Failed to read ROM rawfile';
         throw new Error(detail);

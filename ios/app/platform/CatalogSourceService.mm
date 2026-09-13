@@ -1,4 +1,5 @@
 #import "AppLocalization.h"
+#import "BuiltinGames.h"
 #import "CatalogSourceService.h"
 #import "FlyNesBookmarkStore.h"
 #import "FlyNesAppBridge.h"
@@ -46,7 +47,7 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
 + (instancetype)sharedInstance {
     static CatalogSourceService *instance; static dispatch_once_t once;
     dispatch_once(&once, ^{
-        instance = [[self alloc] initWithBridge:FlyNesAppBridge.sharedInstance defaults:NSUserDefaults.standardUserDefaults builtinURL:[NSBundle.mainBundle URLForResource:@"from_below" withExtension:@"nes"]];
+        instance = [[self alloc] initWithBridge:FlyNesAppBridge.sharedInstance defaults:NSUserDefaults.standardUserDefaults builtinURL:nil];
     });
     return instance;
 }
@@ -122,8 +123,32 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
 }
 - (BOOL)prepareBuiltin:(NSError **)error { @synchronized(self) {
     if (builtinPrepared_) return YES;
-    if (!builtinURL_) { if (error) *error = SourceError(@"library.source.builtin_missing"); return NO; }
-    builtinPrepared_ = [self scanURL:builtinURL_ uuid:BuiltinUUID scope:1 error:error];
+    // Every bundled game is scanned into the builtin source in one transaction,
+    // driven by the shared manifest rather than by a single hardcoded file.
+    NSArray<FlyNesBuiltinGame *> *games = FlyNesBuiltinGames.shared.all;
+    NSMutableArray *records = [NSMutableArray arrayWithCapacity:games.count];
+    for (FlyNesBuiltinGame *game in games) {
+        NSString *resource = [FlyNesBuiltinGames resourceNameForAssetFilename:game.assetFilename];
+        NSURL *url = [NSBundle.mainBundle URLForResource:resource withExtension:@"nes"];
+        if (url == nil) {
+            NSLog(@"[FlyNES] bundled ROM is missing from the app bundle: %@", game.assetFilename);
+            continue;
+        }
+        [records addObject:@{@"url":url,
+                             @"relativePath":game.assetFilename,
+                             @"displayName":game.assetFilename}];
+    }
+    if (records.count == 0) {
+        if (error) *error = SourceError(@"library.source.builtin_missing");
+        return NO;
+    }
+    NSError *scanError = nil;
+    builtinPrepared_ = [bridge_ scanFileRecords:records
+                                    sourceUUID:UUIDBytes(BuiltinUUID)
+                                   sourceScope:1
+                                    incomplete:NO
+                                         error:&scanError];
+    if (!builtinPrepared_ && error) *error = scanError ?: SourceError(@"library.source.scan_failed");
     return builtinPrepared_;
 } }
 // Source identity is the resolved file-provider location, not the ROM payload:
@@ -227,7 +252,17 @@ static BOOL IsWithin(NSURL *url, NSURL *root) {
     uint32_t scope = [selected[@"sourceScope"] unsignedIntValue];
     BOOL access = NO;
     NSURL *root = nil;
-    if (scope == 1 && [uuid isEqual:BuiltinUUID]) root = builtinURL_;
+    if (scope == 1 && [uuid isEqual:BuiltinUUID]) {
+        // The builtin source holds every bundled game, so a row resolves to its
+        // own resource through the shared manifest instead of one fixed URL.
+        NSString *assetFilename = selected[@"relativePath"];
+        FlyNesBuiltinGame *game = [FlyNesBuiltinGames.shared byAssetFilename:assetFilename];
+        if (game != nil) {
+            NSString *resource =
+                [FlyNesBuiltinGames resourceNameForAssetFilename:game.assetFilename];
+            root = [NSBundle.mainBundle URLForResource:resource withExtension:@"nes"];
+        }
+    }
     else if ([metadata_[uuid][@"scope"] unsignedIntValue] == scope) root = [bookmarks_ resolveUUID:[[NSUUID alloc] initWithUUIDString:uuid] didStartAccess:&access error:error];
     if (!root) { if (error && !*error) *error = SourceError(@"library.source.reauthorize_required"); return nil; }
     @try {

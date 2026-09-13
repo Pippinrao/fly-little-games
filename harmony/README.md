@@ -12,8 +12,12 @@ roots (Display, Controls, Audio, Game & Language, About). The layout editor
 writes the shared ControlLayoutV2 string. FilePicker URIs stay in
 `HarmonySourceMap` app preferences, never in FLYCAT01.
 
-The bundled ROM is Matt Hughson's *From Below* (MIT). See
-`entry/src/main/resources/rawfile/LICENSE-from-below.txt`.
+The bundled games are the seven licensed homebrew ROMs declared by
+`content/assets/builtin-games.json`; `tools/content/sync-builtin-content.ps1`
+stages that manifest, the ROMs and their licence texts into this module's
+`entry/src/main/resources/rawfile/` before a build (the staged copies are
+git-ignored). Per-game licences and pinned upstream revisions are recorded in
+`docs/COMPLIANCE.md` and `content/sources.lock.json`.
 
 ## Pinned product configuration
 

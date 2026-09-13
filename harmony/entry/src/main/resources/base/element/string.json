@@ -278,7 +278,7 @@
     },
     {
       "name": "licenses_summary",
-      "value": "Built-in From Below is MIT-licensed. See rawfile LICENSE-from-below.txt."
+      "value": "Bundled homebrew games ship under their own licences. See the licence list."
     },
     {
       "name": "control_layout_title",

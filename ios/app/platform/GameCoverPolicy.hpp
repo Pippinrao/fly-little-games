@@ -7,20 +7,41 @@
 
 namespace flynes::ios {
 // Literal port of Android cover/FrameQuality.java. Input is compact little-endian RGB565.
+//
+// Each cell of the 32x30 grid averages its pixels instead of sampling one. Homebrew
+// titles open on a black screen carrying a few lines of one-pixel white credit text;
+// point sampling stepped over those strokes, scored the frame as an empty black
+// screen, and refused every bundled game a cover. Averaging keeps thin text energy
+// while a blank screen still averages to a flat, rejected grid.
+inline int game_cover_luma(const uint8_t *pixels, unsigned width, unsigned x, unsigned y) {
+    const size_t index=(size_t(y)*width+x)*2;
+    const unsigned value=pixels[index] | (unsigned(pixels[index+1])<<8);
+    const unsigned red=((value>>11)&31)*255/31, green=((value>>5)&63)*255/63, blue=(value&31)*255/31;
+    return (red*77+green*150+blue*29)>>8;
+}
+inline double game_cover_block_luma(const uint8_t *pixels, unsigned width, unsigned height,
+                                    unsigned originX, unsigned originY,
+                                    unsigned blockWidth, unsigned blockHeight) {
+    const unsigned endY=std::min(height, originY+blockHeight);
+    const unsigned endX=std::min(width, originX+blockWidth);
+    double total=0; unsigned samples=0;
+    for(unsigned y=originY;y<endY;y++)
+        for(unsigned x=originX;x<endX;x++) { total+=game_cover_luma(pixels,width,x,y); ++samples; }
+    return samples==0 ? 0.0 : total/samples;
+}
 inline double game_cover_score(const uint8_t *pixels, size_t length, unsigned width, unsigned height) {
     if (!pixels || !width || !height || width > 4096 || height > 4096
         || length != size_t(width)*height*2) return -std::numeric_limits<double>::infinity();
-    const unsigned step_x=std::max(1u,width/32), step_y=std::max(1u,height/30);
+    constexpr unsigned columns=32, rows=30;
+    const unsigned blockWidth=std::max(1u,width/columns), blockHeight=std::max(1u,height/rows);
     double sum=0, squares=0, transitions=0, count=0;
-    for (unsigned y=0;y<height;y+=step_y) {
-        int previous=-1;
-        for(unsigned x=0;x<width;x+=step_x) {
-            const size_t index=(size_t(y)*width+x)*2;
-            const unsigned value=pixels[index] | (unsigned(pixels[index+1])<<8);
-            const unsigned red=((value>>11)&31)*255/31, green=((value>>5)&63)*255/63, blue=(value&31)*255/31;
-            const int luma=(red*77+green*150+blue*29)>>8;
-            sum+=luma; squares+=double(luma)*luma;
-            if(previous>=0 && std::abs(luma-previous)>=20) transitions+=1;
+    for (unsigned blockY=0;blockY<rows;blockY++) {
+        double previous=-1.0;
+        for(unsigned blockX=0;blockX<columns;blockX++) {
+            const double luma=game_cover_block_luma(pixels,width,height,
+                blockX*blockWidth, blockY*blockHeight, blockWidth, blockHeight);
+            sum+=luma; squares+=luma*luma;
+            if(previous>=0.0 && std::abs(luma-previous)>=20.0) transitions+=1;
             previous=luma; ++count;
         }
     }

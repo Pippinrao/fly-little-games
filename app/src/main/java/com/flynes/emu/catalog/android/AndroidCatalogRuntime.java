@@ -4,10 +4,12 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
+import android.util.Log;
 
 import com.flynes.emu.app.FlyCatalogCommands;
 import com.flynes.emu.app.FlyNesApp;
 import com.flynes.emu.app.NativeCatalogEntry;
+import com.flynes.emu.catalog.BuiltinGames;
 import com.flynes.emu.catalog.GameCatalog;
 import com.flynes.emu.catalog.PhysicalPackage;
 import com.flynes.emu.catalog.RomSource;
@@ -61,6 +63,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     private final SourceRegistry sources;
     private final ExecutorService executor;
     private final AndroidBuiltinCatalogAdapter builtin;
+    private final BuiltinGames builtinGames;
     private final FlyNesApp nativeApp;
     private final AndroidUuidSafMap uuidMap;
     private final AndroidRetryableMigrationLog migrationLog;
@@ -94,7 +97,19 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
-        builtin = new AndroidBuiltinCatalogAdapter(this.context);
+        // The bundled game list comes from the shared manifest. A missing or
+        // broken manifest must not take the whole library down: the builtin
+        // source simply ends up with nothing to show.
+        BuiltinGames games;
+        try {
+            games = BuiltinGames.fromAssets(this.context);
+        } catch (IOException failure) {
+            Log.w("FlyNES", "bundled game manifest is unreadable", failure);
+            games = BuiltinGames.empty();
+        }
+        builtinGames = games;
+        builtin = new AndroidBuiltinCatalogAdapter(
+                builtinGames, assetPath -> this.context.getAssets().open(assetPath));
         locators = new AndroidPackageLocatorMap();
         if (nativeCatalog) {
             dataRoot = nativeDataRoot(this.context);
@@ -262,7 +277,10 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         repository.commitScan(SourceScanResult.from(
                 AndroidBuiltinCatalogAdapter.SOURCE, repository.state().revision(),
                 Math.addExact(builtinState.lastScanToken(), 1),
-                SourceScanResult.Completeness.FULL, scanned, 1));
+                SourceScanResult.Completeness.FULL, scanned,
+                // One candidate per bundled game: the scan accounting must match
+                // the outcome list, so it cannot be a fixed number any more.
+                scanned.packageOutcomes().size()));
         return new BootstrapResult(load, migration);
     }
 
@@ -305,19 +323,32 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         byte[] uuid = uuidMap.builtinUuid();
         int begun = nativeApp.scanBegin(uuid, FlyCatalogCommands.SOURCE_SCOPE_BUILTIN);
         if (begun != FlyCatalogCommands.OK) {
+            Log.w("FlyNES", "bundled scan could not begin: rc=" + begun);
             nativeApp.scanAbort();
             return;
         }
-        File copied = copyBuiltinAsset();
-        try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(
-                copied, ParcelFileDescriptor.MODE_READ_ONLY)) {
-            nativeApp.scanAddFile("from_below.nes", "from_below.nes", pfd.getFd(), null);
-        } finally {
-            // noinspection ResultOfMethodCallIgnored
-            copied.delete();
+        for (BuiltinGames.Entry game : builtinGames.all()) {
+            File copied = copyBuiltinAsset(game.assetPath());
+            try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(
+                    copied, ParcelFileDescriptor.MODE_READ_ONLY)) {
+                int added = nativeApp.scanAddFile(
+                        game.assetFilename, game.assetFilename, pfd.getFd(), null);
+                if (added != FlyCatalogCommands.OK) {
+                    Log.w("FlyNES", "bundled scan rejected " + game.assetFilename + ": rc=" + added);
+                }
+            } finally {
+                // noinspection ResultOfMethodCallIgnored
+                copied.delete();
+            }
+            locators.put(uuid, game.assetFilename,
+                    AndroidBuiltinCatalogAdapter.assetLocator(game.assetFilename));
         }
-        nativeApp.scanCommit(FlyCatalogCommands.SCAN_FULL);
-        locators.put(uuid, "from_below.nes", AndroidBuiltinCatalogAdapter.ASSET_LOCATOR);
+        int committed = nativeApp.scanCommit(FlyCatalogCommands.SCAN_FULL);
+        if (committed != FlyCatalogCommands.OK) {
+            Log.w("FlyNES", "bundled scan commit failed: rc=" + committed);
+        } else {
+            Log.i("FlyNES", "bundled scan committed " + builtinGames.all().size() + " game(s)");
+        }
         refreshNativeView();
     }
 
@@ -334,7 +365,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         }
         CatalogState projected = NativeCatalogProjector.project(
                 entries, nativeApp.sourceStatuses(), users, sequence, uuidMap, locators,
-                AndroidDocumentLocators::documentUriFor);
+                AndroidDocumentLocators::documentUriFor, builtinGames);
         nativeView.writeAtomically(CatalogStateCodec.encode(projected));
         return repository.load();
     }
@@ -445,7 +476,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
 
     private FncaNativeMigrator.OpenedFile openPackage(PhysicalPackage pkg) throws Exception {
         if (pkg.source().type() == RomSource.Type.BUILTIN) {
-            File copied = copyBuiltinAsset();
+            File copied = copyBuiltinAsset(builtinAssetPath(pkg.originalFilename()));
             ParcelFileDescriptor pfd = ParcelFileDescriptor.open(
                     copied, ParcelFileDescriptor.MODE_READ_ONLY);
             return new FncaNativeMigrator.OpenedFile(
@@ -477,9 +508,17 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 shaBytes(pkg.physicalPackageSha256()), pfd);
     }
 
-    private File copyBuiltinAsset() throws IOException {
+    /** Asset path of a bundled ROM, resolved from the shared manifest by filename. */
+    private String builtinAssetPath(String assetFilename) throws IOException {
+        for (BuiltinGames.Entry game : builtinGames.all()) {
+            if (game.assetFilename.equals(assetFilename)) return game.assetPath();
+        }
+        throw new IOException("no bundled game declares the asset " + assetFilename);
+    }
+
+    private File copyBuiltinAsset(String assetPath) throws IOException {
         File copied = File.createTempFile("flynes-builtin-", ".nes", cacheRoot);
-        try (InputStream input = context.getAssets().open(AndroidBuiltinCatalogAdapter.ASSET_PATH);
+        try (InputStream input = context.getAssets().open(assetPath);
              FileOutputStream output = new FileOutputStream(copied)) {
             byte[] buffer = new byte[8192];
             while (true) {

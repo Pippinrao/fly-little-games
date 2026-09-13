@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.text.method.LinkMovementMethod;
+import android.util.Log;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -127,20 +128,39 @@ public final class LicensesActivity extends AppCompatActivity {
         Toast.makeText(this, R.string.license_link_copied, Toast.LENGTH_SHORT).show();
     }
 
-    private static String displayName(String name) {
+    /** The bundled-game manifest, loaded once; empty if it cannot be read. */
+    private com.flynes.emu.catalog.BuiltinGames bundledGames;
+
+    private com.flynes.emu.catalog.BuiltinGames bundledGames() {
+        if (bundledGames == null) {
+            try {
+                bundledGames = com.flynes.emu.catalog.BuiltinGames.fromAssets(this);
+            } catch (IOException failure) {
+                Log.w("FlyNES", "bundled game manifest is unreadable", failure);
+                bundledGames = com.flynes.emu.catalog.BuiltinGames.empty();
+            }
+        }
+        return bundledGames;
+    }
+
+    /** Display name of a license asset: bundled games come from the manifest. */
+    private String displayName(String name) {
         if (name == null) return "";
-        if (name.startsWith("from-below")) return "From Below";
+        com.flynes.emu.catalog.BuiltinGames.Entry game = bundledGames().byLicenseFile(name);
+        if (game != null) return game.titleEn;
         if (name.startsWith("nestopia")) return "Nestopia UE";
         if (name.startsWith("own")) return "FlyNES";
         if (name.startsWith("zlib")) return "zlib";
         return name;
     }
 
-    private static String sourceUrl(String name) {
+    /** Source URL of a license asset: bundled games come from the manifest. */
+    private String sourceUrl(String name) {
         if (name == null) return null;
+        com.flynes.emu.catalog.BuiltinGames.Entry game = bundledGames().byLicenseFile(name);
+        if (game != null && !game.licenseSourceUrl.isEmpty()) return game.licenseSourceUrl;
         if (name.startsWith("nestopia")) return "https://github.com/0ldsk00l/nestopia";
         if (name.startsWith("zlib")) return "https://zlib.net/";
-        if (name.startsWith("from-below")) return "https://mhughson.itch.io/from-below";
         return null;
     }
 

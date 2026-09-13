@@ -10,8 +10,8 @@ android {
         applicationId "com.flynes.emu"
         minSdk 24
         targetSdk 36
-        versionCode 1001004
-        versionName "1.1.4"
+        versionCode 1002001
+        versionName "1.2.1"
         testInstrumentationRunner "com.flynes.emu.test.SingleDeviceCertificationRunner"
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
@@ -55,6 +55,9 @@ android {
 
     sourceSets {
         test.resources.srcDir rootProject.file('shared/tests/fixtures')
+        // Bundled homebrew lives once, under content/assets; the Android assets
+        // are merged from there so the repository keeps a single source of truth.
+        main.assets.srcDir rootProject.file('content/assets')
     }
 }
 
@@ -67,6 +70,9 @@ dependencies {
     implementation 'com.google.android.material:material:1.14.0'
 
     testImplementation 'junit:junit:4.13.2'
+    // The bundled-games manifest is parsed with org.json, which Android supplies
+    // at runtime but which is only a throwing stub in JVM unit tests.
+    testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test:core:1.7.0'
     androidTestImplementation 'androidx.test:runner:1.7.0'
     androidTestImplementation 'androidx.test:rules:1.7.0'

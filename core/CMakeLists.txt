@@ -132,7 +132,7 @@ if(NES_BUILD_TESTS AND NOT ANDROID)
     target_link_libraries(nes_core_test PRIVATE nes_abi)
     add_test(NAME core_smoke COMMAND nes_core_test)
     # ctest runs with the build dir as CWD; the test's default ROM path
-    # ("core/tests/fixtures/from_below.nes") is relative to the repo root,
+    # ("content/assets/roms/thwaite.nes") is relative to the repo root,
     # so anchor the test's working directory there.
     set_tests_properties(core_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
 

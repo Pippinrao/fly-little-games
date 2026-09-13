@@ -76,6 +76,7 @@ set(FLYNES_PRODUCT_OBJCXX
     platform/CatalogSourceService.mm
     platform/AppLocalization.mm
     platform/CatalogPresentation.mm
+    platform/BuiltinGames.mm
     platform/FlyNesCoverStore.mm
     platform/RomPackage.cpp
     audio/FlyNesAudioPlayer.mm
@@ -96,10 +97,20 @@ set(FLYNES_PRODUCT_METAL
     metal/shaders/ScaleFxPass4.metal
 )
 
-set(FLYNES_IOS_ROM_FIXTURE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../harmony/entry/src/main/resources/rawfile/from_below.nes")
-set(FLYNES_IOS_ROM_LICENSE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../harmony/entry/src/main/resources/rawfile/LICENSE-from-below.txt")
+# The bundled homebrew comes from the one shared content directory: the manifest
+# plus every ROM and licence text it declares. Nothing here names a game.
+set(FLYNES_CONTENT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../content/assets")
+file(GLOB FLYNES_IOS_BUNDLED_ROMS CONFIGURE_DEPENDS
+    "${FLYNES_CONTENT_ROOT}/roms/*.nes")
+file(GLOB FLYNES_IOS_BUNDLED_LICENSES CONFIGURE_DEPENDS
+    "${FLYNES_CONTENT_ROOT}/licenses/*.txt")
+set(FLYNES_IOS_BUNDLED_MANIFEST "${FLYNES_CONTENT_ROOT}/builtin-games.json")
+if(NOT EXISTS "${FLYNES_IOS_BUNDLED_MANIFEST}")
+    message(FATAL_ERROR "bundled content manifest is missing: ${FLYNES_IOS_BUNDLED_MANIFEST}")
+endif()
+if(FLYNES_IOS_BUNDLED_ROMS STREQUAL "")
+    message(FATAL_ERROR "no bundled ROMs found under ${FLYNES_CONTENT_ROOT}/roms")
+endif()
 
 add_executable(FlyNES MACOSX_BUNDLE
     ${FLYNES_PRODUCT_SWIFT}
@@ -109,11 +120,18 @@ add_executable(FlyNES MACOSX_BUNDLE
     metal/FALLBACK.md
     en.lproj/Localizable.strings
     zh-Hans.lproj/Localizable.strings
-    "${FLYNES_IOS_ROM_FIXTURE}"
-    "${FLYNES_IOS_ROM_LICENSE}"
+    "${FLYNES_IOS_BUNDLED_MANIFEST}"
+    ${FLYNES_IOS_BUNDLED_ROMS}
+    ${FLYNES_IOS_BUNDLED_LICENSES}
 )
 target_sources(FlyNES PRIVATE Assets.xcassets)
 set_source_files_properties(Assets.xcassets PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+set_source_files_properties(
+    "${FLYNES_IOS_BUNDLED_MANIFEST}"
+    ${FLYNES_IOS_BUNDLED_ROMS}
+    ${FLYNES_IOS_BUNDLED_LICENSES}
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
+)
 set_source_files_properties(
     en.lproj/Localizable.strings
     PROPERTIES MACOSX_PACKAGE_LOCATION Resources
@@ -275,7 +293,12 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
         XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@loader_path/Frameworks @executable_path/Frameworks ${_platform_developer}/Library/Frameworks")
-    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm ../tests/ProductImportUITests.mm)
+    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm ../tests/ProductImportUITests.mm
+        "${FLYNES_IOS_BUNDLED_MANIFEST}")
+    # The UI tests assert against the shared manifest instead of hardcoding a
+    # single bundled game, so the manifest travels in the test bundle too.
+    set_source_files_properties("${FLYNES_IOS_BUNDLED_MANIFEST}"
+        PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     add_dependencies(FlyNESUITests FlyNES)
     target_link_libraries(FlyNESUITests PRIVATE "${XCTest_LIBRARY}" "-framework Foundation" "-framework UIKit")
     set_target_properties(FlyNESUITests PROPERTIES

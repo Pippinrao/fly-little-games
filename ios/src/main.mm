@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 
+#import "BuiltinGames.h"
+
 #include "portability_smoke.hpp"
 
 #include <cstdio>
@@ -92,9 +94,17 @@ bool write_result_json(NSURL* documents_url, const flynes::ios::PortabilitySmoke
           [file_manager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
       NSURL* const cache_url =
           [file_manager URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject;
-      NSString* const rom_path = [NSBundle.mainBundle pathForResource:@"from_below" ofType:@"nes"];
-      NSString* const license_path =
-          [NSBundle.mainBundle pathForResource:@"LICENSE-from-below" ofType:@"txt"];
+      // The smoke exercises whichever game the manifest declares first, so it
+      // never has to name a bundled game itself.
+      FlyNesBuiltinGame* const bundled = FlyNesBuiltinGames.shared.all.firstObject;
+      NSString* const rom_resource = bundled == nil ? nil
+          : [FlyNesBuiltinGames resourceNameForAssetFilename:bundled.assetFilename];
+      NSString* const license_resource = bundled == nil || bundled.licenseFile.length == 0
+          ? nil : bundled.licenseFile.stringByDeletingPathExtension;
+      NSString* const rom_path = rom_resource == nil ? nil
+          : [NSBundle.mainBundle pathForResource:rom_resource ofType:@"nes"];
+      NSString* const license_path = license_resource == nil ? nil
+          : [NSBundle.mainBundle pathForResource:license_resource ofType:@"txt"];
 
       flynes::ios::PortabilitySmokeResult result;
       if (documents_url == nil || cache_url == nil)

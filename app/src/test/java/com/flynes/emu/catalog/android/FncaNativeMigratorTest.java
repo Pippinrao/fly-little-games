@@ -47,7 +47,7 @@ public final class FncaNativeMigratorTest {
         assertEquals(FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY, host.begins.get(1).scope);
         assertArrayEquals(map.builtinUuid(), host.begins.get(0).uuid);
         assertEquals("content://tree/roms", map.get(host.begins.get(1).uuid));
-        assertEquals("from_below.nes", host.files.get(0).relativePath);
+        assertEquals("thwaite.nes", host.files.get(0).relativePath);
         assertEquals("game.nes", host.files.get(1).relativePath);
         assertEquals(List.of("canonical-a"), host.favorites);
         assertEquals(List.of("canonical-a", "canonical-a"), host.plays);
@@ -94,12 +94,12 @@ public final class FncaNativeMigratorTest {
 
     private static CatalogState catalog() {
         RomSource builtin = new RomSource(
-                "builtin", RomSource.Type.BUILTIN, "asset:///roms/from_below.nes",
+                "builtin", RomSource.Type.BUILTIN, "asset:///roms/thwaite.nes",
                 RomSource.PermissionState.NOT_REQUIRED);
         RomSource tree = new RomSource(
                 "tree", RomSource.Type.SAF_TREE, "content://tree/roms",
                 RomSource.PermissionState.GRANTED);
-        PhysicalPackage builtinPkg = pkg(builtin, "builtin-pkg", "canonical-b", "from_below.nes", 'B');
+        PhysicalPackage builtinPkg = pkg(builtin, "builtin-pkg", "canonical-b", "thwaite.nes", 'B');
         PhysicalPackage treePkg = pkg(tree, "tree-pkg", "canonical-a", "game.nes", 'A');
         LinkedHashMap<String, SourceCatalogState> sources = new LinkedHashMap<>();
         sources.put("builtin", sourceState(builtin, builtinPkg));

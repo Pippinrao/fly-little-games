@@ -7,6 +7,7 @@
 #import "GamepadOverlayView.h"
 #import "AppLocalization.h"
 #import "CatalogPresentation.h"
+#import "BuiltinGames.h"
 #import "FlyNesCoverStore.h"
 #import "FlyNesMetalRenderer.h"
 #import "FlyNesDisplayLinkPacer.h"

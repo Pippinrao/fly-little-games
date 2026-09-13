@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "note": "Build lock for the bundled homebrew ROMs. Windows fetches and hash-verifies every source tarball; WSL (/mnt/e) extracts and builds it. Nothing here may be relaxed without an explicit, reviewed change.",
+  "toolchain": {
+    "wslDistro": "Ubuntu-24.04",
+    "cc65": "2.19-1",
+    "ca65VersionString": "ca65 V2.18 - Ubuntu 2.19-1",
+    "pythonPillow": "10.2.0",
+    "jre": "default-jre-headless",
+    "notes": "cc65 is pinned to the Ubuntu noble package 2.19-1 (this is the upstream 2.19 release that super_tilt_bro's deps script asks for). Its banner still reports 'V2.18', which is a long-standing quirk of the cc65 version string, so the pipeline verifies the dpkg version instead. Pillow is pinned to the module version reported by PIL.__version__.",
+    "millfork": {
+      "version": "0.3.12",
+      "url": "https://github.com/KarolS/millfork/releases/download/v0.3.12/millfork-0.3.12.zip",
+      "sha256": "3965910a6b6509f83ab9bc2036c97337c4ecdca44e006ccbc7b644b68426c719"
+    },
+    "gcc6502": {
+      "version": "v8.4.1-2",
+      "url": "https://github.com/sgadrat/gcc-6502-bits/releases/download/v8.4.1-2/gcc-6502.zip",
+      "sha256": "997e28a0151bdf9f66240c3952f7e794b44fb4c1db97139458ef279396d89380"
+    },
+    "xa65stb": {
+      "revision": "a75f76dc9aee5b892facecb0436725d368f41102",
+      "url": "https://codeload.github.com/sgadrat/xa65-stb/tar.gz/a75f76dc9aee5b892facecb0436725d368f41102",
+      "sha256": "37fe31d8d61c9532f04f44836df29a0f02de51a7aad30af4ade40e9df9f222f1"
+    },
+    "huffmunch": {
+      "revision": "dfc0804925f6a3a0309440ec5531e966ef8d7f2c",
+      "url": "https://codeload.github.com/bbbradsmith/huffmunch/tar.gz/dfc0804925f6a3a0309440ec5531e966ef8d7f2c",
+      "sha256": "46dfc6ec6f4357bfd5ba8ce1c124456e8ffb3e9d523b765b0b674edced0bb14b"
+    }
+  },
+  "sources": [
+    {
+      "canonicalId": "builtin:super-tilt-bro",
+      "upstreamRepo": "https://github.com/sgadrat/super-tilt-bro",
+      "sourceRevision": "b132fd25add46f816e04be64c434386743b84b8b",
+      "sourceTarballSha256": "7daddb9047aef1f74483d37d1ae5cf14fcd8dc654ef12d778b6da1503fd21ae3",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": ".",
+      "buildSteps": [
+        "./build.sh"
+      ],
+      "env": {
+        "SKIP_RESCUE_IMG": "2"
+      },
+      "outputRomPath": "tilt_no_network_unrom_(E).nes",
+      "assetFilename": "super_tilt_bro.nes",
+      "mapper": 2,
+      "romSha256": "6f80d56ce0b242a4faceafafea321feb1c364ab8e7937646e8580ae9289a4ec3",
+      "notes": "The upstream default ROM uses sgadrat's custom RAINBOW mapper, which no emulator implements. Only the UNROM no-network variant is emulator-usable, so that is what ships. SKIP_RESCUE_IMG=2 skips the Rainbow cartridge recovery partition; verified byte-identical to a full build and cuts the build from ~15 min to ~10 s."
+    },
+    {
+      "canonicalId": "builtin:twin-dragons",
+      "upstreamRepo": "https://github.com/Garydos/twin-dragons-nes",
+      "sourceRevision": "bcf27d0c5117a2aac19e6c33bdb3c776ada069fb",
+      "sourceTarballSha256": "4a011a580f42e2caad7aa911d023cb5e29a559b28764cb3f8aba2bf7f483eaf1",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": "src",
+      "buildSteps": [
+        "java -jar \"$MILLFORK_JAR\" main.mfk -i ./music -i ./levels -i ./enemies -o ../bin/twin_dragons -t nes_small_v -O1"
+      ],
+      "outputRomPath": "bin/twin_dragons.nes",
+      "assetFilename": "twin_dragons.nes",
+      "mapper": 0,
+      "romSha256": "dc03a714636b0fd0cf2246475073baba1fcc82ba9d4ac7e55cac5ea8804f0598",
+      "notes": "upstream make.bat hardcodes C:\\millfork-0.3.12\\millfork.exe; on Linux the same arguments are passed to the Millfork jar. Pin Millfork to 0.3.12: the README states the 32 KiB PRG space is completely full, so a newer compiler risks overflow."
+    },
+    {
+      "canonicalId": "builtin:rhde",
+      "upstreamRepo": "https://github.com/pinobatch/rhde-nes",
+      "sourceRevision": "376204907155d15bb13018e5f9b231c8511d5333",
+      "sourceTarballSha256": "ebe292ed40307ce6194fc871956fee31b5abc9a00b5a21d8ec75914bd35c74df",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": ".",
+      "usePty": true,
+      "buildSteps": [
+        "make all"
+      ],
+      "outputRomPath": "rhde.nes",
+      "assetFilename": "rhde.nes",
+      "mapper": 0,
+      "romSha256": "a6131a45fe5ec5f8e5778abfcd2031477231a023f30af8533c6d25acf8297a43",
+      "notes": "The default make target is 'run' (it launches fceux/Mesen), so the pipeline must ask for 'all'. tools/donut.py calls os.get_terminal_size(), which needs a controlling terminal, hence usePty."
+    },
+    {
+      "canonicalId": "builtin:zap-ruder",
+      "upstreamRepo": "https://github.com/pinobatch/zap-ruder",
+      "sourceRevision": "1b22babdf324fd1e840dfa26ffcc34c75f4e422f",
+      "sourceTarballSha256": "a632c47004e66c7dc32069b9e55150e8a9f847ea833309dab130bf0f60878f6f",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": ".",
+      "buildSteps": [
+        "make all"
+      ],
+      "outputRomPath": "ruder.nes",
+      "assetFilename": "zap_ruder.nes",
+      "mapper": 0,
+      "romSha256": "31811aef54bc433d0d8b9344e0d5ab6417d9f06d97b743abdddfc9b3cab719ff",
+      "notes": "makefile title=ruder, so the upstream ROM is ruder.nes; the bundled asset is renamed zap_ruder.nes to match its canonical id. The default make target is 'run'."
+    },
+    {
+      "canonicalId": "builtin:concentration-room",
+      "upstreamRepo": "https://github.com/pinobatch/croom-nes",
+      "sourceRevision": "ed19c3c07ca389b70cf2e0dd2ce0320df28d511d",
+      "sourceTarballSha256": "37c1f5dc90033b759a69fa1754b9dec9a1aa307eee8f2ed34dd15c5333a4d5c5",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": ".",
+      "buildSteps": [
+        "make all"
+      ],
+      "outputRomPath": "croom.nes",
+      "assetFilename": "concentration_room.nes",
+      "mapper": 0,
+      "romSha256": "3958bb569466b4f8894955b384f756681ecca1dc601d4ea373052371213f9061",
+      "hashPolicy": "artifact",
+      "notes": "makefile title=croom, so the upstream ROM is croom.nes; renamed to concentration_room.nes for the bundled asset. The default make target is 'run'. UNLIKE EVERY OTHER BUNDLED GAME, this upstream build is NOT byte-reproducible: tools/shuffle.py randomises the memory layout, and four clean builds with a fixed -r mode, a fixed --seed and PYTHONHASHSEED=0 still produced three different ROMs. hashPolicy=artifact therefore means: the shipped asset stays hash-pinned and verified, while a rebuild only has to prove that the pinned source still builds a valid ROM of the expected mapper and size."
+    },
+    {
+      "canonicalId": "builtin:thwaite",
+      "upstreamRepo": "https://github.com/pinobatch/thwaite-nes",
+      "sourceRevision": "00e36745188bc165990f60eed6b093c3ce6ad0e3",
+      "sourceTarballSha256": "73ac3f171c93080d50294b121e0b3f4306920bea496c3fab65a4ed35cc47d5f5",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": ".",
+      "buildSteps": [
+        "make all"
+      ],
+      "outputRomPath": "thwaite.nes",
+      "assetFilename": "thwaite.nes",
+      "mapper": 0,
+      "romSha256": "ee51cd9562f28195ba015d9857c6c4fc9bf67cdfb213e95f655e586b92195173",
+      "notes": "Builds thwaite.nes (NROM-256) and thwaite128.nes (NROM-128); the pipeline ships the 256 variant. This is the only bundled project that genuinely needs a C compiler (tools/dte.c -> tools/dte)."
+    },
+    {
+      "canonicalId": "builtin:dabg",
+      "upstreamRepo": "https://github.com/NovaSquirrel/DABG",
+      "sourceRevision": "5ecc60b6af3f726851bfeb1c2555388c5953e0c0",
+      "sourceTarballSha256": "86a25643a28fa5c084e26947fdc43da8bb81ff229019c1be7f37a18da102ed32",
+      "buildEnv": "wsl-ubuntu-24.04",
+      "buildWorkDir": ".",
+      "buildSteps": [
+        "ca65 dabg.s -o dabg.o -l dabg.lst",
+        "ld65 -C nrom256.x dabg.o -o dabg.nes"
+      ],
+      "outputRomPath": "dabg.nes",
+      "assetFilename": "dabg.nes",
+      "mapper": 0,
+      "romSha256": "eca79b9d0b546e96c1bc73099e239539fb9c7773ff10a431bb3a9cd6763208ca",
+      "notes": "upstream mk.bat is two ca65/ld65 lines with no absolute paths; translated verbatim. Built ROM is 32784 bytes, matching the upstream release asset."
+    }
+  ],
+  "acceptedHashChanges": [
+    {
+      "acceptedAt": "2026-09-13T05:38:44Z",
+      "reason": "initial pin of a newly bundled game",
+      "games": [
+        "builtin:concentration-room"
+      ]
+    }
+  ]
+}

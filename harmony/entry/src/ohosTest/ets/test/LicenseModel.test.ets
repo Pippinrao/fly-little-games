@@ -1,24 +1,23 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { LicenseModel } from '../../../main/ets/pages/LicenseModel';
+import { BuiltinGames } from '../../../main/ets/service/BuiltinGames';
 
 export default function licenseModelTest() {
   describe('LicenseModel', () => {
-    it('maps_known_license_files', 0, () => {
-      const nestopia = LicenseModel.byFileName('nestopiaue-gplv2.txt');
+    it('maps_known_component_license_files', 0, () => {
+      const none = BuiltinGames.empty();
+      const nestopia = LicenseModel.byFileName('nestopiaue-gplv2.txt', none);
       expect(nestopia !== undefined).assertTrue();
       expect(nestopia!.displayName).assertEqual('Nestopia UE (GPLv2)');
       expect(nestopia!.sourceUrl).assertEqual('https://github.com/0ldsk00l/nestopia');
       expect(nestopia!.hasSourceUrl()).assertTrue();
 
-      const own = LicenseModel.byFileName('own-gplv2.txt');
+      const own = LicenseModel.byFileName('own-gplv2.txt', none);
       expect(own !== undefined).assertTrue();
       expect(own!.hasSourceUrl()).assertFalse();
 
-      const zlib = LicenseModel.byFileName('zlib-license.txt');
+      const zlib = LicenseModel.byFileName('zlib-license.txt', none);
       expect(zlib!.sourceUrl).assertEqual('https://zlib.net');
-
-      const fromBelow = LicenseModel.byFileName('LICENSE-from-below.txt');
-      expect(fromBelow!.sourceUrl).assertEqual('https://mhughson.itch.io/from-below');
     });
 
     it('resolveBody_throws_when_asset_missing', 0, () => {
@@ -31,8 +30,8 @@ export default function licenseModelTest() {
       expect(threw).assertTrue();
     });
 
-    it('lists_four_entries', 0, () => {
-      expect(LicenseModel.all().length).assertEqual(4);
+    it('lists_only_the_component_entries_when_no_game_is_bundled', 0, () => {
+      expect(LicenseModel.all(BuiltinGames.empty()).length).assertEqual(3);
     });
   });
 }

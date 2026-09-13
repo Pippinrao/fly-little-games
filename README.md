@@ -1,6 +1,6 @@
 # FlyNES
 
-FlyNES 是面向 Android、HarmonyOS NEXT 和 iOS 的离线 NES/Famicom 模拟器。仓库包含共享模拟核心、跨平台目录与设置模型，以及各平台原生界面。应用内置一款取得 MIT 授权的 homebrew 游戏 *From Below*；用户自行导入的 ROM 不会上传到网络。
+FlyNES 是面向 Android、HarmonyOS NEXT 和 iOS 的离线 NES/Famicom 模拟器。仓库包含共享模拟核心、跨平台目录与设置模型，以及各平台原生界面。应用内置 **7 款许可明确的 homebrew 游戏**（清单见 `content/assets/builtin-games.json`，全部由 `content/sources.lock.json` 固定的上游 revision 从源码编译而来）；用户自行导入的 ROM 不会上传到网络。
 
 当前稳定范围包括中文游戏目录、来源扫描、收藏与最近游戏、独立存档、可编辑虚拟手柄，以及 Nearest、Sharp Bilinear、MMPX、ScaleFX、CRT 等显示路径。高刷新率和运动补偿只在设备能力与实测证据满足门禁时开放。
 

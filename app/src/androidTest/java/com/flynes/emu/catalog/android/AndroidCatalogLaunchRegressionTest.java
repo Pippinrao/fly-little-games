@@ -179,7 +179,10 @@ public final class AndroidCatalogLaunchRegressionTest {
                 List.of(new NativeSourceStatus(uuid, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY,
                         FlyCatalogCommands.SCAN_FULL, 1)),
                 Map.of(), 0, uuidMap, new AndroidPackageLocatorMap(),
-                AndroidDocumentLocators::documentUriFor);
+                AndroidDocumentLocators::documentUriFor,
+                // This projection only carries user-directory rows, so no bundled
+                // game needs a trusted title here.
+                com.flynes.emu.catalog.BuiltinGames.empty());
     }
 
     private static NativeCatalogEntry nativeEntry(byte[] uuid) {

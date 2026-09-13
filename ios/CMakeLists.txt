@@ -35,10 +35,12 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../shared"
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../core"
                  "${CMAKE_CURRENT_BINARY_DIR}/core")
 
-set(FLYNES_IOS_ROM_FIXTURE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/fixtures/from_below.nes")
-set(FLYNES_IOS_ROM_LICENSE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/fixtures/LICENSE-from-below.txt")
+# The portability smoke packages the same shared content as the product: the
+# manifest plus every ROM and licence it declares, with no per-game CMake entry.
+set(FLYNES_CONTENT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../content/assets")
+file(GLOB FLYNES_IOS_BUNDLED_ROMS CONFIGURE_DEPENDS "${FLYNES_CONTENT_ROOT}/roms/*.nes")
+file(GLOB FLYNES_IOS_BUNDLED_LICENSES CONFIGURE_DEPENDS "${FLYNES_CONTENT_ROOT}/licenses/*.txt")
+set(FLYNES_IOS_BUNDLED_MANIFEST "${FLYNES_CONTENT_ROOT}/builtin-games.json")
 
 add_executable(FlyNESPortabilitySmoke MACOSX_BUNDLE
     src/abi_layout.c
@@ -47,16 +49,20 @@ add_executable(FlyNESPortabilitySmoke MACOSX_BUNDLE
     src/main.mm
     src/portability_smoke.cpp
     src/portability_smoke.hpp
-    "${FLYNES_IOS_ROM_FIXTURE}"
-    "${FLYNES_IOS_ROM_LICENSE}"
+    app/platform/BuiltinGames.mm
+    "${FLYNES_IOS_BUNDLED_MANIFEST}"
+    ${FLYNES_IOS_BUNDLED_ROMS}
+    ${FLYNES_IOS_BUNDLED_LICENSES}
 )
 set_source_files_properties(
-    "${FLYNES_IOS_ROM_FIXTURE}"
-    "${FLYNES_IOS_ROM_LICENSE}"
+    "${FLYNES_IOS_BUNDLED_MANIFEST}"
+    ${FLYNES_IOS_BUNDLED_ROMS}
+    ${FLYNES_IOS_BUNDLED_LICENSES}
     PROPERTIES MACOSX_PACKAGE_LOCATION Resources
 )
 target_include_directories(FlyNESPortabilitySmoke PRIVATE
     src
+    app/platform
 )
 target_compile_features(FlyNESPortabilitySmoke PRIVATE cxx_std_17)
 target_compile_options(FlyNESPortabilitySmoke PRIVATE

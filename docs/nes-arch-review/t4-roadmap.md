@@ -91,18 +91,23 @@
   4. 电池存档不强求（见 Q9）。
 - **候选清单**（license 最终由 compliance t5 逐个清点）：
 
-  | ROM | 作者 | 类型 | license 线索 | 备注 |
+  > ⚠️ **下表已于 2026-09-13 作废**：表中的许可线索未经一手核实。实测复核结果见
+  > `docs/legal-nes-homebrew-preship-research.md`——From Below 上游仓库**没有 LICENSE 文件**，
+  > Shiru 全站**没有任何许可声明**（Lan Master / Lawn Mower 的 CC0 说法无依据），
+  > Streemerz 是两个权利人且无许可条款。实际内置清单以 `content/assets/builtin-games.json` 为准。
+
+  | ROM | 作者 | 类型 | license 线索（已作废，勿引用） | 备注 |
   |---|---|---|---|---|
-  | From Below | Matt Hughson | 下落消除 | MIT（GitHub mhughson） | 2020 年作品，开源明确，现代手感 |
-  | Super Sunny World | Matt Hughson | 平台 | MIT（GitHub） | 同源 license，便于统一清点 |
-  | Streemerz | Infinite NES Lives | 平台动作 | 开源（GitHub） | 需确认具体条款 |
-  | Lan Master | Shiru | 益智 | **CC0**（NESDev 论坛证实） | 再分发最干净 |
-  | Lawn Mower | Shiru | 竞速/收集 | **CC0** | 同上 |
+  | From Below | Matt Hughson | 下落消除 | 已作废：上游无 LICENSE 文件 | 2020 年作品，现代手感 |
+  | Super Sunny World | Matt Hughson | 平台 | 未核实 | 需逐个核实 |
+  | Streemerz | Infinite NES Lives | 平台动作 | 已作废：两个权利人、无许可条款 | 需确认具体条款 |
+  | Lan Master | Shiru | 益智 | 已作废：Shiru 无任何许可声明 | CC0 说法无依据 |
+  | Lawn Mower | Shiru | 竞速/收集 | 已作废：Shiru 无任何许可声明 | 同上 |
   | Alter Ego | Shiru（移植 RetroSouls） | 平台解谜 | 需单列确认 | 非 Shiru 原创，移植权属复杂 |
   | Blade Buster | HLC! | 竖屏射击 | freeware（需确认再分发） | 高表现力、验证高速滚动 |
   | Nomolos: Storming the Castle | Gradual Games | 平台 | 免费下载（需确认） | 较完整、较大 |
 
-- **推荐**：**以 CC0/MIT 的 4–6 个为默认**：From Below、Super Sunny World、Lan Master、Lawn Mower、（Streemerz 若 license 确认）。Alter Ego 和 Blade Buster 作为「license 若能谈妥」的加分项，绝不作为上架前置。**把 license 清点作为上架门禁之一，而不是事后补救。**
+- **推荐**（已作废，见上）：以 CC0/MIT 的 4–6 个为默认。实际做法是：只内置**一手许可原文可核实**的作品，并把许可清点作为上架门禁之一。
 
 #### Q9. 电池存档（SRAM）与即时存档的演示与优先级如何排？
 - **为什么重要**：两者独立。电池存档是「游戏本体体验」（更本质），即时存档是 QoL（更通用）。且**可内置的免费 homebrew 大多是无电池存档的街机式游戏**，找不到合适的 SRAM 演示载体。

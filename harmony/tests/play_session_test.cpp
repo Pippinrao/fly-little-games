@@ -100,7 +100,7 @@ void test_empty_rom_is_rejected()
 void test_step_publishes_complete_frame_pcm_and_port0_buttons()
 {
     const std::vector<std::uint8_t> rom = read_rom(FLYNES_HARMONY_RUNTIME_ROM_FIXTURE);
-    expect(!rom.empty(), "from_below.nes fixture is readable");
+    expect(!rom.empty(), "thwaite.nes fixture is readable");
     if (rom.empty())
     {
         return;
@@ -133,7 +133,7 @@ void test_step_publishes_complete_frame_pcm_and_port0_buttons()
 void test_checkpoint_restores_pixels_after_later_frames()
 {
     const std::vector<std::uint8_t> rom = read_rom(FLYNES_HARMONY_RUNTIME_ROM_FIXTURE);
-    expect(!rom.empty(), "from_below.nes fixture is readable");
+    expect(!rom.empty(), "thwaite.nes fixture is readable");
     if (rom.empty())
     {
         return;
