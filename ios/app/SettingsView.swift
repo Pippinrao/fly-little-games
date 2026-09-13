@@ -152,6 +152,15 @@ struct SettingsView: View {
         Text("settings.licenses")
             .font(.caption)
             .foregroundStyle(.secondary)
+        // 好友管理 is a row inside the existing Settings page that opens a page
+        // of its own — never a sixth settings root (spec §10 D2). It stays
+        // enabled because entering the page is real local navigation and the
+        // page is where the blocked friend-store keys are displayed (spec §4).
+        NavigationLink {
+            NearbyFriendsManageView()
+        } label: {
+            Text("nearby.friends.manage")
+        }
     }
 
     private func load() {

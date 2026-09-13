@@ -587,6 +587,358 @@
     {
       "name": "permission_vibrate",
       "value": "Vibrate for button feedback"
+    },
+    {
+      "name": "nearby_title",
+      "value": "Nearby multiplayer"
+    },
+    {
+      "name": "nearby_tab_friends",
+      "value": "Friends"
+    },
+    {
+      "name": "nearby_tab_devices",
+      "value": "Nearby devices"
+    },
+    {
+      "name": "nearby_friends_empty",
+      "value": "No saved friends yet."
+    },
+    {
+      "name": "nearby_blocked_friend_store",
+      "value": "Friend storage is not available in this build."
+    },
+    {
+      "name": "nearby_devices_empty",
+      "value": "No nearby devices yet."
+    },
+    {
+      "name": "nearby_find_devices",
+      "value": "Find devices"
+    },
+    {
+      "name": "nearby_scan_host_qr",
+      "value": "Scan host QR code"
+    },
+    {
+      "name": "nearby_blocked_discovery",
+      "value": "Device discovery is not available in this build."
+    },
+    {
+      "name": "nearby_stage_permission",
+      "value": "Permission"
+    },
+    {
+      "name": "nearby_stage_permission_reason",
+      "value": "Nearby permissions are not granted yet."
+    },
+    {
+      "name": "nearby_stage_discovery",
+      "value": "Discovery"
+    },
+    {
+      "name": "nearby_stage_discovery_reason",
+      "value": "Device discovery is not available in this build."
+    },
+    {
+      "name": "nearby_stage_auth",
+      "value": "Authentication"
+    },
+    {
+      "name": "nearby_stage_wifi",
+      "value": "Wi-Fi"
+    },
+    {
+      "name": "nearby_stage_quic",
+      "value": "QUIC"
+    },
+    {
+      "name": "nearby_stage_version",
+      "value": "Version"
+    },
+    {
+      "name": "nearby_stage_codec",
+      "value": "Codec"
+    },
+    {
+      "name": "nearby_stage_status_passed",
+      "value": "Passed"
+    },
+    {
+      "name": "nearby_stage_status_current",
+      "value": "Current stage"
+    },
+    {
+      "name": "nearby_stage_status_not_reached",
+      "value": "Not yet reached"
+    },
+    {
+      "name": "nearby_stage_auth_reason",
+      "value": "Device authentication is not connected to the session yet."
+    },
+    {
+      "name": "nearby_stage_wifi_reason",
+      "value": "No Wi-Fi path has been selected or confirmed yet."
+    },
+    {
+      "name": "nearby_stage_quic_reason",
+      "value": "The production QUIC channel is not connected to the session yet."
+    },
+    {
+      "name": "nearby_stage_version_reason",
+      "value": "Version negotiation needs a live session, which this build does not have yet."
+    },
+    {
+      "name": "nearby_stage_codec_reason",
+      "value": "Codec capability exchange needs a live session, which this build does not have yet."
+    },
+    {
+      "name": "nearby_open",
+      "value": "Nearby"
+    },
+    {
+      "name": "nearby_pairing_title",
+      "value": "Pairing"
+    },
+    {
+      "name": "nearby_lobby_title",
+      "value": "Lobby"
+    },
+    {
+      "name": "nearby_join_request_anonymous",
+      "value": "Request to join without an account"
+    },
+    {
+      "name": "nearby_join_accept",
+      "value": "Accept"
+    },
+    {
+      "name": "nearby_join_reject",
+      "value": "Reject"
+    },
+    {
+      "name": "nearby_code_label",
+      "value": "6-digit join code"
+    },
+    {
+      "name": "nearby_code_confirm",
+      "value": "Confirm code"
+    },
+    {
+      "name": "nearby_wifi_path_building",
+      "value": "Building the Wi-Fi path"
+    },
+    {
+      "name": "nearby_wifi_system_confirm_once",
+      "value": "Confirm the system Wi-Fi prompt once"
+    },
+    {
+      "name": "nearby_friends_section",
+      "value": "Saved friends"
+    },
+    {
+      "name": "nearby_friends_manage",
+      "value": "Manage friends"
+    },
+    {
+      "name": "nearby_friends_saved_after_auth",
+      "value": "A friend is saved only after authentication succeeds."
+    },
+    {
+      "name": "nearby_friends_rename",
+      "value": "Rename"
+    },
+    {
+      "name": "nearby_friends_delete",
+      "value": "Delete"
+    },
+    {
+      "name": "nearby_friends_block",
+      "value": "Block"
+    },
+    {
+      "name": "nearby_friends_identity_reset",
+      "value": "Reset this device identity"
+    },
+    {
+      "name": "nearby_blocked_permissions",
+      "value": "Unavailable: this build declares no nearby permission, so pairing cannot start."
+    },
+    {
+      "name": "nearby_blocked_auth",
+      "value": "Unavailable: device authentication is not connected to the session yet."
+    },
+    {
+      "name": "nearby_blocked_wifi",
+      "value": "Unavailable: no Wi-Fi path has been selected or confirmed yet."
+    },
+    {
+      "name": "nearby_blocked_quic",
+      "value": "Unavailable: the production QUIC channel is not connected to the session yet."
+    },
+    {
+      "name": "nearby_blocked_version",
+      "value": "Unavailable: version negotiation needs a live session."
+    },
+    {
+      "name": "nearby_blocked_codec",
+      "value": "Unavailable: codec capability exchange needs a live session."
+    },
+    {
+      "name": "nearby_blocked_rom_transfer",
+      "value": "Unavailable: ROM identity and transfer are not exposed by the session yet."
+    },
+    {
+      "name": "nearby_blocked_profile_verify",
+      "value": "Unavailable: MultiplayerProfile verification is not exposed by the session yet."
+    },
+    {
+      "name": "nearby_blocked_mode_gate",
+      "value": "Unavailable: DUAL / STREAM mode values are not defined by the session yet."
+    },
+    {
+      "name": "nearby_blocked_connection_quality",
+      "value": "Unavailable: connection quality is not reported by the session yet."
+    },
+    {
+      "name": "nearby_blocked_authority_recovery",
+      "value": "Unavailable: authority recovery is not connected to the session yet."
+    },
+    {
+      "name": "nearby_blocked_branch_merge",
+      "value": "Unavailable: branch identity and reunion are not in the session yet."
+    },
+    {
+      "name": "nearby_blocked_local_mute",
+      "value": "Unavailable: per-end mute is not exposed by the session yet."
+    },
+    {
+      "name": "nearby_blocked_session_read",
+      "value": "Unavailable: this session value is not exposed to this end yet."
+    },
+    {
+      "name": "nearby_lobby_friend_name",
+      "value": "Friend nickname"
+    },
+    {
+      "name": "nearby_lobby_identity_fingerprint",
+      "value": "Identity fingerprint short code"
+    },
+    {
+      "name": "nearby_lobby_authority_capability",
+      "value": "Candidate authority capability"
+    },
+    {
+      "name": "nearby_lobby_resource_risk",
+      "value": "Resource risk"
+    },
+    {
+      "name": "nearby_lobby_network_owner",
+      "value": "Current network owner"
+    },
+    {
+      "name": "nearby_lobby_seat",
+      "value": "Seat (P1 / P2)"
+    },
+    {
+      "name": "nearby_lobby_rom_identity",
+      "value": "ROM identity"
+    },
+    {
+      "name": "nearby_lobby_rom_local_state",
+      "value": "Whether each end already has the ROM"
+    },
+    {
+      "name": "nearby_lobby_rom_transfer_confirm",
+      "value": "Transfer confirmation"
+    },
+    {
+      "name": "nearby_lobby_rom_transfer_progress",
+      "value": "Transfer progress"
+    },
+    {
+      "name": "nearby_lobby_profile_verified",
+      "value": "MultiplayerProfile verified"
+    },
+    {
+      "name": "nearby_lobby_mode_expected",
+      "value": "Expected mode (DUAL / STREAM)"
+    },
+    {
+      "name": "nearby_lobby_local_audio",
+      "value": "Local audio on each end"
+    },
+    {
+      "name": "nearby_lobby_confirm",
+      "value": "Confirm to join"
+    },
+    {
+      "name": "nearby_lobby_confirm_invalidated",
+      "value": "Confirmation is invalid because the authority or seat changed."
+    },
+    {
+      "name": "nearby_ingame_mode",
+      "value": "Current mode"
+    },
+    {
+      "name": "nearby_ingame_connection_quality",
+      "value": "Connection quality"
+    },
+    {
+      "name": "nearby_ingame_seat",
+      "value": "Seat (P1 / P2)"
+    },
+    {
+      "name": "nearby_ingame_pause_state",
+      "value": "Pause / reconnect state"
+    },
+    {
+      "name": "nearby_ingame_frozen",
+      "value": "Frozen"
+    },
+    {
+      "name": "nearby_ingame_frozen_reason",
+      "value": "The session is frozen until the connection decision is made."
+    },
+    {
+      "name": "nearby_ingame_reconnect_countdown",
+      "value": "Reconnect countdown"
+    },
+    {
+      "name": "nearby_ingame_reconnect_countdown_reason",
+      "value": "Reconnecting; the remaining seconds are not exposed to this end yet."
+    },
+    {
+      "name": "nearby_ingame_authority_timeout",
+      "value": "Authority timeout"
+    },
+    {
+      "name": "nearby_ingame_takeover",
+      "value": "Take over"
+    },
+    {
+      "name": "nearby_ingame_continue_solo",
+      "value": "Continue single-player"
+    },
+    {
+      "name": "nearby_ingame_save_and_end",
+      "value": "Save and end"
+    },
+    {
+      "name": "nearby_ingame_option_unavailable_reason",
+      "value": "Unavailable: the session does not report why this option is closed yet."
+    },
+    {
+      "name": "nearby_ingame_branch_reunion",
+      "value": "Branch reunion"
+    },
+    {
+      "name": "nearby_ingame_branch_no_auto_merge",
+      "value": "Branches from the two ends are never merged automatically."
+    },
+    {
+      "name": "nearby_ingame_local_mute",
+      "value": "Mute only on this end"
     }
   ]
 }

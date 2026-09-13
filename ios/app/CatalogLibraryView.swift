@@ -3,6 +3,7 @@ import SwiftUI
 enum LibraryRoute: Hashable {
     case detail(CatalogGame)
     case run(String)
+    case nearby
 }
 
 enum LibraryFilter: String, CaseIterable, Identifiable {
@@ -78,6 +79,11 @@ struct CatalogLibraryView: View {
                     } label: {
                         Text("settings.title")
                     }
+                    NavigationLink {
+                        NearbyFriendsView()
+                    } label: {
+                        Text("nearby.title")
+                    }
                 }
             }
             .navigationDestination(for: LibraryRoute.self) { route in
@@ -86,6 +92,8 @@ struct CatalogLibraryView: View {
                     CatalogGameDetailView(game: game)
                 case .run(let canonicalId):
                     RunGameContainer(canonicalId: canonicalId, path: $path)
+                case .nearby:
+                    NearbyFriendsView()
                 }
             }
             .onAppear(perform: reloadSnapshot)

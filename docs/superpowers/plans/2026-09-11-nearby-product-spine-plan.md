@@ -206,3 +206,30 @@ Acceptance per platform: that platform's build command succeeds and the new page
 - No merge, no push, no force-clean. Preserve `harmony/build-profile.json5`, `harmony/entry/oh-package-lock.json5`, `harmony/.clang-tidy`, `harmony/.clangd` and `docs/acceptance/2026-09-09-nearby-device-audit.md` exactly as found.
 - Do not weaken the approved design; ABI conflicts go back to §30 review instead of being frozen unilaterally.
 - Do not advertise 三端联机首版 while M5 is unpassed.
+
+## A1 — three-platform product-UI spine — implemented 2026-09-13
+
+Delivered A1a (Android), A1b (HarmonyOS) and A1c (iOS) against `2026-09-11-nearby-ui-spine-slice-spec.md`, plus the A1-8 i18n set. The approved design and its normalized blob are untouched. Nothing here is a live session value: every page renders the exact stage or blocked reason that is missing, with no fake friend, peer, session or connection.
+
+Deliverables. Android: `NearbyFriendsActivity`/`NearbyPairingActivity`/`NearbyLobbyActivity`/`NearbyFriendsManageActivity`, the shared `NearbyStagePipeline` renderer and `view_nearby_stage_pipeline` include, `NearbyInGameStatus` (drawer rows + D6 banner), the game-center entry, the Settings 好友管理 row (D2) and the manifest registrations. Harmony: `NearbyService.ets` (pure decision logic + `nearbyString` resolution), `NearbyFriends`/`NearbyPairing`/`NearbyLobby`/`NearbyFriendsManage` pages, `pauseDrawer` status block and run-surface banner in `RunGame.ets`, Settings row, `main_pages.json` registration. iOS: `NearbyFriends`/`NearbyPairing`/`NearbyLobby`/`NearbyFriendsManage` SwiftUI views, route + toolbar + `navigationDestination` wiring, `CMakeLists.txt` registration, pause-drawer rows and the banner in `RunSurfaceViewController.mm`, Settings row. All six locale files carry the full §2 vocabulary.
+
+Two vocabulary additions beyond §2, both page titles, recorded here because they are the only ids not in the spec's tables: `nearby.pairing.title` and `nearby.lobby.title`. Rationale: a sub-page titled with the feature's own name is a hierarchy defect, and the 附近设备 tab needs a label for the one navigate-only entry §4 permits. The anonymous-join control set (D4/§4 line 188) is deliberately **not** built, and 大厅 deliberately has no navigate-only entry, because §4 permits that exception only into 好友/附近设备 and 配对.
+
+Evidence from this session (commands actually run, newest last):
+
+| Check | Command | Result |
+|---|---|---|
+| Shared host CTest | `cmake --build .artifacts\nearby-host --config Release` + `ctest -C Release` | **46/46 passed**, 15.32 s |
+| Harmony host CTest | same, `.artifacts\nearby-harmony-host`, `--config Debug --parallel 1` | **12/12 passed**; Debug is required because two suites use bare `assert`, which Release strips via `NDEBUG` |
+| Android unit tests | `gradlew :app:testDebugUnitTest` | **427 tests, 0 failures, 0 errors** |
+| Android nearby UI, emulator | `gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=…Nearby*` (UTP, emulator-5554) | **19/19 passed** |
+| Android full e2e, emulator | `gradlew :app:connectedDebugAndroidTest -P…notClass=…MotionComputeParityTest,…MotionShadowPresenterTest,…GlCapabilityProbeInstrumentedTest` | **113 run, 111 passed, 2 failed** — both fail inside their own `getUiAutomation()` setup step, see below |
+| Harmony package | `hvigorw assembleHap -p product=default -p module=entry@default -p buildMode=debug` | exit 0, `entry-default-signed.hap` |
+| Harmony Hypium, emulator | `hdc … aa test -b com.flynes.emu -m entry_test -s unittest OpenHarmonyTestRunner` | **31/31 passed** |
+| Versioning regression | `Invoke-Pester tools\versioning\tests\Versioning.Tests.ps1` | **5/5 passed** |
+
+Explicitly **not** verified: iOS compiles nothing on this machine (no Xcode, no Apple SDK, no generated project). A1c evidence is static only — file registration, route wiring, key-count parity (94 nearby keys in each locale, key sets identical) and a syntax review. The iOS binary, the Harmony page rendering beyond the Hypium-covered service logic, and any human walkthrough of the pages remain unverified.
+
+The two Android e2e failures are pre-existing and independent of this slice. `SettingsMasterDetailTest.twoHundredPercentFontKeepsMasterTargetsVisible` and `FirstRunNavigationTest.largeFontKeepsStatusCardAndCtaFullyVisible` both call `shell("settings put system font_scale …")` as their **first** statement, and that call throws `IllegalStateException: Not connected!` / `…already registered!` from `UiAutomation`, so neither test ever reaches a layout assertion; the run then dies at teardown with `Cannot call disconnect() while connecting UiAutomation`. The three excluded classes need EGL/GL, which this emulator does not provide (`EGL_CONTEXT_UNAVAILABLE`). Emulator animations must be off (`window_animation_scale` etc. = 0) or the haptic RecyclerView scroll assertion fails on its own.
+
+Version alignment. The worktree was on `1.0.4` while the mainline is `1.1.4`, and Harmony was still at `1.0.0` inside that same worktree. Root cause: this branch's `tools/versioning/Versioning.ps1` predates mainline `abcde1b`, whose Harmony regex tolerates the trailing comma plus CRLF that `harmony/AppScope/app.json5` actually has — so `Sync-Version.ps1` matched Android and silently skipped Harmony. `VERSION` is now `1.1.4`, all three platform metadata sets are synchronized, and `abcde1b`'s fix plus its Pester regression test are ported so every later commit here keeps them in step. This was a targeted port of one mainline commit, not a merge: the branch is still 15 commits behind mainline.

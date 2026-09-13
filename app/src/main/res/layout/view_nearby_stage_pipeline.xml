@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The §2.1 pairing pipeline as one reusable element, included by every page that has to explain why
+  pairing cannot proceed (好友/附近设备 and 配对). It is a separate element from a capability row:
+  a capability row names the stage that blocks it plus the disabled control's own blocked reason,
+  while this list renders all seven stages in pipeline order with exactly one marked.
+
+  Nothing here holds per-row status. NearbyStagePipeline.render() computes every row's icon, name
+  colour, accessibility label and reason visibility from the single first-failing-stage index, so the
+  four can never disagree, and the status keys stay mandatory rather than decorative: the row's
+  contentDescription is "stage name, status", which is what a screen reader announces
+  (`color-not-only` forbids encoding state as colour alone). The icon and the name view are excluded
+  from the accessibility tree for that reason — the row is one stop, not three.
+
+  The include site owns the top margin, so this file starts at the first row with no margin of its own.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nearby_stage_pipeline" android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical">
+    <LinearLayout android:id="@+id/nearby_stage_permission_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_permission_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_permission_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_permission" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_permission_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_permission_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nearby_stage_discovery_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_discovery_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_discovery_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_discovery" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_discovery_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_discovery_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nearby_stage_auth_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_auth_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_auth_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_auth" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_auth_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_auth_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nearby_stage_wifi_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_wifi_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_wifi_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_wifi" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_wifi_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_wifi_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nearby_stage_quic_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_quic_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_quic_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_quic" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_quic_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_quic_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nearby_stage_version_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_version_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_version_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_version" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_version_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_version_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nearby_stage_codec_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3" android:baselineAligned="false" android:importantForAccessibility="yes" android:orientation="horizontal">
+        <ImageView android:id="@+id/nearby_stage_codec_status" android:layout_width="@dimen/fly_icon_medium" android:layout_height="@dimen/fly_icon_medium" android:contentDescription="@null" android:importantForAccessibility="no" android:src="@drawable/ic_stage_not_reached" app:tint="@color/fly_outline" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/nearby_stage_codec_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:importantForAccessibility="no" android:text="@string/nearby_stage_codec" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_stage_codec_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_stage_codec_reason" android:textColor="@color/fly_error" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

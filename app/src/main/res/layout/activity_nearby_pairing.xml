@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  配对 — the page a user reaches when they are pairing with a device they already found.
+
+  Only the two entry paths the approved design names are laid out here: the six-digit code that
+  accompanies BLE discovery, and the Wi-Fi direct path that the session will build once discovery
+  and authentication have succeeded. Each is shown in full with the exact reason it cannot act yet,
+  because a stage that is missing from the page is a stage the user cannot be told about.
+
+  Deliberately absent: an anonymous join request with accept / reject controls. Design §22.2 names
+  an anonymous join request only for the QR path and a six-digit code only for the BLE path, so a
+  generic request / accept / reject control set is not required by the approved design and its
+  building is pending centralised §30 review (spec §4). The i18n keys for it exist; the control set
+  does not, and it must not be added here without that review.
+
+  The stage pipeline at the bottom is the shared element, identical to the one on 好友/附近设备
+  (see view_nearby_stage_pipeline.xml). It renders all seven stages in §2.1 order with exactly one
+  marked, so this page and that page can never disagree about which stage is current.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nearby_pairing_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/fly_background" android:orientation="vertical">
+    <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_pairing_toolbar"
+        android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
+        android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
+        app:title="@string/nearby_pairing_title" app:titleTextColor="@color/fly_on_surface" />
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
+            <TextView android:id="@+id/nearby_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_code_label" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+            <TextView android:id="@+id/nearby_code_confirm_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_auth" android:textColor="@color/fly_error" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_code_confirm" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:enabled="false" android:text="@string/nearby_code_confirm" />
+            <TextView android:id="@+id/nearby_wifi_path_building" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" android:text="@string/nearby_wifi_path_building" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+            <TextView android:id="@+id/nearby_wifi_system_confirm_once" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_wifi_system_confirm_once" android:textColor="@color/fly_on_surface_muted" />
+            <TextView android:id="@+id/nearby_wifi_blocked" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:text="@string/nearby_blocked_wifi" android:textColor="@color/fly_error" />
+            <include layout="@layout/view_nearby_stage_pipeline" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

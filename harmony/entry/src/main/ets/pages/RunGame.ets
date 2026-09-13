@@ -9,6 +9,15 @@ import { PlayService, rememberRomOpenError, RomLaunchLocator } from '../service/
 import { CoverStore } from '../service/CoverStore';
 import { parsePauseTitle } from './PauseParams';
 import { computeViewport, ViewportSize } from './ViewportGeometry';
+import {
+  NearbyActionOption,
+  NearbyBanner,
+  NearbyInGameRow,
+  nearbyAuthorityTimeoutOptions,
+  nearbyInGameBanner,
+  nearbyInGameRows,
+  nearbyString
+} from '../service/NearbyService';
 
 const DIRECTION_FIXED_JOYSTICK = 1;
 const DEFAULT_DEAD_ZONE = 0.18;
@@ -206,6 +215,13 @@ struct RunGame {
         .hitTestBehavior(HitTestMode.Transparent)
       }
 
+      // D6/D7: only a live session with an action-demanding state pins a banner to
+      // the top of the run surface. It is not a modal and cannot be dismissed while
+      // the state persists, so a frozen end never has to hunt through the drawer.
+      if (nearbyInGameBanner(this.nearbySessionExists(), this.nearbyUiState()) !== undefined) {
+        this.nearbyBanner()
+      }
+
       if (this.drawerOpen) {
         this.pauseDrawer()
       }
@@ -255,6 +271,12 @@ struct RunGame {
               this.handlePauseCommand(id);
             })
         }, (id: string) => id)
+        // In-game nearby status block (design §22.4). It lives in the existing
+        // pause drawer, not a persistent HUD (D6), and renders nothing at all
+        // while there is no session (D7).
+        if (this.nearbySessionExists()) {
+          this.nearbyStatusBlock()
+        }
       }
       .width(320)
       .height('100%')
@@ -272,6 +294,113 @@ struct RunGame {
     }
     .width('100%')
     .height('100%')
+  }
+
+  // D6: the non-dismissible banner. 冻结 / 重连倒计时 / authority 超时 are the states
+  // that demand user action; nothing dismisses this row while the state persists.
+  @Builder
+  nearbyBanner() {
+    Column({ space: 8 }) {
+      Text(nearbyString(this.bannerLabel()))
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#F4EFE6')
+        .width('100%')
+      Text(nearbyString(this.bannerReason()))
+        .fontSize(13)
+        .fontColor('#FF6B5E')
+        .width('100%')
+      // 接管 / 继续单人 / 保存结束. The reason is a table string chosen by the
+      // session's reason-enum kind, never wire text (D9). This build has no
+      // session surface, so the options are present and disabled with a reason.
+      if (this.bannerHasActions()) {
+        ForEach(nearbyAuthorityTimeoutOptions(), (option: NearbyActionOption) => {
+          Column({ space: 4 }) {
+            Button(nearbyString(option.label))
+              .width('100%')
+              .height(48)
+              .fontSize(16)
+              .enabled(false)
+            Text(nearbyString(option.reason))
+              .fontSize(12)
+              .fontColor('#A8B0BD')
+              .width('100%')
+          }
+          .width('100%')
+        }, (option: NearbyActionOption) => option.label)
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .margin({ top: 8 + this.getUIContext().px2vp(this.insetT), left: 8, right: 8 })
+    .backgroundColor('#E61B1D22')
+    .border({ width: 1, color: '#FF6B5E' })
+    .borderRadius(12)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // Every §22.4 field is a row label plus the reason its value cannot be read yet.
+  // D10: 明确不会自动合并 is an always-known invariant, so it renders with no blocked
+  // key and the two-branch visualisation stays deferred.
+  @Builder
+  nearbyStatusBlock() {
+    Column({ space: 8 }) {
+      ForEach(nearbyInGameRows(), (row: NearbyInGameRow) => {
+        Column({ space: 2 }) {
+          Text(nearbyString(row.label))
+            .fontSize(16)
+            .fontColor('#F4EFE6')
+            .width('100%')
+          if (row.blocked.length > 0) {
+            Text(nearbyString(row.blocked))
+              .fontSize(13)
+              .fontColor('#A8B0BD')
+              .width('100%')
+          }
+        }
+        .width('100%')
+      }, (row: NearbyInGameRow) => row.label)
+    }
+    .width('100%')
+    .padding({ top: 8 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  private bannerState(): NearbyBanner | undefined {
+    return nearbyInGameBanner(this.nearbySessionExists(), this.nearbyUiState());
+  }
+
+  private bannerLabel(): string {
+    const banner = this.bannerState();
+    return banner === undefined ? '' : banner.label;
+  }
+
+  private bannerReason(): string {
+    const banner = this.bannerState();
+    return banner === undefined ? '' : banner.reason;
+  }
+
+  private bannerHasActions(): boolean {
+    const banner = this.bannerState();
+    return banner === undefined ? false : banner.actions;
+  }
+
+  /**
+   * D7: with no session there is no nearby block and no banner. The session surface
+   * is not wired into the Harmony binding yet (§3), so this is false today and the
+   * local single-player surface stays exactly as it was.
+   */
+  private nearbySessionExists(): boolean {
+    return false;
+  }
+
+  /**
+   * `fly_session_snapshot.ui_state`. The only defined value is
+   * `FLY_SESSION_UI_UNSPECIFIED` (0), so no action-demanding state is known and no
+   * banner is pinned until the session surface lands.
+   */
+  private nearbyUiState(): number {
+    return 0;
   }
 
   private async start(context: common.UIAbilityContext): Promise<void> {

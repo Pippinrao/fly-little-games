@@ -170,6 +170,8 @@ public final class HomeActivity extends AppCompatActivity {
         findViewById(R.id.close_sources).setOnClickListener(view -> showSources(false));
         findViewById(R.id.open_settings).setOnClickListener(
                 view -> startActivity(new Intent(this, SettingsActivity.class)));
+        findViewById(R.id.open_nearby).setOnClickListener(
+                view -> startActivity(new Intent(this, NearbyFriendsActivity.class)));
         findViewById(R.id.add_source).setOnClickListener(view -> chooseSource());
         launch.setOnClickListener(view -> launchSelected());
         favoriteToggle.setOnClickListener(view -> toggleFavorite());

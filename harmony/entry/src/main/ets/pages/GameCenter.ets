@@ -226,6 +226,13 @@ struct GameCenter {
       .onClick(() => {
         void router.pushUrl({ url: 'pages/Settings' });
       })
+    // 附近联机 entry: real local navigation into the friends/nearby-devices page.
+    Button($r('app.string.nearby_title'))
+      .height(this.compactHeader ? 56 : 48)
+      .fontSize(16)
+      .onClick(() => {
+        void router.pushUrl({ url: 'pages/NearbyFriends' });
+      })
   }
 
   private openSearch(): void {
