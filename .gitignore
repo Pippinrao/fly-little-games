@@ -46,6 +46,10 @@ cmake_install.cmake
 /harmony/entry/src/main/resources/rawfile/zap_ruder.txt
 /core/tests/fixtures/*.nes
 
+# Local-only developer tools that operate on private ROM collections. They never
+# ship and never run in CI; see ios/scripts/local/README.md.
+/ios/scripts/local/
+
 # OS
 .DS_Store
 Thumbs.db

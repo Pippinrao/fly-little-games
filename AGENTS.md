@@ -2,6 +2,28 @@
 
 These instructions apply to the whole repository.
 
+## What this repository is
+
+FlyNES is an offline NES/Famicom emulator for **Android, HarmonyOS NEXT, and
+iOS**: one shared C++ core (NestopiaUE) plus a shared product layer, with a
+native UI per platform. It bundles seven licensed homebrew games declared once in
+`content/assets/builtin-games.json`; users import their own ROMs.
+
+Layout: `core/` (platform-free emulation + `nes_*` ABI), `shared/`
+(cross-platform product layer + `fly_*` app ABI), `app/` Android, `harmony/`
+HarmonyOS, `ios/` iOS, `content/` bundled-game source of truth,
+`tools/content|versioning|quality/`, `docs/`.
+
+**Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before platform work.** It
+holds the per-platform build, test, and debug commands, the toolchain versions,
+the traps that have already cost this repo time, and the invariants the gates
+enforce (no product source may name a bundled game; no platform may keep its own
+ROM copy; the retired bundled game must stay deleted, binary assets included).
+
+Local-only helper scripts that operate on a private ROM collection live in
+`ios/scripts/local/` and are git-ignored on purpose: never commit them, and
+never move their inputs into `content/`.
+
 ## Preserve local state
 
 - Keep unrelated user changes and untracked evidence. Never clean, reset, stash, move, or delete another worktree's files.
