@@ -11,6 +11,7 @@
 #include <flynes/flynes_session.h>
 
 #include "session_initial_plan.hpp"
+#include "session_invite_code.hpp"
 #include "wire/session_codec.hpp"
 #include "wire/sha256.hpp"
 
@@ -27,6 +28,9 @@ using flynes::session::PairRole;
 using flynes::session::PlanHash;
 using flynes::session::VerifiedPairEvidence;
 using flynes::session::VerifiedPlanEvidence;
+using flynes::session::InviteCodeDigits;
+using flynes::session::InviteJoinPhase;
+using flynes::session::InviteLookupStatus;
 namespace wire = flynes::session::wire;
 
 namespace {
@@ -396,11 +400,122 @@ void submit_event_stays_fail_closed()
     fly_session_destroy(session);
 }
 
+// --- 2026-09-13 invite-code amendment: public path ---------------------------
+
+void invite_route_snapshot_contract()
+{
+    fly_session_t* session = create_session();
+
+    fly_session_invite_snapshot_v1 snapshot{};
+    snapshot.struct_size = 4u;
+    snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+    check(fly_session_get_invite_snapshot(session, &snapshot) == FLY_RESULT_STRUCT_TOO_SMALL,
+          "invite snapshot rejects a too-small struct");
+
+    snapshot.struct_size = FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE;
+    snapshot.version = 0u;
+    check(fly_session_get_invite_snapshot(session, &snapshot) == FLY_RESULT_UNSUPPORTED_VERSION,
+          "invite snapshot rejects a wrong version");
+
+    snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+    check(fly_session_get_invite_snapshot(session, &snapshot) == FLY_RESULT_OK,
+          "invite snapshot reads on a fresh session");
+    check(snapshot.join_phase == 0u && snapshot.host_phase == 0u
+              && snapshot.join_attempt_id == 0u && snapshot.host_generation == 0u,
+          "fresh session has no route state");
+    fly_session_destroy(session);
+}
+
+void invite_route_poll_complete_round_trip()
+{
+    fly_session_t* session = create_session();
+    fly_session_invite_snapshot_v1 snapshot{};
+
+    check(flynes::session::submit_invite_code(session, 1u, "012345", 1000u),
+          "submit accepts a six-digit code with leading zeros");
+    const fly_session_command command = poll_of(session);
+    check(command.command_id != 0u, "route command pending after submit");
+    check(command.kind == FLY_SESSION_COMMAND_INVITE_CODE_LOOKUP,
+          "route lookup surfaces its real v1 command kind");
+    check(command.transition_id == 0u, "transition_id stays zero");
+
+    fly_session_command_result result{};
+    result.struct_size = FLY_SESSION_COMMAND_RESULT_V1_SIZE;
+    result.version = FLY_SESSION_COMMAND_RESULT_VERSION_1;
+    result.command_id = command.command_id;
+    result.result = FLY_RESULT_OK;
+    check(fly_session_complete_command(session, &result) == FLY_RESULT_OK,
+          "executor completes the lookup command");
+
+    const fly_session_command empty = poll_of(session);
+    check(empty.command_id == 0u && empty.kind == FLY_SESSION_COMMAND_NONE,
+          "no second command until the next route operation");
+
+    check(flynes::session::invite_lookup_response(
+              session, 1u, InviteLookupStatus::MatchPendingHostApproval, 77u, 2000u),
+          "match response accepted");
+    check(flynes::session::invite_joiner_host_accepted(session, 1u), "host accepted");
+    check(flynes::session::invite_joiner_local_sas_confirmed(session, 1u), "local SAS confirmed");
+    check(flynes::session::invite_joiner_peer_sas_confirmed(session, 1u), "peer SAS confirmed");
+
+    snapshot.struct_size = FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE;
+    snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+    check(fly_session_get_invite_snapshot(session, &snapshot) == FLY_RESULT_OK, "snapshot reads");
+    check(snapshot.join_phase == static_cast<uint32_t>(InviteJoinPhase::Authenticated),
+          "both SAS confirmations authenticate the joiner route");
+    check(snapshot.join_attempt_id == 1u, "attempt id visible in the snapshot");
+
+    // Stale fencing through the public path: attempt 1 is finished; its late
+    // events are refused and never revive anything (C16).
+    check(!flynes::session::invite_lookup_response(
+               session, 1u, InviteLookupStatus::MatchPendingHostApproval, 88u, 3000u),
+          "late response for the finished attempt refused");
+    check(!flynes::session::invite_joiner_host_accepted(session, 1u),
+          "late host acceptance refused");
+    check(!flynes::session::submit_invite_code(session, 1u, "012345", 4000u),
+          "re-submitting a used attempt id is refused");
+    fly_session_destroy(session);
+}
+
+void invite_route_regenerate_and_cancel_commands()
+{
+    fly_session_t* session = create_session();
+
+    check(flynes::session::invite_host_publish(session, 5u, "987654", 1000u),
+          "host publishes");
+    const fly_session_command advertise = poll_of(session);
+    check(advertise.kind == FLY_SESSION_COMMAND_INVITE_REGENERATE
+              && advertise.command_id != 0u,
+          "publish surfaces the advertisement switch command");
+    fly_session_command_result result{};
+    result.struct_size = FLY_SESSION_COMMAND_RESULT_V1_SIZE;
+    result.version = FLY_SESSION_COMMAND_RESULT_VERSION_1;
+    result.command_id = advertise.command_id;
+    result.result = FLY_RESULT_OK;
+    check(fly_session_complete_command(session, &result) == FLY_RESULT_OK, "advertisement switched");
+
+    check(flynes::session::invite_host_regenerate(session, 6u, "111000", 2000u),
+          "regenerate accepted");
+    const fly_session_command switch_cmd = poll_of(session);
+    check(switch_cmd.kind == FLY_SESSION_COMMAND_INVITE_REGENERATE,
+          "regenerate surfaces the advertisement switch command");
+    result.command_id = switch_cmd.command_id;
+    check(fly_session_complete_command(session, &result) == FLY_RESULT_OK, "regeneration applied");
+
+    check(flynes::session::cancel_invite_code(session, 1u) == false,
+          "joiner cancel without an attempt is refused");
+
+    fly_session_destroy(session);
+}
+
 } // namespace
 
 static_assert(FLY_SESSION_UI_IDLE == 1, "UI_IDLE keeps its v1 value");
 static_assert(FLY_SESSION_UI_UNSPECIFIED == 0, "UNSPECIFIED is the documented unset value");
 static_assert(FLY_SESSION_COMMAND_NONE == 0, "COMMAND_NONE keeps its v1 value");
+static_assert(FLY_SESSION_COMMAND_INVITE_CODE_LOOKUP == 1, "invite lookup kind is the first additive command value");
+static_assert(FLY_SESSION_COMMAND_INVITE_CODE_CANCEL == 2, "invite cancel kind keeps its additive value");
+static_assert(FLY_SESSION_COMMAND_INVITE_REGENERATE == 3, "invite regenerate kind keeps its additive value");
 static_assert(FLY_RESULT_OK == 0, "success convention is fly_result_code OK");
 
 int main()
@@ -411,6 +526,9 @@ int main()
     completion_contract_is_enforced();
     snapshot_projects_reducer_state();
     submit_event_stays_fail_closed();
+    invite_route_snapshot_contract();
+    invite_route_poll_complete_round_trip();
+    invite_route_regenerate_and_cancel_commands();
     if (failures != 0)
     {
         std::fprintf(stderr, "flynes_session_public_path_test: %d failure(s)\n", failures);

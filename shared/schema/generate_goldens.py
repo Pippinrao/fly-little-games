@@ -190,6 +190,14 @@ def build_records() -> list[dict]:
     legal = preimage + sig + sig
     records.append(("pair_transcript_v1", legal, "flynes-pair-transcript-object-v1", 8, 2, {"kind": "0x0213"}))
 
+    # 2026-09-13 invite-code amendment (kinds 0x0214/0x0215).
+    legal = u16(1) + z(6) + b"012345" + z(18)
+    records.append(("invite_code_lookup_request_v1", legal, "flynes-invite-code-lookup-request-v1", None, 2, {"kind": "0x0214"}))
+
+    legal = u16(1) + z(6) + bytes([1]) + z(7) + u64(7)
+    records.append(("invite_code_lookup_response_v1", legal, "flynes-invite-code-lookup-response-v1", 8, 2, {"kind": "0x0215"}))
+
+
     legal = (u16(1) + z(6) + sid + bid + u64(1) + h32 + z(32) + h32 + z(32)
              + bytes([1, 1]) + z(14))
     records.append(("opaque_recovery_failure_evidence_v1", legal, "flynes-opaque-recovery-failure-evidence-v1", 176, 2, {"kind": "0x0208"}))

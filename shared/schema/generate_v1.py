@@ -1248,6 +1248,46 @@ def build_schema():
     )
     kinds.append(
         kind(
+            "0x0214",
+            "INVITE_CODE_LOOKUP_REQUEST_V1",
+            32,
+            "HARD",
+            "fixed",
+            "flynes-invite-code-lookup-request-v1",
+            [
+                field("version", "u16be"),
+                field("reserved_zero", "u8[6]"),
+                field("code", "u8[6]", note="six ASCII digits 0x30..0x39; leading zeros preserved; locates the active anonymous invitation only, never a credential"),
+                field("reserved_zero_2", "u8[18]"),
+            ],
+            [],
+            fixed_length=32,
+            notes="2026-09-13 invite-code amendment: pre-reveal anonymous link only; authentication stays on the existing BLE/SAS identity flow.",
+        )
+    )
+    kinds.append(
+        kind(
+            "0x0215",
+            "INVITE_CODE_LOOKUP_RESPONSE_V1",
+            24,
+            "HARD",
+            "fixed",
+            "flynes-invite-code-lookup-response-v1",
+            [
+                field("version", "u16be"),
+                field("reserved_zero", "u8[6]"),
+                field("status", "u8"),
+                field("reserved_zero_2", "u8[7]"),
+                field("generation", "u64be"),
+            ],
+            [],
+            enums={"status": {"MATCH_PENDING_HOST_APPROVAL": 1, "NO_MATCH": 2, "EXPIRED": 3, "RATE_LIMITED": 4}},
+            fixed_length=24,
+            notes="generation is nonzero only for MATCH_PENDING_HOST_APPROVAL and must equal the host's active invitation generation; all other statuses carry zero.",
+        )
+    )
+    kinds.append(
+        kind(
             "0x0301",
             "OFFLINE_RELEASE_CERTIFICATE_V1",
             312,

@@ -1,11 +1,14 @@
 #include <flynes/flynes_session.h>
 #include "session_initial_plan.hpp"
+#include "session_invite_code.hpp"
 #include "session_receive.hpp"
 
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <new>
+#include <optional>
+#include <string_view>
 
 struct fly_session_handle
 {
@@ -15,6 +18,15 @@ struct fly_session_handle
     std::uint64_t original_context_start_ns = 0u;
     flynes::session::InitialPlanLock initial_plan;
 
+    // 2026-09-13 invite-code amendment: the route lives on the handle so the
+    // public snapshot/poll/complete surface and the seam share one serialized
+    // state. No identity data is stored here (design invariant).
+    flynes::session::InviteCodeJoiner invite_joiner;
+    flynes::session::InviteCodeHost invite_host;
+    bool has_invite_command = false;
+    flynes::session::InviteRouteCommand invite_command{};
+    std::uint64_t invite_next_command_id = 1u;
+
     // Last command the public poll handed out. Mapping only: the wire
     // transition_id (16 bytes) is not representable in the public 64-bit field
     // and is never truncated into it. The generation is the one the command was
@@ -23,6 +35,7 @@ struct fly_session_handle
     std::uint64_t polled_command_id = 0u;
     std::uint64_t polled_command_generation = 0u;
     bool has_polled_command = false;
+    bool polled_command_is_invite = false;
 
     // Diagnostic identification of the last received chunk. Independent of the
     // trusted reducer: the receive entry points still fail closed and never
@@ -174,6 +187,165 @@ bool record_received_datagram(fly_session_t* session, std::uint32_t channel,
 ReceivedFrameSummary last_received_frame(const fly_session_t* session) noexcept
 {
     return session == nullptr ? ReceivedFrameSummary{} : session->last_received;
+}
+
+// --- 2026-09-13 invite-code amendment: internal seam ------------------------
+
+namespace {
+
+bool route_command_slot_free(const fly_session_t* session)
+{
+    return session != nullptr && !session->has_invite_command;
+}
+
+bool issue_invite_command(fly_session_t* session, fly_session_command_kind kind,
+                          std::uint64_t generation)
+{
+    if (session->has_invite_command)
+    {
+        return false;
+    }
+    session->invite_command.id = session->invite_next_command_id++;
+    session->invite_command.generation = generation;
+    session->invite_command.kind = kind;
+    session->has_invite_command = true;
+    return true;
+}
+
+} // namespace
+
+bool submit_invite_code(fly_session_t* session, std::uint64_t attempt_id,
+                        std::string_view input, std::uint64_t now_ns)
+{
+    if (!route_command_slot_free(session))
+    {
+        return false;
+    }
+    if (!session->invite_joiner.start(attempt_id, input, now_ns))
+    {
+        return false;
+    }
+    return issue_invite_command(session, FLY_SESSION_COMMAND_INVITE_CODE_LOOKUP, attempt_id);
+}
+
+bool cancel_invite_code(fly_session_t* session, std::uint64_t attempt_id)
+{
+    if (!route_command_slot_free(session))
+    {
+        return false;
+    }
+    if (!session->invite_joiner.cancel(attempt_id))
+    {
+        return false;
+    }
+    return issue_invite_command(session, FLY_SESSION_COMMAND_INVITE_CODE_CANCEL, attempt_id);
+}
+
+bool invite_lookup_response(fly_session_t* session, std::uint64_t attempt_id,
+                            InviteLookupStatus status, std::uint64_t matched_generation,
+                            std::uint64_t now_ns)
+{
+    return session != nullptr
+        && session->invite_joiner.on_response(attempt_id, status, matched_generation, now_ns);
+}
+
+bool invite_joiner_host_accepted(fly_session_t* session, std::uint64_t attempt_id)
+{
+    return session != nullptr && session->invite_joiner.on_host_accepted(attempt_id);
+}
+
+bool invite_joiner_local_sas_confirmed(fly_session_t* session, std::uint64_t attempt_id)
+{
+    return session != nullptr && session->invite_joiner.on_local_sas_confirmed(attempt_id);
+}
+
+bool invite_joiner_peer_sas_confirmed(fly_session_t* session, std::uint64_t attempt_id)
+{
+    return session != nullptr && session->invite_joiner.on_peer_sas_confirmed(attempt_id);
+}
+
+bool invite_host_publish(fly_session_t* session, std::uint64_t generation,
+                         std::string_view code_input, std::uint64_t now_ns)
+{
+    if (!route_command_slot_free(session))
+    {
+        return false;
+    }
+    if (!session->invite_host.publish(generation, code_input, now_ns))
+    {
+        return false;
+    }
+    return issue_invite_command(session, FLY_SESSION_COMMAND_INVITE_REGENERATE, generation);
+}
+
+bool invite_host_regenerate(fly_session_t* session, std::uint64_t new_generation,
+                            std::string_view code_input, std::uint64_t now_ns)
+{
+    if (!route_command_slot_free(session))
+    {
+        return false;
+    }
+    if (!session->invite_host.regenerate(new_generation, code_input, now_ns))
+    {
+        return false;
+    }
+    return issue_invite_command(session, FLY_SESSION_COMMAND_INVITE_REGENERATE, new_generation);
+}
+
+bool invite_host_cancel(fly_session_t* session, std::uint64_t generation)
+{
+    return session != nullptr && session->invite_host.cancel(generation);
+}
+
+InviteLookupStatus invite_host_on_lookup(fly_session_t* session, const InviteCodeDigits& code,
+                                         std::uint64_t now_ns)
+{
+    return session != nullptr ? session->invite_host.on_lookup(code, now_ns)
+                              : InviteLookupStatus::NoMatch;
+}
+
+std::optional<InviteRouteCommand> poll_invite_route_command(fly_session_t* session)
+{
+    if (!session || !session->has_invite_command)
+    {
+        return std::nullopt;
+    }
+    return session->invite_command;
+}
+
+bool complete_invite_route_command(fly_session_t* session, std::uint64_t id, bool success)
+{
+    if (session == nullptr || !session->has_invite_command
+        || session->invite_command.id != id)
+    {
+        return false;
+    }
+    const fly_session_command_kind kind = session->invite_command.kind;
+    const std::uint64_t generation = session->invite_command.generation;
+    session->has_invite_command = false;
+    session->invite_command = InviteRouteCommand{};
+    if (!success && kind == FLY_SESSION_COMMAND_INVITE_CODE_LOOKUP)
+    {
+        // The request never went out: the attempt is dead and no response can
+        // revive it (fail closed, like every failed seam operation).
+        session->invite_joiner.cancel(generation);
+    }
+    return true;
+}
+
+std::optional<SessionInviteSnapshot> invite_route_snapshot(const fly_session_t* session)
+{
+    if (session == nullptr)
+    {
+        return std::nullopt;
+    }
+    SessionInviteSnapshot snapshot;
+    snapshot.join_phase = session->invite_joiner.phase();
+    snapshot.host_phase = session->invite_host.phase();
+    snapshot.join_attempt_id = session->invite_joiner.live_attempt_id();
+    snapshot.host_generation = session->invite_host.active_generation();
+    snapshot.host_attempts_left = session->invite_host.attempts_left();
+    return snapshot;
 }
 } // namespace flynes::session
 
@@ -354,21 +526,37 @@ extern "C" fly_result fly_session_poll_command(fly_session_t* session,
     command_out->struct_size = struct_size;
     command_out->version = version;
     command_out->kind = FLY_SESSION_COMMAND_NONE;
-    // The v1 public command struct has no representation for the seam's command
-    // kinds and no room for a 128-bit wire transition_id. Only the seam's local
-    // monotonic id is exposed; transition_id stays exactly zero, never truncated.
-    const auto pending = flynes::session::poll_initial_plan_command(session);
-    if (pending.has_value())
+    // The v1 public command struct has no room for a 128-bit wire
+    // transition_id. Only the seam's local monotonic id is exposed;
+    // transition_id stays exactly zero, never truncated.
+    // The invite route (2026-09-13 amendment) predates any pairing attempt;
+    // its commands surface with their real v1 kind values.
+    const auto invite_pending = flynes::session::poll_invite_route_command(session);
+    const auto pending = invite_pending.has_value()
+                             ? std::nullopt
+                             : flynes::session::poll_initial_plan_command(session);
+    if (invite_pending.has_value())
+    {
+        command_out->command_id = invite_pending->id;
+        command_out->kind = static_cast<uint32_t>(invite_pending->kind);
+        session->polled_command_id = invite_pending->id;
+        session->polled_command_generation = invite_pending->generation;
+        session->polled_command_is_invite = true;
+        session->has_polled_command = true;
+    }
+    else if (pending.has_value())
     {
         command_out->command_id = pending->id;
         session->polled_command_id = pending->id;
         session->polled_command_generation = pending->generation;
+        session->polled_command_is_invite = false;
         session->has_polled_command = true;
     }
     else
     {
         session->polled_command_id = 0u;
         session->polled_command_generation = 0u;
+        session->polled_command_is_invite = false;
         session->has_polled_command = false;
     }
     return FLY_RESULT_OK;
@@ -403,6 +591,12 @@ extern "C" fly_result fly_session_complete_command(
         // seam remains the authority on staleness, duplicates and ordering.
         return FLY_RESULT_INVALID_STATE;
     }
+    if (session->polled_command_is_invite)
+    {
+        const bool accepted = flynes::session::complete_invite_route_command(
+            session, result->command_id, result->result == FLY_RESULT_OK);
+        return accepted ? FLY_RESULT_OK : FLY_RESULT_INVALID_STATE;
+    }
     const bool accepted = flynes::session::complete_initial_plan_command(
         session, result->command_id, session->polled_command_generation,
         result->result == FLY_RESULT_OK);
@@ -415,6 +609,10 @@ extern "C" fly_result fly_session_tick(fly_session_t* session, uint64_t now_ns)
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
+    // The invite route keeps its own 60 s deadlines; its tick handles
+    // backwards time by expiring the live states (fail closed).
+    session->invite_joiner.tick(now_ns);
+    session->invite_host.tick(now_ns);
     if (session->has_tick && now_ns < session->last_tick_ns)
     {
         if (flynes::session::active(session)) session->initial_plan.invalidate();
@@ -465,5 +663,37 @@ extern "C" fly_result fly_session_get_snapshot(fly_session_t* session,
     snapshot_out->ui_state = idle ? FLY_SESSION_UI_IDLE : FLY_SESSION_UI_UNSPECIFIED;
     fill_genesis(&snapshot_out->committed_through);
     fill_none_evidence(&snapshot_out->state_verified_through);
+    return FLY_RESULT_OK;
+}
+
+extern "C" fly_result fly_session_get_invite_snapshot(
+    fly_session_t* session, fly_session_invite_snapshot_v1* snapshot_out)
+{
+    if (session == nullptr || snapshot_out == nullptr)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (snapshot_out->struct_size < FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE)
+    {
+        return FLY_RESULT_STRUCT_TOO_SMALL;
+    }
+    if (snapshot_out->version != FLY_SESSION_INVITE_SNAPSHOT_VERSION_1)
+    {
+        return FLY_RESULT_UNSUPPORTED_VERSION;
+    }
+    const uint32_t struct_size = snapshot_out->struct_size;
+    const uint32_t version = snapshot_out->version;
+    std::memset(snapshot_out, 0, sizeof(*snapshot_out));
+    snapshot_out->struct_size = struct_size;
+    snapshot_out->version = version;
+    const auto route = flynes::session::invite_route_snapshot(session);
+    if (route.has_value())
+    {
+        snapshot_out->join_phase = static_cast<uint32_t>(route->join_phase);
+        snapshot_out->host_phase = static_cast<uint32_t>(route->host_phase);
+        snapshot_out->join_attempt_id = route->join_attempt_id;
+        snapshot_out->host_generation = route->host_generation;
+        snapshot_out->host_attempts_left = route->host_attempts_left;
+    }
     return FLY_RESULT_OK;
 }

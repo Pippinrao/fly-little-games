@@ -433,8 +433,8 @@ void identifies_by_tag_only()
            "message tag 0xFF05 is ChannelResumeSummaryV1");
 
     // Table introspection used by the consistency guard.
-    expect(flynes::session::wire::frame_tag_count() == 65u,
-           "59 schema kinds plus 6 schema messages");
+    expect(flynes::session::wire::frame_tag_count() == 67u,
+           "61 schema kinds plus 6 schema messages");
     FrameTagInfo info{};
     expect(flynes::session::wire::frame_tag_info(0x0201u, &info), "0x0201 is in the table");
     expect(info.type_namespace == FrameTypeNamespace::ObjectKind, "0x0201 namespace");
