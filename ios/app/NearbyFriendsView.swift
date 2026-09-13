@@ -131,8 +131,30 @@ struct NearbyFriendsView: View {
         // than by a navigation path from this tab, and an entry is added by the
         // slice that owns the post-pairing transition.
         Section {
+            // N00's three primary actions (design 2026-09-13 U07, C04): none of
+            // them requires a selected game. 扫码加入 is the only camera
+            // consumer and is requested on use; a denial never disables the
+            // code path (C10).
             NavigationLink {
-                NearbyPairingView()
+                NearbyPairingView(mode: .create)
+            } label: {
+                Text("nearby.action.create")
+            }
+            .accessibilityIdentifier("nearby_action_create")
+            NavigationLink {
+                NearbyPairingView(mode: .joinCode)
+            } label: {
+                Text("nearby.action.enterCode")
+            }
+            .accessibilityIdentifier("nearby_action_enter_code")
+            NavigationLink {
+                NearbyPairingView(mode: .scan)
+            } label: {
+                Text("nearby.action.scanQr")
+            }
+            .accessibilityIdentifier("nearby_action_scan_qr")
+            NavigationLink {
+                NearbyPairingView(mode: .create)
             } label: {
                 Text("nearby.pairing.title")
             }

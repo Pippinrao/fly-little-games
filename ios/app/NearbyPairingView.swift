@@ -12,15 +12,110 @@ import SwiftUI
 /// spec §4 flags it as over-delivery against the approved design and keeps the
 /// keys only until the §30 centralised review answers. The keys exist in both
 /// locale files; no control is invented here.
+/// Entry mode of the approved design (N01/N02/N03).
+enum NearbyPairingMode: String {
+    case create
+    case joinCode
+    case scan
+}
+
+/// Joiner-side input rule (UI contract nearby_ui_v1, shared
+/// parse_invite_code): exactly six ASCII digits after trimming ASCII
+/// whitespace, leading zeros preserved, no silent truncation (C05).
+func normalizeInviteCode(_ raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count == 6 else { return nil }
+    return trimmed.allSatisfy { $0.isASCII && $0.isNumber } ? trimmed : nil
+}
+
 struct NearbyPairingView: View {
+    var mode: NearbyPairingMode = .create
+    // N01 invite lifecycle: generation-bound code with the 60s continuous
+    // clock; regeneration and cancellation kill the old generation (C16).
+    @State private var inviteCode = ""
+    @State private var inviteGeneration = 0
+    @State private var inviteDeadline = Date()
+    // N02 join form state: error only after a submit attempt, submit locked
+    // while a request is in flight (C05/C16).
+    @State private var joinInput = ""
+    @State private var joinError = false
+    @State private var joinSubmitted = false
+
     var body: some View {
         List {
+            if mode == .create {
+                createSection
+            }
+            if mode == .joinCode || mode == .scan {
+                joinCodeSection
+            }
             stagesSection
             codeSection
             wifiSection
         }
         .navigationTitle("nearby.pairing.title")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// N01 创建联机: generation-bound six-digit code with the 60s clock.
+    @ViewBuilder private var createSection: some View {
+        Section("nearby.invite.codeLabel") {
+            Text(inviteCode.isEmpty ? "· · · · · ·" : inviteCode)
+                .accessibilityIdentifier("nearby_invite_code_value")
+            if !inviteCode.isEmpty {
+                 let seconds = Int((inviteDeadline.timeIntervalSinceNow).rounded(.up))
+                Text(String(format: "%ds", seconds))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            Button("nearby.action.regenerate") {
+                inviteCode = String(format: "%06d", Int.random(in: 0...999_999))
+                inviteGeneration += 1
+                inviteDeadline = Date().addingTimeInterval(60)
+            }
+            .accessibilityIdentifier("nearby_invite_regenerate")
+            Button("nearby.action.cancelInvite", role: .destructive) {
+                inviteCode = ""
+                inviteGeneration = 0
+            }
+            .accessibilityIdentifier("nearby_invite_cancel")
+        }
+    }
+
+    /// N02 输入配对码: six digits, leading zeros kept, request never sent on
+    /// incomplete input, adjacent field error only after submit. With no
+    /// discovery bearer in this build the honest outcome is the
+    /// discovery-blocked reason - never a synthetic host approval.
+    @ViewBuilder private var joinCodeSection: some View {
+        Section("nearby.join.codeLabel") {
+            TextField("nearby.join.codeLabel", text: $joinInput)
+                .keyboardType(.numberPad)
+                .accessibilityIdentifier("nearby_join_code_input")
+                .onChange(of: joinInput) { _ in joinError = false }
+            if joinError {
+                Text(joinSubmitted
+                     ? "nearby.stage.discovery.reason"
+                     : "nearby.reason.code.invalidFormat")
+                    .font(.footnote)
+                    .foregroundColor(.red)
+                    .accessibilityIdentifier("nearby_join_code_error")
+            }
+            Button("nearby.action.submitJoinCode") {
+                if normalizeInviteCode(joinInput) == nil {
+                    joinError = true
+                    return
+                }
+                joinSubmitted = true
+                joinError = true
+            }
+            .disabled(normalizeInviteCode(joinInput) == nil || joinSubmitted)
+            .accessibilityIdentifier("nearby_join_submit")
+            Button("nearby.action.cancelRequest", role: .destructive) {
+                joinSubmitted = false
+                joinError = false
+            }
+            .accessibilityIdentifier("nearby_join_cancel")
+        }
     }
 
     /// The seven pairing stages in pipeline order; earlier stages are marked
