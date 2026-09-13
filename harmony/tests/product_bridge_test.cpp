@@ -42,7 +42,7 @@ void test_filter_zh_query_selects_contra()
     const auto ranked = flynes::harmony::game_center_filter(input, "ALL", "");
     expect(ranked.size() == 3, "exact content copies collapse");
     if (ranked.size() == 3) {
-        expect(ranked[0].canonical_id == "builtin", "forward native package popularity");
+        expect(ranked[0].canonical_id == "builtin:sample", "forward native package popularity");
         expect(ranked[1].canonical_id == "mario", "keep exact descending popularity");
         expect(ranked[2].canonical_id == "contra", "do not score display/search text twice");
     }
