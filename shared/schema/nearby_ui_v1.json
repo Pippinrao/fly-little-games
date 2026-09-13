@@ -334,6 +334,12 @@
     "nearby.reason.content.sendDenied": "对方未许可发送文件",
     "nearby.reason.content.receiveDenied": "对方未许可接收文件"
   },
+  "platformResourceNameOverrides": {
+    "nearby.open": {
+      "harmony": "nearby_open_entry",
+      "note": "HarmonyOS already has nearby_open ('附近') from the first-version UI whose value must not change; the contract string gets a distinct resource name."
+    }
+  },
   "categoryAliases": {
     "category.recent": { "zh": "最近", "android": "category_recent", "harmony": "game_center_recent", "ios": "game_center.recent" },
     "category.favorites": { "zh": "收藏", "android": "category_favorites", "harmony": "game_center_favorites", "ios": "game_center.favorites" },

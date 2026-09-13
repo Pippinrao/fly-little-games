@@ -40,6 +40,58 @@ export function uniqueGameCenterRows(snapshot: GameCenterRow[]): GameCenterRow[]
   return rows;
 }
 
+/**
+ * Shared, versioned two-player capability projection (design 2026-09-13 §3.2).
+ * The only legal source of two-player eligibility: never inferred from file
+ * names, "P2" in a title, or controller counts. Unread ids and entries whose
+ * profile version mismatches project UNKNOWN, never UNSUPPORTED.
+ */
+export enum MultiplayerEligibility {
+  UNSUPPORTED = 0,
+  SUPPORTED = 1,
+  UNKNOWN = 2
+}
+
+export class MultiplayerCapabilityRegistry {
+  private readonly profileVersion: number;
+  private readonly entries: Map<string, [number, number]> = new Map();
+
+  constructor(profileVersion: number) {
+    this.profileVersion = profileVersion;
+  }
+
+  public put(canonicalId: string, eligibility: MultiplayerEligibility,
+    profileVersion: number): void {
+    this.entries.set(canonicalId, [eligibility as number, profileVersion]);
+  }
+
+  public eligibilityFor(canonicalId: string): MultiplayerEligibility {
+    const entry = this.entries.get(canonicalId);
+    if (entry === undefined || entry[1] !== this.profileVersion) {
+      return MultiplayerEligibility.UNKNOWN;
+    }
+    return entry[0] as MultiplayerEligibility;
+  }
+}
+
+/**
+ * Stable post-filter for the independent two-player switch (design U04):
+ * removes rows whose eligibility is not SUPPORTED, never re-sorts, never
+ * re-ranks, and never changes the category/query/filter state itself. Applied
+ * AFTER the existing category+search pipeline and the canonical-id dedupe.
+ */
+export function applyMultiplayerFilter(rows: GameCenterRow[],
+  registry: MultiplayerCapabilityRegistry): GameCenterRow[] {
+  const result: GameCenterRow[] = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    if (registry.eligibilityFor(row.canonicalId) === MultiplayerEligibility.SUPPORTED) {
+      result.push(row);
+    }
+  }
+  return result;
+}
+
 /** Catalog projection for Game Center. Builtin From Below is always present. */
 export class CatalogProductService {
   loadRows(): GameCenterRow[] {

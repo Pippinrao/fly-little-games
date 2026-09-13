@@ -14,8 +14,45 @@ import java.util.HashSet;
 public final class GameCenterState {
     public enum Category { RECENT, FAVORITES, ALL, BUILTIN }
 
+    /**
+     * Shared, versioned two-player capability projection (design 2026-09-13 §3.2).
+     * The only source of two-player eligibility: platforms never infer it from
+     * filenames, "P2" in a title, or controller counts. Unread ids and entries
+     * whose profile version mismatches project UNKNOWN, never UNSUPPORTED.
+     */
+    public enum MultiplayerEligibility { UNSUPPORTED, SUPPORTED, UNKNOWN }
+
+    public static final class MultiplayerCapabilityRegistry {
+        private static final class Entry {
+            final MultiplayerEligibility eligibility;
+            final long profileVersion;
+            Entry(MultiplayerEligibility eligibility, long profileVersion) {
+                this.eligibility = eligibility;
+                this.profileVersion = profileVersion;
+            }
+        }
+
+        private final long profileVersion;
+        private final java.util.HashMap<String, Entry> entries = new java.util.HashMap<>();
+
+        public MultiplayerCapabilityRegistry(long profileVersion) {
+            this.profileVersion = profileVersion;
+        }
+
+        public void put(String canonicalId, MultiplayerEligibility eligibility, long profileVersion) {
+            entries.put(canonicalId, new Entry(eligibility, profileVersion));
+        }
+
+        public MultiplayerEligibility eligibilityFor(String canonicalId) {
+            Entry entry = entries.get(canonicalId);
+            if (entry == null || entry.profileVersion != profileVersion) return MultiplayerEligibility.UNKNOWN;
+            return entry.eligibility;
+        }
+    }
+
     private Category category = Category.ALL;
     private String query = "";
+    private boolean multiplayerOnly = false;
     private final EnumMap<Category, String> selections = new EnumMap<>(Category.class);
     private List<GameCenterItem> rankedInput = Collections.emptyList();
     private List<GameCenterItem> rankedItems = Collections.emptyList();
@@ -23,6 +60,11 @@ public final class GameCenterState {
 
     public static GameCenterState restore(
             String categoryName, String query, String selectedCanonicalId) {
+        return restore(categoryName, query, selectedCanonicalId, false);
+    }
+
+    public static GameCenterState restore(
+            String categoryName, String query, String selectedCanonicalId, boolean multiplayerOnly) {
         GameCenterState state = new GameCenterState();
         try {
             state.category = Category.valueOf(categoryName);
@@ -30,6 +72,7 @@ public final class GameCenterState {
             state.category = Category.ALL;
         }
         state.query = query == null ? "" : query;
+        state.multiplayerOnly = multiplayerOnly;
         if (selectedCanonicalId != null && !selectedCanonicalId.trim().isEmpty()) {
             state.selections.put(state.category, selectedCanonicalId);
         }
@@ -39,6 +82,11 @@ public final class GameCenterState {
     public Category category() { return category; }
     public String query() { return query; }
     public String selectedCanonicalId() { return selections.get(category); }
+
+    /** Independent two-player filter: persisted per device, never changed by
+     *  category, query, or connection events (design U04). */
+    public void setMultiplayerOnly(boolean value) { multiplayerOnly = value; }
+    public boolean multiplayerOnly() { return multiplayerOnly; }
 
     public void setCategory(Category value) {
         category = value == null ? Category.ALL : value;
@@ -101,6 +149,21 @@ public final class GameCenterState {
         for (GameCenterItem item : categoryItems) {
             if (contains(item.titleEn(), needle) || contains(item.titleZhHans(), needle)
                     || contains(item.originalFilename(), needle)) result.add(item);
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    /** Applies the two-player filter AFTER the existing category/search filter
+     *  and sort, preserving the relative order of the surviving items. UNKNOWN
+     *  and UNSUPPORTED games drop out only while the filter is on. */
+    public List<GameCenterItem> filtered(List<GameCenterItem> all, MultiplayerCapabilityRegistry registry) {
+        List<GameCenterItem> base = filtered(all);
+        if (!multiplayerOnly) return base;
+        ArrayList<GameCenterItem> result = new ArrayList<>();
+        for (GameCenterItem item : base) {
+            if (registry.eligibilityFor(item.canonicalId()) == MultiplayerEligibility.SUPPORTED) {
+                result.add(item);
+            }
         }
         return Collections.unmodifiableList(result);
     }

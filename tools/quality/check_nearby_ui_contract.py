@@ -230,6 +230,22 @@ def check_fixture(contract: dict, fixture: dict, problems: Problems) -> None:
                     f"contract text {strings.get(entry_key)!r} for {entry_key}")
 
 
+def platform_resource_name(platform: str, key: str) -> str:
+    """Canonical contract key -> platform resource entry name.
+
+    Android resource names and HarmonyOS $r('string.*') names cannot contain
+    dots, so both platforms map '.' to '_'. iOS .strings keys are opaque and
+    keep the canonical form.
+    """
+    return key.replace(".", "_") if platform in ("android", "harmony") else key
+
+
+def resource_name(contract: dict, platform: str, key: str) -> str:
+    overrides = contract.get("platformResourceNameOverrides", {})
+    override = overrides.get(key, {})
+    return override.get(platform, platform_resource_name(platform, key))
+
+
 def check_platform_strings(contract: dict, root: Path, problems: Problems) -> None:
     android_zh, android_default = read_android(root)
     harmony_zh, harmony_default = read_harmony(root)
@@ -243,14 +259,15 @@ def check_platform_strings(contract: dict, root: Path, problems: Problems) -> No
 
     for key, expected_zh in contract["strings"].items():
         for name, zh, default in platforms:
-            if key not in default:
-                problems.add(f"[{name}] missing default resource key: {key}")
-            if key not in zh:
-                problems.add(f"[{name}] missing zh resource key: {key}")
-            elif zh[key] != expected_zh:
+            resource_key = resource_name(contract, name, key)
+            if resource_key not in default:
+                problems.add(f"[{name}] missing default resource key: {resource_key}")
+            if resource_key not in zh:
+                problems.add(f"[{name}] missing zh resource key: {resource_key}")
+            elif zh[resource_key] != expected_zh:
                 problems.add(
-                    f"[{name}] zh text mismatch for {key}: "
-                    f"{zh[key]!r} != contract {expected_zh!r}")
+                    f"[{name}] zh text mismatch for {resource_key}: "
+                    f"{zh[resource_key]!r} != contract {expected_zh!r}")
 
     for alias_key, alias in contract["categoryAliases"].items():
         for name, zh, default in platforms:
