@@ -20,10 +20,14 @@ P1–P8 逐任务提交（见 git log：P1 `2c8d6ca`、P2 `cab8d7d`、P3 `ec7b54
 
 ## 2. 未验证/不支持项（明确声明，不冒充完成）
 
-- **iOS 全部运行证据未验证**：本机为 Windows，无法执行 macOS/Xcode 产品构建
-  与 FlyNESUITests/FlyNESRuntimeTests（P6/P8 的 iOS 门禁）。iOS 侧已交付：
-  N00 三动作、N01 邀请生命周期、N02 输入码表单、P3 筛选、
-  `NearbyUiParityTests.mm`（已注册进 FlyNESUITests）。执行留待 macOS checkout。
+- **iOS 模拟器证据已补齐**（2026-09-13 晚，ssh apple / macOS 13.7.8 / Xcode 14.3.1 /
+  iPhone 14 模拟器 / iOS 16.4 / en-US）：产品构建 BUILD SUCCEEDED；
+  FlyNESUITests **TEST EXECUTE SUCCEEDED**（含 3 例 NearbyUiParityTests：N00 三动作、
+  C05 输入门禁+前导零、N01 生命周期重生成/取消）；FlyNESRuntimeTests
+  **TEST EXECUTE SUCCEEDED**。运行中发现并修复 3 个问题（Registry init、
+  N00 动作按 content-priority 移到设备页顶部、XCUITest 多类型查询/聚焦）。
+  **真机限制**：Xcode 14.3.1 无法向 iPhone 16 Pro Max（iOS 18）部署，真机阶段前
+  需升级 Xcode 16.x。
 - **实体机配对矩阵未验证**：Android↔Harmony、Android↔iOS、Harmony↔iOS 及三种
   同平台组合、双入口完整闭环（N00→验证→大厅→选游戏→双方确认→双机游戏）——
   需要实体设备与签名配置，全部记为未验证。

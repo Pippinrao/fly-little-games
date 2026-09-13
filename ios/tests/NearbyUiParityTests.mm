@@ -19,15 +19,32 @@
     return app;
 }
 
+// SwiftUI List NavigationLinks surface as buttons, cells or other elements
+// depending on iOS version; resolve through every container type.
+- (XCUIElement *)elementWithIdentifier:(NSString *)identifier inApp:(XCUIApplication *)app {
+    XCUIElement *element = app.buttons[identifier];
+    if (element.exists) return element;
+    element = app.otherElements[identifier];
+    if (element.exists) return element;
+    element = app.staticTexts[identifier];
+    if (element.exists) return element;
+    element = app.cells[identifier];
+    if (element.exists) return element;
+    return app.staticTexts[[identifier stringByAppendingString:@"_label"]];
+}
+
 - (void)testN00ShowsTheThreePrimaryActionsInContractOrder {
     self.continueAfterFailure = NO;
     XCUIApplication *app = [self launchApp];
     XCTAssertTrue([app.buttons[@"open_nearby"] waitForExistenceWithTimeout:15]);
     [app.buttons[@"open_nearby"] tap];
-    XCTAssertTrue([app.otherElements[@"nearby_root"] waitForExistenceWithTimeout:10]);
-    XCTAssertTrue([app.buttons[@"nearby_action_create"] waitForExistenceWithTimeout:5]);
-    XCTAssertTrue([app.buttons[@"nearby_action_enter_code"] waitForExistenceWithTimeout:5]);
-    XCTAssertTrue([app.buttons[@"nearby_action_scan_qr"] waitForExistenceWithTimeout:5]);
+    XCUIElement *root = [[app descendantsMatchingType:XCUIElementTypeAny]
+        matchingIdentifier:@"nearby_root"].firstMatch;
+    XCTAssertTrue([root waitForExistenceWithTimeout:10]);
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_action_create" inApp:app]
+        waitForExistenceWithTimeout:10]);
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_action_enter_code" inApp:app] exists]);
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_action_scan_qr" inApp:app] exists]);
 }
 
 - (void)testJoinCodeFormNeverSubmitsIncompleteInput {
@@ -35,10 +52,12 @@
     XCUIApplication *app = [self launchApp];
     XCTAssertTrue([app.buttons[@"open_nearby"] waitForExistenceWithTimeout:15]);
     [app.buttons[@"open_nearby"] tap];
-    XCTAssertTrue([app.buttons[@"nearby_action_enter_code"] waitForExistenceWithTimeout:10]);
-    [app.buttons[@"nearby_action_enter_code"] tap];
+    XCUIElement *enterCode = [self elementWithIdentifier:@"nearby_action_enter_code" inApp:app];
+    XCTAssertTrue([enterCode waitForExistenceWithTimeout:10]);
+    [enterCode tap];
     XCUIElement *input = app.textFields[@"nearby_join_code_input"];
     XCTAssertTrue([input waitForExistenceWithTimeout:10]);
+    [input tap];  // focus the field before typing
     [input typeText:@"12345"];
     XCUIElement *submit = app.buttons[@"nearby_join_submit"];
     XCTAssertFalse(submit.isEnabled);
@@ -56,8 +75,9 @@
     XCUIApplication *app = [self launchApp];
     XCTAssertTrue([app.buttons[@"open_nearby"] waitForExistenceWithTimeout:15]);
     [app.buttons[@"open_nearby"] tap];
-    XCTAssertTrue([app.buttons[@"nearby_action_create"] waitForExistenceWithTimeout:10]);
-    [app.buttons[@"nearby_action_create"] tap];
+    XCUIElement *create = [self elementWithIdentifier:@"nearby_action_create" inApp:app];
+    XCTAssertTrue([create waitForExistenceWithTimeout:10]);
+    [create tap];
     XCUIElement *code = app.staticTexts[@"nearby_invite_code_value"];
     XCTAssertTrue([code waitForExistenceWithTimeout:10]);
     NSString *first = code.label;

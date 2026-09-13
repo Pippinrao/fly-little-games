@@ -35,6 +35,9 @@ enum MultiplayerEligibility: UInt8 {
 struct MultiplayerCapabilityRegistry {
     let profileVersion: UInt32
     private var entries: [String: (eligibility: MultiplayerEligibility, version: UInt32)] = [:]
+    init(profileVersion: UInt32) {
+        self.profileVersion = profileVersion
+    }
 
     mutating func put(_ canonicalId: String, _ eligibility: MultiplayerEligibility,
                       _ version: UInt32) {
