@@ -45,7 +45,7 @@
 
 新 worktree 只能通过 `tools/versioning/New-VersionedWorktree.ps1` 创建。W0 没有交付共同基线 SHA 前，不启动 W1/W2/W3。
 
-## Task 1（W0）：收尾当前 `0x0212` 持久化并恢复全量绿色
+## Task 1（W0）：收尾当前 `0x0212` 持久化并恢复全量绿色 — ✅ 已完成，见 §19
 
 **当前状态：** scheduler 生产代码和 focused 测试已经绿色；公开 engine 测试与全量回归未完成。
 
@@ -98,7 +98,7 @@ Expected: 当前注册的全部测试通过；按现有目录应为 84/84，若 
 
 **Acceptance `BASE-0212`:** exact 312-byte binding 同时在 SecureStore 记录 KeyRef、在 ObjectStore 注册 `0x0212`；两个 durability gate 缺一不可继续。完整 shared 回归为 0 failure。
 
-## Task 2（W0）：冻结并提交并行共同合同
+## Task 2（W0）：冻结并提交并行共同合同 — ✅ 已完成，见 §19
 
 **Purpose:** W1/W2/W3 不得各自发明 HELLO/READY 或 DUAL seam。共同基线必须先冻结这些边界。
 
@@ -511,3 +511,58 @@ ROM bytes 只走独立 bulk stream，不混入 input/control；支持 8 MiB 上�
 - 物理触控到屏幕延迟、功耗、温度、刷新率和九方向/18 seat 设备矩阵。
 
 延期不代表删除：mode/capability/channel/object kind 继续保留扩展性，未实现路径必须显式 unsupported/fail-closed。
+
+---
+
+## 19. 执行记录：W0 波次 0（2026-09-15 完成）
+
+**共同基线提交 SHA：`e8703e4fdb598277a25d42c515486bea720ea757`**（`e8703e4`，336 个文件，hook 自动将 VERSION 由 1.4.0 递增为 1.4.1）。提交后工作区干净。
+
+### Task 1 证据
+
+| 步骤 | 状态 | 证据 |
+|---|---|---|
+| Step 1–3 0x0212 公开 engine 断言与负例 | ✅ | `test_two_engine_empty_lobby.cpp` 3910 → 4150 行；新增 `drive_session_signing_persistence`、`SessionSigningTail` 与两个测试函数（`test_session_signing_binding_object_hash_mismatch_fails_closed`、`test_session_signing_binding_shutdown_cancels_through_object_store`），二者均被 `main` 调用，非空跑 |
+| Step 4 focused | ✅ | `flynes_two_engine_empty_lobby` PASSED (0.14 s) |
+| Step 5 全量回归 | ✅ | `ctest` **86/86 PASSED，0 failed**，24.77 s（基线 84 + 本轮 2 个新合同测试） |
+
+`nearby_*` 标签门禁非空：`nearby_protocol` 23、`nearby_auth` 12、`nearby_ports` 11、`nearby_abi` 5、`nearby_integration` 1、`nearby_race` 1。
+
+**Acceptance `BASE-0212`：✅** exact 312 字节 binding 同时在 SecureStore 记 KeyRef、在 ObjectStore 注册 `0x0212`，两个 durability gate 缺一不可继续；全量回归 0 failure。
+
+### Task 2 证据
+
+| 步骤 | 状态 | 证据 |
+|---|---|---|
+| Step 1 三份获批文档纳入 W0 | ✅ | 复制前后 `Get-FileHash -Algorithm SHA256` 三对完全一致（`52CFC416…`、`633FDDE1…`、`98EBA20A…`）；主工作区原件仍为 untracked，未移动/改名 |
+| Step 2 LINK_HELLO exact layout 冻结 | ✅ | `shared/src/session/link/link_control_contract.hpp`：kind `0x0216`、tag `0xFF06`、exact 480 字节（pretag 416 + 签名 64）、大端、reserved 全零、domain 字符串、DSL |
+| Step 3 LINK_READY/ACK exact layout 冻结 | ✅ | 同文件：kind `0x0217`、tag `0xFF07`、exact 384 字节（pretag 320 + 签名 64）；phase 必须为 RECONCILE；双方 durable → send → verify → ACK → 才投影 `CONNECTED_LOBBY` |
+| Step 4 DUAL 内部 seam 冻结 | ✅ | `shared/src/session/dual/dual_runtime_contract.hpp`：`DualRuntimePort`（load/step/export_state/import_state/state_digest）、四端口完整 mask、输入主键元组、12 槽回滚环、预测 10 帧冻结、mode 仅 DUAL |
+| Step 5 合同编译测试 | ✅ | `flynes_link_control_contract`、`flynes_dual_runtime_contract` 均 PASSED；静态检查 enum 数值、结构大小、reserved 字段与 callback 签名；运行期覆盖 STREAM capability=false、未知 critical bit 拒绝、checked 单调 generation/sequence 溢出拒绝 |
+| Step 6 共同基线提交 | ✅ | `e8703e4` |
+
+**Acceptance `BASE-PARALLEL`：✅** 三份需求源文件已受版本控制且 SHA-256 与获批源一致；存在真实共同基线提交 SHA；合同不存在"拟议但未冻结"的 HELLO/READY 字段；shared 全量 0 failure。
+
+### 执行中发现并处理的计划外问题
+
+1. **`.gitignore` 漏掉 Rust 构建产物。** `git status --porcelain` 默认折叠未跟踪目录只显示 64 项，实际用 `--untracked-files=all` 展开是 **2024 项**，其中 `shared/nearby-quic-provider/target/` 占 **1865 项 / 1.36 GB** 且没有任何 ignore 规则。直接 `git add -A` 会把整个 cargo 构建树提交进基线。已追加 `/shared/nearby-quic-provider/target/`，untracked 降至 159 项且全部可归属 nearby 工作。
+2. **三份获批文档并未冻结 HELLO/READY 的字节布局。** 它们只冻结语义与门禁。exact 布局、object kind、message tag、domain 字符串由 W0 按 Task 2 Step 2/3 设计并冻结于上述两份合同头；object kind 分配依据是仓库现有 registry（`0x0210`–`0x0213` 已占用，`0x0214/0x0215` 被 invite-code amendment 占用）。**注册进 `shared/schema/` 与三端镜像仍属 Task 9，本轮合同头中不注册。**
+3. **构建环境 `MSB6001` 代理变量坑。** PowerShell `env:` 提供程序按大小写折叠重复项，常规"分组删重复"删不掉。已提供包装器 `out/dsh-exec.ps1`（解析 `cmd /c set` 原始环境块、按大写去重后重建 `ProcessStartInfo`）。另注意该包装器的参数名是 `$Rest`，`-R`/`-C` 会被 PowerShell 当作 `-Rest` 缩写，**ctest 一律使用长选项** `--tests-regex` / `--build-config`。
+
+### 并行 worktree（已创建，均由 `e8703e4` 分出）
+
+| worker | 分支 | 目录 | 版本 | 任务 |
+|---|---|---|---|---|
+| W1 链路控制 | `codex/nearby-dual-link-control` | `.worktrees/nearby-dual-link-control` | 1.5.0 | Task 3 + 4 |
+| W2 DUAL 数据面 | `codex/nearby-dual-runtime` | `.worktrees/nearby-dual-runtime` | 1.6.0 | Task 5 + 6 |
+| W3 双引擎夹具 | `codex/nearby-dual-e2e-harness` | `.worktrees/nearby-dual-e2e-harness` | 1.7.0 | Task 7 + 8 |
+
+三个 worker 已并行启动。交接约定与构建手册见 `out/logs/w1w2w3-conventions.md`（忽略目录，不入版本控制）。
+
+**已知需要 W0 在集成阶段处理的开放点：**
+
+- W1/W2 的测试需要注册进 `shared/CMakeLists.txt`（W0 独占文件），本轮允许各 worker **仅追加**自己带标记的注册块，W0 顺序合并。
+- W3 的 `CONNECTED_LOBBY` 正向断言在 W0 把 HELLO/READY 接进 `SessionEngine`（Task 9）之前不可能成立；W3 须如实标注待启用断言，不得伪造。
+- 真实 loopback QUIC 能否在本机 Windows 上构建并链接（`shared/nearby-quic-provider` Rust crate）尚未验证，W3 正在确认；若不可用须记 BLOCKED 而非 PASS。
+- 平台验收环境已确认可用（用户 2026-09-15 告知）：Windows 本机 Android/HarmonyOS 模拟器 + `ssh apple` 远程 Mac，因此 Task 13–15 的平台验收项应真实执行，**不再默认记 NOT_RUN**。
+
