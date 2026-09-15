@@ -32,7 +32,7 @@ add_library(nescore SHARED
     video/spatial_pipeline.cpp
     video/video_presenter_jni.cpp)
 target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
-target_link_libraries(nescore nes_abi nestopia video_algorithms flynes_app)
+target_link_libraries(nescore nes_abi nestopia video_algorithms flynes_app flynes_session)
 if(TARGET flynes_runtime)
     target_link_libraries(nescore flynes_runtime)
 endif()

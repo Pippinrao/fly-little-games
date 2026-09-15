@@ -15,6 +15,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSString *licenseSpdx;
 @property (nonatomic, readonly, copy) NSString *licenseSourceUrl;
 @property (nonatomic, readonly) NSInteger mapper;
+@property (nonatomic, readonly) NSInteger multiplayerProfileVersion;
+@property (nonatomic, readonly, copy) NSString *multiplayerEligibility;
+@property (nonatomic, readonly) NSInteger multiplayerMaxPlayers;
 
 @end
 
@@ -25,6 +28,8 @@ NS_ASSUME_NONNULL_BEGIN
  * edit plus an asset, and every lookup here picks it up.
  */
 @interface FlyNesBuiltinGames : NSObject
+
+@property (nonatomic, readonly) NSInteger multiplayerProfileVersion;
 
 /** Asset name of the manifest, at the root of the app bundle's resources. */
 @property (class, nonatomic, readonly) NSString *assetName;

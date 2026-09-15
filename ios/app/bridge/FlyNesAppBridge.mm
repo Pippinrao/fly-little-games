@@ -3,6 +3,7 @@
 #import "platform/CatalogPresentation.h"
 
 #include <flynes/flynes_app.h>
+#include <flynes/flynes_session.h>
 #include "flynes/product/game_center_item.hpp"
 #include "flynes/product/game_center_state.hpp"
 
@@ -17,6 +18,26 @@
 #include <unistd.h>
 
 namespace {
+
+[[maybe_unused]] void verify_nearby_v2_composition_contract()
+{
+    fly_session_clock_port_v2 clock{};
+    clock.struct_size = FLY_SESSION_CLOCK_PORT_V2_SIZE;
+    clock.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_executor_port_v2 executor{};
+    executor.struct_size = FLY_SESSION_EXECUTOR_PORT_V2_SIZE;
+    executor.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_platform_state_port_v2 platform_state{};
+    platform_state.struct_size = FLY_SESSION_PLATFORM_STATE_PORT_V2_SIZE;
+    platform_state.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_ports_v2 ports{};
+    ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
+    ports.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ports.clock = &clock;
+    ports.executor = &executor;
+    ports.platform_state = &platform_state;
+    (void)ports;
+}
 
 NSError *flynes_error(NSInteger code, NSString *message)
 {
@@ -177,9 +198,28 @@ NSDictionary<NSString *, id> *with_merged_presentation(
 
 } // namespace
 
+static fly_result complete_pending_invite(fly_session_t *session, bool success)
+{
+    fly_session_command command{};
+    command.struct_size = FLY_SESSION_COMMAND_V1_SIZE;
+    command.version = FLY_SESSION_COMMAND_VERSION_1;
+    fly_result result = fly_session_poll_command(session, &command);
+    if (result != FLY_RESULT_OK || command.command_id == 0u)
+        return FLY_RESULT_INVALID_STATE;
+    fly_session_command_result completion{};
+    completion.struct_size = FLY_SESSION_COMMAND_RESULT_V1_SIZE;
+    completion.version = FLY_SESSION_COMMAND_RESULT_VERSION_1;
+    completion.command_id = command.command_id;
+    completion.result = success ? FLY_RESULT_OK : FLY_RESULT_INVALID_STATE;
+    return fly_session_complete_command(session, &completion);
+}
+
 @implementation FlyNesAppBridge {
     std::mutex mutex_;
     fly_app_t *app_;
+    fly_session_t *session_;
+    uint64_t nextNearbyHostGeneration_;
+    uint64_t nextNearbyJoinAttemptID_;
 }
 
 + (instancetype)sharedInstance
@@ -195,8 +235,12 @@ NSDictionary<NSString *, id> *with_merged_presentation(
 - (instancetype)init
 {
     self = [super init];
-    if (self != nil)
+    if (self != nil) {
         app_ = nullptr;
+        session_ = nullptr;
+        nextNearbyHostGeneration_ = 1u;
+        nextNearbyJoinAttemptID_ = 1u;
+    }
     return self;
 }
 
@@ -205,6 +249,17 @@ NSDictionary<NSString *, id> *with_merged_presentation(
     std::lock_guard<std::mutex> lock(mutex_);
     fly_app_destroy(app_);
     app_ = nullptr;
+    fly_session_destroy(session_);
+    session_ = nullptr;
+}
+
+- (BOOL)ensureSessionLocked
+{
+    if (session_ != nullptr) return YES;
+    fly_session_config config{};
+    config.struct_size = FLY_SESSION_CONFIG_V1_SIZE;
+    config.version = FLY_SESSION_CONFIG_VERSION_1;
+    return fly_session_create(&config, &session_) == FLY_RESULT_OK && session_ != nullptr;
 }
 
 - (BOOL)ensureApp:(NSError **)error
@@ -732,6 +787,102 @@ NSDictionary<NSString *, id> *with_merged_presentation(
         return NO;
     }
     return YES;
+}
+
+- (uint64_t)nearbyNextHostGeneration
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (nextNearbyHostGeneration_ == 0u) return 0u;
+    return nextNearbyHostGeneration_++;
+}
+
+- (uint64_t)nearbyNextJoinAttemptID
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (nextNearbyJoinAttemptID_ == 0u) return 0u;
+    return nextNearbyJoinAttemptID_++;
+}
+
+- (BOOL)nearbyHostPublishCode:(NSString *)code generation:(uint64_t)generation
+               nowNanoseconds:(uint64_t)nowNanoseconds
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (![self ensureSessionLocked]) return NO;
+    NSData *bytes = [code dataUsingEncoding:NSASCIIStringEncoding];
+    if (bytes == nil) return NO;
+    const fly_result result = fly_session_invite_host_publish_v1(
+        session_, generation, static_cast<const uint8_t *>(bytes.bytes), bytes.length,
+        nowNanoseconds);
+    return result == FLY_RESULT_OK &&
+           complete_pending_invite(session_, true) == FLY_RESULT_OK;
+}
+
+- (BOOL)nearbyHostRegenerateCode:(NSString *)code generation:(uint64_t)generation
+                  nowNanoseconds:(uint64_t)nowNanoseconds
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (![self ensureSessionLocked]) return NO;
+    NSData *bytes = [code dataUsingEncoding:NSASCIIStringEncoding];
+    if (bytes == nil) return NO;
+    const fly_result result = fly_session_invite_host_regenerate_v1(
+        session_, generation, static_cast<const uint8_t *>(bytes.bytes), bytes.length,
+        nowNanoseconds);
+    return result == FLY_RESULT_OK &&
+           complete_pending_invite(session_, true) == FLY_RESULT_OK;
+}
+
+- (BOOL)nearbyHostCancelGeneration:(uint64_t)generation
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return [self ensureSessionLocked] &&
+           fly_session_invite_host_cancel_v1(session_, generation) == FLY_RESULT_OK;
+}
+
+- (BOOL)nearbySubmitCode:(NSString *)code attemptID:(uint64_t)attemptID
+          nowNanoseconds:(uint64_t)nowNanoseconds
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (![self ensureSessionLocked]) return NO;
+    NSData *bytes = [code dataUsingEncoding:NSASCIIStringEncoding];
+    if (bytes == nil) return NO;
+    const fly_result submitted = fly_session_invite_submit_code_v1(
+        session_, attemptID, static_cast<const uint8_t *>(bytes.bytes), bytes.length,
+        nowNanoseconds);
+    if (submitted != FLY_RESULT_OK) return NO;
+    // No iOS discovery executor is registered yet. Settle the real shared
+    // command as failed; this prevents a late callback from reviving it.
+    (void)complete_pending_invite(session_, false);
+    return NO;
+}
+
+- (BOOL)nearbyCancelAttempt:(uint64_t)attemptID
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return [self ensureSessionLocked] &&
+           fly_session_invite_cancel_code_v1(session_, attemptID) == FLY_RESULT_OK;
+}
+
+- (void)nearbyTickNanoseconds:(uint64_t)nowNanoseconds
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if ([self ensureSessionLocked]) (void)fly_session_tick(session_, nowNanoseconds);
+}
+
+- (NSDictionary<NSString *, NSNumber *> *)nearbyInviteSnapshot
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (![self ensureSessionLocked]) return @{};
+    fly_session_invite_snapshot_v1 snapshot{};
+    snapshot.struct_size = FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE;
+    snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+    if (fly_session_get_invite_snapshot(session_, &snapshot) != FLY_RESULT_OK) return @{};
+    return @{
+        @"joinPhase" : @(snapshot.join_phase),
+        @"hostPhase" : @(snapshot.host_phase),
+        @"joinAttemptID" : @(snapshot.join_attempt_id),
+        @"hostGeneration" : @(snapshot.host_generation),
+        @"hostAttemptsLeft" : @(snapshot.host_attempts_left),
+    };
 }
 
 - (BOOL)ensureAppLocked:(NSError **)error

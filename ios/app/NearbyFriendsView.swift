@@ -37,14 +37,98 @@ struct NearbyFriendsView: View {
     @State private var tab: PageTab =
         NearbyFriendsView.savedFriendIds.isEmpty ? .devices : .friends
 
+    private let pageBackground = Color(red: 18 / 255, green: 19 / 255, blue: 22 / 255)
+    private let surface = Color(red: 27 / 255, green: 29 / 255, blue: 34 / 255)
+    private let raised = Color(red: 41 / 255, green: 43 / 255, blue: 49 / 255)
+    private let primary = Color(red: 255 / 255, green: 107 / 255, blue: 94 / 255)
+
     var body: some View {
-        List {
+        GeometryReader { geometry in
+            let isWide = geometry.size.width > 580
+            Group {
+                if isWide {
+                    HStack(spacing: 18) {
+                        ScrollView {
+                            nearbyActions
+                        }
+                        .frame(width: 224)
+
+                        ScrollView {
+                            statusPane
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            nearbyActions
+                            statusPane
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(pageBackground.ignoresSafeArea())
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("nearby_root")
+        .navigationTitle("nearby.title")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// The action pane is outside the tab switch so all three primary actions
+    /// remain available on both 好友 and 附近设备 (C04).
+    @ViewBuilder private var nearbyActions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NavigationLink {
+                NearbyPairingView(mode: .create)
+            } label: {
+                Text("nearby.action.create")
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .accessibilityIdentifier("nearby_action_create_label")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(primary)
+            .accessibilityIdentifier("nearby_action_create")
+
+            NavigationLink {
+                NearbyPairingView(mode: .joinCode)
+            } label: {
+                Text("nearby.action.enterCode")
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .accessibilityIdentifier("nearby_action_enter_code_label")
+            }
+            .buttonStyle(.bordered)
+            .tint(primary)
+            .accessibilityIdentifier("nearby_action_enter_code")
+
+            NavigationLink {
+                NearbyPairingView(mode: .scan)
+            } label: {
+                Text("nearby.action.scanQr")
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .accessibilityIdentifier("nearby_action_scan_qr_label")
+            }
+            .buttonStyle(.bordered)
+            .tint(primary)
+            .accessibilityIdentifier("nearby_action_scan_qr")
+        }
+        .padding(16)
+        .background(surface, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("nearby_action_pane")
+    }
+
+    @ViewBuilder private var statusPane: some View {
+        VStack(alignment: .leading, spacing: 16) {
             Picker("nearby.title", selection: $tab) {
                 ForEach(PageTab.allCases) { item in
                     Text(item.titleKey).tag(item)
                 }
             }
             .pickerStyle(.segmented)
+
             switch tab {
             case .friends:
                 friendsTab
@@ -52,9 +136,11 @@ struct NearbyFriendsView: View {
                 devicesTab
             }
         }
-        .accessibilityIdentifier("nearby_root")
-        .navigationTitle("nearby.title")
-        .navigationBarTitleDisplayMode(.inline)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(surface, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("nearby_status_pane")
     }
 
     /// 好友 tab: the empty state plus the blocked friend-store key. Never a
@@ -65,7 +151,7 @@ struct NearbyFriendsView: View {
     /// entries — so the row stays enabled and the *actions* inside it are the
     /// disabled ones (spec §4, §10 D2).
     @ViewBuilder private var friendsTab: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 12) {
             Text("nearby.friends.empty")
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("nearby_friends_empty")
@@ -73,13 +159,14 @@ struct NearbyFriendsView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("nearby_friends_blocked")
-        }
-        Section("nearby.friends.section") {
             NavigationLink {
                 NearbyFriendsManageView()
             } label: {
                 Text("nearby.friends.manage")
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             }
+            .padding(.horizontal, 12)
+            .background(raised, in: RoundedRectangle(cornerRadius: 10))
             .accessibilityIdentifier("nearby_friends_manage")
         }
     }
@@ -88,47 +175,15 @@ struct NearbyFriendsView: View {
     /// empty state, and the two discovery controls, each disabled with the
     /// discovery stage and its reason.
     @ViewBuilder private var devicesTab: some View {
-        Section {
-            // N00's three primary actions (design 2026-09-13 U07, C04):
-            // content-priority puts them first, none requires a selected
-            // game, and the camera is requested on use only (C10).
-            NavigationLink {
-                NearbyPairingView(mode: .create)
-            } label: {
-                Text("nearby.action.create")
-                    .accessibilityIdentifier("nearby_action_create_label")
-            }
-            .accessibilityIdentifier("nearby_action_create")
-            // XCUITest resolves List NavigationLinks as cells in some iOS
-            // versions; the identifier on the inner Text keeps the element
-            // discoverable as a staticText as well.
-            NavigationLink {
-                NearbyPairingView(mode: .joinCode)
-            } label: {
-                Text("nearby.action.enterCode")
-                    .accessibilityIdentifier("nearby_action_enter_code_label")
-            }
-            .accessibilityIdentifier("nearby_action_enter_code")
-            // XCUITest resolves List NavigationLinks as cells in some iOS
-            // versions; the identifier on the inner Text keeps the element
-            // discoverable as a staticText as well.
-            NavigationLink {
-                NearbyPairingView(mode: .scan)
-            } label: {
-                Text("nearby.action.scanQr")
-                    .accessibilityIdentifier("nearby_action_scan_qr_label")
-            }
-            .accessibilityIdentifier("nearby_action_scan_qr")
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(PairingStage.allCases) { stage in
                 PairingStageRow(stage: stage)
             }
-        }
-        Section {
+            Divider()
             Text("nearby.devices.empty")
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("nearby_devices_empty")
-        }
-        Section {
+            Divider()
             Label {
                 Text("nearby.stage.discovery")
             } icon: {
@@ -147,32 +202,15 @@ struct NearbyFriendsView: View {
                 reasonKey: "nearby.blocked.discovery",
                 identifier: "nearby_scan_host_qr"
             )
-        }
-        // 配对 is the only navigate-only entry on this tab: spec §4 permits a
-        // button that merely pushes a page showing blocked states **only** for
-        // the 好友/附近设备 entry and the 配对 entry. The row is an entry to the
-        // page, never a control that pretends to start pairing — it only opens
-        // the page that shows which stage still blocks pairing.
-        //
-        // 大厅 deliberately has no entry here: it happens after pairing
-        // succeeds, so it is outside the §4 exception. The page is still built
-        // and compiled (registered in CMakeLists and titled by
-        // `nearby.lobby.title`); its rows are covered by review/preview rather
-        // than by a navigation path from this tab, and an entry is added by the
-        // slice that owns the post-pairing transition.
-        Section {
-            // N00's three primary actions (design 2026-09-13 U07, C04): none of
-            // them requires a selected game. 扫码加入 is the only camera
-            // consumer and is requested on use; a denial never disables the
-            // code path (C10).
-            // XCUITest resolves List NavigationLinks as cells in some iOS
-            // versions; the identifier on the inner Text keeps the element
-            // discoverable as a staticText as well.
+            Divider()
             NavigationLink {
                 NearbyPairingView(mode: .create)
             } label: {
                 Text("nearby.pairing.title")
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             }
+            .padding(.horizontal, 12)
+            .background(raised, in: RoundedRectangle(cornerRadius: 10))
             .accessibilityIdentifier("nearby_open_pairing")
         }
     }

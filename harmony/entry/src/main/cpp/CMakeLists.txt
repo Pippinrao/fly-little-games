@@ -71,6 +71,7 @@ target_link_libraries(entry PRIVATE
     flynes_app
     flynes_product
     flynes_runtime
+    flynes_session
     libace_napi.z.so
     libace_ndk.z.so
     libEGL.so

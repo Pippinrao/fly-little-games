@@ -244,6 +244,7 @@ bool InviteCodeHost::activate(std::uint64_t generation, std::string_view code_in
     }
     phase_ = InviteHostPhase::Active;
     generation_ = generation;
+    highest_generation_ = generation;
     code_ = *code;
     deadline_ns_ = now_ns + kInviteValidityNs;
     attempts_left_ = kInviteLookupAttemptsPerInvitation;
@@ -255,7 +256,8 @@ bool InviteCodeHost::activate(std::uint64_t generation, std::string_view code_in
 bool InviteCodeHost::publish(std::uint64_t generation, std::string_view code_input,
                              std::uint64_t now_ns)
 {
-    if (generation == 0u || phase_ != InviteHostPhase::Idle
+    if (generation == 0u || generation <= highest_generation_
+        || phase_ != InviteHostPhase::Idle
         || (has_last_tick_ && now_ns < last_tick_ns_))
     {
         return false;
@@ -266,7 +268,8 @@ bool InviteCodeHost::publish(std::uint64_t generation, std::string_view code_inp
 bool InviteCodeHost::regenerate(std::uint64_t new_generation, std::string_view code_input,
                                 std::uint64_t now_ns)
 {
-    if (new_generation == 0u || phase_ != InviteHostPhase::Active
+    if (new_generation == 0u || new_generation <= highest_generation_
+        || phase_ != InviteHostPhase::Active
         || (has_last_tick_ && now_ns < last_tick_ns_))
     {
         return false;

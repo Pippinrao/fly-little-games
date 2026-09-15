@@ -101,7 +101,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MainActivity extends AppCompatActivity {
     // Resolved from the staged launch request, so no game is named here.
     private com.flynes.emu.catalog.CanonicalGame currentGameTitle =
-            new com.flynes.emu.catalog.CanonicalGame("", "", "", java.util.List.of());
+            new com.flynes.emu.catalog.CanonicalGame(
+                    "unresolved-running-game", "", "", java.util.List.of());
     private byte[] currentRom;
     private String currentCoverGameId = "";
     private record RetainedGame(byte[] rom, com.flynes.emu.catalog.CanonicalGame title,

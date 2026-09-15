@@ -209,9 +209,25 @@ add_library(flynes_session_codec STATIC
     src/session/wire/session_codec.cpp
     src/session/wire/app_frame.cpp
     src/session/wire/pair_capability.cpp
+    src/session/wire/gatt_lookup_v2.cpp
+    src/session/wire/initial_bearer.cpp
+    src/session/wire/endpoint_offer.cpp
+    src/session/wire/gatt_fragment.cpp
+    src/session/wire/app_stream_assembler.cpp
+    src/session/wire/pair_crypto.cpp
+    src/session/wire/pair_handshake.cpp
+    src/session/wire/pair_reveal.cpp
+    src/session/wire/pair_secure.cpp
+    src/session/wire/p256_point.cpp
+    src/session/wire/quic_stream_gate.cpp
+    src/session/wire/prebind_record_queue.cpp
+    src/session/wire/quic_contract.cpp
+    src/session/wire/channel_bind.cpp
+    src/session/wire/session_signing_binding.cpp
 )
 target_include_directories(flynes_session_codec PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_features(flynes_session_codec PRIVATE cxx_std_17)
 set_target_properties(flynes_session_codec PROPERTIES
@@ -220,14 +236,52 @@ set_target_properties(flynes_session_codec PROPERTIES
 )
 flynes_enable_strict_warnings(flynes_session_codec)
 
-add_library(flynes_initial_plan_lock STATIC src/session/initial_plan_lock.cpp)
-target_link_libraries(flynes_initial_plan_lock PUBLIC flynes_session_codec)
+add_library(flynes_session_ports STATIC
+    src/session/buffer_handle.cpp
+    src/session/ports/provider_events.cpp
+    src/session/ports/provider_operation_journal.cpp
+)
+target_include_directories(flynes_session_ports PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+)
+target_compile_features(flynes_session_ports PUBLIC cxx_std_17)
+set_target_properties(flynes_session_ports PROPERTIES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE YES
+)
+flynes_enable_strict_warnings(flynes_session_ports)
+
+add_library(flynes_initial_plan_lock STATIC
+    src/session/initial_plan_lock.cpp
+    src/session/link_activation.cpp
+    src/session/link/link_orchestrator.cpp
+    src/session/link/initial_plan_scheduler.cpp
+    src/session/link/initial_bearer_scheduler.cpp
+    src/session/link/endpoint_offer_scheduler.cpp
+    src/session/link/initial_quic_bind_scheduler.cpp
+    src/session/link/pair_capability_scheduler.cpp
+    src/session/link/pair_known_scheduler.cpp
+    src/session/link/pair_material_scheduler.cpp
+    src/session/link/pair_key_confirm_scheduler.cpp
+    src/session/link/pair_reveal_scheduler.cpp
+    src/session/link/pair_sas_scheduler.cpp
+    src/session/link/pair_signature_scheduler.cpp
+    src/session/link/session_signing_scheduler.cpp
+    src/session/link/pair_pipeline.cpp
+    src/session/pair_auth_reducer.cpp
+)
+target_link_libraries(flynes_initial_plan_lock PUBLIC
+    flynes_session_codec flynes_session_ports)
 target_include_directories(flynes_initial_plan_lock PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
 target_compile_features(flynes_initial_plan_lock PUBLIC cxx_std_17)
 set_target_properties(flynes_initial_plan_lock PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
 flynes_enable_strict_warnings(flynes_initial_plan_lock)
 
-add_library(flynes_invite_code_route STATIC src/session/invite_code_route.cpp)
+add_library(flynes_invite_code_route STATIC
+    src/session/invite_code_route.cpp
+    src/session/invite_coordinator.cpp
+)
 target_link_libraries(flynes_invite_code_route PUBLIC flynes_session_codec)
 target_include_directories(flynes_invite_code_route PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
 target_compile_features(flynes_invite_code_route PUBLIC cxx_std_17)
@@ -236,12 +290,16 @@ flynes_enable_strict_warnings(flynes_invite_code_route)
 
 add_library(flynes_session STATIC
     src/session/flynes_session.cpp
+    src/session/flynes_session_v2.cpp
+    src/session/engine/session_engine.cpp
+    src/session/view/session_view.cpp
 )
 target_include_directories(flynes_session PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_features(flynes_session PRIVATE cxx_std_17)
-target_link_libraries(flynes_session PRIVATE flynes_initial_plan_lock flynes_invite_code_route)
+target_link_libraries(flynes_session PRIVATE
+    flynes_initial_plan_lock flynes_invite_code_route flynes_session_ports)
 set_target_properties(flynes_session PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE YES
@@ -775,12 +833,224 @@ if(FLYNES_BUILD_TESTS)
     flynes_enable_strict_warnings(flynes_pair_capability_test)
     add_test(NAME flynes_pair_capability COMMAND flynes_pair_capability_test)
 
+    add_executable(flynes_gatt_lookup_v2_test
+        tests/nearby/protocol/test_gatt_lookup_v2.cpp
+    )
+    target_link_libraries(flynes_gatt_lookup_v2_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_gatt_lookup_v2_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_gatt_lookup_v2_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_gatt_lookup_v2_test)
+    target_compile_definitions(flynes_gatt_lookup_v2_test PRIVATE
+        FLYNES_GATT_LOOKUP_V2_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/gatt_lookup_v2"
+    )
+    add_test(NAME flynes_gatt_lookup_v2 COMMAND flynes_gatt_lookup_v2_test)
+    set_tests_properties(flynes_gatt_lookup_v2 PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_gatt_fragment_test
+        tests/nearby/protocol/test_gatt_fragment.cpp
+    )
+    target_link_libraries(flynes_gatt_fragment_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_gatt_fragment_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_gatt_fragment_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_gatt_fragment_test)
+    add_test(NAME flynes_gatt_fragment COMMAND flynes_gatt_fragment_test)
+    set_tests_properties(flynes_gatt_fragment PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_invite_coordinator_test
+        tests/nearby/protocol/test_invite_coordinator.cpp
+    )
+    target_link_libraries(flynes_invite_coordinator_test PRIVATE flynes_invite_code_route)
+    target_compile_features(flynes_invite_coordinator_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_invite_coordinator_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_invite_coordinator_test)
+    add_test(NAME flynes_invite_coordinator COMMAND flynes_invite_coordinator_test)
+    set_tests_properties(flynes_invite_coordinator PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_app_stream_assembler_test
+        tests/nearby/protocol/test_app_stream_assembler.cpp
+    )
+    target_link_libraries(flynes_app_stream_assembler_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_app_stream_assembler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_app_stream_assembler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_app_stream_assembler_test)
+    target_compile_definitions(flynes_app_stream_assembler_test PRIVATE
+        FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
+    )
+    add_test(NAME flynes_app_stream_assembler COMMAND flynes_app_stream_assembler_test)
+    set_tests_properties(flynes_app_stream_assembler PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_pair_crypto_test
+        tests/nearby/protocol/test_pair_crypto.cpp
+    )
+    target_link_libraries(flynes_pair_crypto_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_pair_crypto_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_crypto_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_crypto_test)
+    add_test(NAME flynes_pair_crypto COMMAND flynes_pair_crypto_test)
+    set_tests_properties(flynes_pair_crypto PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_pair_handshake_test
+        tests/nearby/protocol/test_pair_handshake.cpp
+    )
+    target_link_libraries(flynes_pair_handshake_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_pair_handshake_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_handshake_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_handshake_test)
+    add_test(NAME flynes_pair_handshake COMMAND flynes_pair_handshake_test)
+
+    add_executable(flynes_initial_bearer_wire_test
+        tests/nearby/protocol/test_initial_bearer_wire.cpp)
+    target_link_libraries(flynes_initial_bearer_wire_test PRIVATE
+        flynes_session_codec)
+    target_compile_features(flynes_initial_bearer_wire_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_initial_bearer_wire_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_initial_bearer_wire_test)
+    add_test(NAME flynes_initial_bearer_wire
+        COMMAND flynes_initial_bearer_wire_test)
+
+    add_executable(flynes_endpoint_offer_wire_test
+        tests/nearby/protocol/test_endpoint_offer_wire.cpp)
+    target_link_libraries(flynes_endpoint_offer_wire_test PRIVATE
+        flynes_session_codec)
+    target_compile_features(flynes_endpoint_offer_wire_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_endpoint_offer_wire_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_endpoint_offer_wire_test)
+    add_test(NAME flynes_endpoint_offer_wire COMMAND flynes_endpoint_offer_wire_test)
+    set_tests_properties(flynes_pair_handshake PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_p256_point_test
+        tests/nearby/protocol/test_p256_point.cpp)
+    target_link_libraries(flynes_p256_point_test PRIVATE flynes_session_codec)
+    target_include_directories(flynes_p256_point_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire)
+    target_compile_features(flynes_p256_point_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_p256_point_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_p256_point_test)
+    add_test(NAME flynes_p256_point COMMAND flynes_p256_point_test)
+    set_tests_properties(flynes_p256_point PROPERTIES LABELS "nearby_auth;nearby_protocol")
+
+    add_executable(flynes_quic_stream_gate_test
+        tests/nearby/protocol/test_quic_stream_gate.cpp
+    )
+    target_link_libraries(flynes_quic_stream_gate_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_quic_stream_gate_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_quic_stream_gate_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_quic_stream_gate_test)
+    add_test(NAME flynes_quic_stream_gate COMMAND flynes_quic_stream_gate_test)
+    set_tests_properties(flynes_quic_stream_gate PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_prebind_record_queue_test
+        tests/nearby/protocol/test_prebind_record_queue.cpp
+    )
+    target_link_libraries(flynes_prebind_record_queue_test PRIVATE flynes_session_codec)
+    target_include_directories(flynes_prebind_record_queue_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+    )
+    target_compile_features(flynes_prebind_record_queue_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_prebind_record_queue_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_prebind_record_queue_test)
+    add_test(NAME flynes_prebind_record_queue COMMAND flynes_prebind_record_queue_test)
+    set_tests_properties(flynes_prebind_record_queue PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_quic_contract_test
+        tests/nearby/contract/test_quic_contract.cpp
+    )
+    target_link_libraries(flynes_quic_contract_test PRIVATE flynes_session_codec)
+    target_compile_features(flynes_quic_contract_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_quic_contract_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_quic_contract_test)
+    add_test(NAME flynes_quic_contract COMMAND flynes_quic_contract_test)
+    set_tests_properties(flynes_quic_contract PROPERTIES LABELS "nearby_ports;nearby_protocol")
+
+    add_executable(flynes_channel_bind_wire_test
+        tests/nearby/protocol/test_channel_bind_wire.cpp)
+    target_link_libraries(flynes_channel_bind_wire_test PRIVATE
+        flynes_session_codec)
+    target_compile_features(flynes_channel_bind_wire_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_channel_bind_wire_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_channel_bind_wire_test)
+    add_test(NAME flynes_channel_bind_wire COMMAND flynes_channel_bind_wire_test)
+    set_tests_properties(flynes_channel_bind_wire PROPERTIES LABELS "nearby_auth;nearby_protocol")
+
+    add_executable(flynes_session_signing_binding_test
+        tests/nearby/protocol/test_session_signing_binding.cpp)
+    target_link_libraries(flynes_session_signing_binding_test PRIVATE
+        flynes_session_codec)
+    target_compile_features(flynes_session_signing_binding_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_signing_binding_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_signing_binding_test)
+    add_test(NAME flynes_session_signing_binding
+        COMMAND flynes_session_signing_binding_test)
+    set_tests_properties(flynes_session_signing_binding PROPERTIES
+        LABELS "nearby_auth;nearby_protocol")
+
     add_executable(flynes_initial_plan_lock_test tests/test_initial_plan_lock.cpp)
     target_link_libraries(flynes_initial_plan_lock_test PRIVATE flynes_initial_plan_lock)
     target_compile_features(flynes_initial_plan_lock_test PRIVATE cxx_std_17)
     set_target_properties(flynes_initial_plan_lock_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_initial_plan_lock_test)
     add_test(NAME flynes_initial_plan_lock COMMAND flynes_initial_plan_lock_test)
+
+    add_executable(flynes_initial_plan_scheduler_test
+        tests/nearby/integration/test_initial_plan_scheduler.cpp)
+    target_link_libraries(flynes_initial_plan_scheduler_test PRIVATE
+        flynes_initial_plan_lock)
+    target_include_directories(flynes_initial_plan_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_features(flynes_initial_plan_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_initial_plan_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_initial_plan_scheduler_test)
+    add_test(NAME flynes_initial_plan_scheduler
+        COMMAND flynes_initial_plan_scheduler_test)
+
+    add_executable(flynes_initial_bearer_scheduler_test
+        tests/nearby/integration/test_initial_bearer_scheduler.cpp)
+    target_link_libraries(flynes_initial_bearer_scheduler_test PRIVATE
+        flynes_initial_plan_lock)
+    target_include_directories(flynes_initial_bearer_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_features(flynes_initial_bearer_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_initial_bearer_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_initial_bearer_scheduler_test)
+    add_test(NAME flynes_initial_bearer_scheduler
+        COMMAND flynes_initial_bearer_scheduler_test)
+
+    add_executable(flynes_initial_quic_bind_scheduler_test
+        tests/nearby/integration/test_initial_quic_bind_scheduler.cpp)
+    target_link_libraries(flynes_initial_quic_bind_scheduler_test PRIVATE
+        flynes_initial_plan_lock)
+    target_include_directories(flynes_initial_quic_bind_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_features(flynes_initial_quic_bind_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_initial_quic_bind_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_initial_quic_bind_scheduler_test)
+    add_test(NAME flynes_initial_quic_bind_scheduler
+        COMMAND flynes_initial_quic_bind_scheduler_test)
+
+    add_executable(flynes_pair_auth_reducer_test
+        tests/nearby/protocol/test_pair_auth_reducer.cpp
+    )
+    target_link_libraries(flynes_pair_auth_reducer_test PRIVATE flynes_initial_plan_lock)
+    target_compile_features(flynes_pair_auth_reducer_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_auth_reducer_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_auth_reducer_test)
+    add_test(NAME flynes_pair_auth_reducer COMMAND flynes_pair_auth_reducer_test)
+    set_tests_properties(flynes_pair_auth_reducer PROPERTIES LABELS "nearby_protocol;nearby_auth")
+
+    add_executable(flynes_link_activation_test
+        tests/nearby/protocol/test_link_activation.cpp
+    )
+    target_link_libraries(flynes_link_activation_test PRIVATE flynes_initial_plan_lock)
+    target_include_directories(flynes_link_activation_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+    target_compile_features(flynes_link_activation_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_activation_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_activation_test)
+    add_test(NAME flynes_link_activation COMMAND flynes_link_activation_test)
+    set_tests_properties(flynes_link_activation PROPERTIES
+        LABELS "nearby_protocol;nearby_auth"
+    )
 
     add_executable(flynes_session_codec_loopback_test
         tests/test_session_codec_loopback.cpp
@@ -796,6 +1066,212 @@ if(FLYNES_BUILD_TESTS)
         FLYNES_SESSION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schema/golden"
     )
     add_test(NAME flynes_session_codec_loopback COMMAND flynes_session_codec_loopback_test)
+
+    add_executable(flynes_session_v2_abi_test
+        tests/nearby/contract/test_session_v2_abi.c
+    )
+    target_link_libraries(flynes_session_v2_abi_test PRIVATE flynes_session)
+    set_target_properties(flynes_session_v2_abi_test PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    flynes_enable_strict_warnings(flynes_session_v2_abi_test)
+    add_test(NAME flynes_session_v2_abi COMMAND flynes_session_v2_abi_test)
+    set_tests_properties(flynes_session_v2_abi PROPERTIES LABELS "nearby_abi")
+
+    add_executable(flynes_session_v2_contract_test
+        tests/nearby/contract/test_session_v2_contract.cpp
+    )
+    target_link_libraries(flynes_session_v2_contract_test PRIVATE flynes_session)
+    target_compile_features(flynes_session_v2_contract_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_v2_contract_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_v2_contract_test)
+    add_test(NAME flynes_session_v2_contract COMMAND flynes_session_v2_contract_test)
+    set_tests_properties(flynes_session_v2_contract PROPERTIES
+        LABELS "nearby_abi;nearby_ports"
+    )
+
+    add_executable(flynes_session_v2_buffer_test
+        tests/nearby/contract/test_session_v2_buffer.cpp
+    )
+    target_link_libraries(flynes_session_v2_buffer_test PRIVATE flynes_session)
+    target_include_directories(flynes_session_v2_buffer_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+    )
+    target_compile_features(flynes_session_v2_buffer_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_v2_buffer_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_v2_buffer_test)
+    add_test(NAME flynes_session_v2_buffer COMMAND flynes_session_v2_buffer_test)
+    set_tests_properties(flynes_session_v2_buffer PROPERTIES
+        LABELS "nearby_abi;nearby_ports"
+    )
+
+    add_executable(flynes_session_v2_provider_tables_test
+        tests/nearby/contract/test_session_v2_provider_tables.cpp
+    )
+    target_link_libraries(flynes_session_v2_provider_tables_test PRIVATE flynes_session)
+    target_compile_features(flynes_session_v2_provider_tables_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_v2_provider_tables_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_v2_provider_tables_test)
+    add_test(NAME flynes_session_v2_provider_tables
+        COMMAND flynes_session_v2_provider_tables_test)
+    set_tests_properties(flynes_session_v2_provider_tables PROPERTIES
+        LABELS "nearby_abi;nearby_ports")
+
+    add_executable(flynes_provider_event_contract_test
+        tests/nearby/contract/test_provider_event_contract.cpp
+    )
+    target_link_libraries(flynes_provider_event_contract_test PRIVATE flynes_session)
+    target_include_directories(flynes_provider_event_contract_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+    )
+    target_compile_features(flynes_provider_event_contract_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_provider_event_contract_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_provider_event_contract_test)
+    add_test(NAME flynes_provider_event_contract
+        COMMAND flynes_provider_event_contract_test)
+    set_tests_properties(flynes_provider_event_contract PROPERTIES
+        LABELS "nearby_abi;nearby_ports")
+
+    add_executable(flynes_provider_operation_journal_test
+        tests/nearby/contract/test_provider_operation_journal.cpp
+    )
+    target_link_libraries(flynes_provider_operation_journal_test PRIVATE flynes_session)
+    target_include_directories(flynes_provider_operation_journal_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_provider_operation_journal_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_provider_operation_journal_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_provider_operation_journal_test)
+    add_test(NAME flynes_provider_operation_journal
+        COMMAND flynes_provider_operation_journal_test)
+    set_tests_properties(flynes_provider_operation_journal PROPERTIES
+        LABELS "nearby_auth;nearby_protocol;nearby_ports")
+
+    add_executable(flynes_real_pair_pipeline_test
+        tests/nearby/integration/test_real_pair_pipeline.cpp
+    )
+    target_link_libraries(flynes_real_pair_pipeline_test PRIVATE
+        flynes_session flynes_initial_plan_lock)
+    if(WIN32)
+        target_link_libraries(flynes_real_pair_pipeline_test PRIVATE bcrypt)
+    endif()
+    target_include_directories(flynes_real_pair_pipeline_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_real_pair_pipeline_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_real_pair_pipeline_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_real_pair_pipeline_test)
+    add_test(NAME flynes_real_pair_pipeline COMMAND flynes_real_pair_pipeline_test)
+    set_tests_properties(flynes_real_pair_pipeline PROPERTIES
+        LABELS "nearby_auth;nearby_protocol")
+
+    add_executable(flynes_pair_material_scheduler_test
+        tests/nearby/integration/test_pair_material_scheduler.cpp)
+    target_link_libraries(flynes_pair_material_scheduler_test PRIVATE
+        flynes_session flynes_initial_plan_lock)
+    target_include_directories(flynes_pair_material_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_pair_material_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_material_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_material_scheduler_test)
+    add_test(NAME flynes_pair_material_scheduler
+        COMMAND flynes_pair_material_scheduler_test)
+    set_tests_properties(flynes_pair_material_scheduler PROPERTIES
+        LABELS "nearby_auth;nearby_protocol;nearby_ports")
+
+    add_executable(flynes_pair_known_scheduler_test
+        tests/nearby/integration/test_pair_known_scheduler.cpp)
+    target_link_libraries(flynes_pair_known_scheduler_test PRIVATE
+        flynes_initial_plan_lock)
+    target_include_directories(flynes_pair_known_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_pair_known_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_known_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_known_scheduler_test)
+    add_test(NAME flynes_pair_known_scheduler
+        COMMAND flynes_pair_known_scheduler_test)
+    set_tests_properties(flynes_pair_known_scheduler PROPERTIES
+        LABELS "nearby_auth;nearby_protocol;nearby_ports")
+
+    add_executable(flynes_session_signing_scheduler_test
+        tests/nearby/integration/test_session_signing_scheduler.cpp)
+    target_link_libraries(flynes_session_signing_scheduler_test PRIVATE
+        flynes_initial_plan_lock)
+    target_include_directories(flynes_session_signing_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_session_signing_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_signing_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_signing_scheduler_test)
+    add_test(NAME flynes_session_signing_scheduler
+        COMMAND flynes_session_signing_scheduler_test)
+    set_tests_properties(flynes_session_signing_scheduler PROPERTIES
+        LABELS "nearby_auth;nearby_protocol;nearby_ports")
+
+    add_executable(flynes_two_engine_empty_lobby_test
+        tests/nearby/integration/test_two_engine_empty_lobby.cpp)
+    target_link_libraries(flynes_two_engine_empty_lobby_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_empty_lobby_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_two_engine_empty_lobby_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_empty_lobby_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_empty_lobby_test)
+    add_test(NAME flynes_two_engine_empty_lobby
+        COMMAND flynes_two_engine_empty_lobby_test)
+    set_tests_properties(flynes_two_engine_empty_lobby PROPERTIES
+        LABELS "nearby_integration;nearby_protocol")
+
+    add_executable(flynes_link_races_test
+        tests/nearby/race/test_link_races.cpp)
+    target_link_libraries(flynes_link_races_test PRIVATE flynes_initial_plan_lock)
+    target_include_directories(flynes_link_races_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_races_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_races_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_races_test)
+    add_test(NAME flynes_link_races COMMAND flynes_link_races_test)
+    set_tests_properties(flynes_link_races PROPERTIES
+        LABELS "nearby_race;nearby_protocol;nearby_auth")
+
+    # W0 frozen contracts for the parallel DUAL worktrees (Task 2). These only
+    # pin object kinds, exact sizes, discriminants, domains and pure gates; the
+    # real codecs and schedulers are owned by W1/W2.
+    add_executable(flynes_link_control_contract_test
+        tests/nearby/contract/test_link_control_contract.cpp)
+    target_link_libraries(flynes_link_control_contract_test PRIVATE
+        flynes_session_codec)
+    target_include_directories(flynes_link_control_contract_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_control_contract_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_control_contract_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_control_contract_test)
+    add_test(NAME flynes_link_control_contract
+        COMMAND flynes_link_control_contract_test)
+    set_tests_properties(flynes_link_control_contract PROPERTIES
+        LABELS "nearby_protocol;nearby_auth")
+
+    add_executable(flynes_dual_runtime_contract_test
+        tests/nearby/contract/test_dual_runtime_contract.cpp)
+    target_link_libraries(flynes_dual_runtime_contract_test PRIVATE
+        flynes_session_codec)
+    target_include_directories(flynes_dual_runtime_contract_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_dual_runtime_contract_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_dual_runtime_contract_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_dual_runtime_contract_test)
+    add_test(NAME flynes_dual_runtime_contract
+        COMMAND flynes_dual_runtime_contract_test)
+    set_tests_properties(flynes_dual_runtime_contract PROPERTIES
+        LABELS "nearby_protocol;nearby_ports")
+
+    add_executable(flynes_session_v2_fencing_test
+        tests/nearby/contract/test_session_v2_fencing.cpp
+    )
+    target_link_libraries(flynes_session_v2_fencing_test PRIVATE flynes_session)
+    target_compile_features(flynes_session_v2_fencing_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_session_v2_fencing_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_session_v2_fencing_test)
+    add_test(NAME flynes_session_v2_fencing COMMAND flynes_session_v2_fencing_test)
+    set_tests_properties(flynes_session_v2_fencing PROPERTIES LABELS "nearby_ports")
 
     add_executable(flynes_session_test
         tests/test_session.cpp

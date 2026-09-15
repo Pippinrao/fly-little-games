@@ -23,6 +23,12 @@ enum class PairSelectionStatus
 // separate gates before executing a selected plan.
 Status validate_pair_capability(const std::uint8_t* bytes, std::size_t size) noexcept;
 
+Status validate_bearer_plan_v1(const BearerPlanBytes& plan,
+                               std::uint8_t platform) noexcept;
+
+std::array<std::uint8_t, 32> selected_bearer_plan_hash_v1(
+    const BearerPlanBytes& plan) noexcept;
+
 // Both summaries must be valid; matches require all 48 global-plan bytes.
 // Every failure clears selected. If both inputs are invalid, initiator wins.
 PairSelectionStatus select_pair_plan(const std::uint8_t* initiator,

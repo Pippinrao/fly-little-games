@@ -3,9 +3,9 @@ import SwiftUI
 /// 配对 — the 6-digit-code block and the Wi-Fi-path block, each capability
 /// rendered per spec §4.
 ///
-/// This page reads no session value: `FlyNesAppBridge` has no nearby/session
-/// method yet (spec §3), so its controls are shown disabled with a visible
-/// reason instead of pretending to act.
+/// Invitation lifecycle and join attempts are owned by the shared session
+/// route through `FlyNesAppBridge`; unsupported platform transport still
+/// reports the discovery reason and never fabricates a match.
 ///
 /// The anonymous-join control set (`nearby.join.request_anonymous` /
 /// `nearby.join.accept` / `nearby.join.reject`) is deliberately **not built**:
@@ -33,13 +33,17 @@ struct NearbyPairingView: View {
     // N01 invite lifecycle: generation-bound code with the 60s continuous
     // clock; regeneration and cancellation kill the old generation (C16).
     @State private var inviteCode = ""
-    @State private var inviteGeneration = 0
-    @State private var inviteDeadline = Date()
+    @State private var inviteGeneration: UInt64 = 0
+    @State private var inviteDeadlineNanoseconds: UInt64 = 0
+    @State private var inviteRemainingSeconds = 0
     // N02 join form state: error only after a submit attempt, submit locked
     // while a request is in flight (C05/C16).
     @State private var joinInput = ""
     @State private var joinError = false
     @State private var joinSubmitted = false
+    @State private var nextJoinAttemptID: UInt64 = 1
+    private let ticker = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+    private let bridge = FlyNesAppBridge.sharedInstance()
 
     var body: some View {
         List {
@@ -55,6 +59,18 @@ struct NearbyPairingView: View {
         }
         .navigationTitle("nearby.pairing.title")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if mode == .create && inviteCode.isEmpty {
+                let snapshot = bridge.nearbyInviteSnapshot()
+                let activeGeneration = snapshot["hostGeneration"]?.uint64Value ?? 0
+                if (snapshot["hostPhase"]?.uint32Value ?? 0) == 1 && activeGeneration != 0 {
+                    _ = bridge.nearbyHostCancelGeneration(activeGeneration)
+                }
+                publishInvite(regenerating: false)
+            }
+        }
+        .onDisappear { cancelOwnedRouteState() }
+        .onReceive(ticker) { _ in refreshInvite() }
     }
 
     /// N01 创建联机: generation-bound six-digit code with the 60s clock.
@@ -63,20 +79,18 @@ struct NearbyPairingView: View {
             Text(inviteCode.isEmpty ? "· · · · · ·" : inviteCode)
                 .accessibilityIdentifier("nearby_invite_code_value")
             if !inviteCode.isEmpty {
-                 let seconds = Int((inviteDeadline.timeIntervalSinceNow).rounded(.up))
-                Text(String(format: "%ds", seconds))
+                Text(String(format: "%ds", inviteRemainingSeconds))
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
             Button("nearby.action.regenerate") {
-                inviteCode = String(format: "%06d", Int.random(in: 0...999_999))
-                inviteGeneration += 1
-                inviteDeadline = Date().addingTimeInterval(60)
+                publishInvite(regenerating: true)
             }
             .accessibilityIdentifier("nearby_invite_regenerate")
             Button("nearby.action.cancelInvite", role: .destructive) {
-                inviteCode = ""
-                inviteGeneration = 0
+                if bridge.nearbyHostCancelGeneration(inviteGeneration) {
+                    clearInvite()
+                }
             }
             .accessibilityIdentifier("nearby_invite_cancel")
         }
@@ -105,17 +119,91 @@ struct NearbyPairingView: View {
                     joinError = true
                     return
                 }
+                let attemptID = bridge.nearbyNextJoinAttemptID()
+                guard attemptID != 0 else { joinError = true; return }
+                nextJoinAttemptID = attemptID &+ 1
+                _ = bridge.nearbySubmitCode(
+                    joinInput,
+                    attemptID: attemptID,
+                    nowNanoseconds: monotonicNanoseconds()
+                )
                 joinSubmitted = true
                 joinError = true
             }
             .disabled(normalizeInviteCode(joinInput) == nil || joinSubmitted)
             .accessibilityIdentifier("nearby_join_submit")
             Button("nearby.action.cancelRequest", role: .destructive) {
+                if nextJoinAttemptID > 1 {
+                    _ = bridge.nearbyCancelAttempt(nextJoinAttemptID - 1)
+                }
                 joinSubmitted = false
                 joinError = false
             }
             .accessibilityIdentifier("nearby_join_cancel")
         }
+    }
+
+    private func publishInvite(regenerating: Bool) {
+        let code = secureInviteCode()
+        let generation = bridge.nearbyNextHostGeneration()
+        guard generation != 0 else { clearInvite(); return }
+        let now = monotonicNanoseconds()
+        let snapshot = bridge.nearbyInviteSnapshot()
+        let hostIsOwnedAndActive = (snapshot["hostPhase"]?.uint32Value ?? 0) == 1
+            && (snapshot["hostGeneration"]?.uint64Value ?? 0) == inviteGeneration
+        let accepted = regenerating && hostIsOwnedAndActive
+            ? bridge.nearbyHostRegenerateCode(code, generation: generation, nowNanoseconds: now)
+            : bridge.nearbyHostPublishCode(code, generation: generation, nowNanoseconds: now)
+        guard accepted else { return }
+        inviteCode = code
+        inviteGeneration = generation
+        inviteDeadlineNanoseconds = now &+ 60_000_000_000
+        inviteRemainingSeconds = 60
+    }
+
+    private func refreshInvite() {
+        guard inviteGeneration != 0 else { return }
+        let now = monotonicNanoseconds()
+        bridge.nearbyTickNanoseconds(now)
+        let snapshot = bridge.nearbyInviteSnapshot()
+        let active = (snapshot["hostPhase"]?.uint32Value ?? 0) == 1
+            && (snapshot["hostGeneration"]?.uint64Value ?? 0) == inviteGeneration
+        guard active else {
+            clearInvite()
+            return
+        }
+        let remaining = inviteDeadlineNanoseconds > now
+            ? inviteDeadlineNanoseconds - now
+            : 0
+        inviteRemainingSeconds = Int((remaining + 999_999_999) / 1_000_000_000)
+    }
+
+    private func clearInvite() {
+        inviteCode = ""
+        inviteGeneration = 0
+        inviteDeadlineNanoseconds = 0
+        inviteRemainingSeconds = 0
+    }
+
+    private func cancelOwnedRouteState() {
+        if inviteGeneration != 0 {
+            _ = bridge.nearbyHostCancelGeneration(inviteGeneration)
+        }
+        if joinSubmitted && nextJoinAttemptID > 1 {
+            _ = bridge.nearbyCancelAttempt(nextJoinAttemptID - 1)
+        }
+        clearInvite()
+        joinSubmitted = false
+    }
+
+    private func monotonicNanoseconds() -> UInt64 {
+        UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
+    }
+
+    private func secureInviteCode() -> String {
+        var value = ""
+        for _ in 0..<6 { value += String(arc4random_uniform(10)) }
+        return value
     }
 
     /// The seven pairing stages in pipeline order; earlier stages are marked

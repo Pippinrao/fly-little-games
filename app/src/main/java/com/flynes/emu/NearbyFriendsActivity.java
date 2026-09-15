@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -116,6 +118,33 @@ public final class NearbyFriendsActivity extends AppCompatActivity
         // the row below each button and the same text is repeated to accessibility services.
         describeDisabled(R.id.nearby_find_devices, R.id.nearby_find_devices_reason);
         describeDisabled(R.id.nearby_scan_host_qr, R.id.nearby_scan_host_qr_reason);
+        applyResponsiveColumns();
+    }
+
+    private void applyResponsiveColumns() {
+        LinearLayout columns = findViewById(R.id.nearby_device_columns);
+        LinearLayout actions = findViewById(R.id.nearby_action_column);
+        LinearLayout statusColumn = findViewById(R.id.nearby_status_column);
+        columns.post(() -> {
+            float density = getResources().getDisplayMetrics().density;
+            float availableDp = (columns.getWidth() - columns.getPaddingLeft()
+                    - columns.getPaddingRight()) / density;
+            boolean split = availableDp > 580f;
+            columns.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+
+            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                    split ? Math.round(224f * density) : ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            actions.setLayoutParams(actionParams);
+
+            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                    split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    split ? 1f : 0f);
+            if (split) statusParams.leftMargin = Math.round(18f * density);
+            else statusParams.topMargin = Math.round(18f * density);
+            statusColumn.setLayoutParams(statusParams);
+        });
     }
 
     private void onScanClicked() {

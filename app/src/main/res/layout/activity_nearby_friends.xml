@@ -54,7 +54,8 @@
                 </LinearLayout>
             </ScrollView>
             <ScrollView android:id="@+id/nearby_devices_panel" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/fly_surface" android:fillViewport="true" android:visibility="gone">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
+                <LinearLayout android:id="@+id/nearby_device_columns" android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:orientation="vertical" android:padding="@dimen/fly_space_4">
+                    <LinearLayout android:id="@+id/nearby_action_column" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
                     <!--
                       N00's three primary actions (design 2026-09-13 U07, C04): 创建联机 / 输入配对码 /
                       扫码加入, in the approved order. None of them requires a selected game. 扫码加入
@@ -83,9 +84,12 @@
                       now". 大厅 gets no such entry: §4 permits the exception only into 配对, and
                       大厅 sits after pairing completes.
                     -->
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_open_pairing" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_3" android:text="@string/nearby_pairing_title" />
-                    <include layout="@layout/view_nearby_stage_pipeline" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" />
-                    <TextView android:id="@+id/nearby_devices_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" android:text="@string/nearby_devices_empty" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_open_pairing" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_3" android:text="@string/nearby_pairing_title" />
+                    </LinearLayout>
+                    <LinearLayout android:id="@+id/nearby_status_column" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                        <include layout="@layout/view_nearby_stage_pipeline" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                        <TextView android:id="@+id/nearby_devices_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" android:text="@string/nearby_devices_empty" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+                    </LinearLayout>
                 </LinearLayout>
             </ScrollView>
         </FrameLayout>

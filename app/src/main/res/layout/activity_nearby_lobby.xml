@@ -21,10 +21,18 @@
         android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
         app:title="@string/nearby_lobby_title" app:titleTextColor="@color/fly_on_surface" />
     <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
-            <LinearLayout android:id="@+id/nearby_lobby_rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_lobby_confirm" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_6" android:enabled="false" android:text="@string/nearby_lobby_confirm" />
-            <TextView android:id="@+id/nearby_lobby_confirm_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_session_read" android:textColor="@color/fly_error" />
-        </LinearLayout>
+        <LinearLayout android:id="@+id/nearby_lobby_rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4" />
     </ScrollView>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:background="@color/fly_surface" android:gravity="center_horizontal"
+        android:orientation="vertical" android:padding="@dimen/fly_space_4">
+        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_lobby_confirm"
+            style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="wrap_content"
+            android:layout_height="48dp" android:maxWidth="320dp" android:minWidth="200dp"
+            android:enabled="false" android:text="@string/nearby_lobby_confirm" />
+        <TextView android:id="@+id/nearby_lobby_confirm_reason" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1"
+            android:gravity="center" android:text="@string/nearby_blocked_session_read"
+            android:textColor="@color/fly_error" />
+    </LinearLayout>
 </LinearLayout>

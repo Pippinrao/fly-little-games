@@ -35,6 +35,7 @@ import com.flynes.emu.catalog.persistence.SourceScanResult;
 import com.flynes.emu.cover.AndroidCoverRepository;
 import com.flynes.emu.gamecenter.GameCenterItem;
 import com.flynes.emu.gamecenter.GameCenterState;
+import com.flynes.emu.gamecenter.BuiltinMultiplayerCapabilities;
 import com.flynes.emu.gamecenter.GameTitlePresentation;
 import com.flynes.emu.gamecenter.HomeHeaderLayoutPolicy;
 import com.google.android.material.button.MaterialButton;
@@ -79,6 +80,7 @@ public final class HomeActivity extends AppCompatActivity {
     private MaterialButton favoriteToggle;
     private boolean busy;
     private boolean largeText;
+    private GameCenterState.MultiplayerCapabilityRegistry multiplayerRegistry;
     private final ExecutorService coverLoader = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "flynes-cover-loader");
         thread.setDaemon(true);
@@ -89,6 +91,7 @@ public final class HomeActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
         runtime = ((FlyNesApplication) getApplication()).catalogRuntime();
+        multiplayerRegistry = BuiltinMultiplayerCapabilities.from(runtime.builtinGames());
         covers = new AndroidCoverRepository(this);
         preferences = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
         navigation = restoreNavigation(savedInstanceState);
@@ -325,11 +328,6 @@ public final class HomeActivity extends AppCompatActivity {
         renderGames();
         sourceAdapter.submit(new ArrayList<>(runtime.stateSnapshot().sources().values()));
     }
-
-    /** Capability projection: empty until the shared versioned profile
-     *  registry is wired, so every game truthfully reads UNKNOWN - never
-     *  UNSUPPORTED by name guessing (design 3.2). */
-    private final GameCenterState.MultiplayerCapabilityRegistry multiplayerRegistry = new GameCenterState.MultiplayerCapabilityRegistry(1L);
 
     /** Locale-correct text for the projected entry status (UI contract key). */
     private int entryResourceFor(NearbyEntryStatus.Status status) {

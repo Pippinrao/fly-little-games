@@ -8,13 +8,28 @@ import SwiftUI
 /// generic "session state is not connected to this build yet" key — where no
 /// field-specific key exists.
 struct NearbyLobbyView: View {
+    private let pageBackground = Color(red: 18 / 255, green: 19 / 255, blue: 22 / 255)
+    private let surface = Color(red: 27 / 255, green: 29 / 255, blue: 34 / 255)
+    private let raised = Color(red: 41 / 255, green: 43 / 255, blue: 49 / 255)
+    private let primary = Color(red: 255 / 255, green: 107 / 255, blue: 94 / 255)
+    private let onSurface = Color(red: 244 / 255, green: 239 / 255, blue: 230 / 255)
+    private let muted = Color(red: 190 / 255, green: 184 / 255, blue: 174 / 255)
+
     var body: some View {
-        List {
-            Section {
-                ForEach(LobbyField.allCases) { field in
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(LobbyField.allCases.filter { $0 != .confirmInvalidated }) { field in
                     LobbyFieldRow(field: field)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(raised, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
+            .padding(16)
+        }
+        .background(pageBackground.ignoresSafeArea())
+        .foregroundStyle(onSurface)
+        .safeAreaInset(edge: .bottom) {
             confirmSection
         }
         .navigationTitle("nearby.lobby.title")
@@ -31,24 +46,32 @@ struct NearbyLobbyView: View {
     /// instead of fabricated, the single button is disabled with its reason,
     /// and 确认已失效 keeps its own row and its own bounded reason.
     @ViewBuilder private var confirmSection: some View {
-        Section("nearby.lobby.confirm.section") {
+        VStack(alignment: .center, spacing: 8) {
             Text("nearby.lobby.confirm")
                 .fontWeight(.semibold)
             Text("nearby.lobby.confirm.fingerprint")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(muted)
             Text("nearby.lobby.confirm.no_fingerprint")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
-            DisabledActionRow(
-                titleKey: "nearby.lobby.confirm",
-                reasonKey: "nearby.blocked.session_read"
-            )
+                .foregroundStyle(muted)
+            Button("nearby.lobby.confirm") {}
+                .disabled(true)
+                .frame(minWidth: 200, maxWidth: 320, minHeight: 48)
+                .background(primary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                .foregroundStyle(onSurface)
+            Text("nearby.blocked.session_read")
+                .font(.footnote)
+                .foregroundStyle(muted)
             LobbyFieldRow(field: .confirmInvalidated)
             Text("nearby.lobby.confirm_invalidated.reason")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(muted)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(surface)
     }
 }
 

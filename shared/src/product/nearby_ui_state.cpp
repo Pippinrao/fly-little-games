@@ -4,9 +4,32 @@
 
 #include "flynes/product/nearby_ui_state.hpp"
 
+#include <cmath>
 #include <stdexcept>
 
 namespace flynes::product::nearby {
+
+NearbyLayout project_layout(double available_width) noexcept
+{
+    if (!std::isfinite(available_width) || available_width < 0.0)
+    {
+        return {};
+    }
+    NearbyLayout result;
+    result.valid = true;
+    result.split = available_width > kNearbySplitThreshold;
+    if (!result.split)
+    {
+        result.left_width = available_width;
+        result.right_width = available_width;
+        return result;
+    }
+    result.left_width = kNearbyLeftColumnWidth;
+    result.gutter = kNearbyColumnGutter;
+    result.right_width = available_width - result.left_width - result.gutter;
+    return result;
+}
+
 namespace {
 
 constexpr std::array<std::string_view, 14> kScreenCodes{

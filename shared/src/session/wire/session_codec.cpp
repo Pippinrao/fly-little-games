@@ -1,6 +1,8 @@
 #include "session_codec.hpp"
+#include "p256_point.hpp"
 #include "sha256.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <string>
@@ -22,6 +24,55 @@ bool zeros(const std::uint8_t* p, std::size_t n) noexcept
             return false;
     }
     return true;
+}
+
+bool canonical_p256_low_s(const std::uint8_t signature[64]) noexcept
+{
+    static constexpr std::array<std::uint8_t, 32> order{{
+        0xff,0xff,0xff,0xff,0x00,0x00,0x00,0x00,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xbc,0xe6,0xfa,0xad,0xa7,0x17,0x9e,0x84,
+        0xf3,0xb9,0xca,0xc2,0xfc,0x63,0x25,0x51}};
+    static constexpr std::array<std::uint8_t, 32> half_order{{
+        0x7f,0xff,0xff,0xff,0x80,0x00,0x00,0x00,
+        0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xde,0x73,0x7d,0x56,0xd3,0x8b,0xcf,0x42,
+        0x79,0xdc,0xe5,0x61,0x7e,0x31,0x92,0xa8}};
+    return !zeros(signature, 32) &&
+           std::memcmp(signature, order.data(), 32) < 0 &&
+           !zeros(signature + 32, 32) &&
+           std::memcmp(signature + 32, half_order.data(), 32) <= 0;
+}
+
+Status validate_identity_verifier_ref(const std::uint8_t* bytes) noexcept
+{
+    if (be16(bytes) != 1u)
+        return Status::InvalidField;
+    if (!zeros(bytes + 2, 6) || !zeros(bytes + 105, 7))
+        return Status::NonzeroReserved;
+    if (!validate_p256_uncompressed_point(bytes + 40))
+        return Status::InvalidField;
+    std::array<std::uint8_t, 32> expected{};
+    const auto key_id = domain_hash(
+        "flynes-identity-key-id-v1", bytes + 40, 65);
+    std::copy(key_id.begin(), key_id.end(), expected.begin());
+    return std::memcmp(bytes + 8, expected.data(), expected.size()) == 0
+        ? Status::Ok : Status::InvalidField;
+}
+
+Status validate_session_signing_binding(const std::uint8_t* bytes) noexcept
+{
+    if (zeros(bytes + 8, 32) || zeros(bytes + 40, 16))
+        return Status::InvalidField;
+    if (!zeros(bytes + 57, 7) || !zeros(bytes + 241, 7))
+        return Status::NonzeroReserved;
+    const auto identity = validate_identity_verifier_ref(bytes + 64);
+    if (identity != Status::Ok) return identity;
+    if (!validate_p256_uncompressed_point(bytes + 176) ||
+        std::memcmp(bytes + 104, bytes + 176, 65) == 0 ||
+        !canonical_p256_low_s(bytes + 248))
+        return Status::InvalidField;
+    return Status::Ok;
 }
 
 Status length_status(std::size_t size, std::size_t expected) noexcept
@@ -200,57 +251,6 @@ Status check_channel_bind(const std::uint8_t* bytes, std::size_t size, std::uint
     return Status::Ok;
 }
 
-Status check_invite_code_request(const std::uint8_t* bytes, std::size_t size,
-                                 std::uint8_t hash_out[32])
-{
-    // 2026-09-13 invite-code amendment, kind 0x0214: six ASCII digits only,
-    // leading zeros preserved; the code locates an invitation, it is not a
-    // credential, so no further structure is carried.
-    const Status ls = length_status(size, 32u);
-    if (ls != Status::Ok)
-        return ls;
-    const Status vs = require_version_reserved(bytes, size);
-    if (vs != Status::Ok)
-        return vs;
-    for (std::size_t i = 8u; i < 14u; ++i)
-    {
-        if (bytes[i] < 0x30u || bytes[i] > 0x39u)
-            return Status::InvalidField;
-    }
-    if (!zeros(bytes + 14u, 18u))
-        return Status::NonzeroReserved;
-    write_hash("flynes-invite-code-lookup-request-v1", bytes, size, hash_out);
-    return Status::Ok;
-}
-
-Status check_invite_code_response(const std::uint8_t* bytes, std::size_t size,
-                                  std::uint8_t hash_out[32])
-{
-    // 2026-09-13 invite-code amendment, kind 0x0215: generation is revealed
-    // only on a match and must equal the host's active invitation generation;
-    // every other status carries zero.
-    const Status ls = length_status(size, 24u);
-    if (ls != Status::Ok)
-        return ls;
-    const Status vs = require_version_reserved(bytes, size);
-    if (vs != Status::Ok)
-        return vs;
-    const std::uint8_t status = bytes[8];
-    if (status < 1u || status > 4u)
-        return Status::UnknownEnum;
-    if (!zeros(bytes + 9u, 7u))
-        return Status::NonzeroReserved;
-    std::uint64_t generation = 0u;
-    for (std::size_t i = 16u; i < 24u; ++i)
-    {
-        generation = (generation << 8u) | bytes[i];
-    }
-    if (status != 1u && generation != 0u)
-        return Status::InvalidField;
-    write_hash("flynes-invite-code-lookup-response-v1", bytes, size, hash_out);
-    return Status::Ok;
-}
-
 Status check_end_package(const std::uint8_t* bytes, std::size_t size, std::uint8_t hash_out[32])
 {
     if (size < 4u)
@@ -350,10 +350,6 @@ Status check(const char* type_name, const std::uint8_t* bytes, std::size_t size,
     }
     if (name == "0x0306")
         return check_end_package(bytes, size, hash_out);
-    if (name == "0x0214")
-        return check_invite_code_request(bytes, size, hash_out);
-    if (name == "0x0215")
-        return check_invite_code_response(bytes, size, hash_out);
     if (name == "0x010f")
         return check_counted(bytes, size, 220u, 36u, 216u, 32u,
                              "flynes-end-closure-manifest-v1", hash_out);
@@ -411,15 +407,22 @@ Status check(const char* type_name, const std::uint8_t* bytes, std::size_t size,
     {
         if (name == kind.name)
         {
+            Status fixed = Status::Ok;
             if (kind.has_enum)
             {
                 const std::size_t off[] = {kind.enum_off};
                 const std::uint8_t mx[] = {kind.enum_max};
-                return check_fixed(bytes, size, kind.length, kind.domain, hash_out, off, mx, 1);
+                fixed = check_fixed(bytes, size, kind.length, kind.domain,
+                                    hash_out, off, mx, 1);
             }
-            const Status fixed = check_fixed(bytes, size, kind.length, kind.domain, hash_out, nullptr, nullptr, 0);
-            if (fixed != Status::Ok || name != "0x0209")
+            else
+                fixed = check_fixed(bytes, size, kind.length, kind.domain,
+                                    hash_out, nullptr, nullptr, 0);
+            if (fixed != Status::Ok)
                 return fixed;
+            if (name == "0x0212")
+                return validate_session_signing_binding(bytes);
+            if (name != "0x0209") return Status::Ok;
             if (bytes[40] != 0x04u)
                 return Status::InvalidField;
             std::uint8_t key_pre[4 + 21 + 4 + 65];

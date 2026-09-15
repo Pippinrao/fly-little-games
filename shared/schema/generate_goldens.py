@@ -23,6 +23,12 @@ P256_G = bytes.fromhex(
     "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
 )
 
+P256_2G = bytes.fromhex(
+    "04"
+    "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978"
+    "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1"
+)
+
 
 def u16(n: int) -> bytes:
     return int(n).to_bytes(2, "big")
@@ -181,22 +187,14 @@ def build_records() -> list[dict]:
     legal = pretag272 + sig
     records.append(("input_range_authorization_v1", legal, "flynes-input-range-authorization-v1", 8, 2, {"kind": "0x0211"}))
 
-    pretag248 = (u16(1) + z(6) + h32 + sid + bytes([1]) + z(7) + identity_ref() + P256_G + z(7))
-    legal = pretag248 + sig
+    pretag248 = (u16(1) + z(6) + h32 + sid + bytes([1]) + z(7) + identity_ref() + P256_2G + z(7))
+    legal = pretag248 + fill(32, 0x77) + fill(32, 0x44)
     records.append(("session_signing_key_binding_v1", legal, "flynes-session-signing-key-binding-hash-v1", 56, 2, {"kind": "0x0212"}))
 
     preimage = (u16(1) + z(6) + bytes([1]) + z(7) + z(32) + h32 + fill(32, 0x56)
                 + fill(320, 0x10) + fill(320, 0x20))
     legal = preimage + sig + sig
     records.append(("pair_transcript_v1", legal, "flynes-pair-transcript-object-v1", 8, 2, {"kind": "0x0213"}))
-
-    # 2026-09-13 invite-code amendment (kinds 0x0214/0x0215).
-    legal = u16(1) + z(6) + b"012345" + z(18)
-    records.append(("invite_code_lookup_request_v1", legal, "flynes-invite-code-lookup-request-v1", None, 2, {"kind": "0x0214"}))
-
-    legal = u16(1) + z(6) + bytes([1]) + z(7) + u64(7)
-    records.append(("invite_code_lookup_response_v1", legal, "flynes-invite-code-lookup-response-v1", 8, 2, {"kind": "0x0215"}))
-
 
     legal = (u16(1) + z(6) + sid + bid + u64(1) + h32 + z(32) + h32 + z(32)
              + bytes([1, 1]) + z(14))

@@ -20,6 +20,21 @@
 
 namespace flynes::product::nearby {
 
+inline constexpr double kNearbySplitThreshold = 580.0;
+inline constexpr double kNearbyLeftColumnWidth = 224.0;
+inline constexpr double kNearbyColumnGutter = 18.0;
+
+struct NearbyLayout
+{
+    bool valid = false;
+    bool split = false;
+    double left_width = 0.0;
+    double gutter = 0.0;
+    double right_width = 0.0;
+};
+
+[[nodiscard]] NearbyLayout project_layout(double available_width) noexcept;
+
 // ---------------------------------------------------------------------------
 // Screen identifiers (design §4). These are semantic test/adaptation IDs, not
 // a requirement to create one native page per value.

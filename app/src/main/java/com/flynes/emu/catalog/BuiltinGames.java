@@ -26,6 +26,8 @@ import java.util.Map;
  */
 public final class BuiltinGames {
 
+    public enum MultiplayerEligibility { SUPPORTED, UNSUPPORTED, UNKNOWN }
+
     /** Asset name of the manifest, at the root of the merged assets directory. */
     public static final String ASSET_NAME = "builtin-games.json";
     /** Asset directory that holds the bundled ROMs. */
@@ -45,10 +47,14 @@ public final class BuiltinGames {
         public final String licenseSourceUrl;
         public final int mapper;
         public final int sortOrder;
+        public final long multiplayerProfileVersion;
+        public final MultiplayerEligibility multiplayerEligibility;
+        public final int multiplayerMaxPlayers;
 
         Entry(String canonicalId, String assetFilename, String titleEn, String titleZhHans,
               String credit, String licenseFile, String licenseSpdx, String licenseSourceUrl,
-              int mapper, int sortOrder) {
+              int mapper, int sortOrder, long multiplayerProfileVersion,
+              MultiplayerEligibility multiplayerEligibility, int multiplayerMaxPlayers) {
             this.canonicalId = canonicalId;
             this.assetFilename = assetFilename;
             this.titleEn = titleEn;
@@ -59,6 +65,9 @@ public final class BuiltinGames {
             this.licenseSourceUrl = licenseSourceUrl;
             this.mapper = mapper;
             this.sortOrder = sortOrder;
+            this.multiplayerProfileVersion = multiplayerProfileVersion;
+            this.multiplayerEligibility = multiplayerEligibility;
+            this.multiplayerMaxPlayers = multiplayerMaxPlayers;
         }
 
         /** Asset path of this game's ROM, relative to the assets root. */
@@ -74,10 +83,13 @@ public final class BuiltinGames {
 
     private final List<Entry> entries;
     private final Map<String, Entry> byCanonicalId;
+    private final long multiplayerProfileVersion;
 
-    private BuiltinGames(List<Entry> entries, Map<String, Entry> byCanonicalId) {
+    private BuiltinGames(List<Entry> entries, Map<String, Entry> byCanonicalId,
+                         long multiplayerProfileVersion) {
         this.entries = Collections.unmodifiableList(entries);
         this.byCanonicalId = Collections.unmodifiableMap(byCanonicalId);
+        this.multiplayerProfileVersion = multiplayerProfileVersion;
     }
 
     /** Every bundled game, ordered by the manifest's sortOrder. */
@@ -85,9 +97,11 @@ public final class BuiltinGames {
         return entries;
     }
 
+    public long multiplayerProfileVersion() { return multiplayerProfileVersion; }
+
     /** No bundled games: used when the manifest cannot be read, never to hide one. */
     public static BuiltinGames empty() {
-        return new BuiltinGames(new ArrayList<>(), new HashMap<>());
+        return new BuiltinGames(new ArrayList<>(), new HashMap<>(), 0L);
     }
 
     /** The bundled game with this canonical id, or null (also for null/blank ids). */
@@ -159,6 +173,10 @@ public final class BuiltinGames {
             throw new IOException(ASSET_NAME + " schemaVersion " + schemaVersion
                     + " is not supported (expected " + SUPPORTED_SCHEMA_VERSION + ")");
         }
+        long multiplayerProfileVersion = root.optLong("multiplayerProfileVersion", -1L);
+        if (multiplayerProfileVersion <= 0L) {
+            throw new IOException(ASSET_NAME + " has no supported multiplayerProfileVersion");
+        }
 
         JSONArray games = root.optJSONArray("games");
         if (games == null || games.length() == 0) {
@@ -188,6 +206,25 @@ public final class BuiltinGames {
                 throw new IOException(ASSET_NAME + " declares " + canonicalId + " more than once");
             }
             JSONObject license = game.optJSONObject("license");
+            JSONObject multiplayer = game.optJSONObject("multiplayerProfile");
+            if (multiplayer == null
+                    || multiplayer.optLong("version", -1L) != multiplayerProfileVersion) {
+                throw new IOException(ASSET_NAME + " game " + canonicalId
+                        + " has a missing or version-mismatched multiplayerProfile");
+            }
+            MultiplayerEligibility eligibility;
+            try {
+                eligibility = MultiplayerEligibility.valueOf(
+                        multiplayer.optString("eligibility", ""));
+            } catch (IllegalArgumentException failure) {
+                throw new IOException(ASSET_NAME + " game " + canonicalId
+                        + " has invalid multiplayer eligibility", failure);
+            }
+            int maxPlayers = multiplayer.optInt("maxPlayers", 0);
+            if (eligibility == MultiplayerEligibility.SUPPORTED && maxPlayers != 2) {
+                throw new IOException(ASSET_NAME + " game " + canonicalId
+                        + " must declare maxPlayers=2 when multiplayer is supported");
+            }
             Entry entry = new Entry(
                     canonicalId,
                     assetFilename,
@@ -198,13 +235,16 @@ public final class BuiltinGames {
                     license == null ? "" : license.optString("spdx", ""),
                     license == null ? "" : license.optString("sourceUrl", ""),
                     game.optInt("mapper", 0),
-                    game.optInt("sortOrder", 0));
+                    game.optInt("sortOrder", 0),
+                    multiplayerProfileVersion,
+                    eligibility,
+                    maxPlayers);
             parsed.add(entry);
             index.put(canonicalId, entry);
         }
 
         parsed.sort(Comparator.comparingInt((Entry entry) -> entry.sortOrder));
-        return new BuiltinGames(parsed, index);
+        return new BuiltinGames(parsed, index, multiplayerProfileVersion);
     }
 
     private static String required(JSONObject game, String field, int position) throws IOException {

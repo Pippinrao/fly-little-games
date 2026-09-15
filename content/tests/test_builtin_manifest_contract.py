@@ -54,6 +54,7 @@ REQUIRED_GAME_FIELDS = (
     "credit",
     "sortOrder",
     "license",
+    "multiplayerProfile",
 )
 REQUIRED_LICENSE_FIELDS = ("spdx", "file", "sourceUrl", "sourceRevision")
 
@@ -91,6 +92,8 @@ def main() -> int:
     manifest = load_json(MANIFEST)
     require(isinstance(manifest, dict), "manifest root must be a JSON object")
     require(manifest.get("schemaVersion") == 1, "manifest schemaVersion must be 1")
+    require(manifest.get("multiplayerProfileVersion") == 1,
+            "manifest multiplayerProfileVersion must be 1")
 
     games = manifest.get("games")
     require(isinstance(games, list), "manifest must carry a 'games' array")
@@ -113,6 +116,7 @@ def main() -> int:
     seen_filenames = set()
     seen_sort = set()
     cover_eligible = []
+    supported_multiplayer = []
 
     for game in games:
         require(isinstance(game, dict), "every manifest game must be an object")
@@ -158,6 +162,19 @@ def main() -> int:
                 f"{location}: coverEligible must be a boolean")
         if eligible:
             cover_eligible.append(canonical_id)
+
+        multiplayer = game["multiplayerProfile"]
+        require(isinstance(multiplayer, dict),
+                f"{location}: multiplayerProfile must be an object")
+        require(multiplayer.get("version") == manifest["multiplayerProfileVersion"],
+                f"{location}: multiplayer profile version must match the manifest")
+        eligibility = multiplayer.get("eligibility")
+        require(eligibility in {"SUPPORTED", "UNSUPPORTED", "UNKNOWN"},
+                f"{location}: invalid multiplayer eligibility {eligibility!r}")
+        if eligibility == "SUPPORTED":
+            require(multiplayer.get("maxPlayers") == 2,
+                    f"{location}: supported multiplayer profile must declare maxPlayers=2")
+            supported_multiplayer.append(canonical_id)
 
         rom_sha = game["romSha256"]
         require(isinstance(rom_sha, str) and SHA256_RE.match(rom_sha),
@@ -218,6 +235,8 @@ def main() -> int:
 
     require(cover_eligible, "at least one bundled game must keep coverEligible true; "
                             "device cover capture has nothing it can observe otherwise")
+    require(supported_multiplayer,
+            "the versioned profile must expose at least one verified two-player game")
 
     print(f"PASS builtin manifest contract ({len(games)} games)")
     return 0

@@ -132,6 +132,30 @@ assert "fileIo.listFile(" in scan, "directory enumeration must use the asynchron
 assert "fileIo.open(" in scan, "file opening must use the asynchronous API"
 assert "fileIo.stat(" in scan, "file stat must use the asynchronous API"
 assert "nativeApp.scanAddFile" not in scan, "ArkUI must not synchronously hash ROM files"
+
+pairing = Path("harmony/entry/src/main/ets/pages/NearbyPairing.ets").read_text(encoding="utf-8")
+for export in (
+    "nearbyInviteNextHostGeneration", "nearbyInviteNextJoinAttemptId",
+    "nearbyInviteHostPublish", "nearbyInviteHostRegenerate", "nearbyInviteHostCancel",
+    "nearbyInviteSubmitCode", "nearbyInviteCancelCode", "nearbyInviteTick",
+    "nearbyInviteSnapshot",
+):
+    assert export in dts, f"{export} must be declared for ArkTS"
+    assert f'"{export}"' in napi, f"{export} must be registered by N-API"
+    assert export in pairing, f"NearbyPairing must use the shared session export {export}"
+assert "Math.random" not in pairing, "invite digits must not come from the ArkUI-local PRNG"
+assert "Date.now" not in pairing, "invite expiry must use a monotonic clock"
+assert "snapshot.hostPhase === 1" in pairing, (
+    "expired/cancelled invitations must publish anew instead of regenerating an idle host")
+for color in ("#121316", "#1B1D22", "#292B31", "#F4EFE6", "#BEB8AE", "#FF6B5E"):
+    assert color in pairing, f"NearbyPairing must use acceptance token {color}"
+assert ".width(48)" in pairing and ".height(48)" in pairing, (
+    "NearbyPairing back navigation hit target must be 48vp")
+lobby_page = Path("harmony/entry/src/main/ets/pages/NearbyLobby.ets").read_text(encoding="utf-8")
+scroll_end = lobby_page.find(".layoutWeight(1)", lobby_page.find("Scroll()"))
+footer_at = lobby_page.find("this.confirmFooter()")
+assert scroll_end >= 0 and footer_at > scroll_end, (
+    "NearbyLobby confirmation must be a fixed footer outside the scrolling body")
 appear_at = gc.find("aboutToAppear")
 appear_end = gc.find("private ensureCoverStore", appear_at)
 startup_body = gc[appear_at:appear_end]

@@ -1,4 +1,7 @@
 import { router } from '@kit.ArkUI';
+import { systemDateTime } from '@kit.BasicServicesKit';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import nativeSession, { NearbyInviteSnapshotDto } from 'libentry.so';
 import {
   NEARBY_STAGE_STATUS_CURRENT,
   NEARBY_STAGE_STATUS_NOT_REACHED,
@@ -13,10 +16,12 @@ import {
 
 // Android/game-center parity: the same shell colors as pages/NearbyFriends.ets and
 // pages/Settings.ets. No new palette is introduced here.
-const COLOR_SURFACE: string = '#1B1F28';
-const COLOR_ON_SURFACE: string = '#F2F4F7';
-const COLOR_ON_SURFACE_MUTED: string = '#A8B0BD';
-const COLOR_NOT_REACHED: string = '#3A404C';
+const COLOR_BACKGROUND: string = '#121316';
+const COLOR_SURFACE: string = '#1B1D22';
+const COLOR_FIELD: string = '#292B31';
+const COLOR_ON_SURFACE: string = '#F4EFE6';
+const COLOR_ON_SURFACE_MUTED: string = '#BEB8AE';
+const COLOR_NOT_REACHED: string = '#292B31';
 const COLOR_BLOCKED: string = '#FF6B5E';
 
 @Entry
@@ -26,39 +31,122 @@ struct NearbyPairing {
   @State private mode: string = '';
   @State private inviteCode: string = '';
   @State private inviteGeneration: number = 0;
-  @State private inviteDeadlineMs: number = 0;
+  @State private inviteStartedAtMs: number = 0;
+  @State private inviteSeconds: number = 0;
   @State private joinInput: string = '';
   @State private joinError: boolean = false;
   @State private joinSubmitted: boolean = false;
+  private joinAttemptId: number = 0;
+  private inviteTimerId: number = -1;
 
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, string> | undefined;
     this.mode = params && params['mode'] ? params['mode'] : '';
+    if (this.mode === 'create') {
+      const snapshot: NearbyInviteSnapshotDto = nativeSession.nearbyInviteSnapshot();
+      if (snapshot.hostPhase === 1 && snapshot.hostGeneration > 0) {
+        nativeSession.nearbyInviteHostCancel(snapshot.hostGeneration);
+      }
+      this.publishInvite(false);
+      this.startInviteTimer();
+    }
+  }
+
+  aboutToDisappear(): void {
+    this.stopInviteTimer();
+    if (this.inviteGeneration > 0) {
+      nativeSession.nearbyInviteHostCancel(this.inviteGeneration);
+    }
+    if (this.joinSubmitted && this.joinAttemptId > 0) {
+      nativeSession.nearbyInviteCancelCode(this.joinAttemptId);
+    }
   }
 
   private remainingInviteSeconds(): number {
-    if (this.inviteDeadlineMs === 0) {
-      return 0;
-    }
-    return Math.max(0, Math.ceil((this.inviteDeadlineMs - Date.now()) / 1000));
+    return this.inviteSeconds;
   }
 
   private regenerateInvite(): void {
-    // N01: regeneration starts a new generation and kills the old code/QR
-    // together; the old generation never comes back (C16).
+    const snapshot: NearbyInviteSnapshotDto = nativeSession.nearbyInviteSnapshot();
+    this.publishInvite(snapshot.hostPhase === 1 &&
+      snapshot.hostGeneration === this.inviteGeneration);
+  }
+
+  private monotonicNowMs(): number {
+    return systemDateTime.getUptime(systemDateTime.TimeType.STARTUP);
+  }
+
+  private secureInviteCode(): string {
+    const random = cryptoFramework.createRandom();
     let digits = '';
-    for (let index = 0; index < 6; index++) {
-      digits += String(Math.floor(Math.random() * 10));
+    while (digits.length < 6) {
+      const bytes: Uint8Array = random.generateRandomSync(8).data;
+      for (let index = 0; index < bytes.length && digits.length < 6; index++) {
+        // Rejection sampling avoids modulo bias: 250 is divisible by ten.
+        if (bytes[index] < 250) {
+          digits += String(bytes[index] % 10);
+        }
+      }
     }
-    this.inviteCode = digits;
-    this.inviteGeneration += 1;
-    this.inviteDeadlineMs = Date.now() + 60000;
+    return digits;
+  }
+
+  private publishInvite(regenerate: boolean): void {
+    // N01: the shared reducer owns the generation fence and 60-second expiry.
+    const nowMs = this.monotonicNowMs();
+    const generation = nativeSession.nearbyInviteNextHostGeneration();
+    const code = this.secureInviteCode();
+    const accepted: boolean = regenerate
+      ? nativeSession.nearbyInviteHostRegenerate(generation, code, nowMs)
+      : nativeSession.nearbyInviteHostPublish(generation, code, nowMs);
+    if (!accepted) {
+      this.clearInviteView();
+      return;
+    }
+    this.inviteCode = code;
+    this.inviteGeneration = generation;
+    this.inviteStartedAtMs = nowMs;
+    this.inviteSeconds = 60;
   }
 
   private cancelInvite(): void {
+    if (this.inviteGeneration > 0) {
+      nativeSession.nearbyInviteHostCancel(this.inviteGeneration);
+    }
+    this.clearInviteView();
+  }
+
+  private clearInviteView(): void {
     this.inviteCode = '';
     this.inviteGeneration = 0;
-    this.inviteDeadlineMs = 0;
+    this.inviteStartedAtMs = 0;
+    this.inviteSeconds = 0;
+  }
+
+  private startInviteTimer(): void {
+    if (this.inviteTimerId !== -1) {
+      return;
+    }
+    this.inviteTimerId = setInterval(() => this.tickInvite(), 250);
+  }
+
+  private stopInviteTimer(): void {
+    if (this.inviteTimerId !== -1) {
+      clearInterval(this.inviteTimerId);
+      this.inviteTimerId = -1;
+    }
+  }
+
+  private tickInvite(): void {
+    const nowMs = this.monotonicNowMs();
+    nativeSession.nearbyInviteTick(nowMs);
+    const snapshot: NearbyInviteSnapshotDto = nativeSession.nearbyInviteSnapshot();
+    if (snapshot.hostPhase !== 1 || snapshot.hostGeneration !== this.inviteGeneration) {
+      this.clearInviteView();
+      return;
+    }
+    this.inviteSeconds = Math.max(0,
+      Math.ceil((60000 - (nowMs - this.inviteStartedAtMs)) / 1000));
   }
 
   private joinInputChanged(value: string): void {
@@ -79,6 +167,9 @@ struct NearbyPairing {
       this.joinError = true;
       return;
     }
+    const nowMs = this.monotonicNowMs();
+    this.joinAttemptId = nativeSession.nearbyInviteNextJoinAttemptId();
+    nativeSession.nearbyInviteSubmitCode(this.joinAttemptId, code, nowMs);
     this.joinSubmitted = true;
     this.joinError = true;
   }
@@ -110,7 +201,7 @@ struct NearbyPairing {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.start_window_background'))
+    .backgroundColor(COLOR_BACKGROUND)
   }
 
   @Builder
@@ -120,8 +211,8 @@ struct NearbyPairing {
         .fontSize(26)
         .fontWeight(FontWeight.Bold)
         .fontColor(COLOR_ON_SURFACE)
-        .width(44)
-        .height(44)
+        .width(48)
+        .height(48)
         .textAlign(TextAlign.Center)
         .onClick(() => {
           router.back();
@@ -168,15 +259,15 @@ struct NearbyPairing {
           .layoutWeight(1)
           .height(48)
           .fontSize(16)
-          .backgroundColor('#292B31')
-          .fontColor('#F4EFE6')
+          .backgroundColor(COLOR_FIELD)
+          .fontColor(COLOR_ON_SURFACE)
           .onClick(() => this.regenerateInvite())
         Button($r('app.string.nearby_action_cancelInvite'))
           .layoutWeight(1)
           .height(48)
           .fontSize(16)
-          .backgroundColor('#292B31')
-          .fontColor('#F4EFE6')
+          .backgroundColor(COLOR_FIELD)
+          .fontColor(COLOR_ON_SURFACE)
           .onClick(() => this.cancelInvite())
       }
       .width('100%')
@@ -200,7 +291,6 @@ struct NearbyPairing {
         .width('100%')
       TextInput({ text: this.joinInput })
         .type(InputType.Number)
-        .maxLength(6)
         .height(48)
         .width('100%')
         .fontColor(COLOR_ON_SURFACE)
@@ -218,17 +308,20 @@ struct NearbyPairing {
           .layoutWeight(1)
           .height(48)
           .fontSize(16)
-          .backgroundColor('#FF6B5E')
-          .fontColor('#F4EFE6')
+          .backgroundColor(COLOR_BLOCKED)
+          .fontColor(COLOR_ON_SURFACE)
           .enabled(normalizeInviteCode(this.joinInput) !== '' && !this.joinSubmitted)
           .onClick(() => this.submitJoin())
         Button($r('app.string.nearby_action_cancelRequest'))
           .layoutWeight(1)
           .height(48)
           .fontSize(16)
-          .backgroundColor('#292B31')
-          .fontColor('#F4EFE6')
+          .backgroundColor(COLOR_FIELD)
+          .fontColor(COLOR_ON_SURFACE)
           .onClick(() => {
+            if (this.joinAttemptId > 0) {
+              nativeSession.nearbyInviteCancelCode(this.joinAttemptId);
+            }
             this.joinSubmitted = false;
             this.joinError = false;
           })

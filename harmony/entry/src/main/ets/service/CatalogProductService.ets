@@ -28,6 +28,10 @@ export function uniqueGameCenterRows(snapshot: GameCenterRow[]): GameCenterRow[]
     }
     const target = merged[existing];
     target.builtin = target.builtin || row.builtin;
+    if (row.popularityScore !== undefined &&
+      (target.popularityScore === undefined || row.popularityScore > target.popularityScore)) {
+      target.popularityScore = row.popularityScore;
+    }
   }
   const builtinRows: GameCenterRow[] = [];
   const otherRows: GameCenterRow[] = [];
@@ -82,6 +86,7 @@ export class MultiplayerCapabilityRegistry {
   }
 }
 
+/**
  * Stable post-filter for the independent two-player switch (design U04):
  * removes rows whose eligibility is not SUPPORTED, never re-sorts, never
  * re-ranks, and never changes the category/query/filter state itself. Applied
@@ -95,6 +100,25 @@ export function applyMultiplayerFilter(rows: GameCenterRow[],
     if (registry.eligibilityFor(row.canonicalId) === MultiplayerEligibility.SUPPORTED) {
       result.push(row);
     }
+  }
+  return result;
+}
+
+export function multiplayerCapabilitiesFrom(games: BuiltinGames): MultiplayerCapabilityRegistry {
+  const registry = new MultiplayerCapabilityRegistry(games.multiplayerProfileVersion());
+  const rows = games.all();
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    let eligibility = MultiplayerEligibility.UNKNOWN;
+    if (row.multiplayerEligibility === 'SUPPORTED') {
+      eligibility = MultiplayerEligibility.SUPPORTED;
+    } else if (row.multiplayerEligibility === 'UNSUPPORTED') {
+      eligibility = MultiplayerEligibility.UNSUPPORTED;
+    }
+    registry.put(row.canonicalId, eligibility, row.multiplayerProfileVersion);
+  }
+  return registry;
+}
 
 /**
  * Catalog projection for Game Center.

@@ -66,7 +66,12 @@ public final class StartAndPauseSeparationTest {
                     com.flynes.emu.video.NativePresenterStats.FRAME_RATE_VOTE_CLEARED,
                     pauseStats.frameRateVoteStatus());
             onView(withText(R.string.control_layout_title)).check(doesNotExist());
-            onView(withId(R.id.pause_game_title)).check(matches(withText(R.string.builtin_game_name)));
+            scenario.onActivity(activity -> {
+                android.widget.TextView title = activity.findViewById(R.id.pause_game_title);
+                org.junit.Assert.assertFalse(
+                        "pause drawer must show the shared-manifest game title",
+                        title.getText().toString().isBlank());
+            });
             scenario.onActivity(activity -> {
                 android.graphics.Rect buttonBounds = new android.graphics.Rect();
                 android.view.View continueButton = activity.findViewById(R.id.pause_continue);

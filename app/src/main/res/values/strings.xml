@@ -292,8 +292,8 @@
     <string name="nearby_join_request_anonymous">Anonymous join request</string>
     <string name="nearby_join_accept">Accept</string>
     <string name="nearby_join_reject">Reject</string>
-    <string name="nearby_code_label">Six-digit code</string>
-    <string name="nearby_code_confirm">Confirm code</string>
+    <string name="nearby_code_label">Six-digit identity check code</string>
+    <string name="nearby_code_confirm">Confirm identity check code</string>
     <string name="nearby_wifi_path_building">Building the Wi-Fi direct path</string>
     <string name="nearby_wifi_system_confirm_once">The system may ask once whether to allow the connection</string>
     <string name="nearby_friends_section">Friends</string>

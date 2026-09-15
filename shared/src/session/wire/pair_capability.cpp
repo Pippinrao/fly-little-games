@@ -1,5 +1,7 @@
 #include "pair_capability.hpp"
 
+#include "sha256.hpp"
+
 #include <algorithm>
 #include <cstring>
 
@@ -52,6 +54,26 @@ bool preferred(const std::uint8_t* candidate, const std::uint8_t* current) noexc
 }
 
 } // namespace
+
+Status validate_bearer_plan_v1(const BearerPlanBytes& plan,
+                               std::uint8_t platform) noexcept
+{
+    return platform >= 1 && platform <= 3
+        ? validate_plan(plan.data(), platform) : Status::UnknownEnum;
+}
+
+std::array<std::uint8_t, 32> selected_bearer_plan_hash_v1(
+    const BearerPlanBytes& plan) noexcept
+{
+    static constexpr char domain[] = "flynes-selected-bearer-plan-v1";
+    std::array<std::uint8_t, sizeof(domain) - 1 + 4 + 48> preimage{};
+    std::copy_n(reinterpret_cast<const std::uint8_t*>(domain),
+                sizeof(domain) - 1, preimage.begin());
+    preimage[sizeof(domain) - 1 + 3] = 48;
+    std::copy(plan.begin(), plan.end(),
+              preimage.begin() + sizeof(domain) - 1 + 4);
+    return sha256(preimage.data(), preimage.size());
+}
 
 Status validate_pair_capability(const std::uint8_t* bytes, std::size_t size) noexcept
 {

@@ -2,10 +2,11 @@ import { router } from '@kit.ArkUI';
 
 // Android/game-center parity: existing shell colors from pages/GameCenter.ets and
 // resources/base/element/color.json. No new palette is introduced here.
-const COLOR_SURFACE: string = '#1B1F28';
-const COLOR_ON_SURFACE: string = '#F2F4F7';
-const COLOR_ON_SURFACE_MUTED: string = '#A8B0BD';
-const COLOR_NOT_REACHED: string = '#3A404C';
+const COLOR_BACKGROUND: string = '#121316';
+const COLOR_SURFACE: string = '#1B1D22';
+const COLOR_ON_SURFACE: string = '#F4EFE6';
+const COLOR_ON_SURFACE_MUTED: string = '#BEB8AE';
+const COLOR_NOT_REACHED: string = '#292B31';
 const COLOR_BLOCKED: string = '#FF6B5E';
 
 const TAB_FRIENDS: string = 'friends';
@@ -50,6 +51,7 @@ struct NearbyFriends {
   // the same rule opens returning users on 好友. Do not hardcode this back to 好友
   // and do not persist the last-used tab.
   @State private tab: string = initialNearbyTab(savedFriendCount());
+  @State private availableWidth: number = 0;
 
   build() {
     Column() {
@@ -63,7 +65,10 @@ struct NearbyFriends {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.start_window_background'))
+    .backgroundColor(COLOR_BACKGROUND)
+    .onAreaChange((_old: Area, area: Area) => {
+      this.availableWidth = Number(area.width);
+    })
   }
 
   @Builder
@@ -73,8 +78,8 @@ struct NearbyFriends {
         .fontSize(26)
         .fontWeight(FontWeight.Bold)
         .fontColor(COLOR_ON_SURFACE)
-        .width(44)
-        .height(44)
+        .width(48)
+        .height(48)
         .textAlign(TextAlign.Center)
         .onClick(() => {
           router.back();
@@ -157,111 +162,95 @@ struct NearbyFriends {
   @Builder
   devicesTab() {
     Scroll() {
-      Column({ space: 8 }) {
-        ForEach(STAGE_ORDER, (kind: string) => {
-          this.stageRow(kind)
-        }, (kind: string) => kind)
-
-        // Discovery capability row: the stage name plus the reason it cannot run.
-        Row({ space: 8 }) {
-          Circle()
-            .width(8)
-            .height(8)
-            .fill(COLOR_BLOCKED)
-          Text($r('app.string.nearby_stage_discovery'))
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_ON_SURFACE)
-            .layoutWeight(1)
+      if (this.availableWidth > 580) {
+        Row({ space: 18 }) {
+          Column({ space: 8 }) {
+            this.deviceActions()
+          }
+          .width(224)
+          Column({ space: 8 }) {
+            this.deviceStatus()
+          }
+          .layoutWeight(1)
+          .constraintSize({ minWidth: 0 })
         }
         .width('100%')
-        .height(32)
-        .padding({ left: 12, right: 12 })
-        .alignItems(VerticalAlign.Center)
-        Text($r('app.string.nearby_stage_discovery_reason'))
-          .fontSize(14)
-          .fontColor(COLOR_BLOCKED)
+        .alignItems(VerticalAlign.Top)
+      } else {
+        Column({ space: 18 }) {
+          Column({ space: 8 }) {
+            this.deviceActions()
+          }
           .width('100%')
-          .padding({ left: 12, right: 12 })
-
-        // N00's three primary actions (design 2026-09-13 U07, C04): none of them
-        // requires a selected game. 扫码加入 is the only camera consumer and is
-        // requested on use; a denial never disables the code path (C10).
-        Button($r('app.string.nearby_action_create'))
+          Column({ space: 8 }) {
+            this.deviceStatus()
+          }
           .width('100%')
-          .height(48)
-          .fontSize(16)
-          .backgroundColor('#FF6B5E')
-          .fontColor('#F4EFE6')
-          .onClick(() => {
-            void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'create' } });
-          })
-        Button($r('app.string.nearby_action_enterCode'))
-          .width('100%')
-          .height(48)
-          .fontSize(16)
-          .backgroundColor('#1B1D22')
-          .fontColor('#F4EFE6')
-          .onClick(() => {
-            void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'join_code' } });
-          })
-        Button($r('app.string.nearby_action_scanQr'))
-          .width('100%')
-          .height(48)
-          .fontSize(16)
-          .backgroundColor('#1B1D22')
-          .fontColor('#F4EFE6')
-          .onClick(() => {
-            void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'scan' } });
-          })
-        // Both discovery actions cannot act yet: present, disabled, and each with
-        // its own visible reason (§4).
-        Button($r('app.string.nearby_find_devices'))
-          .width('100%')
-          .height(48)
-          .fontSize(16)
-          .enabled(false)
-        Text($r('app.string.nearby_blocked_discovery'))
-          .fontSize(14)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-          .width('100%')
-          .textAlign(TextAlign.Center)
-        Button($r('app.string.nearby_scan_host_qr'))
-          .width('100%')
-          .height(48)
-          .fontSize(16)
-          .enabled(false)
-        Text($r('app.string.nearby_blocked_discovery'))
-          .fontSize(14)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-          .width('100%')
-          .textAlign(TextAlign.Center)
-
-        Text($r('app.string.nearby_devices_empty'))
-          .fontSize(14)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .margin({ top: 8 })
-
-        // §4 permits exactly one kind of navigate-only entry: into 配对, because
-        // that page must exist to display the blocking stage. Everything else on
-        // this tab stays disabled with its own reason above. The label is the
-        // destination page's own name — nearby.title names the whole feature, so
-        // reusing it on a child page would be a real defect.
-        Button($r('app.string.nearby_pairing_title'))
-          .width('100%')
-          .height(48)
-          .fontSize(16)
-          .onClick(() => {
-            void router.pushUrl({ url: 'pages/NearbyPairing' });
-          })
+        }
+        .width('100%')
       }
-      .width('100%')
-      .padding(16)
     }
     .width('100%')
     .layoutWeight(1)
+    .padding(16)
+  }
+
+  @Builder
+  deviceActions() {
+    Button($r('app.string.nearby_action_create'))
+      .width('100%').height(48).fontSize(16)
+      .backgroundColor(COLOR_BLOCKED).fontColor(COLOR_ON_SURFACE)
+      .onClick(() => {
+        void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'create' } });
+      })
+    Button($r('app.string.nearby_action_enterCode'))
+      .width('100%').height(48).fontSize(16)
+      .backgroundColor(COLOR_SURFACE).fontColor(COLOR_ON_SURFACE)
+      .onClick(() => {
+        void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'join_code' } });
+      })
+    Button($r('app.string.nearby_action_scanQr'))
+      .width('100%').height(48).fontSize(16)
+      .backgroundColor(COLOR_SURFACE).fontColor(COLOR_ON_SURFACE)
+      .onClick(() => {
+        void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'scan' } });
+      })
+    Button($r('app.string.nearby_find_devices'))
+      .width('100%').height(48).fontSize(16).enabled(false)
+    Text($r('app.string.nearby_blocked_discovery'))
+      .fontSize(14).fontColor(COLOR_ON_SURFACE_MUTED)
+      .width('100%').textAlign(TextAlign.Center)
+    Button($r('app.string.nearby_scan_host_qr'))
+      .width('100%').height(48).fontSize(16).enabled(false)
+    Text($r('app.string.nearby_blocked_discovery'))
+      .fontSize(14).fontColor(COLOR_ON_SURFACE_MUTED)
+      .width('100%').textAlign(TextAlign.Center)
+    Button($r('app.string.nearby_pairing_title'))
+      .width('100%').height(48).fontSize(16)
+      .onClick(() => {
+        void router.pushUrl({ url: 'pages/NearbyPairing' });
+      })
+  }
+
+  @Builder
+  deviceStatus() {
+    ForEach(STAGE_ORDER, (kind: string) => {
+      this.stageRow(kind)
+    }, (kind: string) => kind)
+    Row({ space: 8 }) {
+      Circle().width(8).height(8).fill(COLOR_BLOCKED)
+      Text($r('app.string.nearby_stage_discovery'))
+        .fontSize(16).fontWeight(FontWeight.Bold)
+        .fontColor(COLOR_ON_SURFACE).layoutWeight(1)
+    }
+    .width('100%').height(32).padding({ left: 12, right: 12 })
+    .alignItems(VerticalAlign.Center)
+    Text($r('app.string.nearby_stage_discovery_reason'))
+      .fontSize(14).fontColor(COLOR_BLOCKED)
+      .width('100%').padding({ left: 12, right: 12 })
+    Text($r('app.string.nearby_devices_empty'))
+      .fontSize(14).fontColor(COLOR_ON_SURFACE_MUTED)
+      .width('100%').textAlign(TextAlign.Center).margin({ top: 8 })
   }
 
   // One row per pairing stage, in pipeline order. The first failing stage is

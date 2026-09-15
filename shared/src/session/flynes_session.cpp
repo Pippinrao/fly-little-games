@@ -377,6 +377,19 @@ bool valid_channel(std::uint32_t channel) noexcept
     return channel >= FLY_SESSION_QUIC_CONTROL && channel <= FLY_SESSION_QUIC_AUDIO;
 }
 
+std::optional<std::string_view> public_invite_code(const std::uint8_t* code,
+                                                   std::size_t code_size) noexcept
+{
+    if (code == nullptr || code_size != flynes::session::kInviteCodeLength)
+    {
+        return std::nullopt;
+    }
+    const std::string_view value(reinterpret_cast<const char*>(code), code_size);
+    return flynes::session::parse_invite_code(value).has_value()
+               ? std::optional<std::string_view>(value)
+               : std::nullopt;
+}
+
 void fill_genesis(fly_frame_cursor_v1* cursor) noexcept
 {
     std::memset(cursor, 0, sizeof(*cursor));
@@ -696,4 +709,123 @@ extern "C" fly_result fly_session_get_invite_snapshot(
         snapshot_out->host_attempts_left = route->host_attempts_left;
     }
     return FLY_RESULT_OK;
+}
+
+extern "C" fly_result fly_session_invite_submit_code_v1(
+    fly_session_t* session, uint64_t attempt_id, const uint8_t* code,
+    size_t code_size, uint64_t now_ns)
+{
+    const auto value = public_invite_code(code, code_size);
+    if (session == nullptr || attempt_id == 0u || !value.has_value())
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::submit_invite_code(session, attempt_id, *value, now_ns)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_cancel_code_v1(
+    fly_session_t* session, uint64_t attempt_id)
+{
+    if (session == nullptr || attempt_id == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::cancel_invite_code(session, attempt_id)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_host_publish_v1(
+    fly_session_t* session, uint64_t generation, const uint8_t* code,
+    size_t code_size, uint64_t now_ns)
+{
+    const auto value = public_invite_code(code, code_size);
+    if (session == nullptr || generation == 0u || !value.has_value())
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::invite_host_publish(session, generation, *value, now_ns)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_host_regenerate_v1(
+    fly_session_t* session, uint64_t generation, const uint8_t* code,
+    size_t code_size, uint64_t now_ns)
+{
+    const auto value = public_invite_code(code, code_size);
+    if (session == nullptr || generation == 0u || !value.has_value())
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::invite_host_regenerate(session, generation, *value, now_ns)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_host_cancel_v1(
+    fly_session_t* session, uint64_t generation)
+{
+    if (session == nullptr || generation == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::invite_host_cancel(session, generation)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_report_lookup_response_v1(
+    fly_session_t* session, uint64_t attempt_id, uint32_t status,
+    uint64_t matched_generation, uint64_t now_ns)
+{
+    if (session == nullptr || attempt_id == 0u ||
+        status < FLY_SESSION_INVITE_LOOKUP_MATCH_PENDING_HOST_APPROVAL ||
+        status > FLY_SESSION_INVITE_LOOKUP_RATE_LIMITED)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    const auto route_status = static_cast<flynes::session::InviteLookupStatus>(status);
+    return flynes::session::invite_lookup_response(
+               session, attempt_id, route_status, matched_generation, now_ns)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_report_host_accepted_v1(
+    fly_session_t* session, uint64_t attempt_id)
+{
+    if (session == nullptr || attempt_id == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::invite_joiner_host_accepted(session, attempt_id)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_confirm_local_sas_v1(
+    fly_session_t* session, uint64_t attempt_id)
+{
+    if (session == nullptr || attempt_id == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::invite_joiner_local_sas_confirmed(session, attempt_id)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
+}
+
+extern "C" fly_result fly_session_invite_report_peer_sas_confirmed_v1(
+    fly_session_t* session, uint64_t attempt_id)
+{
+    if (session == nullptr || attempt_id == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return flynes::session::invite_joiner_peer_sas_confirmed(session, attempt_id)
+               ? FLY_RESULT_OK
+               : FLY_RESULT_INVALID_STATE;
 }

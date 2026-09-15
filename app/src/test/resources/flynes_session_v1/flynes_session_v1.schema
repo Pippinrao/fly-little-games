@@ -25,8 +25,6 @@
     "flynes-input-sequence-reserve-finalized-v1",
     "flynes-input-sequence-reserve-grant-v1",
     "flynes-input-sequence-reserve-req-v1",
-    "flynes-invite-code-lookup-request-v1",
-    "flynes-invite-code-lookup-response-v1",
     "flynes-offline-release-certificate-hash-v1",
     "flynes-offline-save-manifest-v1",
     "flynes-opaque-recovery-failure-evidence-v1",
@@ -3348,106 +3346,6 @@
       "max_decode_length": 880,
       "name": "PAIR_TRANSCRIPT_V1",
       "notes": "pair_transcript_hash uses flynes-pair-transcript-v1 over the 752-byte preimage only. Object hash covers all 880 bytes. BLE/QR/Wi-Fi/friends not implemented in M1.",
-      "reserved_zero_required": true,
-      "unassigned_kind_illegal": true,
-      "unknown_enum_rejects": true,
-      "version_u16be": 1
-    },
-    {
-      "children": [],
-      "closure_role": "HARD",
-      "enums": {},
-      "fields": [
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "version",
-          "wire_type": "u16be"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "reserved_zero",
-          "wire_type": "u8[6]"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "code",
-          "note": "six ASCII digits 0x30..0x39; leading zeros preserved; locates the active anonymous invitation only, never a credential",
-          "wire_type": "u8[6]"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "reserved_zero_2",
-          "wire_type": "u8[18]"
-        }
-      ],
-      "fixed_length": 32,
-      "hash_domain": "flynes-invite-code-lookup-request-v1",
-      "hash_preimage": "SHA256(\"flynes-invite-code-lookup-request-v1\" || u32be(len) || exact_bytes)",
-      "kind": "0x0214",
-      "layout": "fixed",
-      "max_decode_length": 32,
-      "name": "INVITE_CODE_LOOKUP_REQUEST_V1",
-      "notes": "2026-09-13 invite-code amendment: pre-reveal anonymous link only; authentication stays on the existing BLE/SAS identity flow.",
-      "reserved_zero_required": true,
-      "unassigned_kind_illegal": true,
-      "unknown_enum_rejects": true,
-      "version_u16be": 1
-    },
-    {
-      "children": [],
-      "closure_role": "HARD",
-      "enums": {
-        "status": {
-          "EXPIRED": 3,
-          "MATCH_PENDING_HOST_APPROVAL": 1,
-          "NO_MATCH": 2,
-          "RATE_LIMITED": 4
-        }
-      },
-      "fields": [
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "version",
-          "wire_type": "u16be"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "reserved_zero",
-          "wire_type": "u8[6]"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "status",
-          "wire_type": "u8"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "reserved_zero_2",
-          "wire_type": "u8[7]"
-        },
-        {
-          "cardinality": "required_1",
-          "endian": "network",
-          "name": "generation",
-          "wire_type": "u64be"
-        }
-      ],
-      "fixed_length": 24,
-      "hash_domain": "flynes-invite-code-lookup-response-v1",
-      "hash_preimage": "SHA256(\"flynes-invite-code-lookup-response-v1\" || u32be(len) || exact_bytes)",
-      "kind": "0x0215",
-      "layout": "fixed",
-      "max_decode_length": 24,
-      "name": "INVITE_CODE_LOOKUP_RESPONSE_V1",
-      "notes": "generation is nonzero only for MATCH_PENDING_HOST_APPROVAL and must equal the host's active invitation generation; all other statuses carry zero.",
       "reserved_zero_required": true,
       "unassigned_kind_illegal": true,
       "unknown_enum_rejects": true,

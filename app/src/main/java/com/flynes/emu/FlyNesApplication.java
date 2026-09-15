@@ -10,15 +10,18 @@ import com.flynes.emu.settings.SettingsRepository;
 public final class FlyNesApplication extends Application {
     private AndroidCatalogRuntime catalogRuntime;
     private AndroidGameLaunchService gameLaunchService;
+    private NearbySession nearbySession;
 
     @Override public void onCreate() {
         super.onCreate();
         catalogRuntime = new AndroidCatalogRuntime(this);
         gameLaunchService = new AndroidGameLaunchService(catalogRuntime);
+        nearbySession = NearbySession.create();
     }
 
     public AndroidCatalogRuntime catalogRuntime() { return catalogRuntime; }
     public AndroidGameLaunchService gameLaunchService() { return gameLaunchService; }
+    public NearbySession nearbySession() { return nearbySession; }
     public SettingsRepository settingsRepository() {
         return catalogRuntime == null ? null : catalogRuntime.settingsRepository();
     }

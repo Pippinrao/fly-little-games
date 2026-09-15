@@ -173,11 +173,28 @@ export interface PlayRuntimeStatusDto {
   error: string;
 }
 
+export interface NearbyInviteSnapshotDto {
+  joinPhase: number;
+  hostPhase: number;
+  joinAttemptId: number;
+  hostGeneration: number;
+  hostAttemptsLeft: number;
+}
+
 export const catalogSmoke: (dataRoot: string, cacheRoot: string) => CatalogSmokeResult;
 export const catalogSnapshot: () => GameCenterRow[];
 export const catalogFavoriteSet: (canonicalId: string, favorite: boolean) => void;
 export const catalogMarkPlayed: (canonicalId: string) => void;
 export const catalogUserStateGet: (canonicalId: string) => CatalogUserState;
+export const nearbyInviteHostPublish: (generation: number, code: string, nowMs: number) => boolean;
+export const nearbyInviteNextHostGeneration: () => number;
+export const nearbyInviteNextJoinAttemptId: () => number;
+export const nearbyInviteHostRegenerate: (generation: number, code: string, nowMs: number) => boolean;
+export const nearbyInviteHostCancel: (generation: number) => boolean;
+export const nearbyInviteSubmitCode: (attemptId: number, code: string, nowMs: number) => boolean;
+export const nearbyInviteCancelCode: (attemptId: number) => boolean;
+export const nearbyInviteTick: (nowMs: number) => boolean;
+export const nearbyInviteSnapshot: () => NearbyInviteSnapshotDto;
 export const gameCenterFilter: (rows: GameCenterRow[], category: string, query: string) => GameCenterRow[];
 export const controlLayoutRecommended: () => string;
 export const controlLayoutDecodeOrRecommended: (value: string) => string;

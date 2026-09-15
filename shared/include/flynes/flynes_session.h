@@ -16,6 +16,1143 @@ extern "C" {
 
 typedef struct fly_session_handle fly_session_t;
 
+/*
+ * Additive process ABI for the public multiplayer engine. This version axis is
+ * independent from the product wire major and the repository release version.
+ * V1 declarations below retain their existing layout and behavior.
+ */
+#define FLY_SESSION_ABI_VERSION_2 UINT32_C(2)
+
+typedef int32_t fly_session_result_v2;
+typedef struct fly_session_v2_handle fly_session_v2_t;
+typedef struct fly_session_inbox_v2_handle fly_session_inbox_v2_t;
+typedef struct fly_session_view_v2_handle fly_session_view_v2_t;
+typedef struct fly_session_approval_token_v2_handle fly_session_approval_token_v2_t;
+typedef struct fly_session_task_v2_handle fly_session_task_v2_t;
+typedef struct fly_session_buffer_v2_handle fly_session_buffer_v2_t;
+
+enum fly_session_result_code_v2
+{
+    FLY_SESSION_V2_OK = 0,
+    FLY_SESSION_V2_ACCEPTED = 1,
+    FLY_SESSION_V2_EMPTY = 2,
+    FLY_SESSION_V2_DUPLICATE = 3,
+    FLY_SESSION_V2_INVALID_ARGUMENT = -1,
+    FLY_SESSION_V2_ABI_MISMATCH = -2,
+    FLY_SESSION_V2_STALE = -3,
+    FLY_SESSION_V2_INVALID_STATE = -4,
+    FLY_SESSION_V2_UNSUPPORTED = -5,
+    FLY_SESSION_V2_PERMISSION_DENIED = -6,
+    FLY_SESSION_V2_BACKPRESSURE = -7,
+    FLY_SESSION_V2_BUFFER_TOO_SMALL = -8,
+    FLY_SESSION_V2_CLOSED = -9,
+    FLY_SESSION_V2_CANCELLED = -10,
+    FLY_SESSION_V2_TIMEOUT = -11,
+    FLY_SESSION_V2_IO_FAILED = -12,
+    FLY_SESSION_V2_AUTH_FAILED = -13,
+    FLY_SESSION_V2_PROTOCOL_VIOLATION = -14,
+    FLY_SESSION_V2_CONTRACT_VIOLATION = -15,
+    FLY_SESSION_V2_BUSY = -16,
+    FLY_SESSION_V2_OUT_OF_MEMORY = -17,
+    FLY_SESSION_V2_UNAVAILABLE = -18
+};
+
+typedef struct fly_session_config_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t action_queue_capacity;
+    uint32_t notice_queue_capacity;
+    uint32_t reserved_zero[4];
+} fly_session_config_v2;
+
+#define FLY_SESSION_CONFIG_V2_SIZE \
+    ((uint32_t)(offsetof(fly_session_config_v2, reserved_zero) + \
+                sizeof(((fly_session_config_v2*)0)->reserved_zero)))
+
+enum fly_session_scope_kind_v2
+{
+    FLY_SESSION_SCOPE_ENGINE_V2 = 1,
+    FLY_SESSION_SCOPE_LINK_V2 = 2,
+    FLY_SESSION_SCOPE_GAME_V2 = 3
+};
+
+typedef struct fly_session_scope_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t kind;
+    uint32_t reserved_zero;
+    uint8_t link_id[16];
+    uint8_t branch_id[16];
+} fly_session_scope_v2;
+
+#define FLY_SESSION_SCOPE_V2_SIZE ((uint32_t)sizeof(fly_session_scope_v2))
+
+typedef struct fly_session_op_token_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint8_t engine_instance_id[16];
+    fly_session_scope_v2 scope;
+    uint64_t connection_generation;
+    uint64_t config_revision;
+    uint64_t authority_term;
+    uint64_t writer_generation;
+    uint64_t timeline_epoch;
+    uint64_t seat_revision;
+    uint64_t mode_generation;
+    uint64_t media_generation;
+    uint64_t operation_id;
+    uint8_t transition_id[16];
+} fly_session_op_token_v2;
+
+#define FLY_SESSION_OP_TOKEN_V2_SIZE ((uint32_t)sizeof(fly_session_op_token_v2))
+
+typedef fly_session_result_v2 (*fly_session_operation_cancel_v2)(
+    void*, const fly_session_op_token_v2*);
+
+typedef struct fly_session_clock_sample_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t continuous_ns;
+    uint8_t boot_generation[32];
+    uint32_t suspend_inclusive;
+    uint32_t reserved_zero;
+} fly_session_clock_sample_v2;
+
+#define FLY_SESSION_CLOCK_SAMPLE_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_clock_sample_v2))
+
+typedef void (*fly_session_context_retain_v2)(void* context);
+typedef void (*fly_session_context_release_v2)(void* context);
+
+typedef fly_session_result_v2 (*fly_session_clock_read_continuous_v2)(
+    void* context,
+    fly_session_clock_sample_v2* out_sample);
+
+typedef struct fly_session_clock_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_clock_read_continuous_v2 read_continuous;
+} fly_session_clock_port_v2;
+
+#define FLY_SESSION_CLOCK_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_clock_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_executor_post_v2)(
+    void* context,
+    fly_session_task_v2_t* task);
+typedef fly_session_result_v2 (*fly_session_executor_arm_timer_v2)(
+    void* context,
+    uint64_t deadline_ns,
+    const uint8_t boot_generation[32],
+    uint64_t timer_id,
+    fly_session_task_v2_t* task);
+typedef fly_session_result_v2 (*fly_session_executor_cancel_timer_v2)(
+    void* context,
+    uint64_t timer_id);
+
+typedef struct fly_session_executor_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_executor_post_v2 post;
+    fly_session_executor_arm_timer_v2 arm_timer;
+    fly_session_executor_cancel_timer_v2 cancel_timer;
+} fly_session_executor_port_v2;
+
+#define FLY_SESSION_EXECUTOR_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_executor_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_platform_state_watch_v2)(
+    void* context,
+    const fly_session_op_token_v2* token,
+    fly_session_inbox_v2_t* inbox);
+typedef fly_session_result_v2 (*fly_session_platform_state_stop_v2)(
+    void* context,
+    const fly_session_op_token_v2* token);
+
+typedef struct fly_session_platform_state_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_platform_state_watch_v2 watch;
+    fly_session_platform_state_stop_v2 stop;
+} fly_session_platform_state_port_v2;
+
+#define FLY_SESSION_PLATFORM_STATE_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_platform_state_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_camera_start_scan_v2)(
+    void* context,
+    const fly_session_op_token_v2* token,
+    fly_session_inbox_v2_t* inbox);
+typedef fly_session_result_v2 (*fly_session_camera_stop_scan_v2)(
+    void* context,
+    const fly_session_op_token_v2* token);
+
+typedef struct fly_session_camera_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_camera_start_scan_v2 start_scan;
+    fly_session_camera_stop_scan_v2 stop_scan;
+} fly_session_camera_port_v2;
+
+#define FLY_SESSION_CAMERA_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_camera_port_v2))
+
+/*
+ * Provider-owned opaque resources. Zero is always invalid. Public code may
+ * copy handles but must use the owning provider's release operation; handles
+ * never contain or expose private-key bytes.
+ */
+typedef uint64_t fly_session_resource_handle_v2;
+
+typedef struct fly_session_bytes_v2
+{
+    const uint8_t* data;
+    uint32_t size;
+    uint32_t reserved_zero;
+} fly_session_bytes_v2;
+
+/* Borrowed writable storage for a synchronous BufferHandle read. */
+typedef struct fly_session_write_bytes_v2
+{
+    uint8_t* data;
+    uint64_t capacity;
+} fly_session_write_bytes_v2;
+
+enum fly_session_key_purpose_v2
+{
+    FLY_SESSION_KEY_DEVICE_IDENTITY_V2 = 1,
+    FLY_SESSION_KEY_SESSION_SIGNING_V2 = 2,
+    FLY_SESSION_KEY_PAIR_ECDH_V2 = 3,
+    FLY_SESSION_KEY_TLS_V2 = 4
+};
+
+enum fly_session_public_key_encoding_v2
+{
+    FLY_SESSION_PUBLIC_KEY_X963_UNCOMPRESSED_V2 = 1,
+    FLY_SESSION_PUBLIC_KEY_DER_SPKI_V2 = 2
+};
+
+typedef fly_session_result_v2 (*fly_session_key_generate_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t purpose,
+    fly_session_bytes_v2 scope_binding, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_key_open_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t purpose,
+    fly_session_bytes_v2 durable_key_ref, fly_session_bytes_v2 scope_binding,
+    const uint8_t expected_public_hash[32], fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_key_public_key_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
+    uint32_t encoding, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_key_prehashed_sign_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
+    uint32_t purpose, fly_session_bytes_v2 domain,
+    const uint8_t digest[32], fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_key_agree_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
+    fly_session_bytes_v2 peer_x963, fly_session_bytes_v2 attempt_binding,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_key_release_v2)(
+    void*, fly_session_resource_handle_v2);
+typedef fly_session_result_v2 (*fly_session_key_destroy_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 durable_key_ref,
+    uint64_t expected_revision, fly_session_inbox_v2_t*);
+
+typedef struct fly_session_key_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_key_generate_v2 generate;
+    fly_session_key_open_v2 open;
+    fly_session_key_public_key_v2 public_key;
+    fly_session_key_prehashed_sign_v2 prehashed_sign;
+    fly_session_key_agree_v2 key_agree;
+    fly_session_key_release_v2 release_key;
+    fly_session_key_destroy_v2 destroy;
+    fly_session_operation_cancel_v2 cancel;
+} fly_session_key_port_v2;
+
+#define FLY_SESSION_KEY_PORT_V2_SIZE ((uint32_t)sizeof(fly_session_key_port_v2))
+
+enum fly_session_crypto_algorithm_v2
+{
+    FLY_SESSION_CRYPTO_SHA256_V2 = 1,
+    FLY_SESSION_CRYPTO_HKDF_SHA256_V2 = 2,
+    FLY_SESSION_CRYPTO_AES_256_GCM_V2 = 3,
+    FLY_SESSION_CRYPTO_ECDSA_P256_SHA256_PREHASHED_V2 = 4
+};
+
+typedef fly_session_result_v2 (*fly_session_crypto_random_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t byte_count,
+    fly_session_bytes_v2 purpose, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_crypto_hkdf_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 secret,
+    fly_session_bytes_v2 salt, fly_session_bytes_v2 info, uint32_t output_size,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_crypto_aead_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 key,
+    fly_session_bytes_v2 nonce, fly_session_bytes_v2 aad,
+    fly_session_bytes_v2 input, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_crypto_verify_prehashed_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 public_key_x963,
+    fly_session_bytes_v2 domain, const uint8_t digest[32],
+    fly_session_bytes_v2 canonical_low_s_signature, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_crypto_hmac_sha256_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 key,
+    fly_session_bytes_v2 exact_input, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_crypto_release_secret_v2)(
+    void*, fly_session_resource_handle_v2);
+
+typedef struct fly_session_crypto_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_crypto_random_v2 random;
+    fly_session_crypto_hkdf_v2 hkdf;
+    fly_session_crypto_aead_v2 aead_seal;
+    fly_session_crypto_aead_v2 aead_open;
+    fly_session_crypto_verify_prehashed_v2 verify_prehashed;
+    fly_session_crypto_release_secret_v2 release_secret;
+    fly_session_operation_cancel_v2 cancel;
+    /* Appended in R2: required for exact protocol HMACs over non-exportable keys. */
+    fly_session_crypto_hmac_sha256_v2 hmac_sha256;
+} fly_session_crypto_port_v2;
+
+#define FLY_SESSION_CRYPTO_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_crypto_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_tls_material_create_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 tls_key,
+    fly_session_bytes_v2 certificate_policy, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_tls_material_restore_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 durable_ref,
+    const uint8_t expected_spki_hash[32], fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_tls_material_release_v2)(
+    void*, fly_session_resource_handle_v2);
+
+typedef struct fly_session_tls_material_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_tls_material_create_v2 create;
+    fly_session_tls_material_restore_v2 restore;
+    fly_session_tls_material_release_v2 release_material;
+    fly_session_operation_cancel_v2 cancel;
+} fly_session_tls_material_port_v2;
+
+#define FLY_SESSION_TLS_MATERIAL_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_tls_material_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_secure_store_read_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 name_space,
+    fly_session_bytes_v2 record_key, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_secure_store_compare_replace_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 name_space,
+    fly_session_bytes_v2 record_key, uint64_t expected_revision,
+    fly_session_buffer_v2_t* immutable_secret_buffer, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_secure_store_remove_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 name_space,
+    fly_session_bytes_v2 record_key, uint64_t expected_revision,
+    fly_session_inbox_v2_t*);
+
+typedef struct fly_session_secure_store_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_secure_store_read_v2 read;
+    fly_session_secure_store_compare_replace_v2 compare_replace;
+    fly_session_secure_store_remove_v2 remove;
+    fly_session_operation_cancel_v2 cancel;
+} fly_session_secure_store_port_v2;
+
+#define FLY_SESSION_SECURE_STORE_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_secure_store_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_object_store_put_immutable_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t object_kind,
+    const uint8_t expected_content_hash[32],
+    fly_session_buffer_v2_t* immutable_buffer, fly_session_inbox_v2_t*);
+
+typedef struct fly_session_object_store_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_object_store_put_immutable_v2 put_immutable;
+    fly_session_operation_cancel_v2 cancel;
+} fly_session_object_store_port_v2;
+
+#define FLY_SESSION_OBJECT_STORE_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_object_store_port_v2))
+
+enum fly_session_quic_handshake_policy_v2
+{
+    FLY_SESSION_QUIC_REQUIRE_FULL_TLS13_V2 = 1,
+    FLY_SESSION_QUIC_FORBID_RESUMPTION_V2 = 1,
+    FLY_SESSION_QUIC_FORBID_ZERO_RTT_V2 = 1
+};
+
+typedef struct fly_session_quic_connect_policy_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t require_full_tls13;
+    uint32_t forbid_resumption;
+    uint32_t forbid_zero_rtt;
+    uint32_t reserved_zero;
+    char alpn[32];
+    uint8_t expected_der_spki_hash[32];
+} fly_session_quic_connect_policy_v2;
+
+#define FLY_SESSION_QUIC_CONNECT_POLICY_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_quic_connect_policy_v2))
+
+typedef fly_session_result_v2 (*fly_session_quic_start_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 path,
+    fly_session_bytes_v2 endpoint, fly_session_resource_handle_v2 tls_material,
+    const fly_session_quic_connect_policy_v2*, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_inspect_handshake_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_exporter_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    fly_session_bytes_v2 label, fly_session_bytes_v2 context, uint32_t output_size,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_open_stream_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    uint32_t opener_role, uint32_t stream_kind, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_write_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 stream,
+    fly_session_buffer_v2_t* immutable_buffer, uint32_t finish,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_stream_control_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 stream,
+    uint64_t value, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_send_datagram_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    fly_session_resource_handle_v2 immutable_buffer, uint64_t deadline_ns,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_connection_query_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_quic_close_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    uint32_t reason, fly_session_inbox_v2_t*);
+
+typedef struct fly_session_quic_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_quic_start_v2 listen;
+    fly_session_quic_start_v2 connect;
+    fly_session_quic_inspect_handshake_v2 inspect_handshake;
+    fly_session_quic_exporter_v2 exporter;
+    fly_session_quic_open_stream_v2 open_uni;
+    fly_session_quic_open_stream_v2 open_bidi;
+    fly_session_quic_open_stream_v2 accept_uni;
+    fly_session_quic_open_stream_v2 accept_bidi;
+    fly_session_quic_write_v2 write;
+    fly_session_quic_stream_control_v2 finish;
+    fly_session_quic_stream_control_v2 reset;
+    fly_session_quic_stream_control_v2 grant_read_credit;
+    fly_session_quic_send_datagram_v2 send_datagram;
+    fly_session_quic_connection_query_v2 payload_budget;
+    fly_session_quic_connection_query_v2 stats;
+    fly_session_quic_close_v2 close;
+    fly_session_operation_cancel_v2 cancel;
+} fly_session_quic_port_v2;
+
+#define FLY_SESSION_QUIC_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_quic_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_discovery_start_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 policy,
+    uint64_t deadline_ns, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_discovery_stop_v2)(
+    void*, const fly_session_op_token_v2*);
+typedef fly_session_result_v2 (*fly_session_discovery_connection_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 candidate,
+    uint64_t generation, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_discovery_write_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    uint32_t characteristic, fly_session_buffer_v2_t*, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_discovery_subscribe_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 connection,
+    uint32_t characteristic, fly_session_inbox_v2_t*);
+
+enum fly_session_discovery_physical_role_v2
+{
+    FLY_SESSION_DISCOVERY_PHYSICAL_CENTRAL_V2 = 1,
+    FLY_SESSION_DISCOVERY_PHYSICAL_PERIPHERAL_V2 = 2
+};
+
+enum fly_session_discovery_characteristic_v2
+{
+    FLY_SESSION_DISCOVERY_WRITE_V2 = 1,
+    FLY_SESSION_DISCOVERY_INDICATE_V2 = 2
+};
+
+typedef struct fly_session_discovery_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_discovery_start_v2 scan;
+    fly_session_discovery_start_v2 advertise;
+    fly_session_discovery_stop_v2 stop;
+    fly_session_discovery_connection_v2 connect;
+    fly_session_discovery_connection_v2 disconnect;
+    fly_session_discovery_write_v2 write;
+    fly_session_discovery_write_v2 indicate;
+    fly_session_discovery_subscribe_v2 subscribe;
+} fly_session_discovery_port_v2;
+
+#define FLY_SESSION_DISCOVERY_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_discovery_port_v2))
+
+typedef fly_session_result_v2 (*fly_session_bearer_probe_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_bytes_v2 policy,
+    uint64_t deadline_ns, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_bearer_start_v2)(
+    void*, const fly_session_op_token_v2*, const uint8_t plan_hash[32],
+    fly_session_resource_handle_v2 credential, uint32_t confirmation_budget,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_bearer_resolve_endpoint_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 path,
+    fly_session_bytes_v2 listener_token, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_bearer_release_v2)(
+    void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2 bearer,
+    fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_bearer_prepare_credential_v2)(
+    void*, const fly_session_op_token_v2*, const uint8_t plan_hash[32],
+    fly_session_bytes_v2 selected_plan, fly_session_resource_handle_v2 bearer,
+    uint32_t creator,
+    fly_session_bytes_v2 canonical_join_params, fly_session_inbox_v2_t*);
+typedef fly_session_result_v2 (*fly_session_bearer_release_credential_v2)(
+    void*, fly_session_resource_handle_v2 credential);
+
+typedef struct fly_session_bearer_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_bearer_probe_v2 probe;
+    fly_session_bearer_start_v2 create;
+    fly_session_bearer_start_v2 join;
+    fly_session_bearer_resolve_endpoint_v2 resolve_endpoint;
+    fly_session_bearer_release_v2 release_bearer;
+    fly_session_operation_cancel_v2 cancel;
+    fly_session_bearer_prepare_credential_v2 prepare_credential;
+    fly_session_bearer_release_credential_v2 release_credential;
+} fly_session_bearer_port_v2;
+
+#define FLY_SESSION_BEARER_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_bearer_port_v2))
+
+typedef struct fly_session_ports_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    const fly_session_clock_port_v2* clock;
+    const fly_session_executor_port_v2* executor;
+    const fly_session_platform_state_port_v2* platform_state;
+    const fly_session_camera_port_v2* camera;
+    const fly_session_key_port_v2* key;
+    const fly_session_crypto_port_v2* crypto;
+    const fly_session_tls_material_port_v2* tls_material;
+    const fly_session_secure_store_port_v2* secure_store;
+    const fly_session_quic_port_v2* quic;
+    const fly_session_discovery_port_v2* discovery;
+    const fly_session_bearer_port_v2* bearer;
+    const fly_session_object_store_port_v2* object_store;
+} fly_session_ports_v2;
+
+#define FLY_SESSION_PORTS_V2_R0_SIZE \
+    ((uint32_t)(offsetof(fly_session_ports_v2, camera) + \
+                sizeof(((fly_session_ports_v2*)0)->camera)))
+#define FLY_SESSION_PORTS_V2_SIZE ((uint32_t)sizeof(fly_session_ports_v2))
+
+enum fly_session_engine_state_v2
+{
+    FLY_SESSION_ENGINE_LOADING_V2 = 1,
+    FLY_SESSION_ENGINE_READY_V2 = 2,
+    FLY_SESSION_ENGINE_SHUTTING_DOWN_V2 = 3,
+    FLY_SESSION_ENGINE_SHUTDOWN_COMPLETE_V2 = 4
+};
+
+enum fly_session_action_kind_v2
+{
+    FLY_SESSION_ACTION_CANCEL_LOADING_V2 = 1,
+    FLY_SESSION_ACTION_SET_NEARBY_VISIBLE_V2 = 2,
+    FLY_SESSION_ACTION_START_DISCOVERY_V2 = 3,
+    FLY_SESSION_ACTION_STOP_DISCOVERY_V2 = 4,
+    FLY_SESSION_ACTION_CREATE_INVITE_V2 = 5,
+    FLY_SESSION_ACTION_REGENERATE_INVITE_V2 = 6,
+    FLY_SESSION_ACTION_CANCEL_INVITE_V2 = 7,
+    FLY_SESSION_ACTION_CANCEL_JOIN_V2 = 8,
+    FLY_SESSION_ACTION_JOIN_CODE_V2 = 9,
+    FLY_SESSION_ACTION_BEGIN_SCAN_V2 = 10,
+    FLY_SESSION_ACTION_END_SCAN_V2 = 11,
+    FLY_SESSION_ACTION_SUBMIT_SCANNED_INVITE_V2 = 12,
+    FLY_SESSION_ACTION_JOIN_CANDIDATE_V2 = 13,
+    FLY_SESSION_ACTION_JOIN_FRIEND_V2 = 14,
+    FLY_SESSION_ACTION_ACCEPT_REQUEST_V2 = 15,
+    FLY_SESSION_ACTION_REJECT_REQUEST_V2 = 16,
+    FLY_SESSION_ACTION_CONFIRM_SAS_V2 = 17,
+    FLY_SESSION_ACTION_REJECT_SAS_V2 = 18,
+    FLY_SESSION_ACTION_CANCEL_CONNECT_V2 = 19,
+    FLY_SESSION_ACTION_DISCONNECT_LINK_V2 = 20,
+    FLY_SESSION_ACTION_PROPOSE_GAME_V2 = 21,
+    FLY_SESSION_ACTION_CHANGE_AUTHORITY_V2 = 22,
+    FLY_SESSION_ACTION_CHANGE_SEATS_V2 = 23,
+    FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2 = 24,
+    FLY_SESSION_ACTION_RETURN_TO_LOBBY_V2 = 25,
+    FLY_SESSION_ACTION_SET_LOCAL_MUTE_V2 = 26,
+    FLY_SESSION_ACTION_OFFER_CONTENT_V2 = 27,
+    FLY_SESSION_ACTION_APPROVE_SEND_V2 = 28,
+    FLY_SESSION_ACTION_APPROVE_RECEIVE_V2 = 29,
+    FLY_SESSION_ACTION_CANCEL_CONTENT_V2 = 30,
+    FLY_SESSION_ACTION_APPROVE_IMPORT_V2 = 31,
+    FLY_SESSION_ACTION_PAUSE_GAME_V2 = 32,
+    FLY_SESSION_ACTION_RESUME_GAME_V2 = 33,
+    FLY_SESSION_ACTION_TAKE_OVER_V2 = 34,
+    FLY_SESSION_ACTION_CONTINUE_SINGLE_V2 = 35,
+    FLY_SESSION_ACTION_SAVE_AND_END_V2 = 36,
+    FLY_SESSION_ACTION_RETRY_FAILURE_V2 = 37,
+    FLY_SESSION_ACTION_RENAME_FRIEND_V2 = 38,
+    FLY_SESSION_ACTION_DELETE_FRIEND_V2 = 39,
+    FLY_SESSION_ACTION_BLOCK_FRIEND_V2 = 40,
+    FLY_SESSION_ACTION_RESET_LOCAL_IDENTITY_V2 = 41
+};
+
+enum fly_session_link_state_v2
+{
+    FLY_SESSION_LINK_UNAVAILABLE_V2 = 0,
+    FLY_SESSION_LINK_IDLE_V2 = 1,
+    FLY_SESSION_LINK_DISCOVERING_V2 = 2,
+    FLY_SESSION_LINK_INVITING_V2 = 3,
+    FLY_SESSION_LINK_JOINING_V2 = 4,
+    FLY_SESSION_LINK_AUTHENTICATING_V2 = 5,
+    FLY_SESSION_LINK_PROVISIONING_V2 = 6,
+    FLY_SESSION_LINK_CONNECTING_V2 = 7,
+    FLY_SESSION_LINK_CONNECTED_LOBBY_V2 = 8,
+    FLY_SESSION_LINK_FAILED_V2 = 9
+};
+
+enum fly_session_game_state_v2
+{
+    FLY_SESSION_GAME_NOT_STARTED_V2 = 0,
+    FLY_SESSION_GAME_CONFIGURING_V2 = 1,
+    FLY_SESSION_GAME_SYNCING_V2 = 2,
+    FLY_SESSION_GAME_RUNNING_V2 = 3,
+    FLY_SESSION_GAME_FROZEN_V2 = 4,
+    FLY_SESSION_GAME_ENDING_V2 = 5
+};
+
+enum fly_session_friend_identity_state_v2
+{
+    FLY_SESSION_FRIEND_ACTIVE_V2 = 1,
+    FLY_SESSION_FRIEND_NEEDS_REVERIFY_V2 = 2,
+    FLY_SESSION_FRIEND_BLOCKED_V2 = 3
+};
+
+typedef struct fly_session_candidate_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    fly_session_resource_handle_v2 candidate;
+    uint64_t discovery_generation;
+    uint64_t last_observed_continuous_ns;
+    int32_t rssi_bucket;
+    uint32_t reserved_zero;
+    uint64_t available_action_mask;
+    char reason_key[64];
+} fly_session_candidate_v2;
+
+#define FLY_SESSION_CANDIDATE_V2_SIZE ((uint32_t)sizeof(fly_session_candidate_v2))
+
+typedef struct fly_session_friend_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint8_t contact_id[16];
+    uint64_t record_revision;
+    uint32_t identity_state;
+    uint32_t display_name_size;
+    uint64_t available_action_mask;
+    uint8_t display_name[128];
+} fly_session_friend_v2;
+
+#define FLY_SESSION_FRIEND_V2_SIZE ((uint32_t)sizeof(fly_session_friend_v2))
+
+typedef struct fly_session_game_choice_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint8_t content_id[32];
+    uint8_t source_choice_ref[16];
+    uint64_t catalog_revision;
+    uint64_t progress_revision;
+    uint32_t selectable;
+    uint32_t display_name_size;
+    uint8_t display_name[128];
+    char reason_key[64];
+} fly_session_game_choice_v2;
+
+#define FLY_SESSION_GAME_CHOICE_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_game_choice_v2))
+
+typedef struct fly_session_snapshot_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t view_revision;
+    uint32_t engine_state;
+    uint32_t action_count;
+    uint32_t game_choice_count;
+    uint32_t reserved_zero;
+    fly_session_scope_v2 scope;
+    char primary_reason_key[64];
+    uint32_t link_state;
+    uint32_t game_state;
+    uint32_t candidate_count;
+    uint32_t friend_count;
+} fly_session_snapshot_v2;
+
+#define FLY_SESSION_SNAPSHOT_V2_SIZE ((uint32_t)sizeof(fly_session_snapshot_v2))
+
+enum fly_session_pairing_stage_v2
+{
+    FLY_SESSION_PAIRING_AWAITING_LOCAL_SAS_V2 = 1,
+    FLY_SESSION_PAIRING_AWAITING_PEER_CONFIRM_V2 = 2,
+    FLY_SESSION_PAIRING_CONFIRMED_V2 = 3
+};
+
+typedef struct fly_session_pairing_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t connection_generation;
+    uint32_t entry_mode;
+    uint32_t local_role;
+    uint32_t stage;
+    uint32_t local_confirmed;
+    uint32_t peer_confirmed;
+    uint8_t sas[6];
+    uint8_t reserved_zero[2];
+    uint8_t pair_transcript_hash[32];
+} fly_session_pairing_v2;
+
+#define FLY_SESSION_PAIRING_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_pairing_v2))
+
+typedef struct fly_session_action_descriptor_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t descriptor_id;
+    uint32_t action_kind;
+    uint32_t enabled;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    char text_key[64];
+    char reason_key[64];
+    fly_session_approval_token_v2_t* approval_token;
+} fly_session_action_descriptor_v2;
+
+#define FLY_SESSION_ACTION_DESCRIPTOR_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_action_descriptor_v2))
+
+typedef struct fly_session_action_choice_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t choice_kind;
+    uint32_t reserved_zero;
+    uint64_t value;
+    uint8_t choice_id[16];
+} fly_session_action_choice_v2;
+
+enum fly_session_action_choice_kind_v2
+{
+    FLY_SESSION_CHOICE_NONE_V2 = 0,
+    FLY_SESSION_CHOICE_BOOLEAN_V2 = 1,
+    FLY_SESSION_CHOICE_INVITE_CODE_V2 = 2,
+    FLY_SESSION_CHOICE_REFERENCE_V2 = 3
+};
+
+#define FLY_SESSION_ACTION_CHOICE_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_action_choice_v2))
+
+typedef struct fly_session_action_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t request_id;
+    uint64_t expected_view_revision;
+    fly_session_approval_token_v2_t* approval_token;
+    uint32_t choice_size;
+    uint32_t reserved_zero;
+    fly_session_action_choice_v2 choice;
+} fly_session_action_v2;
+
+#define FLY_SESSION_ACTION_V2_SIZE ((uint32_t)sizeof(fly_session_action_v2))
+
+typedef struct fly_session_input_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    fly_session_scope_v2 scope;
+    uint64_t expected_seat_revision;
+    uint64_t local_device_input_id;
+    uint32_t buttons;
+    uint32_t reserved_zero;
+    fly_session_clock_sample_v2 capture_clock;
+} fly_session_input_v2;
+
+#define FLY_SESSION_INPUT_V2_SIZE ((uint32_t)sizeof(fly_session_input_v2))
+
+enum fly_session_notice_kind_v2
+{
+    FLY_SESSION_NOTICE_ACTION_RESULT_V2 = 1,
+    FLY_SESSION_NOTICE_SHUTDOWN_COMPLETE_V2 = 2
+};
+
+enum fly_session_action_outcome_v2
+{
+    FLY_SESSION_ACTION_APPLIED_V2 = 1,
+    FLY_SESSION_ACTION_REJECTED_V2 = 2
+};
+
+typedef struct fly_session_notice_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t notice_sequence;
+    uint64_t request_id;
+    uint32_t kind;
+    uint32_t outcome;
+    fly_session_result_v2 result;
+    uint32_t reserved_zero;
+    uint64_t view_revision;
+    char reason_key[64];
+} fly_session_notice_v2;
+
+#define FLY_SESSION_NOTICE_V2_SIZE ((uint32_t)sizeof(fly_session_notice_v2))
+
+enum fly_session_port_event_kind_v2
+{
+    FLY_SESSION_PORT_EVENT_PLATFORM_STATE_V2 = 1,
+    FLY_SESSION_PORT_EVENT_TIMER_V2 = 2,
+    FLY_SESSION_PORT_EVENT_OPERATION_V2 = 3
+};
+
+enum fly_session_platform_state_payload_kind_v2
+{
+    FLY_SESSION_PLATFORM_STATE_SNAPSHOT_V2 = 1
+};
+
+typedef struct fly_session_platform_state_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t state_revision;
+    uint32_t foreground;
+    uint32_t network_ready;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+} fly_session_platform_state_event_v2;
+
+#define FLY_SESSION_PLATFORM_STATE_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_platform_state_event_v2))
+
+enum fly_session_authenticated_operation_payload_kind_v2
+{
+    FLY_SESSION_PAIR_SIGNATURE_VERIFIED_V2 = 101,
+    FLY_SESSION_PAIR_KEY_CONFIRM_VERIFIED_V2 = 102,
+    FLY_SESSION_PROVIDER_DISCOVERY_CANDIDATE_V2 = 201,
+    FLY_SESSION_PROVIDER_DISCOVERY_CONNECTION_V2 = 202,
+    FLY_SESSION_PROVIDER_DISCOVERY_MTU_V2 = 203,
+    FLY_SESSION_PROVIDER_DISCOVERY_BYTES_V2 = 204,
+    FLY_SESSION_PROVIDER_DISCOVERY_END_V2 = 205,
+    FLY_SESSION_PROVIDER_BEARER_CAPABILITIES_V2 = 220,
+    FLY_SESSION_PROVIDER_BEARER_PATH_V2 = 221,
+    FLY_SESSION_PROVIDER_BEARER_ENDPOINT_V2 = 222,
+    FLY_SESSION_PROVIDER_BEARER_END_V2 = 223,
+    FLY_SESSION_PROVIDER_BEARER_CREDENTIAL_V2 = 224,
+    FLY_SESSION_PROVIDER_KEY_HANDLE_V2 = 240,
+    FLY_SESSION_PROVIDER_KEY_PUBLIC_V2 = 241,
+    FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2 = 242,
+    FLY_SESSION_PROVIDER_KEY_AGREEMENT_V2 = 243,
+    FLY_SESSION_PROVIDER_CRYPTO_RANDOM_V2 = 244,
+    FLY_SESSION_PROVIDER_CRYPTO_SECRET_V2 = 245,
+    FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2 = 246,
+    FLY_SESSION_PROVIDER_CRYPTO_VERIFICATION_V2 = 247,
+    FLY_SESSION_PROVIDER_CRYPTO_MAC_V2 = 248,
+    FLY_SESSION_PROVIDER_TLS_MATERIAL_V2 = 250,
+    FLY_SESSION_PROVIDER_SECURE_STORE_REVISION_V2 = 260,
+    FLY_SESSION_PROVIDER_SECURE_STORE_RECORD_V2 = 261,
+    FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2 = 270,
+    FLY_SESSION_PROVIDER_QUIC_CONNECTION_V2 = 280,
+    FLY_SESSION_PROVIDER_QUIC_HANDSHAKE_V2 = 281,
+    FLY_SESSION_PROVIDER_QUIC_EXPORTER_V2 = 282,
+    FLY_SESSION_PROVIDER_QUIC_STREAM_V2 = 283,
+    FLY_SESSION_PROVIDER_QUIC_DATA_V2 = 284,
+    FLY_SESSION_PROVIDER_QUIC_PAYLOAD_BUDGET_V2 = 285,
+    FLY_SESSION_PROVIDER_QUIC_STATS_V2 = 286,
+    FLY_SESSION_PROVIDER_QUIC_END_V2 = 287
+};
+
+typedef struct fly_session_provider_resource_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    fly_session_resource_handle_v2 resource;
+    uint64_t generation;
+    uint64_t value0;
+    uint64_t value1;
+} fly_session_provider_resource_event_v2;
+
+#define FLY_SESSION_PROVIDER_RESOURCE_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_provider_resource_event_v2))
+
+typedef struct fly_session_provider_buffer_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    fly_session_buffer_v2_t* buffer;
+    uint64_t generation;
+    uint64_t logical_size;
+    uint64_t flags;
+} fly_session_provider_buffer_event_v2;
+
+#define FLY_SESSION_PROVIDER_BUFFER_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_provider_buffer_event_v2))
+
+typedef struct fly_session_provider_store_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    fly_session_buffer_v2_t* buffer;
+    uint64_t revision;
+    uint64_t logical_size;
+    uint64_t flags;
+} fly_session_provider_store_event_v2;
+
+#define FLY_SESSION_PROVIDER_STORE_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_provider_store_event_v2))
+
+typedef struct fly_session_provider_hash_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    fly_session_resource_handle_v2 resource;
+    fly_session_buffer_v2_t* buffer;
+    uint8_t hash[32];
+} fly_session_provider_hash_event_v2;
+
+#define FLY_SESSION_PROVIDER_HASH_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_provider_hash_event_v2))
+
+typedef struct fly_session_provider_metrics_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    uint64_t values[6];
+} fly_session_provider_metrics_event_v2;
+
+#define FLY_SESSION_PROVIDER_METRICS_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_provider_metrics_event_v2))
+
+typedef struct fly_session_provider_end_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+} fly_session_provider_end_event_v2;
+
+#define FLY_SESSION_PROVIDER_END_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_provider_end_event_v2))
+
+enum fly_session_pair_approval_kind_v2
+{
+    FLY_SESSION_APPROVAL_BLE_SAS_MATCH_V2 = 1,
+    FLY_SESSION_APPROVAL_QR_SCANNER_JOIN_V2 = 2,
+    FLY_SESSION_APPROVAL_QR_INVITER_ACCEPT_V2 = 3,
+    FLY_SESSION_APPROVAL_KNOWN_FRIEND_INVITE_V2 = 4,
+    FLY_SESSION_APPROVAL_KNOWN_FRIEND_ACCEPT_V2 = 5
+};
+
+typedef struct fly_session_port_event_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    fly_session_op_token_v2 token;
+    uint64_t event_sequence;
+    uint32_t event_kind;
+    uint32_t terminal;
+    fly_session_result_v2 result;
+    uint32_t payload_kind;
+    uint32_t payload_size;
+    uint32_t reserved_zero;
+    uint8_t payload[64];
+} fly_session_port_event_v2;
+
+#define FLY_SESSION_PORT_EVENT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_port_event_v2))
+
+FLYNES_API fly_session_result_v2 fly_session_create_v2(
+    const fly_session_config_v2* config,
+    const fly_session_ports_v2* ports,
+    fly_session_v2_t** out_engine);
+FLYNES_API fly_session_result_v2 fly_session_submit_action_v2(
+    fly_session_v2_t* engine,
+    const fly_session_action_v2* action);
+FLYNES_API fly_session_result_v2 fly_session_submit_input_v2(
+    fly_session_v2_t* engine,
+    const fly_session_input_v2* input);
+FLYNES_API fly_session_result_v2 fly_session_read_notice_v2(
+    fly_session_v2_t* engine,
+    fly_session_notice_v2* out_notice);
+FLYNES_API fly_session_result_v2 fly_session_deliver_v2(
+    fly_session_inbox_v2_t* inbox,
+    const fly_session_port_event_v2* event);
+FLYNES_API fly_session_result_v2 fly_session_buffer_size_v2(
+    const fly_session_buffer_v2_t* buffer,
+    uint64_t* out_size);
+FLYNES_API fly_session_result_v2 fly_session_buffer_create_copy_v2(
+    fly_session_bytes_v2 source,
+    fly_session_buffer_v2_t** out_buffer);
+FLYNES_API fly_session_result_v2 fly_session_buffer_read_v2(
+    const fly_session_buffer_v2_t* buffer,
+    uint64_t offset,
+    fly_session_write_bytes_v2 destination,
+    uint64_t* out_written);
+FLYNES_API void fly_session_buffer_retain_v2(fly_session_buffer_v2_t* buffer);
+FLYNES_API void fly_session_buffer_release_v2(fly_session_buffer_v2_t* buffer);
+FLYNES_API void fly_session_inbox_retain_v2(fly_session_inbox_v2_t* inbox);
+FLYNES_API void fly_session_inbox_release_v2(fly_session_inbox_v2_t* inbox);
+FLYNES_API fly_session_result_v2 fly_session_acquire_view_v2(
+    fly_session_v2_t* engine,
+    fly_session_view_v2_t** out_view);
+FLYNES_API fly_session_result_v2 fly_session_view_read_v2(
+    const fly_session_view_v2_t* view,
+    fly_session_snapshot_v2* out_snapshot);
+FLYNES_API fly_session_result_v2 fly_session_view_read_pairing_v2(
+    const fly_session_view_v2_t* view,
+    fly_session_pairing_v2* out_pairing);
+FLYNES_API fly_session_result_v2 fly_session_view_copy_actions_v2(
+    const fly_session_view_v2_t* view,
+    uint32_t offset,
+    fly_session_action_descriptor_v2* out_actions,
+    uint32_t capacity,
+    uint32_t* written);
+FLYNES_API fly_session_result_v2 fly_session_view_copy_candidates_v2(
+    const fly_session_view_v2_t* view,
+    uint32_t offset,
+    fly_session_candidate_v2* out_candidates,
+    uint32_t capacity,
+    uint32_t* written);
+FLYNES_API fly_session_result_v2 fly_session_view_copy_friends_v2(
+    const fly_session_view_v2_t* view,
+    uint32_t offset,
+    fly_session_friend_v2* out_friends,
+    uint32_t capacity,
+    uint32_t* written);
+FLYNES_API fly_session_result_v2 fly_session_view_copy_game_choices_v2(
+    const fly_session_view_v2_t* view,
+    uint32_t offset,
+    fly_session_game_choice_v2* out_choices,
+    uint32_t capacity,
+    uint32_t* written);
+FLYNES_API void fly_session_approval_token_retain_v2(
+    fly_session_approval_token_v2_t* token);
+FLYNES_API void fly_session_approval_token_release_v2(
+    fly_session_approval_token_v2_t* token);
+FLYNES_API void fly_session_view_release_v2(fly_session_view_v2_t* view);
+FLYNES_API fly_session_result_v2 fly_session_begin_shutdown_v2(
+    fly_session_v2_t* engine,
+    uint64_t request_id);
+FLYNES_API fly_session_result_v2 fly_session_destroy_v2(fly_session_v2_t* engine);
+FLYNES_API void fly_session_task_run_v2(fly_session_task_v2_t* task);
+FLYNES_API void fly_session_task_release_v2(fly_session_task_v2_t* task);
+
 #define FLY_SESSION_CONFIG_VERSION_1 UINT32_C(1)
 #define FLY_FRAME_CURSOR_VERSION_1 UINT32_C(1)
 #define FLY_EVIDENCE_CURSOR_VERSION_1 UINT32_C(1)
@@ -61,6 +1198,15 @@ enum fly_session_command_kind
     FLY_SESSION_COMMAND_INVITE_CODE_LOOKUP = 1,
     FLY_SESSION_COMMAND_INVITE_CODE_CANCEL = 2,
     FLY_SESSION_COMMAND_INVITE_REGENERATE = 3
+};
+
+/* Wire-validated lookup outcomes accepted from a platform transport adapter. */
+enum fly_session_invite_lookup_status_v1
+{
+    FLY_SESSION_INVITE_LOOKUP_MATCH_PENDING_HOST_APPROVAL = 1,
+    FLY_SESSION_INVITE_LOOKUP_NO_MATCH = 2,
+    FLY_SESSION_INVITE_LOOKUP_EXPIRED = 3,
+    FLY_SESSION_INVITE_LOOKUP_RATE_LIMITED = 4
 };
 
 /*
@@ -260,6 +1406,37 @@ FLYNES_API fly_result fly_session_get_snapshot(fly_session_t* session,
  */
 FLYNES_API fly_result fly_session_get_invite_snapshot(
     fly_session_t* session, fly_session_invite_snapshot_v1* snapshot_out);
+
+/*
+ * UI/adapter entry points for the invitation route. Code buffers are borrowed
+ * for the call and must contain exactly six ASCII digits; no terminator is
+ * read. IDs are caller-owned, nonzero, monotonically increasing generation
+ * fences. Invalid/stale/out-of-order actions fail closed.
+ */
+FLYNES_API fly_result fly_session_invite_submit_code_v1(
+    fly_session_t* session, uint64_t attempt_id, const uint8_t* code,
+    size_t code_size, uint64_t now_ns);
+FLYNES_API fly_result fly_session_invite_cancel_code_v1(
+    fly_session_t* session, uint64_t attempt_id);
+FLYNES_API fly_result fly_session_invite_host_publish_v1(
+    fly_session_t* session, uint64_t generation, const uint8_t* code,
+    size_t code_size, uint64_t now_ns);
+FLYNES_API fly_result fly_session_invite_host_regenerate_v1(
+    fly_session_t* session, uint64_t generation, const uint8_t* code,
+    size_t code_size, uint64_t now_ns);
+FLYNES_API fly_result fly_session_invite_host_cancel_v1(
+    fly_session_t* session, uint64_t generation);
+
+/* Adapter callbacks after authenticated protocol/wire validation. */
+FLYNES_API fly_result fly_session_invite_report_lookup_response_v1(
+    fly_session_t* session, uint64_t attempt_id, uint32_t status,
+    uint64_t matched_generation, uint64_t now_ns);
+FLYNES_API fly_result fly_session_invite_report_host_accepted_v1(
+    fly_session_t* session, uint64_t attempt_id);
+FLYNES_API fly_result fly_session_invite_confirm_local_sas_v1(
+    fly_session_t* session, uint64_t attempt_id);
+FLYNES_API fly_result fly_session_invite_report_peer_sas_confirmed_v1(
+    fly_session_t* session, uint64_t attempt_id);
 
 #ifdef __cplusplus
 }

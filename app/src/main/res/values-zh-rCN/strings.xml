@@ -289,8 +289,8 @@
     <string name="nearby_join_request_anonymous">匿名入局请求</string>
     <string name="nearby_join_accept">接受</string>
     <string name="nearby_join_reject">拒绝</string>
-    <string name="nearby_code_label">六位码</string>
-    <string name="nearby_code_confirm">确认六位码</string>
+    <string name="nearby_code_label">六位身份校验码</string>
+    <string name="nearby_code_confirm">确认身份校验码</string>
     <string name="nearby_wifi_path_building">正在建立 Wi-Fi 直连路径</string>
     <string name="nearby_wifi_system_confirm_once">系统可能询问一次是否允许该连接</string>
     <string name="nearby_friends_section">好友</string>

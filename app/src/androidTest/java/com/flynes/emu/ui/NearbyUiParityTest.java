@@ -17,6 +17,8 @@ import static androidx.test.espresso.contrib.RecyclerViewActions.scrollTo;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * N00 parity checks on the real nearby entry page (design 2026-09-13 U07,
@@ -57,6 +59,23 @@ public final class NearbyUiParityTest {
             onView(withId(R.id.nearby_action_create)).perform(click());
             onView(withId(R.id.nearby_pairing_root)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_create_block)).check(matches(isDisplayed()));
+        }
+    }
+
+    @Test public void wideLayoutUsesTheShared224By18Split() {
+        try (ActivityScenario<NearbyFriendsActivity> scenario =
+                     ActivityScenario.launch(NearbyFriendsActivity.class)) {
+            scenario.onActivity(activity -> {
+                android.view.View columns = activity.findViewById(R.id.nearby_device_columns);
+                android.view.View left = activity.findViewById(R.id.nearby_action_column);
+                android.view.View right = activity.findViewById(R.id.nearby_status_column);
+                float density = activity.getResources().getDisplayMetrics().density;
+                assertTrue("test target must be wider than the 580dp breakpoint",
+                        columns.getWidth() / density > 580f);
+                assertEquals(224f, left.getWidth() / density, 1f);
+                assertEquals(18f, (right.getLeft() - left.getRight()) / density, 1f);
+                assertEquals(columns.getWidth() - columns.getPaddingRight(), right.getRight());
+            });
         }
     }
 }

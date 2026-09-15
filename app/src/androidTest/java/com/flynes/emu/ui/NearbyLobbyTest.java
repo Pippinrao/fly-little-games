@@ -13,6 +13,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.Visibility;
 import static org.hamcrest.Matchers.not;
 
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -58,7 +59,7 @@ public final class NearbyLobbyTest {
 
     @Test
     public void eachFieldStatesWhyItIsUnavailable() {
-        try (ActivityScenario<NearbyLobbyActivity> ignored =
+        try (ActivityScenario<NearbyLobbyActivity> scenario =
                      ActivityScenario.launch(NearbyLobbyActivity.class)) {
             // A field's reason is its own: 座位 waits on the mode gate, not on the generic session
             // read, because no FLY_SESSION_MODE_* values exist (§3).
@@ -80,12 +81,20 @@ public final class NearbyLobbyTest {
 
     @Test
     public void confirmIsOneDisabledPrimaryActionWithAReason() {
-        try (ActivityScenario<NearbyLobbyActivity> ignored =
+        try (ActivityScenario<NearbyLobbyActivity> scenario =
                      ActivityScenario.launch(NearbyLobbyActivity.class)) {
             // D8: one primary action per side, bound to the pending configuration. There is no
             // configuration to read yet, so it is disabled and says so rather than confirming.
-            // It sits below the 14 field rows, so scroll to it first.
-            onView(withId(R.id.nearby_lobby_confirm)).perform(scrollTo());
+            scenario.onActivity(activity -> {
+                android.view.ViewParent parent = activity.findViewById(
+                        R.id.nearby_lobby_confirm).getParent();
+                while (parent != null) {
+                    org.junit.Assert.assertFalse(
+                            "confirm footer must remain outside scrolling content",
+                            parent instanceof ScrollView);
+                    parent = parent.getParent();
+                }
+            });
             onView(withId(R.id.nearby_lobby_confirm)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_lobby_confirm)).check(matches(not(isEnabled())));
             onView(withId(R.id.nearby_lobby_confirm_reason))

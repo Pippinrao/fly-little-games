@@ -30,6 +30,7 @@ void check_key(std::string_view actual, std::string_view expected, const char* m
 using flynes::product::nearby::ActionId;
 using flynes::product::nearby::ConnectionStatus;
 using flynes::product::nearby::EntryStatus;
+using flynes::product::nearby::NearbyLayout;
 using flynes::product::nearby::PendingConfigFacts;
 using flynes::product::nearby::Permission;
 using flynes::product::nearby::ScreenContext;
@@ -43,6 +44,7 @@ using flynes::product::nearby::config_start_allowed;
 using flynes::product::nearby::invalidate_on_config_change;
 using flynes::product::nearby::permission_denied_reason;
 using flynes::product::nearby::project_entry;
+using flynes::product::nearby::project_layout;
 using flynes::product::nearby::project_stages;
 using flynes::product::nearby::screen_code;
 using flynes::product::nearby::stage_failure_key;
@@ -317,6 +319,24 @@ void test_remaining_screen_actions()
     check(contains(connected, ActionId::Disconnect), "N08 offers 断开");
 }
 
+void test_responsive_layout_contract()
+{
+    const NearbyLayout narrow = project_layout(580.0);
+    check(!narrow.split, "C17: width 580 remains vertically stacked");
+    check(narrow.left_width == 580.0 && narrow.gutter == 0.0
+              && narrow.right_width == 580.0,
+          "C17: stacked panes each consume the available width");
+
+    const NearbyLayout wide = project_layout(736.0);
+    check(wide.split, "C17: width above 580 uses two columns");
+    check(wide.left_width == 224.0 && wide.gutter == 18.0
+              && wide.right_width == 494.0,
+          "C17: wide layout is 224 + 18 + remaining width");
+
+    const NearbyLayout invalid = project_layout(-1.0);
+    check(!invalid.valid, "negative available width is rejected");
+}
+
 } // namespace
 
 int main()
@@ -331,6 +351,7 @@ int main()
     test_screen_codes_are_stable();
     test_config_invalidation();
     test_remaining_screen_actions();
+    test_responsive_layout_contract();
 
     if (failures != 0)
     {

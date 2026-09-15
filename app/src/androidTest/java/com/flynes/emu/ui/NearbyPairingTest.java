@@ -11,6 +11,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibilit
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.allOf;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -38,8 +39,10 @@ public final class NearbyPairingTest {
     public void sixDigitCodePathIsPresentAndCannotConfirmWithoutASession() {
         try (ActivityScenario<NearbyPairingActivity> ignored =
                      ActivityScenario.launch(NearbyPairingActivity.class)) {
-            onView(withId(R.id.nearby_code_label)).check(matches(isDisplayed()));
-            onView(withId(R.id.nearby_code_confirm)).check(matches(isDisplayed()));
+            onView(withId(R.id.nearby_code_label)).check(matches(allOf(
+                    isDisplayed(), withText(R.string.nearby_sas_digitCount))));
+            onView(withId(R.id.nearby_code_confirm)).check(matches(allOf(
+                    isDisplayed(), withText(R.string.nearby_code_confirm))));
             onView(withId(R.id.nearby_code_confirm)).check(matches(not(isEnabled())));
             onView(withId(R.id.nearby_code_confirm_reason)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_code_confirm_reason))

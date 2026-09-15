@@ -74,6 +74,8 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     private final File dataRoot;
     private final File cacheRoot;
 
+    public BuiltinGames builtinGames() { return builtinGames; }
+
     public AndroidCatalogRuntime(Context context) {
         this(context, defaultStateFile(context), true);
     }

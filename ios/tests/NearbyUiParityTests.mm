@@ -47,6 +47,21 @@
     XCTAssertTrue([[self elementWithIdentifier:@"nearby_action_scan_qr" inApp:app] exists]);
 }
 
+- (void)testGameCenterExposesVisibleNearbyStatusAndIndependentMultiplayerFilter {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = [self launchApp];
+    XCUIElement *entryText = app.staticTexts[@"nearby_entry_text"];
+    XCTAssertTrue([entryText waitForExistenceWithTimeout:15]);
+    XCTAssertEqualObjects(entryText.label, @"Nearby Multiplayer");
+
+    XCUIElement *filter = app.switches[@"nearby_multiplayer_filter"];
+    XCTAssertTrue([filter waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(filter.isEnabled);
+    NSString *before = filter.value;
+    [filter tap];
+    XCTAssertNotEqualObjects(filter.value, before);
+}
+
 - (void)testJoinCodeFormNeverSubmitsIncompleteInput {
     self.continueAfterFailure = NO;
     XCUIApplication *app = [self launchApp];

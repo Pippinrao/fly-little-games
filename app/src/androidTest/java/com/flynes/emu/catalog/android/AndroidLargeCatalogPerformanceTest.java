@@ -46,6 +46,8 @@ public final class AndroidLargeCatalogPerformanceTest {
                 return base.getSharedPreferences(prefix + name, mode);
             }
         };
+        final int expectedGames = 2224
+                + com.flynes.emu.catalog.BuiltinGames.fromAssets(isolated).all().size();
         // Initialize the bundled game, then seed synthetic entries through the real native scanner.
         try (var runtime = new AndroidCatalogRuntime(isolated)) { runtime.bootstrap().get(); }
         byte[] uuid = new byte[16]; uuid[0] = 42;
@@ -75,7 +77,7 @@ public final class AndroidLargeCatalogPerformanceTest {
             try (var runtime = new AndroidCatalogRuntime(isolated)) {
                 runtime.bootstrap().get();
                 long loaded = SystemClock.elapsedRealtime();
-                assertEquals(2225, runtime.gameCatalog().canonicalEntries().size());
+                assertEquals(expectedGames, runtime.gameCatalog().canonicalEntries().size());
                 ArrayList<GameCenterItem> rows = new ArrayList<>();
                 for (var entry : runtime.gameCatalog().canonicalEntries()) {
                     rows.add(new GameCenterItem(entry.canonicalGame().id(),
@@ -85,33 +87,39 @@ public final class AndroidLargeCatalogPerformanceTest {
                 }
                 GameCenterState state = new GameCenterState();
                 long firstStart = SystemClock.elapsedRealtime();
-                assertEquals(2225, state.filtered(rows).size());
+                assertEquals(expectedGames, state.filtered(rows).size());
                 long firstEnd = SystemClock.elapsedRealtime();
                 for (int i = 0; i < 20; ++i) {
                     state.select(rows.get(i).canonicalId());
-                    assertEquals(2225, state.filtered(rows).size());
+                    assertEquals(expectedGames, state.filtered(rows).size());
                 }
                 long end = SystemClock.elapsedRealtime();
                 Log.i("FlyNesCatalogPerf", "run=" + run + " coldMs=" + (loaded-start)
                         + " firstSortMs=" + (firstEnd-firstStart)
                         + " navigation20Ms=" + (end-firstEnd));
                 // Allow emulator scheduling jitter; the old 5.6–6.0 s path still fails this budget.
-                assertTrue("2225-game cold load must finish within 2.5 seconds: " + (loaded-start),
+                assertTrue(expectedGames + "-game cold load must finish within 2.5 seconds: "
+                                + (loaded-start),
                         loaded-start < 2500);
                 assertTrue("selection must reuse ordering, 20 selections within 200 ms: " + (end-firstEnd),
                         end-firstEnd < 200);
-                if (run == 2) verifyRealHome(runtime, base);
+                if (run == 2) verifyRealHome(runtime, base, expectedGames);
             }
         }
-        failBuiltin.set(true);
+        failBuiltin.set(false);
         try (var runtime = new AndroidCatalogRuntime(isolated)) {
+            // Let construction read the shared manifest, then fail the actual bundled-ROM copy.
+            failBuiltin.set(true);
             assertThrows(java.util.concurrent.ExecutionException.class, () -> runtime.bootstrap().get());
-            assertEquals("builtin copy failure must not hide persisted external games", 2225,
+            assertEquals("builtin copy failure must not hide persisted external games", expectedGames,
                     runtime.gameCatalog().canonicalEntries().size());
+        } finally {
+            failBuiltin.set(false);
         }
     }
 
-    private static void verifyRealHome(AndroidCatalogRuntime fixture, Context base) throws Exception {
+    private static void verifyRealHome(AndroidCatalogRuntime fixture, Context base,
+                                       int expectedGames) throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         // Only swap this Activity's runtime. The user's persisted catalog and source grants stay intact.
         try (var scenario = ActivityScenario.launch(HomeActivity.class)) {
@@ -133,7 +141,7 @@ public final class AndroidLargeCatalogPerformanceTest {
             instrumentation.waitForIdleSync();
             scenario.onActivity(activity -> {
                 RecyclerView grid = activity.findViewById(R.id.game_grid);
-                assertEquals(2225, grid.getAdapter().getItemCount());
+                assertEquals(expectedGames, grid.getAdapter().getItemCount());
                 assertTrue(grid.getChildCount() > 1);
                 assertTrue("highest popularity must be visible first",
                         grid.getChildAt(0).getContentDescription().toString().contains("魂斗罗"));
@@ -142,13 +150,14 @@ public final class AndroidLargeCatalogPerformanceTest {
                     @Override public void onChanged() { fullRefresh.incrementAndGet(); }
                 });
                 grid.getChildAt(1).performClick();
-                assertEquals("selection must not invalidate all 2225 cards", 0, fullRefresh.get());
-                grid.scrollToPosition(2224);
+                assertEquals("selection must not invalidate every card", 0, fullRefresh.get());
+                grid.scrollToPosition(expectedGames - 1);
             });
             instrumentation.waitForIdleSync();
             scenario.onActivity(activity -> {
                 RecyclerView grid = activity.findViewById(R.id.game_grid);
-                assertNotNull("last card remains reachable", grid.findViewHolderForAdapterPosition(2224));
+                assertNotNull("last card remains reachable",
+                        grid.findViewHolderForAdapterPosition(expectedGames - 1));
                 grid.scrollToPosition(0);
             });
             instrumentation.waitForIdleSync();
@@ -175,7 +184,8 @@ public final class AndroidLargeCatalogPerformanceTest {
             });
             android.graphics.Bitmap bitmap = instrumentation.getUiAutomation().takeScreenshot();
             assertNotNull(bitmap);
-                try (var output = new FileOutputStream(new File(base.getCacheDir(), "catalog-2225.png"))) {
+                try (var output = new FileOutputStream(new File(
+                        base.getCacheDir(), "catalog-" + expectedGames + ".png"))) {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
                 } catch (Exception failure) { throw new AssertionError(failure); }
                 bitmap.recycle();

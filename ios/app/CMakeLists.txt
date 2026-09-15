@@ -195,6 +195,7 @@ target_link_libraries(FlyNES PRIVATE
     flynes_app
     flynes_runtime
     flynes_product
+    flynes_session
     nes_abi
     "-framework Foundation"
     "-framework UIKit"

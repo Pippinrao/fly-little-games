@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <vector>
 
 namespace flynes::session {
 namespace {
@@ -20,15 +21,38 @@ PairRole other(PairRole role)
 }
 PlanHash selected_hash(const wire::BearerPlanBytes& plan)
 {
-    constexpr char domain[] = "flynes-selected-bearer-plan-v1";
-    constexpr std::size_t domain_size = sizeof(domain) - 1;
-    std::array<std::uint8_t, domain_size + 4 + 48> preimage{};
-    std::copy(domain, domain + domain_size, preimage.begin());
-    preimage[domain_size + 3] = 48;
-    std::copy(plan.begin(), plan.end(), preimage.begin() + domain_size + 4);
-    return wire::sha256(preimage.data(), preimage.size());
+    return wire::selected_bearer_plan_hash_v1(plan);
+}
+
+PlanHash evidence_seal(const VerifiedPairEvidence& evidence)
+{
+    constexpr char domain[] = "flynes-verified-pair-evidence-v2";
+    std::vector<std::uint8_t> bytes;
+    bytes.reserve(sizeof(domain) - 1 + 1 + 8 + 32 * 5 + 512 * 2);
+    bytes.insert(bytes.end(), domain, domain + sizeof(domain) - 1);
+    bytes.push_back(static_cast<std::uint8_t>(evidence.local_role));
+    for (int shift = 56; shift >= 0; shift -= 8)
+        bytes.push_back(static_cast<std::uint8_t>(evidence.generation >> shift));
+    bytes.insert(bytes.end(), evidence.transcript.begin(), evidence.transcript.end());
+    bytes.insert(bytes.end(), evidence.initiator_reveal.begin(), evidence.initiator_reveal.end());
+    bytes.insert(bytes.end(), evidence.responder_reveal.begin(), evidence.responder_reveal.end());
+    bytes.insert(bytes.end(), evidence.initiator_capability.begin(), evidence.initiator_capability.end());
+    bytes.insert(bytes.end(), evidence.responder_capability.begin(), evidence.responder_capability.end());
+    bytes.insert(bytes.end(), evidence.initiator_summary.begin(), evidence.initiator_summary.end());
+    bytes.insert(bytes.end(), evidence.responder_summary.begin(), evidence.responder_summary.end());
+    return wire::sha256(bytes.data(), bytes.size());
 }
 } // namespace
+
+void VerifiedPairEvidence::seal_for_authenticated_pipeline() noexcept
+{
+    authentication_seal_ = evidence_seal(*this);
+}
+
+bool VerifiedPairEvidence::authenticated() const noexcept
+{
+    return nonzero(authentication_seal_) && authentication_seal_ == evidence_seal(*this);
+}
 
 bool InitialPlanLock::reject() noexcept
 {
@@ -45,9 +69,12 @@ void InitialPlanLock::invalidate() noexcept
 
 bool InitialPlanLock::begin(const VerifiedPairEvidence& evidence)
 {
-    if (failed_ || phase_ != Phase::Idle || !valid_role(evidence.local_role) ||
+    if (failed_ || phase_ != Phase::Idle || !evidence.authenticated() ||
+        !valid_role(evidence.local_role) ||
         evidence.generation == 0 || !nonzero(evidence.transcript) ||
-        !nonzero(evidence.initiator_reveal) || !nonzero(evidence.responder_reveal)) return reject();
+        !nonzero(evidence.initiator_reveal) || !nonzero(evidence.responder_reveal) ||
+        !nonzero(evidence.initiator_capability) ||
+        !nonzero(evidence.responder_capability)) return reject();
     const auto selection = wire::select_pair_plan(
         evidence.initiator_summary.data(), evidence.initiator_summary.size(),
         evidence.responder_summary.data(), evidence.responder_summary.size(), selected_);
@@ -67,6 +94,8 @@ bool InitialPlanLock::valid_binding(const VerifiedPlanEvidence& evidence, PairRo
         evidence.transcript == pair_.transcript &&
         evidence.initiator_reveal == pair_.initiator_reveal &&
         evidence.responder_reveal == pair_.responder_reveal &&
+        evidence.initiator_capability == pair_.initiator_capability &&
+        evidence.responder_capability == pair_.responder_capability &&
         evidence.selected_plan == selected_ &&
         evidence.selected_plan_hash == selected_hash(selected_) &&
         nonzero(evidence.selected_plan_hash) && nonzero(evidence.plan_logical_hash);

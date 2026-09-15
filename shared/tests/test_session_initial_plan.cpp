@@ -1,4 +1,5 @@
 #include "session_initial_plan.hpp"
+#include "nearby/harness/verified_pair_evidence.hpp"
 #include "wire/sha256.hpp"
 
 #include <algorithm>
@@ -35,12 +36,16 @@ struct Fixture {
         selected[6] = 10; selected[11] = 1; selected[12] = 1;
         pair.local_role = role; pair.generation = generation;
         pair.transcript = hash(1); pair.initiator_reveal = hash(2); pair.responder_reveal = hash(3);
+        pair.initiator_capability = hash(4); pair.responder_capability = hash(5);
         auto& summary = pair.initiator_summary;
         summary[1] = 1; summary[8] = 1; summary[9] = 1; summary[32] = 1; summary[64] = 1;
         std::copy(selected.begin(), selected.end(), summary.begin() + 96); pair.responder_summary = summary;
+        pair = VerifiedPairEvidenceTestFactory::seal(pair);
         plan.generation = generation; plan.sender = PairRole::Initiator; plan.receiver = PairRole::Responder;
         plan.transcript = pair.transcript; plan.initiator_reveal = pair.initiator_reveal;
-        plan.responder_reveal = pair.responder_reveal; plan.selected_plan = selected;
+        plan.responder_reveal = pair.responder_reveal;
+        plan.initiator_capability = pair.initiator_capability;
+        plan.responder_capability = pair.responder_capability; plan.selected_plan = selected;
         plan.selected_plan_hash = wire::domain_hash("flynes-selected-bearer-plan-v1", selected.data(), selected.size());
         plan.plan_logical_hash = hash(4);
         ack = plan; ack.sender = PairRole::Responder; ack.receiver = PairRole::Initiator; ack.ack_logical_hash = hash(5);

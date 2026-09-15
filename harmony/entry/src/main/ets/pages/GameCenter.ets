@@ -4,7 +4,7 @@ import { router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { i18n } from '@kit.LocalizationKit';
 import nativeProduct, { GameCenterRow } from 'libentry.so';
-import { applyMultiplayerFilter, CatalogProductService, MultiplayerCapabilityRegistry, localizedGameTitle } from '../service/CatalogProductService';
+import { applyMultiplayerFilter, CatalogProductService, multiplayerCapabilitiesFrom, MultiplayerCapabilityRegistry, localizedGameTitle } from '../service/CatalogProductService';
 import { takeRomOpenError, builtinGamesSync } from '../service/PlayService';
 import { BuiltinGames } from '../service/BuiltinGames';
 import { CoverStore } from '../service/CoverStore';
@@ -31,9 +31,7 @@ struct GameCenter {
   // Independent two-player filter (design U04): per-device preference, never
   // changed by category, query, or connection events.
   @State private multiplayerOnly: boolean = false;
-  // Capability projection: empty until the shared versioned profile registry
-  // is wired, so every game truthfully reads UNKNOWN (design 3.2).
-  private readonly multiplayerRegistry: MultiplayerCapabilityRegistry = new MultiplayerCapabilityRegistry(1);
+  private multiplayerRegistry: MultiplayerCapabilityRegistry = new MultiplayerCapabilityRegistry(0);
 
   aboutToAppear(): void {
     this.ensureApp();
@@ -482,6 +480,7 @@ struct GameCenter {
     const games = host === undefined
       ? BuiltinGames.empty()
       : builtinGamesSync(host as common.UIAbilityContext);
+    this.multiplayerRegistry = multiplayerCapabilitiesFrom(games);
     this.allRows = this.catalog.loadRows(games);
   }
 

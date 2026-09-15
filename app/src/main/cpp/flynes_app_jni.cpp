@@ -3,6 +3,7 @@
 #include <jni.h>
 
 #include <flynes/flynes_app.h>
+#include <flynes/flynes_session.h>
 
 #include <algorithm>
 #include <array>
@@ -12,6 +13,26 @@
 #include <vector>
 
 namespace {
+
+[[maybe_unused]] void verify_nearby_v2_composition_contract()
+{
+    fly_session_clock_port_v2 clock{};
+    clock.struct_size = FLY_SESSION_CLOCK_PORT_V2_SIZE;
+    clock.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_executor_port_v2 executor{};
+    executor.struct_size = FLY_SESSION_EXECUTOR_PORT_V2_SIZE;
+    executor.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_platform_state_port_v2 platform_state{};
+    platform_state.struct_size = FLY_SESSION_PLATFORM_STATE_PORT_V2_SIZE;
+    platform_state.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_ports_v2 ports{};
+    ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
+    ports.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ports.clock = &clock;
+    ports.executor = &executor;
+    ports.platform_state = &platform_state;
+    (void)ports;
+}
 
 std::string copy_bytes(JNIEnv* env, jbyteArray array)
 {
@@ -76,6 +97,11 @@ fly_app_t* app_from(jlong handle)
 fly_scan_t* scan_from(jlong handle)
 {
     return reinterpret_cast<fly_scan_t*>(handle);
+}
+
+fly_session_t* session_from(jlong handle)
+{
+    return reinterpret_cast<fly_session_t*>(handle);
 }
 
 jobjectArray game_title_strings(JNIEnv* env, const fly_game_title& title)
@@ -169,6 +195,132 @@ JNIEXPORT void JNICALL
 Java_com_flynes_emu_app_FlyNesApp_nativeDestroy(JNIEnv*, jclass, jlong handle)
 {
     fly_app_destroy(app_from(handle));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeCreate(
+    JNIEnv* env, jclass, jlongArray out_handle)
+{
+    if (out_handle == nullptr || env->GetArrayLength(out_handle) < 1)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    const jlong zero = 0;
+    env->SetLongArrayRegion(out_handle, 0, 1, &zero);
+    fly_session_config config{};
+    config.struct_size = FLY_SESSION_CONFIG_V1_SIZE;
+    config.version = FLY_SESSION_CONFIG_VERSION_1;
+    fly_session_t* session = nullptr;
+    const fly_result result = fly_session_create(&config, &session);
+    if (result == FLY_RESULT_OK && session != nullptr)
+    {
+        const jlong handle = reinterpret_cast<jlong>(session);
+        env->SetLongArrayRegion(out_handle, 0, 1, &handle);
+    }
+    return result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_flynes_emu_NearbySession_nativeDestroy(JNIEnv*, jclass, jlong handle)
+{
+    fly_session_destroy(session_from(handle));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeHostPublish(
+    JNIEnv* env, jclass, jlong handle, jlong generation, jbyteArray code, jlong now_ns)
+{
+    const std::string value = copy_bytes(env, code);
+    return fly_session_invite_host_publish_v1(
+        session_from(handle), static_cast<uint64_t>(generation),
+        reinterpret_cast<const uint8_t*>(value.data()), value.size(),
+        static_cast<uint64_t>(now_ns));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeHostRegenerate(
+    JNIEnv* env, jclass, jlong handle, jlong generation, jbyteArray code, jlong now_ns)
+{
+    const std::string value = copy_bytes(env, code);
+    return fly_session_invite_host_regenerate_v1(
+        session_from(handle), static_cast<uint64_t>(generation),
+        reinterpret_cast<const uint8_t*>(value.data()), value.size(),
+        static_cast<uint64_t>(now_ns));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeHostCancel(
+    JNIEnv*, jclass, jlong handle, jlong generation)
+{
+    return fly_session_invite_host_cancel_v1(
+        session_from(handle), static_cast<uint64_t>(generation));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeSubmitCode(
+    JNIEnv* env, jclass, jlong handle, jlong attempt_id, jbyteArray code, jlong now_ns)
+{
+    const std::string value = copy_bytes(env, code);
+    return fly_session_invite_submit_code_v1(
+        session_from(handle), static_cast<uint64_t>(attempt_id),
+        reinterpret_cast<const uint8_t*>(value.data()), value.size(),
+        static_cast<uint64_t>(now_ns));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeCancelCode(
+    JNIEnv*, jclass, jlong handle, jlong attempt_id)
+{
+    return fly_session_invite_cancel_code_v1(
+        session_from(handle), static_cast<uint64_t>(attempt_id));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeTick(
+    JNIEnv*, jclass, jlong handle, jlong now_ns)
+{
+    return fly_session_tick(session_from(handle), static_cast<uint64_t>(now_ns));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeSnapshot(
+    JNIEnv* env, jclass, jlong handle, jlongArray out)
+{
+    if (out == nullptr || env->GetArrayLength(out) < 5)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    fly_session_invite_snapshot_v1 snapshot{};
+    snapshot.struct_size = FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE;
+    snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+    const fly_result result = fly_session_get_invite_snapshot(session_from(handle), &snapshot);
+    if (result != FLY_RESULT_OK) return result;
+    const jlong values[5] = {
+        static_cast<jlong>(snapshot.join_phase),
+        static_cast<jlong>(snapshot.host_phase),
+        static_cast<jlong>(snapshot.join_attempt_id),
+        static_cast<jlong>(snapshot.host_generation),
+        static_cast<jlong>(snapshot.host_attempts_left),
+    };
+    env->SetLongArrayRegion(out, 0, 5, values);
+    return env->ExceptionCheck() ? FLY_RESULT_INVALID_ARGUMENT : FLY_RESULT_OK;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySession_nativeResolvePending(
+    JNIEnv*, jclass, jlong handle, jboolean success)
+{
+    fly_session_command command{};
+    command.struct_size = FLY_SESSION_COMMAND_V1_SIZE;
+    command.version = FLY_SESSION_COMMAND_VERSION_1;
+    fly_result result = fly_session_poll_command(session_from(handle), &command);
+    if (result != FLY_RESULT_OK || command.command_id == 0u) return FLY_RESULT_INVALID_STATE;
+    fly_session_command_result completion{};
+    completion.struct_size = FLY_SESSION_COMMAND_RESULT_V1_SIZE;
+    completion.version = FLY_SESSION_COMMAND_RESULT_VERSION_1;
+    completion.command_id = command.command_id;
+    completion.result = success == JNI_TRUE ? FLY_RESULT_OK : FLY_RESULT_INVALID_STATE;
+    return fly_session_complete_command(session_from(handle), &completion);
 }
 
 JNIEXPORT jint JNICALL

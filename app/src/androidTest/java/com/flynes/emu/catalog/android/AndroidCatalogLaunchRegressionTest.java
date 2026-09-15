@@ -111,7 +111,9 @@ public final class AndroidCatalogLaunchRegressionTest {
             map.put(uuid(), TREE_LOCATOR);
             CatalogState state = NativeCatalogProjector.project(restarted.catalogEntries(),
                     restarted.sourceStatuses(), Map.of(), 0, map, new AndroidPackageLocatorMap(),
-                    AndroidDocumentLocators::documentUriFor);
+                    AndroidDocumentLocators::documentUriFor,
+                    // This projection only carries the user-directory row created above.
+                    com.flynes.emu.catalog.BuiltinGames.empty());
             GameCatalog catalog = new GameCatalog();
             new CatalogRepository(state, new MemoryStateStore(), catalog);
             var variant = catalog.canonicalEntries().get(0).variants().get(0);

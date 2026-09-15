@@ -39,11 +39,12 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     public static final String MODE_SCAN = "scan";
     private static final String EXTRA_MODE = "nearby_mode";
 
-    private final NearbyInviteHostState invite = new NearbyInviteHostState();
+    private NearbyInviteHostState invite;
+    private NearbySession nearbySession;
     private final Handler ticker = new Handler(Looper.getMainLooper());
     private String mode = "";
     private boolean requestInFlight;
-    private String requestGeneration = "";
+    private long requestGeneration;
 
     public static void start(@NonNull Context context, @NonNull String mode) {
         context.startActivity(intentFor(context, mode));
@@ -62,6 +63,8 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(R.layout.activity_nearby_pairing);
+        nearbySession = ((FlyNesApplication) getApplication()).nearbySession();
+        invite = new NearbyInviteHostState(nearbySession);
 
         MaterialToolbar toolbar = findViewById(R.id.nearby_pairing_toolbar);
         toolbar.setNavigationOnClickListener(view -> finish());
@@ -107,6 +110,11 @@ public final class NearbyPairingActivity extends AppCompatActivity {
 
     private void showCreateBlock() {
         findViewById(R.id.nearby_create_block).setVisibility(View.VISIBLE);
+        // The session is process-scoped while this display state belongs to
+        // one Activity. If the prior display owner disappeared, its code is no
+        // longer recoverable; cancel that generation before publishing a new
+        // one so reopening the page cannot be blocked by invisible stale UI.
+        nearbySession.cancelActiveHost();
         if (!invite.active()) {
             invite.create(android.os.SystemClock.elapsedRealtime());
         }
@@ -125,6 +133,7 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     private void startTicker() {
         ticker.postDelayed(new Runnable() {
             @Override public void run() {
+                NearbyInviteTicker.tick(invite, android.os.SystemClock.elapsedRealtime());
                 if (invite.active()) {
                     renderValidity();
                     ticker.postDelayed(this, 250L);
@@ -174,7 +183,8 @@ public final class NearbyPairingActivity extends AppCompatActivity {
         submit.setOnClickListener(view -> onSubmit());
         findViewById(R.id.nearby_join_cancel).setOnClickListener(view -> {
             requestInFlight = false;
-            requestGeneration = "";
+            if (requestGeneration != 0L) nearbySession.cancelCode(requestGeneration);
+            requestGeneration = 0L;
             submit.setEnabled(false);
             error.setVisibility(View.GONE);
         });
@@ -193,17 +203,19 @@ public final class NearbyPairingActivity extends AppCompatActivity {
             return;
         }
         if (requestInFlight) return;
+        long generation = nearbySession.nextJoinAttemptId();
         requestInFlight = true;
-        requestGeneration = code + "@" + android.os.SystemClock.elapsedRealtime();
+        requestGeneration = generation;
         submit.setEnabled(false);
         // There is no discovery bearer in this build, so the lookup request
         // cannot go out: the honest outcome is the discovery-blocked reason,
         // never a synthetic host approval. The backend track replaces this
         // with the real route command through the session ABI.
+        nearbySession.submitCode(generation, code, android.os.SystemClock.elapsedRealtime());
         error.setText(R.string.nearby_stage_discovery_reason);
         error.setVisibility(View.VISIBLE);
         requestInFlight = false;
-        requestGeneration = "";
+        requestGeneration = 0L;
     }
 
     private static boolean isComplete(String raw) {

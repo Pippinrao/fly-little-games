@@ -21,10 +21,18 @@ interface BuiltinGamePayload {
   credit: string;
   sortOrder: number;
   license: BuiltinLicensePayload;
+  multiplayerProfile: MultiplayerProfilePayload;
+}
+
+interface MultiplayerProfilePayload {
+  version: number;
+  eligibility: string;
+  maxPlayers?: number;
 }
 
 interface BuiltinGamesPayload {
   schemaVersion: number;
+  multiplayerProfileVersion: number;
   games: BuiltinGamePayload[];
 }
 
@@ -40,10 +48,14 @@ export class BuiltinGame {
   readonly licenseSourceUrl: string;
   readonly mapper: number;
   readonly sortOrder: number;
+  readonly multiplayerProfileVersion: number;
+  readonly multiplayerEligibility: string;
+  readonly multiplayerMaxPlayers: number;
 
   constructor(canonicalId: string, assetFilename: string, titleEn: string, titleZhHans: string,
     credit: string, licenseFile: string, licenseSpdx: string, licenseSourceUrl: string,
-    mapper: number, sortOrder: number) {
+    mapper: number, sortOrder: number, multiplayerProfileVersion: number,
+    multiplayerEligibility: string, multiplayerMaxPlayers: number) {
     this.canonicalId = canonicalId;
     this.assetFilename = assetFilename;
     this.titleEn = titleEn;
@@ -54,6 +66,9 @@ export class BuiltinGame {
     this.licenseSourceUrl = licenseSourceUrl;
     this.mapper = mapper;
     this.sortOrder = sortOrder;
+    this.multiplayerProfileVersion = multiplayerProfileVersion;
+    this.multiplayerEligibility = multiplayerEligibility;
+    this.multiplayerMaxPlayers = multiplayerMaxPlayers;
   }
 
   /** Rawfile path of this game's ROM. */
@@ -74,6 +89,7 @@ export class BuiltinGames {
   private static readonly SUPPORTED_SCHEMA: number = 1;
 
   private readonly entries: BuiltinGame[] = [];
+  private profileVersion: number = 0;
 
   /** No bundled games: used when the manifest cannot be read. */
   static empty(): BuiltinGames {
@@ -113,6 +129,9 @@ export class BuiltinGames {
       throw new Error(`${BuiltinGames.ASSET_NAME} schemaVersion ${payload.schemaVersion}`
         + ` is not supported (expected ${BuiltinGames.SUPPORTED_SCHEMA})`);
     }
+    if (payload.multiplayerProfileVersion === undefined || payload.multiplayerProfileVersion <= 0) {
+      throw new Error(`${BuiltinGames.ASSET_NAME} has no supported multiplayerProfileVersion`);
+    }
     if (payload.games.length === 0) {
       throw new Error(`${BuiltinGames.ASSET_NAME} bundles no games`);
     }
@@ -127,6 +146,18 @@ export class BuiltinGames {
         throw new Error(`${BuiltinGames.ASSET_NAME} game #${index} is missing its id or asset`);
       }
       const license = row.license;
+      const multiplayer = row.multiplayerProfile;
+      if (multiplayer === undefined || multiplayer.version !== payload.multiplayerProfileVersion
+        || (multiplayer.eligibility !== 'SUPPORTED'
+          && multiplayer.eligibility !== 'UNSUPPORTED'
+          && multiplayer.eligibility !== 'UNKNOWN')) {
+        throw new Error(`${BuiltinGames.ASSET_NAME} game ${row.canonicalId}`
+          + ' has an invalid multiplayerProfile');
+      }
+      const maxPlayers = multiplayer.maxPlayers ?? 0;
+      if (multiplayer.eligibility === 'SUPPORTED' && maxPlayers !== 2) {
+        throw new Error(`${BuiltinGames.ASSET_NAME} supported multiplayer profile must use maxPlayers=2`);
+      }
       games.entries.push(new BuiltinGame(
         row.canonicalId,
         row.assetFilename,
@@ -137,14 +168,22 @@ export class BuiltinGames {
         license === undefined ? '' : (license.spdx ?? ''),
         license === undefined ? '' : (license.sourceUrl ?? ''),
         row.mapper ?? 0,
-        row.sortOrder ?? 0));
+        row.sortOrder ?? 0,
+        payload.multiplayerProfileVersion,
+        multiplayer.eligibility,
+        maxPlayers));
     }
+    games.profileVersion = payload.multiplayerProfileVersion;
     return games;
   }
 
   /** Every bundled game, ordered by the manifest's sortOrder. */
   all(): BuiltinGame[] {
     return this.entries;
+  }
+
+  multiplayerProfileVersion(): number {
+    return this.profileVersion;
   }
 
   /** The bundled game with this canonical id, or undefined. */
