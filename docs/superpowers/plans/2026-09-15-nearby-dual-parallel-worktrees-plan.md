@@ -597,3 +597,65 @@ ROM bytes 只走独立 bulk stream，不混入 input/control；支持 8 MiB 上�
 
 `shared/src/session/engine/session_engine.cpp:4467`：`session_signing_->ready()` 成立（exact 312 字节 `0x0212` 的两个持久化门禁都过）时，当前只 `publish_link_view_locked(FLY_SESSION_LINK_CONNECTING_V2)`，注释写明「LINK_HELLO is the next protocol gate」。需照抄 `session_signing_` 的 8 处接线（effect kind 映射、cancel、start、事件归属判定、effect 派发、完成分支、shutdown 忙判定、状态投影）已逐条记入 `out/logs/task9-integration-notes.md`（忽略目录）。
 
+---
+
+## 20. 执行记录：并行波次与集成（2026-09-15 进行中）
+
+### 20.1 测试运行环境改为 WSL（用户 2026-09-15 明确要求）
+
+**原因：** 在 Windows 上运行失败的 MSVC Debug 测试会弹出 "Debug Assertion Failed" 对话框打扰用户。因此约定：**C++ 测试只在 WSL(Ubuntu-24.04) 构建并运行；Windows 上只允许 `cmake --build`。**
+
+WSL 环境实测：`cmake 3.28.3`(/usr/bin)、`g++ 13.3`、`make 4.3`、`openssl 3.0.13`、`cargo 1.96`、`zlib.h`、32 核；仓库经 `/mnt/e/...` 可达。配方：
+
+```bash
+cmake -S shared -B out/nearby-host-linux/shared/build -DFLYNES_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/nearby-host-linux/shared/build -j 24
+# 直接跑二进制；用 ctest 时必须用长选项（--test-dir/--build-config/--tests-regex）
+```
+
+新 worktree 首次 configure 前需 `git submodule update --init core/vendor/nestopiaue`。
+
+### 20.2 Linux 上暴露并已修复的既有缺陷（`9826703`）
+
+MSVC 全部接受、GCC 加 `-Werror` 全部拒绝；这些只有换到 Linux 才暴露。**其中一处是真实未定义行为**，不是单纯的告警：
+
+| 文件 | 问题 | 性质 |
+|---|---|---|
+| `test_initial_quic_bind_scheduler.cpp:249` | 同一实参列表里两次 `next_resource++`（未定序） | **真实 UB**，GCC 正确拒绝、MSVC 只默默选一个顺序 |
+| `test_zip_payload_fixture_loader.cpp:266` | `const std::string&` 绑定由 `const char*` 构造的临时对象 | 可移植性缺陷 |
+| `initial_bearer_scheduler.cpp` / `pair_signature_scheduler.cpp` | 两个匿名 namespace 死函数 | 死代码，已删 |
+| `test_two_engine_empty_lobby.cpp`（30 处）/ `test_real_pair_pipeline.cpp`（2 处） | 未使用的 `unavailable_*` 端口桩与 CNG-only 辅助 | 标 `[[maybe_unused]]`，保留桩族以记录完整端口面 |
+
+Windows 侧仍然干净：`cmake --build` exit 0、**0 个 `error C`**（131 个 warning 全部来自 nestopia 既有代码）。**Linux 上 `nearby_*` 标签全部通过。**
+
+**仍存在、本轮未处理的 2 个既有 Linux 失败**（与本轮 Nearby 工作无关，且不在 DUAL 门禁内，仅记录）：
+- `flynes_runtime_pcm_contention` 编译失败：`shared/src/runtime/flynes_runtime.cpp:292` 的 `-Werror=subobject-linkage`（匿名声明的 `Snapshot` / `NesDeleter` 被外部链接的 `fly_runtime_handle` 当作成员）——真实缺陷，需结构性改动。
+- `flynes_zip_payload_fixture_corpus_check` 失败：4 个 fixture 文件在 Linux 检出下的字节与生成结果不一致（`deflate_large_signed_descriptor_exact_limits.zip`、`directory_payload_not_rejected.zip`、`truncated_deflate_incomplete.zip`、`manifest.tsv`），疑似行尾/`.gitattributes` 差异。
+
+### 20.3 W1 已合并（`fe91ff1`）
+
+- W1 交付 `32b0d1e`（Task 3 codec）+ `66c048e`（Task 4 scheduler）。
+- 合并冲突面只有 4 个文件：**`shared/CMakeLists.txt` 自动合并成功**（已核对 W0 的 QUIC 接线三个定义各 1 次、W1 的 4 个测试注册块都在、0 处冲突标记）；3 个版本元数据文件按设计文档处理——取 W0 侧版本后跑 `tools/versioning/Sync-Version.ps1` 重新同步三端（`synchronized: 1.4.6`），**未手改 versionName/versionCode**。
+- **合并后验证绿色**（设计文档要求"合并后的全量测试失败必须先恢复绿色，再接收下一个分支"）：WSL 上 **90 个测试 / 98% 通过**，W1 的 `link_hello_wire` / `link_ready_wire` / `link_handshake_scheduler` / `link_handshake_races` 全部通过；仅剩 §20.2 记录的 2 个既有非 Nearby 失败。
+- W1 的 golden 向量经**独立手工核对**：按合同偏移逐字段比对 `kHelloInitiatorBytes`（480 字节）——version/reserved/角色互反/phase/session_id/link_id/channel_id/两个 generation/wire 版本/**capability 仅含 DUAL 位**/critical_extension_mask=0/四个 32 字节 hash 的偏移/identity_verifier_ref 内 version=1 与 reserved/其 `identity_key_id` 与单独声明的常量逐字节相等/公钥首字节 `0x04`——全部正确，排除了"脚本与实现从同一处误读而一起出错"的风险。
+- W1 留有一个临时静态库 `flynes_link_control_w1`，按 Task 9 Step 3「集中式 CMake」要求需收编进 `flynes_session_codec` / `flynes_initial_plan_lock` 后删除。
+
+### 20.4 W3 真实 loopback QUIC 探针（`3df0deb`）——`E2E-HARNESS` 的硬门禁已有硬证据
+
+此前 W3 报 BLOCKED，根因是缺少能生成 91 字节 canonical P-256 DER-SPKI 证书与 low-S 签名的工具。WSL 有 `openssl 3.0.13` 后打通，**卡点正是 low-S 归一**：`ECDSA_do_sign` 的原始输出约一半是 high-S，必须 `s = min(s, n-s)` 再 `i2d_ECDSA_SIG` 重编码，否则 provider 用 ring 验证会正确拒绝。
+
+WSL 实测输出（提交 `3df0deb`）：
+
+```
+PROBE register-tls-material-accepted: PASS
+PROBE loopback-handshake-completed: PASS
+PROBE connector/listener-handshake-facts: PASS  (TLS1.3 + ALPN flynes-nearby/2 + pin + peer_certificate_verified + peer_der_spki_hash==pin)
+PROBE exporters-agree: PASS        PROBE stream-payload-round-trip: PASS
+PROBE datagram-round-trip: PASS    PROBE all-resources-closed: PASS
+PROBE signer-context-balanced: PASS   PROBE_EXIT=0   PASS=37  FAIL=0
+```
+
+Windows 降级路径已验证：同时具备 cargo 与 OpenSSL 才注册该探针，否则打印 `W3 loopback QUIC probe: skipped (needs cargo and OpenSSL libcrypto)`。
+
+**验收记录须注明**：`two_engine_fixture.hpp`（2235 行）**不是手写**，而是从 `test_two_engine_empty_lobby.cpp` 逐行 carve（生成器在 git-ignored 的 `out/tools/`，不受版本控制），三处显式 delta 为 per-engine clock、可换 QUIC port、engine ordinal+ledger。
+
