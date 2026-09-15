@@ -1347,6 +1347,82 @@ if(FLYNES_BUILD_TESTS)
         COMMAND flynes_session_app_frame_consistency_test)
 endif()
 
+# =====================================================================
+# W2 (nearby-dual-runtime) append-only block. Owned by the
+# codex/nearby-dual-runtime worker; the W0 merge applies it last. It adds new
+# targets only and never edits an existing line above.
+# =====================================================================
+if(FLYNES_BUILD_TESTS)
+    # W2 DUAL data plane sources, compiled directly into the W2 test targets so
+    # that no pre-existing library line has to change.
+    set(FLYNES_W2_DUAL_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/canonical_input.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/input_window.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/dual_run_scheduler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/dual_state_digest.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire/sha256.cpp
+    )
+    set(FLYNES_W2_DUAL_INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+    )
+
+    add_executable(flynes_nearby_canonical_input_test
+        tests/nearby/protocol/test_canonical_input.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/canonical_input.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire/sha256.cpp
+    )
+    target_include_directories(flynes_nearby_canonical_input_test PRIVATE
+        ${FLYNES_W2_DUAL_INCLUDE_DIRS})
+    target_compile_features(flynes_nearby_canonical_input_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_nearby_canonical_input_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_nearby_canonical_input_test)
+    add_test(NAME nearby_canonical_input COMMAND flynes_nearby_canonical_input_test)
+    set_tests_properties(nearby_canonical_input PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_nearby_input_window_test
+        tests/nearby/protocol/test_input_window.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/canonical_input.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/input_window.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire/sha256.cpp
+    )
+    target_include_directories(flynes_nearby_input_window_test PRIVATE
+        ${FLYNES_W2_DUAL_INCLUDE_DIRS})
+    target_compile_features(flynes_nearby_input_window_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_nearby_input_window_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_nearby_input_window_test)
+    add_test(NAME nearby_input_window COMMAND flynes_nearby_input_window_test)
+    set_tests_properties(nearby_input_window PROPERTIES LABELS "nearby_protocol")
+
+    add_executable(flynes_nearby_dual_run_scheduler_test
+        tests/nearby/integration/test_dual_run_scheduler.cpp
+        ${FLYNES_W2_DUAL_SOURCES}
+    )
+    target_include_directories(flynes_nearby_dual_run_scheduler_test PRIVATE
+        ${FLYNES_W2_DUAL_INCLUDE_DIRS})
+    target_compile_features(flynes_nearby_dual_run_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_nearby_dual_run_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_nearby_dual_run_scheduler_test)
+    add_test(NAME nearby_dual_run_scheduler COMMAND flynes_nearby_dual_run_scheduler_test)
+    set_tests_properties(nearby_dual_run_scheduler PROPERTIES
+        LABELS "nearby_integration;nearby_protocol")
+
+    add_executable(flynes_nearby_dual_run_races_test
+        tests/nearby/race/test_dual_run_races.cpp
+        ${FLYNES_W2_DUAL_SOURCES}
+    )
+    target_include_directories(flynes_nearby_dual_run_races_test PRIVATE
+        ${FLYNES_W2_DUAL_INCLUDE_DIRS})
+    target_compile_features(flynes_nearby_dual_run_races_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_nearby_dual_run_races_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_nearby_dual_run_races_test)
+    add_test(NAME nearby_dual_run_races COMMAND flynes_nearby_dual_run_races_test)
+    set_tests_properties(nearby_dual_run_races PROPERTIES
+        LABELS "nearby_race;nearby_integration")
+endif()
+# =================== end W2 append-only block =======================
+
 # Android (and other consumers that add core first) get the runtime library
 # without pulling nestopia into catalog-only host tests.
 flynes_add_runtime_library()
