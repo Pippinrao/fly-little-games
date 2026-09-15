@@ -566,3 +566,34 @@ ROM bytes 只走独立 bulk stream，不混入 input/control；支持 8 MiB 上�
 - 真实 loopback QUIC 能否在本机 Windows 上构建并链接（`shared/nearby-quic-provider` Rust crate）尚未验证，W3 正在确认；若不可用须记 BLOCKED 而非 PASS。
 - 平台验收环境已确认可用（用户 2026-09-15 告知）：Windows 本机 Android/HarmonyOS 模拟器 + `ssh apple` 远程 Mac，因此 Task 13–15 的平台验收项应真实执行，**不再默认记 NOT_RUN**。
 
+### 波次 0 之后的 W0 增量（`e22cbff`）
+
+**真实 loopback QUIC 已打通 —— 这是本轮解除的最大计划风险。**
+
+此前 `shared/CMakeLists.txt` **完全没有引用** `shared/nearby-quic-provider`，因此没有任何 CTest 套件执行过真实 provider 代码，所有传输测试用的都是假实现。这会让 Task 7/8 的 `E2E-HARNESS` 与 Task 9 的 `MVP-LOBBY`（要求「真实 loopback Quinn」）无法成立。
+
+已落地的接线：
+
+- `FLYNES_ENABLE_RUST_QUIC_PROVIDER`（默认 ON；找不到 cargo 时打印 status 并降级）
+- 自定义目标 `flynes_nearby_quic_provider_build` 触发 `cargo build --release`（crate 源码与 Cargo.toml 列为 DEPENDS），实测 13.45 秒完成
+- IMPORTED STATIC 目标 `flynes_nearby_quic_provider`，带 C ABI 头目录与 Rust 依赖需要的 MSVC 系统库
+- 新增 `shared/tests/nearby/contract/test_quic_provider_linkage.cpp`
+
+**证据：** `flynes_quic_provider_linkage` PASSED。该测试不是"加了一行链接就算通过"——它调用 provider 自己的参数校验与引用计数（`struct_size`/`abi_version`/三个回调非空校验、null 句柄 release 无副作用、最终 release 恰好释放上下文一次），能通过只可能是真实 Rust 实现执行了。全量 `ctest` **87/87 PASSED，0 failed**（16.27 s）。
+
+### Android unit 基线（§17「Android unit/build 0 failure」）
+
+**证据：** `gradlew.bat :app:testDebugUnitTest` → `BUILD SUCCESSFUL in 22s`；测试结果 XML 汇总 **97 个测试类 / 468 tests / 0 failures / 0 errors / 2 skipped**，其中包含 nearby 相关类 `NearbyInviteHostStateTest`、`NearbyInviteTickerTest`、`SessionSchemaRegistryTest`、`BuiltinGamesTest`。**不是 0 tests matched。**
+
+### 平台验收环境（2026-09-15 实测探测，非仅用户口述）
+
+| 平台 | 实测命令 | 结果 |
+|---|---|---|
+| Android | `adb devices` | `emulator-5554` / `emulator-5564` / `emulator-5570` 均 `device` |
+| HarmonyOS | `hdc list targets` | `127.0.0.1:5557` |
+| iOS | `ssh -o BatchMode=yes apple 'xcrun simctl list devices booted'` | iPhone 14 / iOS 16.4 **Booted**（UDID `988243AC-5704-45B6-9151-FF3A9B7AFD35`） |
+
+### Task 9 集成点已定位
+
+`shared/src/session/engine/session_engine.cpp:4467`：`session_signing_->ready()` 成立（exact 312 字节 `0x0212` 的两个持久化门禁都过）时，当前只 `publish_link_view_locked(FLY_SESSION_LINK_CONNECTING_V2)`，注释写明「LINK_HELLO is the next protocol gate」。需照抄 `session_signing_` 的 8 处接线（effect kind 映射、cancel、start、事件归属判定、effect 派发、完成分支、shutdown 忙判定、状态投影）已逐条记入 `out/logs/task9-integration-notes.md`（忽略目录）。
+
