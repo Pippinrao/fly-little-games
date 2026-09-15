@@ -328,6 +328,72 @@ function(flynes_add_runtime_library)
     flynes_enable_strict_warnings(flynes_runtime)
 endfunction()
 
+# ---------------------------------------------------------------------------
+# Nearby QUIC provider (Rust / Quinn static library).
+#
+# The provider is the repository's only real QUIC transport implementation. It
+# is a Rust staticlib exposing a C ABI (see nearby-quic-provider/include/
+# flynes_quic_provider.h), so it cannot go through add_subdirectory. Test
+# targets that need a genuine loopback QUIC connection link the imported target
+# below and additionally depend on the custom target that runs cargo.
+#
+# Until 2026-09-15 nothing in shared/CMakeLists.txt referenced the provider at
+# all, which is why no CTest suite had ever exercised a real QUIC connection.
+# ---------------------------------------------------------------------------
+option(FLYNES_ENABLE_RUST_QUIC_PROVIDER
+    "Build and link the Rust nearby QUIC provider (requires cargo)" ON)
+
+if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+    find_program(FLYNES_CARGO_EXECUTABLE cargo)
+    if(NOT FLYNES_CARGO_EXECUTABLE)
+        message(STATUS
+            "nearby QUIC provider: cargo not found; the provider target is disabled")
+        set(FLYNES_ENABLE_RUST_QUIC_PROVIDER OFF CACHE BOOL "" FORCE)
+    endif()
+endif()
+
+if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+    set(FLYNES_QUIC_PROVIDER_ROOT
+        "${CMAKE_CURRENT_SOURCE_DIR}/nearby-quic-provider")
+    if(WIN32)
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/flynes_nearby_quic_provider.lib")
+    else()
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/libflynes_nearby_quic_provider.a")
+    endif()
+
+    file(GLOB_RECURSE FLYNES_QUIC_PROVIDER_SOURCES
+        "${FLYNES_QUIC_PROVIDER_ROOT}/src/*.rs")
+    list(APPEND FLYNES_QUIC_PROVIDER_SOURCES
+        "${FLYNES_QUIC_PROVIDER_ROOT}/Cargo.toml")
+
+    add_custom_command(
+        OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+        COMMAND "${FLYNES_CARGO_EXECUTABLE}" build --release
+            --manifest-path "${FLYNES_QUIC_PROVIDER_ROOT}/Cargo.toml"
+        WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
+        DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
+        COMMENT "cargo build --release (flynes nearby QUIC provider)"
+        VERBATIM)
+
+    add_custom_target(flynes_nearby_quic_provider_build
+        DEPENDS "${FLYNES_QUIC_PROVIDER_LIBRARY}")
+
+    add_library(flynes_nearby_quic_provider STATIC IMPORTED GLOBAL)
+    set_target_properties(flynes_nearby_quic_provider PROPERTIES
+        IMPORTED_LOCATION "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${FLYNES_QUIC_PROVIDER_ROOT}/include")
+    if(WIN32)
+        # A Rust staticlib on MSVC still needs the platform libraries its
+        # dependencies (ring, rustls, socket2, getrandom) reference.
+        set_property(TARGET flynes_nearby_quic_provider APPEND PROPERTY
+            INTERFACE_LINK_LIBRARIES
+            "ws2_32;bcrypt;ntdll;userenv;crypt32;advapi32;ole32;shell32;iphlpapi;user32")
+    endif()
+    message(STATUS "nearby QUIC provider: linked from ${FLYNES_QUIC_PROVIDER_LIBRARY}")
+endif()
+
 if(FLYNES_BUILD_TESTS)
     enable_language(C)
     enable_testing()
@@ -1263,6 +1329,25 @@ if(FLYNES_BUILD_TESTS)
     set_tests_properties(flynes_dual_runtime_contract PROPERTIES
         LABELS "nearby_protocol;nearby_ports")
 
+    # Proves that the Rust QUIC provider is actually built and linked into a
+    # C++ test binary, so the two-engine harness can rely on real loopback QUIC
+    # instead of a fake transport. Compiled only where cargo is available.
+    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+        add_executable(flynes_quic_provider_linkage_test
+            tests/nearby/contract/test_quic_provider_linkage.cpp)
+        target_link_libraries(flynes_quic_provider_linkage_test PRIVATE
+            flynes_nearby_quic_provider)
+        add_dependencies(flynes_quic_provider_linkage_test
+            flynes_nearby_quic_provider_build)
+        target_compile_features(flynes_quic_provider_linkage_test PRIVATE cxx_std_17)
+        set_target_properties(flynes_quic_provider_linkage_test PROPERTIES CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_quic_provider_linkage_test)
+        add_test(NAME flynes_quic_provider_linkage
+            COMMAND flynes_quic_provider_linkage_test)
+        set_tests_properties(flynes_quic_provider_linkage PROPERTIES
+            LABELS "nearby_protocol;nearby_ports")
+    endif()
+
     add_executable(flynes_session_v2_fencing_test
         tests/nearby/contract/test_session_v2_fencing.cpp
     )
@@ -1345,6 +1430,126 @@ if(FLYNES_BUILD_TESTS)
     )
     add_test(NAME flynes_session_app_frame_consistency
         COMMAND flynes_session_app_frame_consistency_test)
+
+    # =======================================================================
+    # W3 (branch codex/nearby-dual-e2e-harness) -- APPEND ONLY BLOCK.
+    # Two-engine acceptance harness and scenarios. Nothing above this block is
+    # touched by W3. Merge conflict resolution must keep BOTH this block and
+    # W0's QUIC provider block: they are independent additions.
+    # =======================================================================
+
+    add_library(flynes_two_engine_harness STATIC
+        tests/nearby/harness/two_engine_fixture.cpp
+    )
+    target_link_libraries(flynes_two_engine_harness PRIVATE flynes_session)
+    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+        # PUBLIC so every scenario binary also gets the real provider symbols:
+        # the harness proves the real Rust implementation is linked.
+        target_link_libraries(flynes_two_engine_harness PUBLIC
+            flynes_nearby_quic_provider)
+        add_dependencies(flynes_two_engine_harness
+            flynes_nearby_quic_provider_build)
+    endif()
+    target_include_directories(flynes_two_engine_harness
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+                ${CMAKE_CURRENT_SOURCE_DIR}/nearby-quic-provider/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+    target_compile_features(flynes_two_engine_harness PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_harness PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_harness)
+
+    # Real loopback QUIC fixture. Compiled only where the Rust provider is
+    # available; the probes exist so a missing cargo degrades to "not built"
+    # instead of silently faking a transport.
+    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+        add_library(flynes_loopback_quic_fixture STATIC
+            tests/nearby/harness/loopback_tls_fixture.cpp
+        )
+        target_link_libraries(flynes_loopback_quic_fixture PRIVATE
+            flynes_nearby_quic_provider)
+        add_dependencies(flynes_loopback_quic_fixture
+            flynes_nearby_quic_provider_build)
+        target_include_directories(flynes_loopback_quic_fixture
+            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+        target_compile_features(flynes_loopback_quic_fixture PRIVATE cxx_std_17)
+        set_target_properties(flynes_loopback_quic_fixture PROPERTIES
+            CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_loopback_quic_fixture)
+
+        add_executable(flynes_loopback_tls_fixture_test
+            tests/nearby/harness/test_loopback_tls_fixture.cpp)
+        target_link_libraries(flynes_loopback_tls_fixture_test PRIVATE
+            flynes_loopback_quic_fixture flynes_nearby_quic_provider)
+        add_dependencies(flynes_loopback_tls_fixture_test
+            flynes_nearby_quic_provider_build)
+        target_compile_features(flynes_loopback_tls_fixture_test PRIVATE
+            cxx_std_17)
+        set_target_properties(flynes_loopback_tls_fixture_test PROPERTIES
+            CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_loopback_tls_fixture_test)
+        add_test(NAME flynes_loopback_tls_fixture
+            COMMAND flynes_loopback_tls_fixture_test)
+        set_tests_properties(flynes_loopback_tls_fixture PROPERTIES
+            LABELS "nearby_protocol;nearby_ports")
+
+        add_executable(flynes_loopback_quic_probe
+            tests/nearby/harness/loopback_quic_probe.cpp)
+        target_link_libraries(flynes_loopback_quic_probe PRIVATE
+            flynes_loopback_quic_fixture flynes_nearby_quic_provider)
+        add_dependencies(flynes_loopback_quic_probe
+            flynes_nearby_quic_provider_build)
+        target_compile_features(flynes_loopback_quic_probe PRIVATE cxx_std_17)
+        set_target_properties(flynes_loopback_quic_probe PROPERTIES
+            CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_loopback_quic_probe)
+        add_test(NAME flynes_loopback_quic_probe
+            COMMAND flynes_loopback_quic_probe)
+        set_tests_properties(flynes_loopback_quic_probe PROPERTIES
+            LABELS "nearby_integration;nearby_ports")
+    endif()
+
+    add_executable(flynes_two_engine_connected_lobby_test
+        tests/nearby/scenarios/test_two_engine_connected_lobby.cpp)
+    target_link_libraries(flynes_two_engine_connected_lobby_test PRIVATE
+        flynes_two_engine_harness flynes_session)
+    target_compile_features(flynes_two_engine_connected_lobby_test PRIVATE
+        cxx_std_17)
+    set_target_properties(flynes_two_engine_connected_lobby_test PROPERTIES
+        CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_connected_lobby_test)
+    add_test(NAME flynes_two_engine_connected_lobby
+        COMMAND flynes_two_engine_connected_lobby_test)
+    set_tests_properties(flynes_two_engine_connected_lobby PROPERTIES
+        LABELS "nearby_integration;nearby_protocol;nearby_auth")
+
+    add_executable(flynes_two_engine_dual_run_test
+        tests/nearby/scenarios/test_two_engine_dual_run.cpp)
+    target_link_libraries(flynes_two_engine_dual_run_test PRIVATE
+        flynes_two_engine_harness flynes_session)
+    target_compile_features(flynes_two_engine_dual_run_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_dual_run_test PROPERTIES
+        CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_dual_run_test)
+    add_test(NAME flynes_two_engine_dual_run
+        COMMAND flynes_two_engine_dual_run_test)
+    set_tests_properties(flynes_two_engine_dual_run PROPERTIES
+        LABELS "nearby_integration;nearby_protocol")
+
+    add_executable(flynes_two_engine_recovery_test
+        tests/nearby/scenarios/test_two_engine_recovery.cpp)
+    target_link_libraries(flynes_two_engine_recovery_test PRIVATE
+        flynes_two_engine_harness flynes_session)
+    target_compile_features(flynes_two_engine_recovery_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_recovery_test PROPERTIES
+        CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_recovery_test)
+    add_test(NAME flynes_two_engine_recovery
+        COMMAND flynes_two_engine_recovery_test)
+    set_tests_properties(flynes_two_engine_recovery PROPERTIES
+        LABELS "nearby_integration;nearby_race;nearby_ports")
+
+    # ======================= end W3 append-only block ======================
 endif()
 
 # Android (and other consumers that add core first) get the runtime library
