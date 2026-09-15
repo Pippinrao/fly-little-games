@@ -13,6 +13,7 @@
 #include "wire/quic_contract.hpp"
 #include "wire/session_signing_binding.hpp"
 #include "wire/sha256.hpp"
+#include "link/link_control_contract.hpp"
 
 #include <array>
 #include <algorithm>
@@ -998,6 +999,10 @@ struct EngineFixture final
         int puts = 0;
         int cancels = 0;
         std::uint32_t last_kind = 0;
+        // Every object kind this generation asked to persist, in order. Used to
+        // prove the engine never persists a 0x0216/0x0217 control object while
+        // the ABI has no object-read primitive.
+        std::vector<std::uint32_t> kinds;
         std::array<std::uint8_t, 32> last_hash{};
         std::vector<std::uint8_t> last_value;
         fly_session_op_token_v2 last_token{};
@@ -1025,6 +1030,7 @@ struct EngineFixture final
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->puts;
             self->last_kind = object_kind;
+            self->kinds.push_back(object_kind);
             std::copy_n(expected_hash, 32, self->last_hash.begin());
             self->last_token = *token;
             fly_session_inbox_retain_v2(inbox);
@@ -2752,6 +2758,32 @@ void drive_session_signing_persistence(
               fixture.key.cancels == 0,
           "both persistence gates satisfied still leaves CONNECTING until the "
           "peer HELLO/READY exchange");
+
+    // Task 9 Step 1/2 negative acceptance for the engine seam. The engine starts
+    // the link handshake at exactly this point, but the current frozen ABI cannot
+    // serve it: the scheduler's first effect is ReadLocalBindingObject and
+    // fly_session_object_store_port_v2 has no read operation (only put_immutable +
+    // cancel), and the codec's synchronous prehashed verifier has no provider
+    // shape. The engine therefore must NOT reach CONNECTED_LOBBY by any other
+    // route, and must NOT emit a LINK_HELLO/LINK_READY object, rather than
+    // substituting an in-memory assumption for the required re-read.
+    check(durable.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              fixture.object_store.puts == object_puts + 1 &&
+              fixture.object_store.last_kind ==
+                  flynes::session::wire::kSessionSigningBindingObjectKindV1 &&
+              std::none_of(fixture.object_store.kinds.begin(),
+                           fixture.object_store.kinds.end(),
+                           [](std::uint32_t kind) {
+                               return kind ==
+                                          flynes::session::link::
+                                              kLinkHelloObjectKindV1 ||
+                                      kind ==
+                                          flynes::session::link::
+                                              kLinkReadyObjectKindV1;
+                           }),
+          "the engine never persists a 0x0216/0x0217 object and never publishes "
+          "CONNECTED_LOBBY while the control-stream object read and the "
+          "synchronous prehashed verifier are missing from the ABI");
 }
 
 void drive_initiator_pair_flow(EngineFixture& fixture, SessionSigningTail tail)

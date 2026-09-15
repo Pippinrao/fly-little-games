@@ -14,6 +14,7 @@
 #include "../link/endpoint_offer_scheduler.hpp"
 #include "../link/initial_quic_bind_scheduler.hpp"
 #include "../link/session_signing_scheduler.hpp"
+#include "../link/link_handshake_scheduler.hpp"
 #include "../view/session_view.hpp"
 #include "../wire/gatt_fragment.hpp"
 #include "../wire/pair_handshake.hpp"
@@ -75,6 +76,7 @@ private:
     void cancel_endpoint_offer_locked() noexcept;
     void cancel_initial_quic_bind_locked() noexcept;
     void cancel_session_signing_locked() noexcept;
+    void cancel_link_handshake_locked() noexcept;
     bool start_pair_reveal_locked() noexcept;
     bool start_pair_signature_locked() noexcept;
     bool start_pair_known_locked() noexcept;
@@ -96,6 +98,7 @@ private:
     bool queue_local_endpoint_offer_locked() noexcept;
     bool start_initial_quic_bind_locked() noexcept;
     bool start_session_signing_locked() noexcept;
+    bool start_link_handshake_locked() noexcept;
 
     struct PendingAction final
     {
@@ -192,6 +195,7 @@ private:
     fly_session_op_token_v2 endpoint_offer_token_{};
     fly_session_op_token_v2 initial_quic_bind_token_{};
     fly_session_op_token_v2 session_signing_token_{};
+    fly_session_op_token_v2 link_handshake_token_{};
     fly_session_op_token_v2 gatt_write_token_{};
     std::uint64_t next_operation_id_ = 2;
     std::uint64_t link_generation_ = 1;
@@ -240,6 +244,9 @@ private:
     bool session_signing_dispatch_pending_ = false;
     bool session_signing_active_ = false;
     std::uint32_t session_signing_expected_kind_ = 0;
+    bool link_handshake_dispatch_pending_ = false;
+    bool link_handshake_active_ = false;
+    std::uint32_t link_handshake_expected_kind_ = 0;
     bool gatt_write_pending_ = false;
     bool gatt_write_active_ = false;
     fly_session_resource_handle_v2 discovery_connection_ = 0;
@@ -267,6 +274,7 @@ private:
     std::unique_ptr<EndpointOfferScheduler> endpoint_offer_{};
     std::unique_ptr<InitialQuicBindScheduler> initial_quic_bind_{};
     std::unique_ptr<SessionSigningScheduler> session_signing_{};
+    std::optional<LinkHandshakeScheduler> link_handshake_{};
     std::optional<CapabilitySummary> local_pair_capability_{};
     std::array<std::uint8_t, 32> pending_local_capability_hash_{};
     std::array<std::uint8_t, 32> pending_local_known_hash_{};
