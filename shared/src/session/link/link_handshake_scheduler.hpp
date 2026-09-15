@@ -46,6 +46,7 @@ enum class LinkHandshakeEffectKind : std::uint8_t
     SignHello,
     PersistHelloObject,
     SendHello,
+    VerifyPeerSignature,
     PersistPeerHelloObject,
     PersistNegotiatedResult,
     SignReady,
@@ -62,6 +63,12 @@ enum class LinkHandshakeEffectKind : std::uint8_t
  * The observable stage sequence. The tests assert the exact trace, so a missing
  * durable write or a reordered send is visible as a stage-order failure rather
  * than only as a broken end state.
+ *
+ * Every received peer message passes through its own AwaitPeerXSignature stage:
+ * the scheduler parses the exact bytes, asks the crypto port to verify the
+ * sender's signature asynchronously, and only then persists and answers. The
+ * signature is therefore never checked by a synchronous callback inside the
+ * decoder.
  */
 enum class LinkHandshakeStageV1 : std::uint8_t
 {
@@ -71,17 +78,20 @@ enum class LinkHandshakeStageV1 : std::uint8_t
     PersistHello,
     SendHello,
     AwaitPeerHello,
+    AwaitPeerHelloSignature,
     PersistPeerHello,
     PersistNegotiatedResult,
     SignReady,
     PersistReady,
     SendReady,
     AwaitPeerReady,
+    AwaitPeerReadySignature,
     PersistPeerReady,
     SignAck,
     PersistAck,
     SendAck,
     AwaitPeerAck,
+    AwaitPeerAckSignature,
     PersistPeerAck,
     Connected,
     Failed
@@ -127,8 +137,6 @@ struct LinkHandshakeStartV1 final
     std::array<std::uint8_t, 32> merge_result_hash{};
     fly_session_resource_handle_v2 session_signing_key = 0;
     fly_session_resource_handle_v2 control_stream = 0;
-    wire::LinkControlSignatureVerifierV1 verify_peer_signature = nullptr;
-    void* verify_context = nullptr;
 };
 
 struct LinkHandshakeEffect final
@@ -141,6 +149,12 @@ struct LinkHandshakeEffect final
     std::uint32_t object_kind = 0;
     std::array<std::uint8_t, 32> expected_hash{};
     std::array<std::uint8_t, 32> digest{};
+    /* VerifyPeerSignature only: the exact public key whose signature must be
+     * verified (the peer's session signing key, taken from the message itself),
+     * plus the canonical low-S signature the peer sent, so the engine can hand
+     * both to the asynchronous crypto port unchanged. */
+    std::array<std::uint8_t, 65> signer_public_key{};
+    std::array<std::uint8_t, 64> signature{};
     std::vector<std::uint8_t> domain{};
     std::vector<std::uint8_t> name_space{};
     std::vector<std::uint8_t> record_key{};
@@ -172,6 +186,14 @@ public:
 
     [[nodiscard]] bool begun() const noexcept { return begun_; }
     [[nodiscard]] bool failed() const noexcept { return progress_.failed; }
+    /*
+     * True when the attempt stopped because this build has no producer for a
+     * start input the protocol needs further along the sequence (today: the u64
+     * channel_id / channel_bind_id / channel_bind_hash and the negotiated
+     * result). That is a seam that is not wired yet, never a protocol failure,
+     * and the engine must not publish a failed link for it.
+     */
+    [[nodiscard]] bool missing_inputs() const noexcept { return missing_inputs_; }
     [[nodiscard]] bool has_pending_operation() const noexcept
     { return operations_.has_pending(); }
     [[nodiscard]] bool connected() const noexcept
@@ -214,6 +236,10 @@ private:
     void record(LinkHandshakeStageV1 stage) noexcept;
     void reset_attempt(const LinkHandshakeStartV1& start) noexcept;
     fly_session_result_v2 fail(fly_session_result_v2 result) noexcept;
+    /* Fails closed when an input with no producer in this build is absent,
+     * recording that fact so the engine can distinguish "not wired yet" from a
+     * real protocol failure. */
+    fly_session_result_v2 require_inputs(bool present) noexcept;
     fly_session_result_v2 issue(LinkHandshakeEffect effect,
                                 LinkHandshakeStageV1 stage);
     fly_session_result_v2 read_buffer(const ParsedProviderEvent& event,
@@ -238,6 +264,20 @@ private:
                                               LinkHandshakeStageV1 awaiting,
                                               std::uint8_t ready_phase,
                                               LinkHandshakeStageV1 persist_stage);
+    /* Stage 1 of a received control message: hold the exact bytes plus the
+     * parsed value and issue the asynchronous VerifyPeerSignature effect.
+     * Nothing is persisted and nothing is answered before stage 2 accepts it. */
+    fly_session_result_v2 store_pending_peer_message(
+        const std::uint8_t* bytes, std::size_t size,
+        const wire::LinkControlParsedV1& parsed,
+        const wire::LinkControlVerifyRequestV1& request,
+        LinkHandshakeStageV1 verify_stage, std::uint32_t peer_value,
+        std::uint32_t peer_kind,
+        const std::array<std::uint8_t, 32>& peer_hash,
+        LinkHandshakeStageV1 persist_stage);
+    /* Stage 2: the asynchronous verification terminal has arrived. Accept and
+     * persist, or fail the link closed. */
+    fly_session_result_v2 complete_verify_peer_signature();
     fly_session_result_v2 persist_peer_message();
 
     ProviderOperationJournal operations_{1};
@@ -268,7 +308,16 @@ private:
     std::uint64_t next_operation_id_ = 0;
     LinkHandshakeStageV1 stage_ = LinkHandshakeStageV1::Empty;
     LinkHandshakeStageV1 persist_stage_ = LinkHandshakeStageV1::Empty;
+    /* The outstanding asynchronous verification of a received control message,
+     * plus everything needed to resume the sequence once it returns. */
+    std::optional<wire::LinkControlVerifyRequestV1> pending_verification_{};
+    std::vector<std::uint8_t> pending_peer_preimage_{};
+    std::array<std::uint8_t, 32> pending_peer_hash_{};
+    std::uint32_t pending_peer_kind_ = 0;
+    std::uint32_t pending_peer_value_ = 0;
+    LinkHandshakeStageV1 pending_persist_stage_ = LinkHandshakeStageV1::Empty;
     bool begun_ = false;
+    bool missing_inputs_ = false;
 };
 
 } // namespace flynes::session

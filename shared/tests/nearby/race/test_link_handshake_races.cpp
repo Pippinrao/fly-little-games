@@ -265,6 +265,17 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
             buffer_event(effect.token, FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2,
                          signature.data(), signature.size()));
     }
+    case LinkHandshakeEffectKind::VerifyPeerSignature: {
+        /* The engine's asynchronous crypto terminal, driven by the same real
+         * verification the provider performs. */
+        const bool verified =
+            test_verify(nullptr, effect.signer_public_key.data(),
+                        effect.digest.data(), effect.signature.data());
+        return complete_event(
+            side.scheduler,
+            end_event(effect.token, FLY_SESSION_PROVIDER_CRYPTO_VERIFICATION_V2,
+                      verified ? FLY_SESSION_V2_OK : FLY_SESSION_V2_AUTH_FAILED));
+    }
     case LinkHandshakeEffectKind::PersistHelloObject:
     case LinkHandshakeEffectKind::PersistPeerHelloObject:
     case LinkHandshakeEffectKind::PersistReadyObject:
@@ -362,7 +373,6 @@ Side make_side(wire::PairRoleV1 role,
     start.merge_result_hash = filled<32>(0xdd);
     start.session_signing_key = 0x1000;
     start.control_stream = 0x2000;
-    start.verify_peer_signature = test_verify;
     side.start = start;
     check(side.scheduler.begin(side.start), "scheduler begins a link attempt");
     return side;

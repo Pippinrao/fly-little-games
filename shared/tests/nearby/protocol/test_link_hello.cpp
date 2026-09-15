@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -815,6 +816,123 @@ void wrong_kind_and_constants()
           "HELLO object hash domain comes from the frozen contract");
 }
 
+/*
+ * The two-stage contract. Stage 1 parses and validates every non-cryptographic
+ * field and hands back the exact verification request; stage 2 accepts or fails
+ * closed once the asynchronous verification result exists. The signature
+ * rejection point therefore moved out of the decoder, without weakening any
+ * negative case.
+ */
+void two_stage_parse_then_accept()
+{
+    auto expected = hello_expectations();
+    const auto golden = golden_initiator_hello_bytes();
+
+    wire::LinkControlDecodeReportV1 report{};
+    wire::LinkControlParsedV1 parsed{};
+    link::LinkHelloV1 value{};
+    check(wire::parse_link_hello_v1(
+              golden.data(), golden.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr, &report,
+              &parsed, &value) == wire::Status::Ok,
+          "stage 1 parses a well-formed HELLO without any cryptography");
+
+    const auto expected_digest = hex_bytes<32>(kHelloInitiatorDigest);
+    const auto expected_object_hash = hex_bytes<32>(kHelloInitiatorObjectHash);
+    check(parsed.digest == expected_digest &&
+              value.digest == expected_digest &&
+              value.object_hash == expected_object_hash,
+          "stage 1 already fixes the exact digest and object hash");
+
+    wire::LinkControlVerifyRequestV1 request{};
+    const std::string digest_domain = link::kLinkHelloDigestDomainV1;
+    check(wire::link_control_verify_request_v1(
+              parsed, link::kLinkHelloDigestDomainV1, &request) ==
+              wire::Status::Ok &&
+              request.public_key_x963 == hex_bytes<65>(kGenerator1) &&
+              request.digest == expected_digest &&
+              request.signature == parsed.signature &&
+              request.domain.size() == digest_domain.size() &&
+              std::equal(request.domain.begin(), request.domain.end(),
+                         digest_domain.begin()),
+          "stage 1 produces the exact asynchronous verification request");
+
+    /* Accepted only once the verifier has answered. */
+    link::LinkHelloV1 accepted{};
+    check(wire::accept_link_hello_v1(
+              parsed, value, wire::LinkControlVerificationOutcomeV1::Accepted,
+              &report, &accepted) == wire::Status::Ok &&
+              accepted.object_hash == expected_object_hash,
+          "stage 2 accepts after a successful asynchronous verification");
+
+    /* A rejected signature is the only thing stage 2 may reject. */
+    link::LinkHelloV1 rejected{};
+    report = wire::LinkControlDecodeReportV1{};
+    check(wire::accept_link_hello_v1(
+              parsed, value, wire::LinkControlVerificationOutcomeV1::Rejected,
+              &report, &rejected) == wire::Status::InvalidField &&
+              report.issue == wire::LinkControlIssueV1::Signature,
+          "stage 2 fails closed when the asynchronous verifier rejected");
+
+    /*
+     * A structurally valid but wrong signature is now accepted by stage 1 and
+     * rejected only by stage 2: this is the moved rejection point, and the
+     * message is never persisted or answered.
+     */
+    auto tampered = golden;
+    tampered[420] = static_cast<std::uint8_t>(tampered[420] ^ 0x01u);
+    wire::LinkControlDecodeReportV1 tampered_report{};
+    wire::LinkControlParsedV1 tampered_parsed{};
+    link::LinkHelloV1 tampered_value{};
+    check(wire::parse_link_hello_v1(
+              tampered.data(), tampered.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr,
+              &tampered_report, &tampered_parsed, &tampered_value) ==
+              wire::Status::Ok,
+          "stage 1 defers the signature decision to stage 2");
+    wire::LinkControlDecodeReportV1 tampered_accept_report{};
+    link::LinkHelloV1 tampered_accepted{};
+    check(wire::accept_link_hello_v1(
+              tampered_parsed, tampered_value,
+              wire::LinkControlVerificationOutcomeV1::Rejected,
+              &tampered_accept_report, &tampered_accepted) ==
+              wire::Status::InvalidField &&
+              tampered_accept_report.issue == wire::LinkControlIssueV1::Signature,
+          "a tampered signature is rejected only after the async result returns");
+
+    /*
+     * The non-cryptographic negatives are unchanged and now land in stage 1, so
+     * no verifier is ever consulted for a message that is structurally illegal.
+     */
+    auto reflected = golden;
+    reflected[8] = 2;
+    reflected[9] = 1;
+    wire::LinkControlDecodeReportV1 reflected_report{};
+    wire::LinkControlParsedV1 reflected_parsed{};
+    link::LinkHelloV1 reflected_value{};
+    check(wire::parse_link_hello_v1(
+              reflected.data(), reflected.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr,
+              &reflected_report, &reflected_parsed, &reflected_value) ==
+              wire::Status::InvalidField &&
+              reflected_report.issue == wire::LinkControlIssueV1::Discriminant,
+          "stage 1 still rejects a role-reflected HELLO before any crypto");
+
+    /* A non-canonical (zero) signature is still a stage-1 rejection. */
+    auto zero_signature = golden;
+    std::fill(zero_signature.begin() + 416, zero_signature.end(), 0);
+    wire::LinkControlDecodeReportV1 zero_report{};
+    wire::LinkControlParsedV1 zero_parsed{};
+    link::LinkHelloV1 zero_value{};
+    check(wire::parse_link_hello_v1(
+              zero_signature.data(), zero_signature.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr,
+              &zero_report, &zero_parsed, &zero_value) ==
+              wire::Status::InvalidField &&
+              zero_report.issue == wire::LinkControlIssueV1::Signature,
+          "stage 1 still rejects a non-canonical zero signature");
+}
+
 } // namespace
 
 int main()
@@ -828,6 +946,7 @@ int main()
     identity_and_binding_negatives();
     signature_negatives();
     wrong_kind_and_constants();
+    two_stage_parse_then_accept();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d link hello codec checks failed\n", failures);

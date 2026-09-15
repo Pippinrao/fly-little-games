@@ -1007,7 +1007,28 @@ struct EngineFixture final
         std::vector<std::uint8_t> last_value;
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
-        ~ObjectStore() { fly_session_inbox_release_v2(inbox); }
+        /* R3 durable re-read gate: every read-back request this generation made,
+         * with its object kind and expected content hash, plus the objects that
+         * were actually persisted so a read can return the exact bytes. */
+        int reads = 0;
+        int missing_reads = 0;
+        std::uint32_t last_read_kind = 0;
+        std::array<std::uint8_t, 32> last_read_hash{};
+        fly_session_op_token_v2 last_read_token{};
+        fly_session_inbox_v2_t* read_inbox = nullptr;
+        std::vector<std::uint32_t> read_kinds;
+        struct StoredObject
+        {
+            std::uint32_t kind = 0;
+            std::array<std::uint8_t, 32> hash{};
+            std::vector<std::uint8_t> value;
+        };
+        std::vector<StoredObject> stored;
+        ~ObjectStore()
+        {
+            fly_session_inbox_release_v2(inbox);
+            fly_session_inbox_release_v2(read_inbox);
+        }
 
         static fly_session_result_v2 put_immutable(
             void* context, const fly_session_op_token_v2* token,
@@ -1033,9 +1054,54 @@ struct EngineFixture final
             self->kinds.push_back(object_kind);
             std::copy_n(expected_hash, 32, self->last_hash.begin());
             self->last_token = *token;
+            StoredObject record{};
+            record.kind = object_kind;
+            std::copy_n(expected_hash, 32, record.hash.begin());
+            record.value = self->last_value;
+            self->stored.push_back(std::move(record));
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
+            return FLY_SESSION_V2_ACCEPTED;
+        }
+
+        /*
+         * The R3 read primitive. It records the exact request and then answers
+         * with the retained object for (kind, hash), or with
+         * FLY_SESSION_V2_UNAVAILABLE when this store never held it. The two
+         * failure modes the ABI keeps apart are therefore both reachable: an
+         * absent object is UNAVAILABLE, while an object whose bytes or hash
+         * disagree is injected by the test as a non-OK terminal.
+         */
+        static fly_session_result_v2 read(
+            void* context, const fly_session_op_token_v2* token,
+            std::uint32_t object_kind, const std::uint8_t expected_hash[32],
+            fly_session_inbox_v2_t* inbox)
+        {
+            auto* self = static_cast<ObjectStore*>(context);
+            if (!token || object_kind == 0 || !expected_hash)
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
+            ++self->reads;
+            self->last_read_kind = object_kind;
+            std::copy_n(expected_hash, 32, self->last_read_hash.begin());
+            self->last_read_token = *token;
+            self->read_kinds.push_back(object_kind);
+            const auto found = std::find_if(
+                self->stored.begin(), self->stored.end(),
+                [&](const StoredObject& item) {
+                    return item.kind == object_kind &&
+                           std::equal(item.hash.begin(), item.hash.end(),
+                                      expected_hash);
+                });
+            if (found == self->stored.end())
+            {
+                ++self->missing_reads;
+                return FLY_SESSION_V2_UNAVAILABLE;
+            }
+            if (inbox == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
+            fly_session_inbox_retain_v2(inbox);
+            fly_session_inbox_release_v2(self->read_inbox);
+            self->read_inbox = inbox;
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -1123,6 +1189,7 @@ struct EngineFixture final
         object_store_port.retain = retain_noop;
         object_store_port.release = release_noop;
         object_store_port.put_immutable = ObjectStore::put_immutable;
+        object_store_port.read = ObjectStore::read;
         object_store_port.cancel = ObjectStore::cancel;
         bearer_port.struct_size = FLY_SESSION_BEARER_PORT_V2_SIZE;
         bearer_port.abi_version = FLY_SESSION_ABI_VERSION_2;
@@ -2517,7 +2584,11 @@ enum class SessionSigningTail
 {
     DurableAcrossBothGates,
     WrongObjectHash,
-    ShutdownCancelsThroughObjectStore
+    ShutdownCancelsThroughObjectStore,
+    /* R3 durable re-read negatives: the object is absent, and the object exists
+     * but the bytes read back do not match the expected content hash. */
+    ReadObjectMissing,
+    ReadObjectContentMismatch
 };
 
 // The hash domain the wire codec uses for the 0x0212 binding object. Verified
@@ -2738,6 +2809,12 @@ void drive_session_signing_persistence(
         "an old connection generation cannot complete the current 0x0212 "
         "object request");
 
+    // A store that lost the object between the durable put and the required
+    // re-read: the R3 read must then answer FLY_SESSION_V2_UNAVAILABLE, never a
+    // fabricated success.
+    if (tail == SessionSigningTail::ReadObjectMissing)
+        fixture.object_store.stored.clear();
+
     // Step 2: only the exact immutable-object completion releases the second
     // gate. Local material is then fully durable, so CONNECTING afterwards can
     // only mean the remaining gate is the peer HELLO/READY exchange.
@@ -2746,7 +2823,14 @@ void drive_session_signing_persistence(
         FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 320, expected_hash);
     fixture.executor.run_all();
     const auto durable = fixture.snapshot();
-    check(durable.link_state == FLY_SESSION_LINK_CONNECTING_V2 &&
+    // When the store lost the object, the durable re-read already ran inside the
+    // same drain and failed the link closed; otherwise both gates are satisfied
+    // and the link stays CONNECTING until the peer HELLO/READY exchange.
+    const auto state_after_second_gate =
+        tail == SessionSigningTail::ReadObjectMissing
+            ? FLY_SESSION_LINK_FAILED_V2
+            : FLY_SESSION_LINK_CONNECTING_V2;
+    check(durable.link_state == state_after_second_gate &&
               durable.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
               fixture.object_store.puts == object_puts + 1 &&
               fixture.secure_store.writes == secure_writes &&
@@ -2759,18 +2843,100 @@ void drive_session_signing_persistence(
           "both persistence gates satisfied still leaves CONNECTING until the "
           "peer HELLO/READY exchange");
 
-    // Task 9 Step 1/2 negative acceptance for the engine seam. The engine starts
-    // the link handshake at exactly this point, but the current frozen ABI cannot
-    // serve it: the scheduler's first effect is ReadLocalBindingObject and
-    // fly_session_object_store_port_v2 has no read operation (only put_immutable +
-    // cancel), and the codec's synchronous prehashed verifier has no provider
-    // shape. The engine therefore must NOT reach CONNECTED_LOBBY by any other
-    // route, and must NOT emit a LINK_HELLO/LINK_READY object, rather than
-    // substituting an in-memory assumption for the required re-read.
-    check(durable.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
-              fixture.object_store.puts == object_puts + 1 &&
-              fixture.object_store.last_kind ==
+    /*
+     * Decision 1 negative A: the object is absent. The port answers UNAVAILABLE
+     * and the engine must fail the link closed - a binding it cannot read back
+     * is not durable, and no in-memory copy may stand in for it.
+     */
+    if (tail == SessionSigningTail::ReadObjectMissing)
+    {
+        check(fixture.object_store.reads == 1 &&
+                  fixture.object_store.missing_reads == 1 &&
+                  fixture.object_store.reads == fixture.object_store.missing_reads &&
+                  fixture.object_store.last_read_kind ==
+                      flynes::session::wire::kSessionSigningBindingObjectKindV1 &&
+                  fixture.object_store.last_read_hash == expected_hash,
+              "an absent 0x0212 object is reported as UNAVAILABLE by the read "
+              "port, never as a successful read");
+        const auto state = fixture.snapshot();
+        check(state.link_state == FLY_SESSION_LINK_FAILED_V2 &&
+                  state.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+                  fixture.quic.writes == quic_writes &&
+                  std::none_of(fixture.object_store.kinds.begin(),
+                               fixture.object_store.kinds.end(),
+                               [](std::uint32_t kind) {
+                                   return kind ==
+                                              flynes::session::link::
+                                                  kLinkHelloObjectKindV1 ||
+                                          kind ==
+                                              flynes::session::link::
+                                                  kLinkReadyObjectKindV1;
+                               }),
+              "a failed durable re-read fails the link closed without emitting "
+              "LINK_HELLO or reaching a lobby");
+        return;
+    }
+
+    // Task 9 milestone: at exactly this point start_link_handshake_locked() runs,
+    // so the scheduler's first effect (ReadLocalBindingObject) is dispatched and
+    // serviced through the R3 object-store read primitive. The engine asks for
+    // object kind 0x0212 with the *local binding hash* as the expected content
+    // hash, and the mock store really held that object, so this is a genuine
+    // durable read-back and not an in-memory assumption.
+    check(fixture.object_store.reads == 1 &&
+              fixture.object_store.missing_reads == 0 &&
+              fixture.object_store.last_read_kind ==
                   flynes::session::wire::kSessionSigningBindingObjectKindV1 &&
+              fixture.object_store.last_read_hash == expected_hash &&
+              fixture.object_store.read_kinds.size() == 1,
+          "the link handshake really re-reads the durable 0x0212 binding "
+          "through the R3 object-store read port");
+
+    // Deliver the exact stored bytes and hash. The scheduler verifies them and
+    // then stops at the first input this build has no producer for (the
+    // contract's u64 channel_id/channel_bind_id, the negotiated result and the
+    // peer's accepted 0x0212 binding), which is a not-wired seam: the link must
+    // stay CONNECTING, never FAILED and never CONNECTED_LOBBY.
+    if (tail == SessionSigningTail::ReadObjectContentMismatch)
+    {
+        /*
+         * Decision 1 negative B: the object exists but the bytes read back do
+         * not hash to the expected content hash. The port must not answer
+         * UNAVAILABLE for this, and the engine must not treat it as a success:
+         * the mismatching 312 bytes fail the link closed.
+         */
+        auto tampered = expected_binding;
+        tampered[180] = static_cast<std::uint8_t>(tampered[180] ^ 0xffu);
+        const auto hash_of_tampered = flynes::session::wire::domain_hash(
+            kSessionSigningBindingHashDomainV1, tampered.data(), tampered.size());
+        deliver_provider_hash_buffer(
+            fixture.object_store.read_inbox, fixture.object_store.last_read_token,
+            FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 321, tampered.data(),
+            tampered.size(), hash_of_tampered);
+        fixture.executor.run_all();
+        const auto state = fixture.snapshot();
+        check(fixture.object_store.missing_reads == 0 &&
+                  fixture.object_store.reads == 1,
+              "an existing-but-wrong object is not reported as a missing object");
+        check(state.link_state == FLY_SESSION_LINK_FAILED_V2 &&
+                  state.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+                  fixture.quic.writes == quic_writes,
+              "a 0x0212 object whose bytes do not match its expected hash fails "
+              "the link closed");
+        return;
+    }
+
+    deliver_provider_hash_buffer(
+        fixture.object_store.read_inbox, fixture.object_store.last_read_token,
+        FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 321, expected_binding.data(),
+        expected_binding.size(), expected_hash);
+    fixture.executor.run_all();
+    const auto after_read = fixture.snapshot();
+    check(after_read.link_state == FLY_SESSION_LINK_CONNECTING_V2 &&
+              after_read.link_state != FLY_SESSION_LINK_FAILED_V2 &&
+              after_read.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              fixture.object_store.reads == 1 &&
+              fixture.object_store.puts == object_puts + 1 &&
               std::none_of(fixture.object_store.kinds.begin(),
                            fixture.object_store.kinds.end(),
                            [](std::uint32_t kind) {
@@ -2781,9 +2947,9 @@ void drive_session_signing_persistence(
                                           flynes::session::link::
                                               kLinkReadyObjectKindV1;
                            }),
-          "the engine never persists a 0x0216/0x0217 object and never publishes "
-          "CONNECTED_LOBBY while the control-stream object read and the "
-          "synchronous prehashed verifier are missing from the ABI");
+          "the verified local re-read keeps CONNECTING and persists no "
+          "0x0216/0x0217 object while channel_bind_id, the negotiated result and "
+          "the peer binding still have no producer");
 }
 
 void drive_initiator_pair_flow(EngineFixture& fixture, SessionSigningTail tail)
@@ -4167,6 +4333,26 @@ void test_session_signing_binding_shutdown_cancels_through_object_store()
         fixture, SessionSigningTail::ShutdownCancelsThroughObjectStore);
 }
 
+/*
+ * Decision 1 negatives for the R3 object-store read primitive, driven through
+ * the real public engine and the real link handshake mount point: an absent
+ * object and an object whose bytes disagree with the expected content hash are
+ * two different failures, and neither may be mistaken for the other or for a
+ * successful re-read.
+ */
+void test_link_handshake_read_object_missing_fails_closed()
+{
+    EngineFixture fixture;
+    drive_initiator_pair_flow(fixture, SessionSigningTail::ReadObjectMissing);
+}
+
+void test_link_handshake_read_object_hash_mismatch_fails_closed()
+{
+    EngineFixture fixture;
+    drive_initiator_pair_flow(fixture,
+                              SessionSigningTail::ReadObjectContentMismatch);
+}
+
 } // namespace
 
 int main()
@@ -4180,6 +4366,8 @@ int main()
     test_inviter_generates_and_sends_pair_context_from_crypto_port();
     test_session_signing_binding_object_hash_mismatch_fails_closed();
     test_session_signing_binding_shutdown_cancels_through_object_store();
+    test_link_handshake_read_object_missing_fails_closed();
+    test_link_handshake_read_object_hash_mismatch_fails_closed();
     test_public_candidate_projection_and_stop();
     return failures == 0 ? 0 : 1;
 }

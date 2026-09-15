@@ -39,6 +39,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace flynes::session::wire {
 
@@ -106,6 +107,61 @@ struct LinkHelloExpectationsV1 final
 };
 
 /*
+ * Stage 1 result: a fully parsed, non-cryptographically validated control
+ * message. Every size, reserved, discriminant, role, identity, generation,
+ * capability and critical-extension check has already been applied; the only
+ * thing missing is the sender's signature check.
+ */
+struct LinkControlParsedV1 final
+{
+    std::array<std::uint8_t, 65> signer_public_key{};
+    std::array<std::uint8_t, 32> digest{};
+    std::array<std::uint8_t, 64> signature{};
+};
+
+/*
+ * The exact parameters of the asynchronous signature check. The digest is
+ * already domain-separated (domain_hash over the exact pretag), so a verifier
+ * must never hash it a second time; the domain string travels alongside only so
+ * the provider can select and audit the verification context, exactly as
+ * Key.prehashed_sign receives its domain.
+ */
+struct LinkControlVerifyRequestV1 final
+{
+    std::array<std::uint8_t, 65> public_key_x963{};
+    std::array<std::uint8_t, 32> digest{};
+    std::array<std::uint8_t, 64> signature{};
+    std::vector<std::uint8_t> domain{};
+};
+
+enum class LinkControlVerificationOutcomeV1 : std::uint8_t
+{
+    Accepted = 0,
+    Rejected
+};
+
+/*
+ * Stage 2 outcome class. Rejected is reserved for "the signature did not
+ * verify"; Malformed is reserved for "the provider answered something that is
+ * not a usable verification result" and is never used for a bad signature.
+ */
+enum class LinkControlAcceptanceV1 : std::uint8_t
+{
+    Accepted = 0,
+    Rejected,
+    Malformed
+};
+
+/*
+ * Builds the exact verify_prehashed request for a parsed control message under
+ * the given digest domain. Fails closed when the parsed value is missing.
+ */
+Status link_control_verify_request_v1(
+    const LinkControlParsedV1& parsed, const char* digest_domain,
+    LinkControlVerifyRequestV1* out_request) noexcept;
+
+
+/*
  * Encodes bytes[0..416) and the digest it covers. Reserved regions are written
  * zero; value.signature / value.digest / value.object_hash are ignored here.
  * Fails closed when the value would advertise anything outside
@@ -129,9 +185,32 @@ Status finish_link_hello_v1(
     link::LinkHelloV1* out_value) noexcept;
 
 /*
- * Decodes and fully verifies a peer HELLO. On any non-Ok return *out is left
- * untouched apart from the report, so a caller can never observe a partially
- * populated value.
+ * Stage 1: parse and validate every non-cryptographic field. Never verifies the
+ * signature and never calls a provider. On any non-Ok return *out is left
+ * untouched apart from the report.
+ */
+Status parse_link_hello_v1(
+    const std::uint8_t* bytes, std::size_t size,
+    const LinkHelloExpectationsV1& expected, P256PointValidatorV1 validate_point,
+    void* validator_context, LinkControlDecodeReportV1* out_report,
+    LinkControlParsedV1* out_parsed, link::LinkHelloV1* out) noexcept;
+
+/*
+ * Stage 2: accept or fail closed once the asynchronous verification result for
+ * exactly this parsed value has arrived. A Rejected outcome is reported as
+ * LinkControlIssueV1::Signature / AUTH_FAILED by the caller, never as a parse
+ * failure, and never advances any state.
+ */
+Status accept_link_hello_v1(const LinkControlParsedV1& parsed,
+                            const link::LinkHelloV1& parsed_value,
+                            LinkControlVerificationOutcomeV1 outcome,
+                            LinkControlDecodeReportV1* out_report,
+                            link::LinkHelloV1* out) noexcept;
+
+/*
+ * Two-stage convenience wrapper: parse, then synchronously verify through the
+ * caller's own verifier. The scheduler does not use the verifier callback; it
+ * drives the two stages separately through the asynchronous crypto port.
  */
 Status decode_link_hello_v1(
     const std::uint8_t* bytes, std::size_t size,

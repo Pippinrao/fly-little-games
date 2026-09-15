@@ -198,19 +198,29 @@ Status finish_link_ready_v1(
     return Status::Ok;
 }
 
-Status decode_link_ready_v1(
+/*
+ * Stage 1: every non-cryptographic READY/ACK check, including the canonical
+ * low-S shape of the signature encoding. A rejected signature is decided only in
+ * stage 2, once the asynchronous verification result is available.
+ */
+Status parse_link_ready_v1(
     const std::uint8_t* bytes, std::size_t size,
     const LinkReadyExpectationsV1& expected, P256PointValidatorV1 validate_point,
-    void* validator_context, LinkControlSignatureVerifierV1 verify_signature,
-    void* verifier_context, LinkControlDecodeReportV1* out_report,
-    link::LinkReadyV1* out) noexcept
+    void* validator_context, LinkControlDecodeReportV1* out_report,
+    LinkControlParsedV1* out_parsed, link::LinkReadyV1* out) noexcept
 {
+    if (out_report != nullptr) {
+        out_report->status = Status::Ok;
+        out_report->issue = LinkControlIssueV1::None;
+        out_report->proposal = link::LinkProposalSupportV1::Supported;
+    }
+    if (out_parsed != nullptr) *out_parsed = LinkControlParsedV1{};
     if (size < kLinkReadySizeV1)
         return fail(out_report, LinkControlIssueV1::Size, Status::Truncated);
     if (size > kLinkReadySizeV1)
         return fail(out_report, LinkControlIssueV1::Size, Status::Trailing);
     if (bytes == nullptr || out == nullptr || out_report == nullptr ||
-        validate_point == nullptr || verify_signature == nullptr)
+        out_parsed == nullptr || validate_point == nullptr)
         return fail(out_report, LinkControlIssueV1::None, Status::InvalidField);
     if (!valid_role(expected.local_role) ||
         !valid_ready_phase(expected.expected_phase))
@@ -306,27 +316,66 @@ Status decode_link_ready_v1(
                         expected.peer_session_signing_public_key.data()))
         return fail(out_report, LinkControlIssueV1::Signature,
                     Status::InvalidField);
-    const auto digest =
+
+    copy_out(expected.peer_session_signing_public_key.data(), 65,
+             out_parsed->signer_public_key.data());
+    out_parsed->digest =
         domain_hash(kLinkReadyDigestDomainV1, bytes, kLinkReadyPretagSizeV1);
-    if (!verify_signature(verifier_context,
-                          expected.peer_session_signing_public_key.data(),
-                          digest.data(), bytes + 320))
-        return fail(out_report, LinkControlIssueV1::Signature,
-                    Status::InvalidField);
+    copy_out(bytes + 320, 64, out_parsed->signature.data());
 
     link::LinkReadyV1 parsed{};
     parse_pretag(bytes, &parsed);
-    copy_out(bytes + 320, 64, parsed.signature.data());
-    parsed.digest = digest;
+    parsed.signature = out_parsed->signature;
+    parsed.digest = out_parsed->digest;
     parsed.object_hash =
         domain_hash(kLinkReadyObjectHashDomainV1, bytes, kLinkReadySizeV1);
     *out = parsed;
+    return Status::Ok;
+}
+
+Status accept_link_ready_v1(const LinkControlParsedV1& parsed,
+                            const link::LinkReadyV1& parsed_value,
+                            LinkControlVerificationOutcomeV1 outcome,
+                            LinkControlDecodeReportV1* out_report,
+                            link::LinkReadyV1* out) noexcept
+{
+    if (outcome != LinkControlVerificationOutcomeV1::Accepted)
+        return fail(out_report, LinkControlIssueV1::Signature,
+                    Status::InvalidField);
+    if (out == nullptr ||
+        !link_control_signature_is_canonical_v1(parsed.signature.data()))
+        return fail(out_report, LinkControlIssueV1::Signature,
+                    Status::InvalidField);
+    *out = parsed_value;
     if (out_report != nullptr) {
         out_report->status = Status::Ok;
         out_report->issue = LinkControlIssueV1::None;
         out_report->proposal = link::LinkProposalSupportV1::Supported;
     }
     return Status::Ok;
+}
+
+Status decode_link_ready_v1(
+    const std::uint8_t* bytes, std::size_t size,
+    const LinkReadyExpectationsV1& expected, P256PointValidatorV1 validate_point,
+    void* validator_context, LinkControlSignatureVerifierV1 verify_signature,
+    void* verifier_context, LinkControlDecodeReportV1* out_report,
+    link::LinkReadyV1* out) noexcept
+{
+    if (verify_signature == nullptr)
+        return fail(out_report, LinkControlIssueV1::None, Status::InvalidField);
+    LinkControlParsedV1 parsed{};
+    link::LinkReadyV1 value{};
+    const auto parsed_status = parse_link_ready_v1(
+        bytes, size, expected, validate_point, validator_context, out_report,
+        &parsed, &value);
+    if (parsed_status != Status::Ok) return parsed_status;
+    const auto outcome =
+        verify_signature(verifier_context, parsed.signer_public_key.data(),
+                         parsed.digest.data(), parsed.signature.data())
+            ? LinkControlVerificationOutcomeV1::Accepted
+            : LinkControlVerificationOutcomeV1::Rejected;
+    return accept_link_ready_v1(parsed, value, outcome, out_report, out);
 }
 
 Status hash_link_negotiated_result_v1(const std::uint8_t* bytes,

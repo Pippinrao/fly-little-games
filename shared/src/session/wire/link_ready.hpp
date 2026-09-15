@@ -66,6 +66,31 @@ Status finish_link_ready_v1(
     std::array<std::uint8_t, link::kLinkReadySizeV1>* out_bytes,
     link::LinkReadyV1* out_value) noexcept;
 
+/*
+ * Stage 1: parse and validate every non-cryptographic READY/ACK field. Never
+ * verifies the signature and never calls a provider.
+ */
+Status parse_link_ready_v1(
+    const std::uint8_t* bytes, std::size_t size,
+    const LinkReadyExpectationsV1& expected, P256PointValidatorV1 validate_point,
+    void* validator_context, LinkControlDecodeReportV1* out_report,
+    LinkControlParsedV1* out_parsed, link::LinkReadyV1* out) noexcept;
+
+/*
+ * Stage 2: accept or fail closed once the asynchronous verification result for
+ * exactly this parsed value has arrived.
+ */
+Status accept_link_ready_v1(const LinkControlParsedV1& parsed,
+                            const link::LinkReadyV1& parsed_value,
+                            LinkControlVerificationOutcomeV1 outcome,
+                            LinkControlDecodeReportV1* out_report,
+                            link::LinkReadyV1* out) noexcept;
+
+/*
+ * Two-stage convenience wrapper: parse, then synchronously verify through the
+ * caller's own verifier. The scheduler does not use the verifier callback; it
+ * drives the two stages separately through the asynchronous crypto port.
+ */
 Status decode_link_ready_v1(
     const std::uint8_t* bytes, std::size_t size,
     const LinkReadyExpectationsV1& expected, P256PointValidatorV1 validate_point,

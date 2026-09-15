@@ -48,6 +48,11 @@ fly_session_result_v2 decode_failure(
     }
 }
 
+/* The digest domain is fixed per control message: the sender's signature covers
+ * domain_hash(domain, exact pretag). accept_peer_message() names it explicitly
+ * when it builds the verification request, so the provider verifies under the
+ * same context the sender signed. */
+
 } // namespace
 
 void LinkHandshakeScheduler::record(LinkHandshakeStageV1 stage) noexcept
@@ -103,43 +108,49 @@ void LinkHandshakeScheduler::reset_attempt(
     peer_ready_bytes_.fill(0);
     peer_ack_bytes_.fill(0);
     persist_stage_ = LinkHandshakeStageV1::Empty;
+    pending_verification_.reset();
+    pending_persist_stage_ = LinkHandshakeStageV1::Empty;
+    pending_peer_kind_ = 0;
+    pending_peer_value_ = 0;
+    pending_peer_preimage_.clear();
+    pending_peer_hash_.fill(0);
+    missing_inputs_ = false;
 }
 
 bool LinkHandshakeScheduler::begin(const LinkHandshakeStartV1& start)
 {
+    /*
+     * begin() validates exactly the inputs the FIRST step consumes, and every
+     * later step validates its own inputs through require_inputs() immediately
+     * before it acts. Two reasons, both load-bearing:
+     *
+     *   1. Peer-side inputs (the peer's accepted 0x0212 binding hash, its
+     *      identity_key_id and the session signing key that binding
+     *      authenticates) cannot be known before the peer's own authenticated
+     *      HELLO arrives. Demanding them here would make the handshake
+     *      unstartable; demanding them at accept_peer_hello() puts the check
+     *      exactly where the codec already rejects a zero or mismatched value.
+     *   2. Inputs that this build has no producer for yet (the contract's u64
+     *      channel_id / channel_bind_id / channel_bind_hash, the negotiated
+     *      result) are refused at their point of use instead of silently
+     *      forwarded as zeros.
+     *
+     * No check is weakened: every field still fails closed, only closer to the
+     * operation that needs it, and a missing producer is reported as such.
+     */
     const bool valid =
         start.generation != 0 && start.link_generation != 0 &&
-        start.first_operation_id != 0 && start.channel_id != 0 &&
-        start.channel_bind_id != 0 && start.session_signing_key != 0 &&
-        start.control_stream != 0 && start.verify_peer_signature != nullptr &&
-        !start.negotiated_result.empty() &&
+        start.first_operation_id != 0 &&
         link::link_role_is_valid_v1(start.local_role) &&
         nonzero(start.engine_instance_id.data(), start.engine_instance_id.size()) &&
         nonzero(start.link_id.data(), start.link_id.size()) &&
         nonzero(start.session_id.data(), start.session_id.size()) &&
         nonzero(start.pair_transcript_hash.data(), start.pair_transcript_hash.size()) &&
-        nonzero(start.pair_transcript_object_hash.data(),
-                start.pair_transcript_object_hash.size()) &&
-        nonzero(start.selected_plan_hash.data(), start.selected_plan_hash.size()) &&
-        nonzero(start.endpoint_offer_hash.data(), start.endpoint_offer_hash.size()) &&
-        nonzero(start.channel_bind_hash.data(), start.channel_bind_hash.size()) &&
         nonzero(start.local_binding_hash.data(), start.local_binding_hash.size()) &&
-        nonzero(start.peer_binding_hash.data(), start.peer_binding_hash.size()) &&
-        nonzero(start.peer_identity_key_id.data(), start.peer_identity_key_id.size()) &&
-        nonzero(start.negotiated_result_hash.data(),
-                start.negotiated_result_hash.size()) &&
-        nonzero(start.local_summary_hash.data(), start.local_summary_hash.size()) &&
-        nonzero(start.peer_summary_hash.data(), start.peer_summary_hash.size()) &&
-        nonzero(start.merge_result_hash.data(), start.merge_result_hash.size()) &&
         wire::validate_p256_uncompressed_point(
             start.local_identity_public_key.data()) &&
         wire::validate_p256_uncompressed_point(
-            start.local_session_signing_public_key.data()) &&
-        wire::validate_p256_uncompressed_point(
-            start.peer_identity_public_key.data()) &&
-        wire::validate_p256_uncompressed_point(
-            start.peer_session_signing_public_key.data()) &&
-        start.peer_identity_public_key != start.peer_session_signing_public_key;
+            start.local_session_signing_public_key.data());
     if (!valid) {
         if (!begun_) {
             progress_.failed = true;
@@ -177,11 +188,24 @@ fly_session_result_v2 LinkHandshakeScheduler::fail(
         operations_.cancel(pending_->token);
         pending_.reset();
     }
+    pending_verification_.reset();
+    pending_persist_stage_ = LinkHandshakeStageV1::Empty;
+    pending_peer_kind_ = 0;
+    pending_peer_value_ = 0;
+    pending_peer_preimage_.clear();
+    pending_peer_hash_.fill(0);
     progress_.failed = true;
     stage_ = LinkHandshakeStageV1::Failed;
     record(LinkHandshakeStageV1::Failed);
     return result == FLY_SESSION_V2_OK ? FLY_SESSION_V2_CONTRACT_VIOLATION
                                        : result;
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::require_inputs(bool present) noexcept
+{
+    if (present) return FLY_SESSION_V2_OK;
+    missing_inputs_ = true;
+    return fail(FLY_SESSION_V2_UNSUPPORTED);
 }
 
 fly_session_result_v2 LinkHandshakeScheduler::issue(LinkHandshakeEffect effect,
@@ -250,6 +274,11 @@ fly_session_result_v2 LinkHandshakeScheduler::persist_object(
 fly_session_result_v2 LinkHandshakeScheduler::send_bytes(
     const std::uint8_t* bytes, std::size_t size, LinkHandshakeStageV1 stage)
 {
+    /* The control stream is a real owned resource; without it nothing may be
+     * sent, and an absent handle is a not-wired seam rather than a protocol
+     * violation. */
+    const auto inputs = require_inputs(start_.control_stream != 0 && size != 0);
+    if (inputs != FLY_SESSION_V2_OK) return inputs;
     try {
         LinkHandshakeEffect effect{};
         effect.kind = stage == LinkHandshakeStageV1::SendHello
@@ -305,6 +334,20 @@ fly_session_result_v2 LinkHandshakeScheduler::request_local_binding()
 
 fly_session_result_v2 LinkHandshakeScheduler::request_hello_signature()
 {
+    /* HELLO binds the locked plan, the locked bearer path, the pair transcript
+     * object and the contract's u64 channel id, plus the session signing key.
+     * The channel id has no producer in this build yet, so an absent value stops
+     * the attempt as a not-wired seam instead of emitting a zero. */
+    const auto inputs = require_inputs(
+        start_.channel_id != 0 &&
+        nonzero(start_.selected_plan_hash.data(),
+                start_.selected_plan_hash.size()) &&
+        nonzero(start_.endpoint_offer_hash.data(),
+                start_.endpoint_offer_hash.size()) &&
+        nonzero(start_.pair_transcript_object_hash.data(),
+                start_.pair_transcript_object_hash.size()) &&
+        start_.session_signing_key != 0);
+    if (inputs != FLY_SESSION_V2_OK) return inputs;
     link::LinkHelloV1 value{};
     value.version = 1;
     value.sender_role = start_.local_role;
@@ -343,6 +386,10 @@ fly_session_result_v2 LinkHandshakeScheduler::request_hello_signature()
 
 fly_session_result_v2 LinkHandshakeScheduler::request_negotiated_result()
 {
+    /* Persist-before-send: an empty negotiated result must never be persisted as
+     * if it were a negotiation. This build has no canonical result producer. */
+    const auto inputs = require_inputs(!start_.negotiated_result.empty());
+    if (inputs != FLY_SESSION_V2_OK) return inputs;
     try {
         LinkHandshakeEffect effect{};
         effect.kind = LinkHandshakeEffectKind::PersistNegotiatedResult;
@@ -371,6 +418,25 @@ fly_session_result_v2 LinkHandshakeScheduler::request_negotiated_result()
 
 fly_session_result_v2 LinkHandshakeScheduler::request_ready_signature()
 {
+    /* READY binds the channel bind (id + proof hash), both verified resume
+     * summaries, the merge result, the negotiated result and both persisted
+     * HELLOs. None of those may be emitted as zeros. */
+    const auto inputs = require_inputs(
+        start_.channel_bind_id != 0 &&
+        nonzero(start_.channel_bind_hash.data(), start_.channel_bind_hash.size()) &&
+        nonzero(start_.local_summary_hash.data(),
+                start_.local_summary_hash.size()) &&
+        nonzero(start_.peer_summary_hash.data(),
+                start_.peer_summary_hash.size()) &&
+        nonzero(start_.merge_result_hash.data(),
+                start_.merge_result_hash.size()) &&
+        nonzero(local_hello_object_hash_.data(),
+                local_hello_object_hash_.size()) &&
+        nonzero(peer_hello_object_hash_.data(),
+                peer_hello_object_hash_.size()) &&
+        nonzero(negotiated_result_hash_.data(),
+                negotiated_result_hash_.size()));
+    if (inputs != FLY_SESSION_V2_OK) return inputs;
     link::LinkReadyV1 value{};
     value.version = 1;
     value.sender_role = start_.local_role;
@@ -417,6 +483,111 @@ fly_session_result_v2 LinkHandshakeScheduler::request_ack_signature()
                 LinkHandshakeStageV1::SignAck);
 }
 
+fly_session_result_v2 LinkHandshakeScheduler::store_pending_peer_message(
+    const std::uint8_t* bytes, std::size_t size,
+    const wire::LinkControlParsedV1& parsed,
+    const wire::LinkControlVerifyRequestV1& request,
+    LinkHandshakeStageV1 verify_stage, std::uint32_t peer_value,
+    std::uint32_t peer_kind,
+    const std::array<std::uint8_t, 32>& peer_hash,
+    LinkHandshakeStageV1 persist_stage)
+{
+    try {
+        LinkHandshakeEffect effect{};
+        effect.kind = LinkHandshakeEffectKind::VerifyPeerSignature;
+        effect.token = token(next_operation_id_++);
+        effect.expected_payload_kind = FLY_SESSION_PROVIDER_CRYPTO_VERIFICATION_V2;
+        effect.value.assign(bytes, bytes + size);
+        effect.domain = request.domain;
+        effect.digest = parsed.digest;
+        effect.signer_public_key = request.public_key_x963;
+        effect.signature = request.signature;
+        pending_verification_ = request;
+        pending_peer_value_ = peer_value;
+        pending_peer_kind_ = peer_kind;
+        pending_peer_hash_ = peer_hash;
+        pending_peer_preimage_ = effect.value;
+        pending_persist_stage_ = persist_stage;
+        return issue(std::move(effect), verify_stage);
+    } catch (const std::bad_alloc&) {
+        return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+    }
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::complete_verify_peer_signature()
+{
+    if (!pending_verification_)
+        return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+    const auto& request = *pending_verification_;
+    const wire::LinkControlParsedV1 parsed{
+        request.public_key_x963, request.digest, request.signature};
+    wire::LinkControlDecodeReportV1 report{};
+    const bool is_hello =
+        stage_ == LinkHandshakeStageV1::AwaitPeerHelloSignature;
+    const bool is_ready =
+        stage_ == LinkHandshakeStageV1::AwaitPeerReadySignature;
+    const bool is_ack =
+        stage_ == LinkHandshakeStageV1::AwaitPeerAckSignature;
+    if (!is_hello && !is_ready && !is_ack)
+        return fail(FLY_SESSION_V2_INVALID_STATE);
+
+    /*
+     * The asynchronous crypto verification already succeeded (a rejected
+     * signature arrives as a non-OK provider result and fail()s in complete()).
+     * What stage 2 still has to prove is that the key the provider verified is
+     * exactly the key the accepted peer binding authenticated: a HELLO that
+     * carries some other session signing key must not be accepted even if that
+     * other key produced a perfectly valid signature. That is the whole point of
+     * separating parse from accept.
+     */
+    const auto outcome =
+        std::memcmp(request.public_key_x963.data(),
+                    start_.peer_session_signing_public_key.data(), 65) == 0
+            ? wire::LinkControlVerificationOutcomeV1::Accepted
+            : wire::LinkControlVerificationOutcomeV1::Rejected;
+
+    if (is_hello) {
+        if (wire::accept_link_hello_v1(parsed, peer_hello_, outcome, &report,
+                                       &peer_hello_) != wire::Status::Ok)
+            return fail(FLY_SESSION_V2_AUTH_FAILED);
+        progress_.peer_hello_verified = true;
+    } else if (is_ready) {
+        if (wire::accept_link_ready_v1(parsed, peer_ready_, outcome, &report,
+                                       &peer_ready_) != wire::Status::Ok)
+            return fail(FLY_SESSION_V2_AUTH_FAILED);
+        progress_.peer_ready_verified = true;
+    } else if (wire::accept_link_ready_v1(parsed, peer_ack_, outcome, &report,
+                                          &peer_ack_) != wire::Status::Ok) {
+        return fail(FLY_SESSION_V2_AUTH_FAILED);
+    } else {
+        progress_.peer_ack_received = true;
+    }
+    pending_verification_.reset();
+    pending_.reset();
+    persist_stage_ = pending_persist_stage_;
+    return persist_peer_message();
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::persist_peer_message()
+{
+    const bool is_hello = pending_peer_kind_ == link::kLinkHelloObjectKindV1;
+    if (pending_peer_kind_ == 0 ||
+        (!is_hello && pending_peer_kind_ != link::kLinkReadyObjectKindV1))
+        return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+    const auto object_size = is_hello ? peer_hello_bytes_.size()
+                                      : peer_ready_bytes_.size();
+    if (pending_peer_preimage_.size() != object_size)
+        return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+    auto* destination = is_hello ? peer_hello_bytes_.data()
+                         : pending_peer_value_ == 1 ? peer_ready_bytes_.data()
+                                                    : peer_ack_bytes_.data();
+    std::copy(pending_peer_preimage_.begin(), pending_peer_preimage_.end(),
+              destination);
+    return persist_object(pending_peer_kind_, pending_peer_hash_,
+                          pending_peer_preimage_.data(), object_size,
+                          pending_persist_stage_);
+}
+
 fly_session_result_v2 LinkHandshakeScheduler::accept_peer_message(
     const std::uint8_t* bytes, std::size_t size, LinkHandshakeStageV1 awaiting,
     std::uint8_t ready_phase, LinkHandshakeStageV1 persist_stage)
@@ -456,13 +627,17 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_message(
         expected.peer_binding_hash = start_.peer_binding_hash;
         expected.peer_identity_key_id = start_.peer_identity_key_id;
         expected.peer_identity_public_key = start_.peer_identity_public_key;
+        /* Unknown before the peer's own binding is accepted; the HELLO codec
+         * rejects a zero expectation, so this fails closed rather than
+         * substituting anything. */
         expected.peer_session_signing_public_key =
             start_.peer_session_signing_public_key;
+        wire::LinkControlParsedV1 parsed{};
         link::LinkHelloV1 value{};
-        const auto status = wire::decode_link_hello_v1(
+        const auto status = wire::parse_link_hello_v1(
             bytes, size, expected,
-            wire::validate_p256_uncompressed_point_callback, nullptr,
-            start_.verify_peer_signature, start_.verify_context, &report, &value);
+            wire::validate_p256_uncompressed_point_callback, nullptr, &report,
+            &parsed, &value);
         if (status != wire::Status::Ok) {
             if (report.issue == wire::LinkControlIssueV1::Generation)
                 return FLY_SESSION_V2_STALE;
@@ -470,13 +645,20 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_message(
         }
         if (size != peer_hello_bytes_.size())
             return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
-        std::copy(bytes, bytes + size, peer_hello_bytes_.begin());
         peer_hello_ = value;
+        /* READY binds the peer's own persisted HELLO, which is this exact
+         * object, so the hash is recorded at parse time and the durable write
+         * happens only after stage 2 accepts the signature. */
         peer_hello_object_hash_ = value.object_hash;
-        progress_.peer_hello_verified = true;
-        persist_stage_ = persist_stage;
-        return persist_object(link::kLinkHelloObjectKindV1,
-                              peer_hello_object_hash_, bytes, size, persist_stage);
+        wire::LinkControlVerifyRequestV1 request{};
+        if (wire::link_control_verify_request_v1(
+                parsed, link::kLinkHelloDigestDomainV1, &request) !=
+            wire::Status::Ok)
+            return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+        return store_pending_peer_message(
+            bytes, size, parsed, request,
+            LinkHandshakeStageV1::AwaitPeerHelloSignature, 0,
+            link::kLinkHelloObjectKindV1, value.object_hash, persist_stage);
     }
 
     wire::LinkReadyExpectationsV1 expected{};
@@ -498,31 +680,34 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_message(
     expected.merge_result_hash = start_.merge_result_hash;
     expected.peer_session_signing_public_key =
         start_.peer_session_signing_public_key;
+    wire::LinkControlParsedV1 parsed{};
     link::LinkReadyV1 value{};
-    const auto status = wire::decode_link_ready_v1(
+    const auto status = wire::parse_link_ready_v1(
         bytes, size, expected, wire::validate_p256_uncompressed_point_callback,
-        nullptr, start_.verify_peer_signature, start_.verify_context, &report,
-        &value);
+        nullptr, &report, &parsed, &value);
     if (status != wire::Status::Ok) {
         if (report.issue == wire::LinkControlIssueV1::Generation)
             return FLY_SESSION_V2_STALE;
         return fail(decode_failure(report));
     }
-    auto* destination = ready_phase == 1 ? peer_ready_bytes_.data()
-                                        : peer_ack_bytes_.data();
     if (size != peer_ready_bytes_.size())
         return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
-    std::copy(bytes, bytes + size, destination);
+    /* Recorded now, published only after stage 2 accepts the signature. */
     if (ready_phase == 1) {
         peer_ready_ = value;
-        progress_.peer_ready_verified = true;
     } else {
         peer_ack_ = value;
-        progress_.peer_ack_received = true;
     }
-    persist_stage_ = persist_stage;
-    return persist_object(link::kLinkReadyObjectKindV1, value.object_hash,
-                          bytes, size, persist_stage);
+    wire::LinkControlVerifyRequestV1 request{};
+    if (wire::link_control_verify_request_v1(
+            parsed, link::kLinkReadyDigestDomainV1, &request) != wire::Status::Ok)
+        return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+    return store_pending_peer_message(
+        bytes, size, parsed, request,
+        ready_phase == 1 ? LinkHandshakeStageV1::AwaitPeerReadySignature
+                         : LinkHandshakeStageV1::AwaitPeerAckSignature,
+        ready_phase, link::kLinkReadyObjectKindV1, value.object_hash,
+        persist_stage);
 }
 
 fly_session_result_v2 LinkHandshakeScheduler::accept_peer_hello(
@@ -604,6 +789,14 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
         pending_.reset();
         return send_bytes(local_hello_bytes_.data(), local_hello_bytes_.size(),
                           LinkHandshakeStageV1::SendHello);
+    }
+    if (kind == LinkHandshakeEffectKind::VerifyPeerSignature) {
+        /*
+         * Stage 2. The provider already told us whether the signature is valid
+         * (completion.result); now the parsed value is either accepted - and
+         * only now persisted and answered - or the link fails closed here.
+         */
+        return complete_verify_peer_signature();
     }
     if (kind == LinkHandshakeEffectKind::SendHello) {
         pending_.reset();

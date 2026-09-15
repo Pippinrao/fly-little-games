@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 /*
@@ -706,6 +707,113 @@ void wrong_kind()
           "READY domains come from the frozen contract");
 }
 
+/*
+ * The two-stage contract for READY/ACK: stage 1 validates every
+ * non-cryptographic field and hands back the exact verification request; stage 2
+ * accepts or fails closed once the asynchronous verification result exists.
+ */
+void two_stage_parse_then_accept()
+{
+    const auto expected = ready_expectations(link::LinkReadyPhaseV1::Ready);
+    const auto golden = hex_bytes<384>(kReadyInitiatorBytes);
+
+    wire::LinkControlDecodeReportV1 report{};
+    wire::LinkControlParsedV1 parsed{};
+    link::LinkReadyV1 value{};
+    check(wire::parse_link_ready_v1(
+              golden.data(), golden.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr, &report,
+              &parsed, &value) == wire::Status::Ok,
+          "stage 1 parses a well-formed READY without any cryptography");
+
+    const auto expected_digest = hex_bytes<32>(kReadyInitiatorDigest);
+    const auto expected_object_hash = hex_bytes<32>(kReadyInitiatorObjectHash);
+    check(parsed.digest == expected_digest &&
+              value.digest == expected_digest &&
+              value.object_hash == expected_object_hash,
+          "stage 1 already fixes the exact READY digest and object hash");
+
+    wire::LinkControlVerifyRequestV1 request{};
+    const std::string digest_domain = link::kLinkReadyDigestDomainV1;
+    check(wire::link_control_verify_request_v1(
+              parsed, link::kLinkReadyDigestDomainV1, &request) ==
+              wire::Status::Ok &&
+              request.public_key_x963 ==
+                  expected.peer_session_signing_public_key &&
+              request.digest == expected_digest &&
+              request.signature == parsed.signature &&
+              request.domain.size() == digest_domain.size() &&
+              std::equal(request.domain.begin(), request.domain.end(),
+                         digest_domain.begin()),
+          "stage 1 produces the exact asynchronous verification request");
+
+    link::LinkReadyV1 accepted{};
+    check(wire::accept_link_ready_v1(
+              parsed, value, wire::LinkControlVerificationOutcomeV1::Accepted,
+              &report, &accepted) == wire::Status::Ok &&
+              accepted.object_hash == expected_object_hash,
+          "stage 2 accepts after a successful asynchronous verification");
+
+    link::LinkReadyV1 rejected{};
+    report = wire::LinkControlDecodeReportV1{};
+    check(wire::accept_link_ready_v1(
+              parsed, value, wire::LinkControlVerificationOutcomeV1::Rejected,
+              &report, &rejected) == wire::Status::InvalidField &&
+              report.issue == wire::LinkControlIssueV1::Signature,
+          "stage 2 fails closed when the asynchronous verifier rejected");
+
+    /* Structurally valid but wrong signature: accepted by stage 1, rejected only
+     * by stage 2. This is the moved rejection point. */
+    auto tampered = bytes_of(golden.data(), golden.size());
+    tampered[324] = static_cast<std::uint8_t>(tampered[324] ^ 0x01u);
+    wire::LinkControlDecodeReportV1 tampered_report{};
+    wire::LinkControlParsedV1 tampered_parsed{};
+    link::LinkReadyV1 tampered_value{};
+    check(wire::parse_link_ready_v1(
+              tampered.data(), tampered.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr,
+              &tampered_report, &tampered_parsed, &tampered_value) ==
+              wire::Status::Ok,
+          "stage 1 defers the READY signature decision to stage 2");
+    wire::LinkControlDecodeReportV1 tampered_accept_report{};
+    link::LinkReadyV1 tampered_accepted{};
+    check(wire::accept_link_ready_v1(
+              tampered_parsed, tampered_value,
+              wire::LinkControlVerificationOutcomeV1::Rejected,
+              &tampered_accept_report, &tampered_accepted) ==
+              wire::Status::InvalidField &&
+              tampered_accept_report.issue == wire::LinkControlIssueV1::Signature,
+          "a tampered READY signature is rejected only after the async result");
+
+    /* The non-cryptographic negatives stay in stage 1. */
+    auto reflected = bytes_of(golden.data(), golden.size());
+    reflected[8] = 2;
+    reflected[9] = 1;
+    wire::LinkControlDecodeReportV1 reflected_report{};
+    wire::LinkControlParsedV1 reflected_parsed{};
+    link::LinkReadyV1 reflected_value{};
+    check(wire::parse_link_ready_v1(
+              reflected.data(), reflected.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr,
+              &reflected_report, &reflected_parsed, &reflected_value) ==
+              wire::Status::InvalidField &&
+              reflected_report.issue == wire::LinkControlIssueV1::Discriminant,
+          "stage 1 still rejects a role-reflected READY before any crypto");
+
+    auto zero_signature = bytes_of(golden.data(), golden.size());
+    std::fill(zero_signature.begin() + 320, zero_signature.end(), 0);
+    wire::LinkControlDecodeReportV1 zero_report{};
+    wire::LinkControlParsedV1 zero_parsed{};
+    link::LinkReadyV1 zero_value{};
+    check(wire::parse_link_ready_v1(
+              zero_signature.data(), zero_signature.size(), expected,
+              wire::validate_p256_uncompressed_point_callback, nullptr,
+              &zero_report, &zero_parsed, &zero_value) ==
+              wire::Status::InvalidField &&
+              zero_report.issue == wire::LinkControlIssueV1::Signature,
+          "stage 1 still rejects a non-canonical zero READY signature");
+}
+
 } // namespace
 
 int main()
@@ -718,6 +826,7 @@ int main()
     binding_chain_negatives();
     signature_negatives();
     wrong_kind();
+    two_stage_parse_then_accept();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d link ready codec checks failed\n", failures);

@@ -375,10 +375,16 @@ Side make_side(wire::PairRoleV1 role,
     start.merge_result_hash = merge_hash();
     start.session_signing_key = 0x1000;
     start.control_stream = 0x2000;
-    start.verify_peer_signature = test_verify;
-    start.verify_context = nullptr;
     check(side.scheduler.begin(start), "scheduler begins a link attempt");
     return side;
+}
+
+/* The asynchronous verification terminal the engine delivers after the crypto
+ * port has checked the peer's signature over effect.digest. */
+fly_session_port_event_v2 verification_event(
+    const fly_session_op_token_v2& token, fly_session_result_v2 result)
+{
+    return end_event(token, FLY_SESSION_PROVIDER_CRYPTO_VERIFICATION_V2, result);
 }
 
 fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
@@ -410,6 +416,26 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
             side.scheduler,
             buffer_event(token, FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2,
                          signature.data(), signature.size()));
+    }
+    case LinkHandshakeEffectKind::VerifyPeerSignature: {
+        /*
+         * The engine's asynchronous crypto port terminal. This stub runs the
+         * same real check the provider must run - the canonical test verifier
+         * over the exact digest the scheduler computed - and reports the outcome
+         * through the inbox, so a tampered signature is still rejected and only
+         * the rejection point moved from a synchronous callback to this result.
+         */
+        if (inject_failure)
+            return complete_event(
+                side.scheduler,
+                verification_event(token, FLY_SESSION_V2_IO_FAILED));
+        const bool verified =
+            test_verify(nullptr, effect.signer_public_key.data(),
+                        effect.digest.data(), effect.signature.data());
+        return complete_event(
+            side.scheduler,
+            verification_event(token, verified ? FLY_SESSION_V2_OK
+                                               : FLY_SESSION_V2_AUTH_FAILED));
     }
     case LinkHandshakeEffectKind::PersistHelloObject:
     case LinkHandshakeEffectKind::PersistPeerHelloObject:
@@ -534,25 +560,28 @@ void exchange_hellos(Pair& pair)
     pump(pair.b);
 }
 
-const std::array<LinkHandshakeStageV1, 18>& expected_sequence()
+const std::array<LinkHandshakeStageV1, 21>& expected_sequence()
 {
-    static const std::array<LinkHandshakeStageV1, 18> value{{
+    static const std::array<LinkHandshakeStageV1, 21> value{{
         LinkHandshakeStageV1::ReadLocalBinding,
         LinkHandshakeStageV1::SignHello,
         LinkHandshakeStageV1::PersistHello,
         LinkHandshakeStageV1::SendHello,
         LinkHandshakeStageV1::AwaitPeerHello,
+        LinkHandshakeStageV1::AwaitPeerHelloSignature,
         LinkHandshakeStageV1::PersistPeerHello,
         LinkHandshakeStageV1::PersistNegotiatedResult,
         LinkHandshakeStageV1::SignReady,
         LinkHandshakeStageV1::PersistReady,
         LinkHandshakeStageV1::SendReady,
         LinkHandshakeStageV1::AwaitPeerReady,
+        LinkHandshakeStageV1::AwaitPeerReadySignature,
         LinkHandshakeStageV1::PersistPeerReady,
         LinkHandshakeStageV1::SignAck,
         LinkHandshakeStageV1::PersistAck,
         LinkHandshakeStageV1::SendAck,
         LinkHandshakeStageV1::AwaitPeerAck,
+        LinkHandshakeStageV1::AwaitPeerAckSignature,
         LinkHandshakeStageV1::PersistPeerAck,
         LinkHandshakeStageV1::Connected}};
     return value;
@@ -800,8 +829,13 @@ void peer_messages_are_durable_before_ack()
 
     const auto before = static_cast<int>(pair.a.answered.size());
     pump(pair.a);
-    check(before < static_cast<int>(pair.a.answered.size()) &&
+    /* The signature gate now sits immediately before the durable write, and the
+     * ordering assertion keeps its full strength: the peer READY is still
+     * persisted before this side ACKs it, only one effect later than before. */
+    check(before + 1 < static_cast<int>(pair.a.answered.size()) &&
               pair.a.answered[static_cast<std::size_t>(before)] ==
+                  LinkHandshakeEffectKind::VerifyPeerSignature &&
+              pair.a.answered[static_cast<std::size_t>(before + 1)] ==
                   LinkHandshakeEffectKind::PersistPeerReadyObject,
           "the verified peer READY is persisted first");
     check(index_of(pair.a, LinkHandshakeEffectKind::PersistPeerReadyObject) <

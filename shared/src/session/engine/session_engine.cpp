@@ -244,6 +244,8 @@ std::uint32_t link_handshake_payload_kind(
     case Kind::SignReady:
     case Kind::SignAck:
         return FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2;
+    case Kind::VerifyPeerSignature:
+        return FLY_SESSION_PROVIDER_CRYPTO_VERIFICATION_V2;
     case Kind::PersistNegotiatedResult:
         return FLY_SESSION_PROVIDER_SECURE_STORE_REVISION_V2;
     case Kind::SendHello:
@@ -470,6 +472,9 @@ void SessionEngine::cancel_link_handshake_locked() noexcept
         case LinkHandshakeEffectKind::SignReady:
         case LinkHandshakeEffectKind::SignAck:
             result = ports_.cancel_key(&effect->token);
+            break;
+        case LinkHandshakeEffectKind::VerifyPeerSignature:
+            result = ports_.cancel_crypto(&effect->token);
             break;
         case LinkHandshakeEffectKind::PersistNegotiatedResult:
             result = ports_.cancel_secure_store(&effect->token);
@@ -1654,66 +1659,121 @@ bool SessionEngine::start_session_signing_locked() noexcept
  * 0x0212 binding becomes durable through *both* persistence gates (SecureStore
  * revision + immutable object), i.e. session_signing_->ready().
  *
- * FAIL-CLOSED: the attempt is refused until three inputs the W1 scheduler
- * requires exist below this seam. Fabricating them is forbidden, and starting
- * with a zeroed field would be worse than refusing, because the scheduler's
- * begin() validates every field and would report the start failure as a *link*
- * failure (FLY_SESSION_LINK_FAILED_V2) instead of "not implemented yet".
+ * Both former blockers are now wired:
  *
- *   1. ObjectStore read. The first effect is ReadLocalBindingObject: the
- *      scheduler re-reads the persisted 312-byte 0x0212 object and verifies its
- *      hash instead of assuming the write landed. fly_session_object_store_port_v2
- *      exposes only put_immutable + cancel
- *      (shared/include/flynes/flynes_session.h:422), so no port can serve it.
- *   2. Synchronous prehashed verifier. wire::LinkControlSignatureVerifierV1 is a
- *      synchronous bool callback over an already domain-hashed digest;
- *      fly_session_crypto_port_v2 exposes only the asynchronous verify_prehashed
- *      effect (shared/include/flynes/flynes_session.h:327).
- *   3. The peer's accepted 0x0212 binding (peer_binding_hash /
- *      peer_identity_key_id / peer_session_signing_public_key). The engine never
- *      decodes the peer binding today, so those bytes have no owner here.
+ *   1. ObjectStore read (R3, appended to fly_session_object_store_port_v2).
+ *      The first effect is ReadLocalBindingObject: the scheduler re-reads the
+ *      persisted exact 312-byte 0x0212 object and verifies its hash instead of
+ *      assuming the write landed. The engine dispatches it through
+ *      ports_.read_immutable_object(); a missing object is UNAVAILABLE and a
+ *      disagreeing object is a contract/auth failure, never conflated.
+ *   2. Signature verification goes through the existing asynchronous
+ *      verify_prehashed port. The W1 decoders are two-stage, so a peer message
+ *      is parsed first and accepted only after the crypto terminal returns.
  *
- * The projection while refused stays FLY_SESSION_LINK_CONNECTING_V2, which is
- * honest: the peer HELLO/READY exchange has not happened and CONNECTED_LOBBY
- * may never be published by any other route.
+ * Still absent, and deliberately left zero rather than fabricated:
  *
- * Once (1..3) exist, the mapping below is the intended one; every source is a
- * scheduler that already owns the value, so no protocol byte is invented here:
+ *   3. The contract's u64 channel_id / channel_bind_id / channel_bind_hash.
+ *      The bind scheduler owns a 16-byte channel id and the bind proofs, but the
+ *      LINK_HELLO/LINK_READY contract uses u64 ids that nothing produces yet.
+ *   4. The negotiated capability/runtime result and its hash.
+ *   5. The peer's accepted 0x0212 binding (peer_binding_hash /
+ *      peer_identity_key_id / peer_session_signing_public_key): the engine never
+ *      receives the peer binding object, so those bytes have no owner here.
+ *
+ * Because of 3..5 the scheduler stops as soon as one of them is needed and
+ * reports missing_inputs(). The engine then keeps the link at
+ * FLY_SESSION_LINK_CONNECTING_V2 - the honest projection, since no peer
+ * HELLO/READY exchange took place - instead of publishing a failure for a seam
+ * that is simply not wired.
+ *
+ * Every other field is copied from exactly one scheduler that already owns the
+ * value, so no protocol byte is invented here:
  *
  *   engine_instance_id            authorization_->engine_instance_id
  *   link_id / generation          link_generation_
  *   first_operation_id            next_operation_id_
  *   local_role                    local_pair_role_
  *   session_id                    pair_context_->bytes[32..48)
- *   channel_id                    initial_quic_bind_->channel_id()
  *   control_stream                initial_quic_bind_->owned_resources().send_stream
  *   pair_transcript_hash          pair_signature_->transcript_hash()
  *   pair_transcript_object_hash   pair_signature_->transcript_object_hash()
  *   endpoint_offer_hash           pair_signature_->transcript_hash() (the offer
  *                                 and the QUIC bind derive from one transcript)
  *   selected_plan_hash            initial_plan_->verified_plan().selected_plan_hash
- *   channel_bind_hash/_id         derived from the bind proof once the bind
- *                                 scheduler exposes it (today: no accessor)
  *   local_binding_hash            session_signing_->material().binding_hash
  *   local_identity_public_key     pair_material_->material()->contribution.identity_public_key
  *   local_session_signing_public_key  session_signing_->material().public_key
  *   peer_identity_public_key      pair_reveal_->peer_contribution()->identity_public_key
- *   negotiated_result             the 512-byte canonical local capability summary
- *   negotiated_result_hash        wire::hash_link_negotiated_result_v1 over it
  *   local_summary_hash            pending_local_capability_hash_
  *   peer_summary_hash             pair_capability_->peer_logical_hash()
  *   merge_result_hash             initial_plan_->verified_plan().final_logical_hash
  *   session_signing_key           session_signing_->material().key
- *   verify_peer_signature         the synchronous prehashed verifier (2)
  *
  * The scheduler owns no provider resource: the signing key belongs to
  * session_signing_ and the control stream to initial_quic_bind_, and each
  * releases its own handle. Cancellation below therefore cancels only the
  * outstanding operation and never releases a borrowed handle.
+ *
+ * Every field below is copied from exactly one owner that already produced it.
+ * The contract's u64 channel_id / channel_bind_id / channel_bind_hash, the
+ * negotiated result and the peer's accepted 0x0212 binding have no producer in
+ * this build, so they stay zero: the handshake starts, reads the local binding
+ * back through the R3 object-store read port, and then stops at the first
+ * absent input by reporting missing_inputs() rather than inventing a value or
+ * publishing a failed link.
  */
 bool SessionEngine::start_link_handshake_locked() noexcept
 {
-    return false;
+    if (link_handshake_ || !session_signing_ || !session_signing_->ready() ||
+        !initial_quic_bind_ || !initial_quic_bind_->channel_bound() ||
+        !pair_signature_ || !pair_signature_->ready() ||
+        !pair_material_ || !pair_material_->ready() || !pair_capability_ ||
+        !initial_plan_ || !authorization_)
+        return false;
+    const auto material = pair_material_->material();
+    const auto signing = session_signing_->material();
+    if (!material || signing.key == 0 || !ports_.has_object_store() ||
+        !ports_.has_object_store_read())
+        return false;
+
+    LinkHandshakeStartV1 start{};
+    std::copy(authorization_->engine_instance_id.begin(),
+              authorization_->engine_instance_id.end(),
+              start.engine_instance_id.begin());
+    start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
+    start.generation = link_generation_;
+    start.link_generation = link_generation_;
+    start.first_operation_id = next_operation_id_;
+    start.session_id = initial_quic_bind_->session_id();
+    start.local_role = local_pair_role_;
+    start.pair_transcript_hash = pair_signature_->transcript_hash();
+    start.pair_transcript_object_hash = pair_signature_->transcript_object_hash();
+    /* The locked bearer path and the offer derive from the same transcript. */
+    start.endpoint_offer_hash = pair_signature_->transcript_hash();
+    start.selected_plan_hash = initial_plan_->verified_plan().selected_plan_hash;
+    start.local_binding_hash = signing.binding_hash;
+    start.local_identity_public_key = material->contribution.identity_public_key;
+    start.local_session_signing_public_key = signing.public_key;
+    start.local_summary_hash = pending_local_capability_hash_;
+    start.peer_summary_hash = pair_capability_->peer_logical_hash();
+    start.merge_result_hash = initial_plan_->verified_plan().final_logical_hash;
+    start.session_signing_key = signing.key;
+    start.control_stream = initial_quic_bind_->owned_resources().send_stream;
+    if (pair_reveal_) {
+        const auto peer = pair_reveal_->peer_contribution();
+        if (peer) start.peer_identity_public_key = peer->identity_public_key;
+    }
+    try
+    {
+        LinkHandshakeScheduler handshake;
+        if (!handshake.begin(start)) return false;
+        link_handshake_ = std::move(handshake);
+    }
+    catch (const std::bad_alloc&) { return false; }
+    link_handshake_dispatch_pending_ =
+        link_handshake_->poll_effect().has_value();
+    return true;
 }
 
 bool SessionEngine::accept_completed_gatt_locked(
@@ -3635,15 +3695,41 @@ void SessionEngine::run_work() noexcept
             {
             case LinkHandshakeEffectKind::ReadLocalBindingObject:
                 /*
-                 * The scheduler MUST re-read the persisted 0x0212 object and
-                 * verify its hash rather than assume the write landed, but
-                 * fly_session_object_store_port_v2 has no read operation
-                 * (only put_immutable + cancel). Fail closed with the exact
-                 * reason instead of substituting an in-memory assumption; the
-                 * engine never publishes CONNECTED_LOBBY from an unread object.
+                 * The durable re-read gate. The engine reads the exact 0x0212
+                 * object back through the R3 object-store read primitive and the
+                 * scheduler then verifies the returned 312 bytes and their hash,
+                 * so a write that never landed can never be assumed.
+                 *
+                 * A missing object is FLY_SESSION_V2_UNAVAILABLE from the port;
+                 * an object whose bytes or hash disagree is a terminal failure in
+                 * the scheduler's completion branch. The two are never merged.
                  */
-                result = FLY_SESSION_V2_UNAVAILABLE;
+                result = ports_.read_immutable_object(
+                    &link_handshake_effect.token,
+                    link_handshake_effect.object_kind,
+                    link_handshake_effect.expected_hash.data(), inbox_);
                 break;
+            case LinkHandshakeEffectKind::VerifyPeerSignature:
+            {
+                /* All cryptography goes through the port, asynchronously; the
+                 * engine thread never verifies a signature itself. */
+                const fly_session_bytes_v2 public_key{
+                    link_handshake_effect.signer_public_key.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.signer_public_key.size()), 0};
+                const fly_session_bytes_v2 signature{
+                    link_handshake_effect.signature.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.signature.size()), 0};
+                const fly_session_bytes_v2 verify_domain{
+                    link_handshake_effect.domain.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.domain.size()), 0};
+                result = ports_.verify_prehashed(
+                    &link_handshake_effect.token, public_key, verify_domain,
+                    link_handshake_effect.digest.data(), signature, inbox_);
+                break;
+            }
             case LinkHandshakeEffectKind::SignHello:
             case LinkHandshakeEffectKind::SignReady:
             case LinkHandshakeEffectKind::SignAck:
@@ -4820,11 +4906,27 @@ void SessionEngine::run_work() noexcept
                     else
                     {
                         link_handshake_dispatch_pending_ = false;
+                        const bool not_wired_yet =
+                            link_handshake_->missing_inputs();
                         cancel_link_handshake_locked();
                         cancel_pair_material_locked();
                         release_pair_material_locked();
-                        discovery_disconnect_pending_ = discovery_connection_ != 0;
-                        publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                        if (not_wired_yet)
+                        {
+                            // A start input this build has no producer for (the
+                            // contract's u64 channel_bind_id, the negotiated
+                            // result, the peer's accepted binding). That is a
+                            // seam that is not wired, not a protocol failure:
+                            // publishing FAILED would assert an exchange that
+                            // never happened. CONNECTING is already published
+                            // and is the honest projection.
+                        }
+                        else
+                        {
+                            discovery_disconnect_pending_ =
+                                discovery_connection_ != 0;
+                            publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                        }
                     }
                 }
                 else if (pair_material_active_ && pair_material_ &&

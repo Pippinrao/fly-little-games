@@ -294,6 +294,24 @@ public:
             : FLY_SESSION_V2_UNAVAILABLE;
     }
 
+    /* R3 appended read primitive. An R2-sized table has no read; the durable
+     * read-back gate then fails closed instead of assuming a previous write. */
+    [[nodiscard]] bool has_object_store_read() const noexcept
+    {
+        return has_object_store_ && object_store_.read != nullptr;
+    }
+
+    fly_session_result_v2 read_immutable_object(
+        const fly_session_op_token_v2* token, std::uint32_t object_kind,
+        const std::uint8_t expected_hash[32],
+        fly_session_inbox_v2_t* inbox) const
+    {
+        return has_object_store_read()
+            ? object_store_.read(object_store_.context, token, object_kind,
+                                 expected_hash, inbox)
+            : FLY_SESSION_V2_UNSUPPORTED;
+    }
+
     fly_session_result_v2 read_secure_store(
         const fly_session_op_token_v2* token, fly_session_bytes_v2 name_space,
         fly_session_bytes_v2 record_key, fly_session_inbox_v2_t* inbox) const

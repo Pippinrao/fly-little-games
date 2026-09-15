@@ -419,6 +419,30 @@ typedef fly_session_result_v2 (*fly_session_object_store_put_immutable_v2)(
     const uint8_t expected_content_hash[32],
     fly_session_buffer_v2_t* immutable_buffer, fly_session_inbox_v2_t*);
 
+/*
+ * Appended in R3: exact-byte read-back of a durable immutable object.
+ *
+ * The completion must be a FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2 hash event:
+ * resource = the object reference (nonzero), buffer = the exact stored bytes,
+ * hash = the object's content hash. That is the payload kind the caller already
+ * expects for this object, and unlike the non-terminal Buffer form it can
+ * terminate the asynchronous operation.
+ *
+ * The two failure modes are distinct and must never be collapsed:
+ *   - the object does not exist            -> FLY_SESSION_V2_UNAVAILABLE
+ *   - it exists but its content hash or its exact length differs from
+ *     expected_content_hash / the stored length -> a terminal failure, never
+ *     FLY_SESSION_V2_UNAVAILABLE (the caller reports AUTH_FAILED for that case)
+ * A provider must never answer UNAVAILABLE for an object it did read, and must
+ * never answer OK with bytes that do not hash to expected_content_hash.
+ * The bytes a successful read returns are the exact stored object, so a caller
+ * that only had a hash can now verify the durable bytes instead of assuming a
+ * previous write succeeded.
+ */
+typedef fly_session_result_v2 (*fly_session_object_store_read_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t object_kind,
+    const uint8_t expected_content_hash[32], fly_session_inbox_v2_t*);
+
 typedef struct fly_session_object_store_port_v2
 {
     uint32_t struct_size;
@@ -430,7 +454,19 @@ typedef struct fly_session_object_store_port_v2
     fly_session_context_release_v2 release;
     fly_session_object_store_put_immutable_v2 put_immutable;
     fly_session_operation_cancel_v2 cancel;
+    /* Appended in R3: required by the LINK_HELLO durable-binding gate, which
+     * reads the exact 0x0212 local binding back and checks its hash instead of
+     * trusting the earlier put. */
+    fly_session_object_store_read_v2 read;
 } fly_session_object_store_port_v2;
+
+/*
+ * The frozen R2 prefix: every field up to and including cancel. A provider built
+ * against the R2 table is still a valid prefix; it simply has no read primitive,
+ * and only the operations that need one fail closed.
+ */
+#define FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE \
+    ((uint32_t)(offsetof(fly_session_object_store_port_v2, read)))
 
 #define FLY_SESSION_OBJECT_STORE_PORT_V2_SIZE \
     ((uint32_t)sizeof(fly_session_object_store_port_v2))

@@ -231,11 +231,14 @@ fly_session_result_v2 validate_secure_store(
 fly_session_result_v2 validate_object_store(
     const fly_session_object_store_port_v2* port) noexcept
 {
+    /* R3 appended read; validate_prefix is the repository's tail-append gate, so
+     * an R2-sized table is rejected here rather than silently accepted with a
+     * null read (which the engine could only discover mid-handshake). */
     const auto prefix = validate_provider_prefix(
         port, FLY_SESSION_OBJECT_STORE_PORT_V2_SIZE);
     if (prefix != FLY_SESSION_V2_OK || !port)
         return prefix;
-    return port->put_immutable && port->cancel
+    return port->put_immutable && port->cancel && port->read
                ? FLY_SESSION_V2_OK
                : FLY_SESSION_V2_UNSUPPORTED;
 }

@@ -91,6 +91,11 @@ public:
     { return next_operation_id_; }
     [[nodiscard]] const std::array<std::uint8_t, 16>& channel_id() const noexcept
     { return channel_id_; }
+    /* The session id this bind was locked under. Kept here because the owner of
+     * pair_context_ releases it well before the LINK_HELLO mount point, while
+     * the bind scheduler survives the whole link. */
+    [[nodiscard]] const std::array<std::uint8_t, 16>& session_id() const noexcept
+    { return start_.session_id; }
     [[nodiscard]] InitialQuicBindResourcesV1 owned_resources() const noexcept
     { return resources_; }
 
