@@ -23,12 +23,6 @@ PairRole public_role(wire::PairRoleV1 role) noexcept
         ? PairRole::Initiator : PairRole::Responder;
 }
 
-wire::PairRoleV1 wire_role(PairRole role) noexcept
-{
-    return role == PairRole::Initiator
-        ? wire::PairRoleV1::Initiator : wire::PairRoleV1::Responder;
-}
-
 } // namespace
 
 PairSignatureScheduler::PairSignatureScheduler() = default;

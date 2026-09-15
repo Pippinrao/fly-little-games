@@ -19,12 +19,15 @@ using namespace flynes::session;
 namespace {
 
 int failures = 0;
-void check(bool value, const char* message)
+/* This suite drives real ECDSA through Windows CNG, so on non-Windows
+ * toolchains the only consumer of these two helpers is compiled out. GCC then
+ * flags them as unused where MSVC does not. */
+[[maybe_unused]] void check(bool value, const char* message)
 {
     if (!value) { std::cerr << "FAIL: " << message << '\n'; ++failures; }
 }
 
-CapabilitySummary summary()
+[[maybe_unused]] CapabilitySummary summary()
 {
     CapabilitySummary value{};
     value[1] = 1; value[8] = 1; value[9] = 1; value[32] = 1;

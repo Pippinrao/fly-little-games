@@ -245,8 +245,13 @@ bool drive_one(InitialQuicBindScheduler& scheduler,
                effect.kind == InitialQuicBindEffectKind::AcceptBindStream) {
         check(effect.accept == listener,
               "connector opens and listener accepts the unique bidi bind stream");
+        /* Two fresh handles, evaluated left to right. Writing both increments
+         * inside one call argument list was unsequenced and therefore
+         * undefined: GCC rejects it, MSVC silently picks an order. */
+        const auto first_resource = next_resource++;
+        const auto second_resource = next_resource++;
         result = scheduler.complete(resource_event(
-            effect, next_resource++, next_resource++));
+            effect, first_resource, second_resource));
     } else if (effect.kind == InitialQuicBindEffectKind::Write) {
         outgoing.bytes.insert(outgoing.bytes.end(), effect.input.begin(),
                               effect.input.end());

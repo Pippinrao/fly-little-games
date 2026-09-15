@@ -42,128 +42,131 @@ fly_session_result_v2 read_clock(void*, fly_session_clock_sample_v2* out)
     return FLY_SESSION_V2_OK;
 }
 
-fly_session_result_v2 unavailable_cancel(
+[[maybe_unused]] fly_session_result_v2 unavailable_cancel(
     void*, const fly_session_op_token_v2*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_generate(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_generate(
     void*, const fly_session_op_token_v2*, std::uint32_t,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_open(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_open(
     void*, const fly_session_op_token_v2*, std::uint32_t,
     fly_session_bytes_v2, fly_session_bytes_v2, const std::uint8_t[32],
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_public(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_public(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_sign(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_sign(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, fly_session_bytes_v2, const std::uint8_t[32],
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_agree(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_agree(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_release(
     void*, fly_session_resource_handle_v2)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_destroy(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_destroy(
     void*, const fly_session_op_token_v2*, fly_session_bytes_v2,
     std::uint64_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_random(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_random(
     void*, const fly_session_op_token_v2*, std::uint32_t,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_hkdf(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_hkdf(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, std::uint32_t,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_aead(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_aead(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, fly_session_bytes_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_verify(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_verify(
     void*, const fly_session_op_token_v2*, fly_session_bytes_v2,
     fly_session_bytes_v2, const std::uint8_t[32], fly_session_bytes_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_hmac(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_hmac(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_secret_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_secret_release(
     void*, fly_session_resource_handle_v2)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_tls_create(
+[[maybe_unused]] fly_session_result_v2 unavailable_tls_create(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_tls_restore(
+[[maybe_unused]] fly_session_result_v2 unavailable_tls_restore(
     void*, const fly_session_op_token_v2*, fly_session_bytes_v2,
     const std::uint8_t[32], fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_tls_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_tls_release(
     void*, fly_session_resource_handle_v2)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_bearer_start(
+[[maybe_unused]] fly_session_result_v2 unavailable_bearer_start(
     void*, const fly_session_op_token_v2*, const std::uint8_t[32],
     fly_session_resource_handle_v2, std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_bearer_resolve(
+[[maybe_unused]] fly_session_result_v2 unavailable_bearer_resolve(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_bearer_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_bearer_release(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_prepare_credential(
+[[maybe_unused]] fly_session_result_v2 unavailable_prepare_credential(
     void*, const fly_session_op_token_v2*, const std::uint8_t[32],
     fly_session_bytes_v2, fly_session_resource_handle_v2, std::uint32_t,
     fly_session_bytes_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_start(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_start(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_resource_handle_v2,
     const fly_session_quic_connect_policy_v2*, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_inspect(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_inspect(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_exporter(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_exporter(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, std::uint32_t,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_stream(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_stream(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_write(
+/* Kept for symmetry with the rest of the unavailable_quic_* stub family; the
+ * port table currently wires writes through unavailable_quic_stream, so GCC
+ * flags this one as unused while MSVC does not. */
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_write(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_buffer_v2_t*, std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_control(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_control(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint64_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_datagram(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_datagram(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_resource_handle_v2, std::uint64_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_query(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_query(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_close(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_close(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }

@@ -29,12 +29,6 @@ wire::PairRoleV1 wire_role(std::uint8_t value) noexcept
         ? wire::PairRoleV1::Initiator : wire::PairRoleV1::Responder;
 }
 
-wire::PairRoleV1 other(wire::PairRoleV1 role) noexcept
-{
-    return role == wire::PairRoleV1::Initiator
-        ? wire::PairRoleV1::Responder : wire::PairRoleV1::Initiator;
-}
-
 } // namespace
 
 fly_session_op_token_v2 InitialBearerScheduler::token(
