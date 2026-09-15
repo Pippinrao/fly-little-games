@@ -4,21 +4,37 @@
 /*
  * W2 / Task 5: bounded DUAL input window.
  *
- * The window is the per-frame authority for input reality in one engine:
+ * The window is the per-frame authority for input reality in one engine, and it
+ * deliberately separates two frontiers that move at different speeds:
  *
- *   - it stores at most one canonical bundle per (frame, logical seat), so
- *     out-of-order arrival can never change the materialized frame;
- *   - a frame inside the ring is re-materialized from a fully real per-seat
- *     bundle before it is reported again, which is the rollback/replay basis;
- *   - a frame that has become fully real is committed history and may never be
- *     rewritten by different bytes; a byte-identical retransmission is only a
- *     duplicate;
- *   - a missing port is predicted from the last known complete state of that
- *     seat and is always flagged in predicted_port_mask. A predicted frame is
- *     never a final canonical success;
- *   - the hard ring is kDualMaxRollbackFramesV1 (12) frames and the prediction
- *     gate is kDualPredictionFreezeDepthV1 (10) frames: a plan at depth ten
- *     freezes, so a prediction depth of twelve is unreachable.
+ *   - `step_frontier_`  - the next frame the runtime will execute. Only the
+ *     scheduler moves it, one frame per step.
+ *   - `commit_frontier_` - the first frame whose inputs are not all confirmed.
+ *     Every frame below it is fully real and therefore immutable history.
+ *
+ * Capacity is anchored on the STEP frontier, not on the committed watermark:
+ * the ring only ever holds frames still in flight, which are bounded by the
+ * frozen prediction depth (how far the runtime may run ahead of the watermark)
+ * plus the guest lead (how far ahead of the runtime an input may arrive). That
+ * is what keeps arrival speed and step speed from fighting over ring slots.
+ *
+ * A record is reused only once its frame is below the committed watermark, so a
+ * delivered frame can never be lost while it is still in flight.
+ *
+ * Semantics:
+ *   - at most one confirmed sample per (frame, port), and a port is confirmed
+ *     only by the bundle its OWN seat signed, so one player's view can never
+ *     masquerade as another player's input;
+ *   - an impossible d-pad state never enters the window: the canonical builder
+ *     clears opposing pairs before the bundle exists;
+ *   - identical key plus identical bytes is idempotent; identical key with
+ *     different bytes for a frame that is not yet committed is rejected, and for
+ *     a frame at or below the watermark it is committed-history equivocation;
+ *   - a missing in-play port is predicted from the last known complete state of
+ *     the seat that owns it and is always flagged in predicted_port_mask. A
+ *     frame carrying a prediction is never a final canonical success;
+ *   - prediction depth ten freezes and nothing may exceed the hard twelve frame
+ *     ring bound, both taken verbatim from the frozen W0 contract.
  */
 
 #include "canonical_input.hpp"
@@ -86,6 +102,18 @@ struct DualWindowPlanV1 final
 class DualInputWindowV1
 {
 public:
+    /*
+     * Ring capacity in frames. It must cover every frame that can be in flight:
+     * the runtime may run up to kDualPredictionFreezeDepthV1 frames ahead of the
+     * committed watermark, an input may arrive up to kDualGuestLeadFramesV1
+     * frames ahead of the runtime, and the watermark itself trails the runtime
+     * by at most the guest lead (deliveries below it are refused), so the span
+     * is 10 + 4 + 4 = 18 and 20 leaves margin. The hard bound the contract
+     * advertises is still kDualMaxRollbackFramesV1: a target outside the last
+     * twelve frames is a freeze, enforced by the prediction gate below.
+     */
+    static constexpr std::uint32_t kRingSlotsV1 = 20;
+
     DualInputWindowV1() noexcept = default;
 
     DualInputWindowV1(const DualInputWindowV1&) = delete;
@@ -93,7 +121,8 @@ public:
 
     /* Bind the session context: the key supplies session/branch/epoch and the
      * current global seat revision; owners supply the per-seat signing key ids
-     * that are trusted for this branch. */
+     * that are trusted for this branch. A seat whose key is all zero is not in
+     * play. */
     DualWindowStatusV1 begin(
         const DualInputKeyV1& context,
         const std::array<DualOwnerKeyV1, kDualPortCountV1>& owners) noexcept;
@@ -111,36 +140,33 @@ public:
         const DualPortInputArrayV1& samples,
         std::uint8_t logical_seat) noexcept;
 
-    /* The next frame this window would materialize. */
-    std::uint64_t next_frame() const noexcept;
+    /* Materialize the next frame. Advances the step frontier. */
+    DualWindowPlanV1 plan_next() noexcept;
 
-    /* Materialize the next frame. Never mutates the window. */
-    DualWindowPlanV1 plan_next() const noexcept;
-
-    /* Record that the runtime stepped the frame with this predicted port mask,
-     * then re-materialize a frame at or above the committed watermark. */
+    /* Record that the runtime executed `frame_index` with this predicted port
+     * mask. Returns false when the frame is not the one that was materialized. */
     DualWindowStatusV1 mark_planned(std::uint64_t frame_index,
                                     std::uint32_t predicted_port_mask) noexcept;
 
-    /* Where the engine has stepped to so far. */
-    std::uint64_t planned_frontier() const noexcept { return planned_frontier_; }
+    /* The next frame the runtime will execute. */
+    std::uint64_t step_frontier() const noexcept { return step_frontier_; }
 
-    /* The last frame that is fully real, so entirely immutable. */
+    /* The first frame whose inputs are not all confirmed. */
     std::uint64_t commit_frontier() const noexcept { return commit_frontier_; }
 
     bool has_frame(std::uint64_t frame_index) const noexcept;
     /* True when every port that has an owner carries a real sample. */
     bool frame_all_real(std::uint64_t frame_index) const noexcept;
-    /* True when every port of the frame carries a real (never predicted)
-     * sample, so the frame is immutable even above the committed watermark. */
+    /* True when every in-play port of the frame is either real or was predicted
+     * in the plan the runtime executed. */
     bool frame_is_real(std::uint64_t frame_index) const noexcept;
     std::optional<std::uint32_t> frame_predicted_mask(
         std::uint64_t frame_index) const noexcept;
     std::optional<DualInputBundleV1> clone_frame_bundle(
         std::uint64_t frame_index) const noexcept;
 
-    /* The exact mask a port would be served for a frame: the frame's real
-     * bundle when present, otherwise the last known complete state, otherwise
+    /* The exact mask a port would be served for a frame: the frame's confirmed
+     * sample when present, otherwise the last known complete state, otherwise
      * neutral. */
     std::uint32_t effective_mask(std::uint64_t frame_index,
                                  std::uint32_t port) const noexcept;
@@ -149,10 +175,10 @@ private:
     struct FrameRecordV1 final
     {
         bool used = false;
-        /* Set once the runtime has stepped this frame at least once. */
+        /* Set once the runtime has executed this frame. */
         bool planned = false;
         std::uint64_t frame_index = 0;
-        /* Materialized plan when the runtime stepped the frame. */
+        /* Prediction mask the runtime was actually fed for this frame. */
         std::uint32_t planned_predicted_mask = 0;
         std::uint32_t real_port_mask = 0;
         std::array<bool, kDualPortCountV1> provided{};
@@ -163,26 +189,31 @@ private:
         std::array<std::uint64_t, kDualPortCountV1> sequences{};
     };
 
+    static std::uint32_t slot_of(std::uint64_t frame_index) noexcept
+    {
+        return static_cast<std::uint32_t>(frame_index % kRingSlotsV1);
+    }
+
     FrameRecordV1* find_record(std::uint64_t frame_index) noexcept;
     const FrameRecordV1* find_record(std::uint64_t frame_index) const noexcept;
+    FrameRecordV1& ensure_record(std::uint64_t frame_index) noexcept;
     void advance_commit_frontier() noexcept;
-    std::uint64_t first_unplanned_frame() const noexcept;
-    std::uint64_t lowest_replan_frame() const noexcept;
+    bool frame_real_locked(std::uint64_t frame_index) const noexcept;
 
-    std::array<FrameRecordV1, kDualMaxRollbackFramesV1> ring_{};
+    std::array<FrameRecordV1, kRingSlotsV1> ring_{};
     DualInputKeyV1 context_{};
     std::array<DualOwnerKeyV1, kDualPortCountV1> owners_{};
     std::array<std::uint32_t, kDualPortCountV1> last_complete_mask_{};
     std::array<std::uint64_t, kDualPortCountV1> last_complete_sequence_{};
     /* The ports that have a seat owner in this branch. Ports outside this mask
-     * are not in play: they are never required, never predicted and never
-     * committed, so a two-seat DUAL session still commits every frame. */
+     * are not in play: never required, never predicted, never committed. */
     std::uint32_t owned_port_mask_ = 0;
-    std::uint64_t planned_frontier_ = 0;
-    /* Frames below this have already been stepped and must not be re-planned
-     * unless real input replaced a prediction they were stepped with. */
-    std::uint64_t replan_floor_ = 0;
+    /* Next frame the runtime will execute. */
+    std::uint64_t step_frontier_ = 0;
+    /* First frame whose in-play ports are not all confirmed. */
     std::uint64_t commit_frontier_ = 0;
+    /* Furthest frame this window has materialized. */
+    std::uint64_t materialized_through_ = 0;
     std::uint64_t min_accept_revision_ = 0;
     bool bound_ = false;
 };
