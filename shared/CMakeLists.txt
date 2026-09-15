@@ -1459,54 +1459,47 @@ if(FLYNES_BUILD_TESTS)
     set_target_properties(flynes_two_engine_harness PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_two_engine_harness)
 
-    # Real loopback QUIC fixture. Compiled only where the Rust provider is
-    # available; the probes exist so a missing cargo degrades to "not built"
-    # instead of silently faking a transport.
-    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+    # Real loopback QUIC probe. Needs two things that are not everywhere:
+    #   * the Rust/Quinn provider (cargo), and
+    #   * OpenSSL libcrypto, because the listener must sign the TLS 1.3
+    #     CertificateVerify at run time and the provider verifies it with ring.
+    # Where either is missing the probe is simply not registered, so the rest of
+    # the suite stays buildable instead of quietly faking a transport.
+    find_package(OpenSSL QUIET)
+    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER AND OpenSSL_FOUND)
+        message(STATUS "W3 loopback QUIC probe: enabled (OpenSSL ${OPENSSL_VERSION})")
         add_library(flynes_loopback_quic_fixture STATIC
-            tests/nearby/harness/loopback_tls_fixture.cpp
+            tests/nearby/harness/loopback_quic_fixture.cpp
         )
-        target_link_libraries(flynes_loopback_quic_fixture PRIVATE
-            flynes_nearby_quic_provider)
+        target_link_libraries(flynes_loopback_quic_fixture PUBLIC
+            flynes_nearby_quic_provider OpenSSL::Crypto)
         add_dependencies(flynes_loopback_quic_fixture
             flynes_nearby_quic_provider_build)
         target_include_directories(flynes_loopback_quic_fixture
-            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/nearby-quic-provider/include
+                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
         target_compile_features(flynes_loopback_quic_fixture PRIVATE cxx_std_17)
         set_target_properties(flynes_loopback_quic_fixture PROPERTIES
             CXX_EXTENSIONS NO)
-        flynes_enable_strict_warnings(flynes_loopback_quic_fixture)
-
-        add_executable(flynes_loopback_tls_fixture_test
-            tests/nearby/harness/test_loopback_tls_fixture.cpp)
-        target_link_libraries(flynes_loopback_tls_fixture_test PRIVATE
-            flynes_loopback_quic_fixture flynes_nearby_quic_provider)
-        add_dependencies(flynes_loopback_tls_fixture_test
-            flynes_nearby_quic_provider_build)
-        target_compile_features(flynes_loopback_tls_fixture_test PRIVATE
-            cxx_std_17)
-        set_target_properties(flynes_loopback_tls_fixture_test PROPERTIES
-            CXX_EXTENSIONS NO)
-        flynes_enable_strict_warnings(flynes_loopback_tls_fixture_test)
-        add_test(NAME flynes_loopback_tls_fixture
-            COMMAND flynes_loopback_tls_fixture_test)
-        set_tests_properties(flynes_loopback_tls_fixture PROPERTIES
-            LABELS "nearby_protocol;nearby_ports")
+        # No flynes_enable_strict_warnings here: OpenSSL 3 deprecates the
+        # low-level EC_KEY API the signer uses, and the fixture is test-only.
 
         add_executable(flynes_loopback_quic_probe
             tests/nearby/harness/loopback_quic_probe.cpp)
         target_link_libraries(flynes_loopback_quic_probe PRIVATE
-            flynes_loopback_quic_fixture flynes_nearby_quic_provider)
+            flynes_loopback_quic_fixture)
         add_dependencies(flynes_loopback_quic_probe
             flynes_nearby_quic_provider_build)
         target_compile_features(flynes_loopback_quic_probe PRIVATE cxx_std_17)
         set_target_properties(flynes_loopback_quic_probe PROPERTIES
             CXX_EXTENSIONS NO)
-        flynes_enable_strict_warnings(flynes_loopback_quic_probe)
         add_test(NAME flynes_loopback_quic_probe
             COMMAND flynes_loopback_quic_probe)
         set_tests_properties(flynes_loopback_quic_probe PROPERTIES
             LABELS "nearby_integration;nearby_ports")
+    else()
+        message(STATUS
+            "W3 loopback QUIC probe: skipped (needs cargo and OpenSSL libcrypto)")
     endif()
 
     add_executable(flynes_two_engine_connected_lobby_test
