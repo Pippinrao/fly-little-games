@@ -139,6 +139,12 @@ bool link_control_signature_is_canonical_v1(
     return canonical_signature(signature);
 }
 
+std::array<std::uint8_t, 32> link_identity_key_id_v1(
+    const std::uint8_t public_key_x963[65]) noexcept
+{
+    return domain_hash(kIdentityKeyIdDomainV1, public_key_x963, 65);
+}
+
 Status build_link_hello_pretag_v1(
     const link::LinkHelloV1& value, P256PointValidatorV1 validate_point,
     void* validator_context,

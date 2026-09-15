@@ -144,6 +144,14 @@ Status decode_link_hello_v1(
 bool link_control_signature_is_canonical_v1(
     const std::uint8_t signature[64]) noexcept;
 
+/*
+ * The long-term identity key id: domain_hash("flynes-identity-key-id-v1", key).
+ * This is the exact derivation the 0x0212 binding uses, so a caller building
+ * identity_verifier_ref outside this codec cannot drift from it.
+ */
+std::array<std::uint8_t, 32> link_identity_key_id_v1(
+    const std::uint8_t public_key_x963[65]) noexcept;
+
 } // namespace flynes::session::wire
 
 #endif

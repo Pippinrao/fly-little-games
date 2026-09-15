@@ -1394,6 +1394,42 @@ if(FLYNES_BUILD_TESTS)
     set_tests_properties(flynes_link_ready_wire PROPERTIES
         LABELS "nearby_protocol;nearby_auth")
     # END W1 APPEND-ONLY BLOCK (Task 3)
+
+    # ======================================================================
+    # BEGIN W1 (branch codex/nearby-dual-link-control) APPEND-ONLY BLOCK
+    # Owner: W1. Task 4 = pure link handshake scheduler.
+    # ======================================================================
+    target_sources(flynes_link_control_w1 PRIVATE
+        src/session/link/link_handshake_scheduler.cpp)
+
+    add_executable(flynes_link_handshake_scheduler_test
+        tests/nearby/integration/test_link_handshake_scheduler.cpp)
+    target_link_libraries(flynes_link_handshake_scheduler_test PRIVATE
+        flynes_link_control_w1)
+    target_include_directories(flynes_link_handshake_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_handshake_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_handshake_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_handshake_scheduler_test)
+    add_test(NAME flynes_link_handshake_scheduler
+        COMMAND flynes_link_handshake_scheduler_test)
+    set_tests_properties(flynes_link_handshake_scheduler PROPERTIES
+        LABELS "nearby_integration;nearby_protocol;nearby_ports")
+
+    add_executable(flynes_link_handshake_races_test
+        tests/nearby/race/test_link_handshake_races.cpp)
+    target_link_libraries(flynes_link_handshake_races_test PRIVATE
+        flynes_link_control_w1)
+    target_include_directories(flynes_link_handshake_races_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_handshake_races_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_handshake_races_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_handshake_races_test)
+    add_test(NAME flynes_link_handshake_races
+        COMMAND flynes_link_handshake_races_test)
+    set_tests_properties(flynes_link_handshake_races PROPERTIES
+        LABELS "nearby_race;nearby_protocol;nearby_ports")
+    # END W1 APPEND-ONLY BLOCK (Task 4)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library
