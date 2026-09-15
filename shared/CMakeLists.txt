@@ -1430,6 +1430,91 @@ if(FLYNES_BUILD_TESTS)
     )
     add_test(NAME flynes_session_app_frame_consistency
         COMMAND flynes_session_app_frame_consistency_test)
+
+    # ======================================================================
+    # BEGIN W1 (branch codex/nearby-dual-link-control) APPEND-ONLY BLOCK
+    # Owner: W1. Task 3 = exact LINK_HELLO / LINK_READY wire codecs.
+    # Task 4 = link handshake scheduler (registered in a second append below).
+    # flynes_link_control_w1 is a temporary W1-owned container so the parallel
+    # worktree can build its own sources; W0 Task 9 moves these translation
+    # units into the permanent libraries and deletes this block.
+    # No existing line in this file was modified.
+    # ======================================================================
+    add_library(flynes_link_control_w1 STATIC
+        src/session/wire/link_hello.cpp
+        src/session/wire/link_ready.cpp
+    )
+    target_link_libraries(flynes_link_control_w1 PUBLIC
+        flynes_session_codec flynes_session_ports)
+    target_include_directories(flynes_link_control_w1 PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_control_w1 PUBLIC cxx_std_17)
+    set_target_properties(flynes_link_control_w1 PROPERTIES
+        CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+    flynes_enable_strict_warnings(flynes_link_control_w1)
+
+    add_executable(flynes_link_hello_wire_test
+        tests/nearby/protocol/test_link_hello.cpp)
+    target_link_libraries(flynes_link_hello_wire_test PRIVATE
+        flynes_link_control_w1)
+    target_include_directories(flynes_link_hello_wire_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_hello_wire_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_hello_wire_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_hello_wire_test)
+    add_test(NAME flynes_link_hello_wire COMMAND flynes_link_hello_wire_test)
+    set_tests_properties(flynes_link_hello_wire PROPERTIES
+        LABELS "nearby_protocol;nearby_auth")
+
+    add_executable(flynes_link_ready_wire_test
+        tests/nearby/protocol/test_link_ready.cpp)
+    target_link_libraries(flynes_link_ready_wire_test PRIVATE
+        flynes_link_control_w1)
+    target_include_directories(flynes_link_ready_wire_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_ready_wire_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_ready_wire_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_ready_wire_test)
+    add_test(NAME flynes_link_ready_wire COMMAND flynes_link_ready_wire_test)
+    set_tests_properties(flynes_link_ready_wire PROPERTIES
+        LABELS "nearby_protocol;nearby_auth")
+    # END W1 APPEND-ONLY BLOCK (Task 3)
+
+    # ======================================================================
+    # BEGIN W1 (branch codex/nearby-dual-link-control) APPEND-ONLY BLOCK
+    # Owner: W1. Task 4 = pure link handshake scheduler.
+    # ======================================================================
+    target_sources(flynes_link_control_w1 PRIVATE
+        src/session/link/link_handshake_scheduler.cpp)
+
+    add_executable(flynes_link_handshake_scheduler_test
+        tests/nearby/integration/test_link_handshake_scheduler.cpp)
+    target_link_libraries(flynes_link_handshake_scheduler_test PRIVATE
+        flynes_link_control_w1)
+    target_include_directories(flynes_link_handshake_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_handshake_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_handshake_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_handshake_scheduler_test)
+    add_test(NAME flynes_link_handshake_scheduler
+        COMMAND flynes_link_handshake_scheduler_test)
+    set_tests_properties(flynes_link_handshake_scheduler PROPERTIES
+        LABELS "nearby_integration;nearby_protocol;nearby_ports")
+
+    add_executable(flynes_link_handshake_races_test
+        tests/nearby/race/test_link_handshake_races.cpp)
+    target_link_libraries(flynes_link_handshake_races_test PRIVATE
+        flynes_link_control_w1)
+    target_include_directories(flynes_link_handshake_races_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_link_handshake_races_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_handshake_races_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_handshake_races_test)
+    add_test(NAME flynes_link_handshake_races
+        COMMAND flynes_link_handshake_races_test)
+    set_tests_properties(flynes_link_handshake_races PROPERTIES
+        LABELS "nearby_race;nearby_protocol;nearby_ports")
+    # END W1 APPEND-ONLY BLOCK (Task 4)
 endif()
 
 # Android (and other consumers that add core first) get the runtime library
