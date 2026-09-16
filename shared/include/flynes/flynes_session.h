@@ -419,6 +419,30 @@ typedef fly_session_result_v2 (*fly_session_object_store_put_immutable_v2)(
     const uint8_t expected_content_hash[32],
     fly_session_buffer_v2_t* immutable_buffer, fly_session_inbox_v2_t*);
 
+/*
+ * Appended in R3: exact-byte read-back of a durable immutable object.
+ *
+ * The completion must be a FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2 hash event:
+ * resource = the object reference (nonzero), buffer = the exact stored bytes,
+ * hash = the object's content hash. That is the payload kind the caller already
+ * expects for this object, and unlike the non-terminal Buffer form it can
+ * terminate the asynchronous operation.
+ *
+ * The two failure modes are distinct and must never be collapsed:
+ *   - the object does not exist            -> FLY_SESSION_V2_UNAVAILABLE
+ *   - it exists but its content hash or its exact length differs from
+ *     expected_content_hash / the stored length -> a terminal failure, never
+ *     FLY_SESSION_V2_UNAVAILABLE (the caller reports AUTH_FAILED for that case)
+ * A provider must never answer UNAVAILABLE for an object it did read, and must
+ * never answer OK with bytes that do not hash to expected_content_hash.
+ * The bytes a successful read returns are the exact stored object, so a caller
+ * that only had a hash can now verify the durable bytes instead of assuming a
+ * previous write succeeded.
+ */
+typedef fly_session_result_v2 (*fly_session_object_store_read_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t object_kind,
+    const uint8_t expected_content_hash[32], fly_session_inbox_v2_t*);
+
 typedef struct fly_session_object_store_port_v2
 {
     uint32_t struct_size;
@@ -430,7 +454,19 @@ typedef struct fly_session_object_store_port_v2
     fly_session_context_release_v2 release;
     fly_session_object_store_put_immutable_v2 put_immutable;
     fly_session_operation_cancel_v2 cancel;
+    /* Appended in R3: required by the LINK_HELLO durable-binding gate, which
+     * reads the exact 0x0212 local binding back and checks its hash instead of
+     * trusting the earlier put. */
+    fly_session_object_store_read_v2 read;
 } fly_session_object_store_port_v2;
+
+/*
+ * The frozen R2 prefix: every field up to and including cancel. A provider built
+ * against the R2 table is still a valid prefix; it simply has no read primitive,
+ * and only the operations that need one fail closed.
+ */
+#define FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE \
+    ((uint32_t)(offsetof(fly_session_object_store_port_v2, read)))
 
 #define FLY_SESSION_OBJECT_STORE_PORT_V2_SIZE \
     ((uint32_t)sizeof(fly_session_object_store_port_v2))
@@ -612,6 +648,137 @@ typedef struct fly_session_bearer_port_v2
 #define FLY_SESSION_BEARER_PORT_V2_SIZE \
     ((uint32_t)sizeof(fly_session_bearer_port_v2))
 
+/*
+ * ---------------------------------------------------------------------------
+ * DUAL runtime provider (IF12's RuntimePort, DUAL mode).
+ *
+ * The engine stays the only reducer owner. It decides the content reference,
+ * the frame/seat/authority key tuple, when a frame may be stepped and when a
+ * frame counts as committed; this provider only executes one frame at a time
+ * and reports its state digest. It mirrors the frozen internal seam
+ * `flynes::session::dual::DualRuntimePort`
+ * (shared/src/session/dual/dual_runtime_contract.hpp) field for field, because
+ * the public session boundary is C.
+ *
+ * Rules the engine enforces and this table must therefore obey:
+ *   - every call is serialized on the engine's simulation worker; the provider
+ *     never sees UI events, sockets or other provider callbacks;
+ *   - after pause, disconnect, transport terminal, authenticated-activity
+ *     timeout or shutdown, `step` is never called again;
+ *   - a committed frame's input history is immutable, and `state_digest`
+ *     covers the committed frame only, never a prediction;
+ *   - implementations must be deterministic: two isolated providers replaying
+ *     the same canonical bundle from the same checkpoint must produce the same
+ *     digest.
+ *
+ * STREAM is not selectable in this release and this table deliberately has no
+ * codec, encoder, decoder, sink, media or transport entry point of any kind.
+ * The engine must be able to disable DUAL by omitting the whole port.
+ * ---------------------------------------------------------------------------
+ */
+
+/*
+ * DUAL port count. The DUAL seam always carries a complete four-port bundle
+ * (shared/src/session/dual/dual_runtime_contract.hpp: kDualPortCountV1), which
+ * matches the public runtime ABI's FLY_RUNTIME_PORT_COUNT.
+ */
+#define FLY_SESSION_DUAL_PORT_COUNT_V2 4u
+
+/* Raw content reference. ROM bytes never cross this seam. */
+typedef struct fly_session_dual_content_ref_v2
+{
+    uint8_t session_id[16];
+    uint8_t branch_id[16];
+    uint8_t content_hash[32];
+    uint64_t timeline_epoch;
+} fly_session_dual_content_ref_v2;
+
+/* One port of the canonical four-port bundle. */
+typedef struct fly_session_dual_port_sample_v2
+{
+    uint32_t mask;
+    uint32_t reserved_zero;
+    uint64_t input_sequence;
+} fly_session_dual_port_sample_v2;
+
+/*
+ * The canonical input unit: always a complete four-port bundle, with the exact
+ * input key tuple and the prediction marker. `predicted_port_mask` marks the
+ * ports whose sample is a prediction so a prediction can never be mistaken for
+ * a confirmed peer sample.
+ */
+typedef struct fly_session_dual_input_bundle_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint8_t session_id[16];
+    uint8_t branch_id[16];
+    uint64_t timeline_epoch;
+    uint64_t frame_index;
+    uint64_t seat_revision;
+    uint8_t logical_seat;
+    uint8_t reserved_zero[3];
+    uint32_t predicted_port_mask;
+    fly_session_dual_port_sample_v2 ports[FLY_SESSION_DUAL_PORT_COUNT_V2];
+} fly_session_dual_input_bundle_v2;
+
+#define FLY_SESSION_DUAL_INPUT_BUNDLE_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_dual_input_bundle_v2))
+
+/* What the provider reports about the frame it just executed. */
+typedef struct fly_session_dual_frame_outcome_v2
+{
+    uint64_t frame_index;
+    uint64_t applied_input_sequence[FLY_SESSION_DUAL_PORT_COUNT_V2];
+    uint32_t honoured_port_mask;
+    uint32_t reserved_zero;
+} fly_session_dual_frame_outcome_v2;
+
+#define FLY_SESSION_DUAL_FRAME_OUTCOME_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_dual_frame_outcome_v2))
+
+/* Determinism gate: state, frame and PCM digests of one committed frame. */
+typedef struct fly_session_dual_state_digest_v2
+{
+    uint8_t state[32];
+    uint8_t frame[32];
+    uint8_t pcm[32];
+} fly_session_dual_state_digest_v2;
+
+#define FLY_SESSION_DUAL_STATE_DIGEST_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_dual_state_digest_v2))
+
+typedef fly_session_result_v2 (*fly_session_dual_load_v2)(
+    void*, const fly_session_dual_content_ref_v2*);
+typedef fly_session_result_v2 (*fly_session_dual_step_v2)(
+    void*, const fly_session_dual_input_bundle_v2*,
+    fly_session_dual_frame_outcome_v2*);
+typedef fly_session_result_v2 (*fly_session_dual_export_state_v2)(
+    void*, uint8_t*, size_t, size_t*, uint8_t hash_out[32]);
+typedef fly_session_result_v2 (*fly_session_dual_import_state_v2)(
+    void*, const uint8_t*, size_t);
+typedef fly_session_result_v2 (*fly_session_dual_state_digest_fn_v2)(
+    void*, uint64_t, fly_session_dual_state_digest_v2*);
+
+typedef struct fly_session_dual_runtime_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_dual_load_v2 load;
+    fly_session_dual_step_v2 step;
+    fly_session_dual_export_state_v2 export_state;
+    fly_session_dual_import_state_v2 import_state;
+    fly_session_dual_state_digest_fn_v2 state_digest;
+} fly_session_dual_runtime_port_v2;
+
+#define FLY_SESSION_DUAL_RUNTIME_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_dual_runtime_port_v2))
+
 typedef struct fly_session_ports_v2
 {
     uint32_t struct_size;
@@ -630,12 +797,27 @@ typedef struct fly_session_ports_v2
     const fly_session_discovery_port_v2* discovery;
     const fly_session_bearer_port_v2* bearer;
     const fly_session_object_store_port_v2* object_store;
+    /*
+     * DUAL runtime, appended and optional. A shorter table (an older caller)
+     * leaves it absent, and DUAL actions then fail closed with
+     * FLY_SESSION_V2_UNAVAILABLE instead of pretending to run.
+     */
+    const fly_session_dual_runtime_port_v2* dual_runtime;
 } fly_session_ports_v2;
 
 #define FLY_SESSION_PORTS_V2_R0_SIZE \
     ((uint32_t)(offsetof(fly_session_ports_v2, camera) + \
                 sizeof(((fly_session_ports_v2*)0)->camera)))
+/* The largest table that has no DUAL runtime slot: the pre-DUAL prefix. */
+#define FLY_SESSION_PORTS_V2_R1_SIZE \
+    ((uint32_t)(offsetof(fly_session_ports_v2, dual_runtime)))
 #define FLY_SESSION_PORTS_V2_SIZE ((uint32_t)sizeof(fly_session_ports_v2))
+#ifdef __cplusplus
+static_assert(FLY_SESSION_PORTS_V2_SIZE ==
+                  FLY_SESSION_PORTS_V2_R1_SIZE +
+                      sizeof(const fly_session_dual_runtime_port_v2*),
+              "the DUAL runtime slot is a pure tail append");
+#endif
 
 enum fly_session_engine_state_v2
 {
@@ -687,7 +869,17 @@ enum fly_session_action_kind_v2
     FLY_SESSION_ACTION_RENAME_FRIEND_V2 = 38,
     FLY_SESSION_ACTION_DELETE_FRIEND_V2 = 39,
     FLY_SESSION_ACTION_BLOCK_FRIEND_V2 = 40,
-    FLY_SESSION_ACTION_RESET_LOCAL_IDENTITY_V2 = 41
+    FLY_SESSION_ACTION_RESET_LOCAL_IDENTITY_V2 = 41,
+    /*
+     * DUAL run control, appended. The config/seat/authority confirmations reuse
+     * the kinds above (23 CHANGE_SEATS, 24 CONFIRM_GAME_CONFIG and 22
+     * CHANGE_AUTHORITY); these two are the only genuinely new controls:
+     * selecting the content the run will use, and starting the DUAL run itself.
+     * Pause, resume, end and exit reuse 32 PAUSE_GAME, 33 RESUME_GAME, 36
+     * SAVE_AND_END and 25 RETURN_TO_LOBBY.
+     */
+    FLY_SESSION_ACTION_SELECT_CONTENT_V2 = 42,
+    FLY_SESSION_ACTION_START_DUAL_V2 = 43
 };
 
 enum fly_session_link_state_v2
@@ -782,9 +974,79 @@ typedef struct fly_session_snapshot_v2
     uint32_t game_state;
     uint32_t candidate_count;
     uint32_t friend_count;
+    /*
+     * DUAL run state, appended. These are the only fields a DUAL reader needs:
+     * the simulation lifecycle, the freeze reason when it stopped being legal to
+     * step, the frame/verified/commit watermarks, and the run identity the two
+     * engines must agree on (session, branch, content hash, seats, seat
+     * revision). They are zero for a non-DUAL engine. A reader whose
+     * struct_size stops before FLY_SESSION_SNAPSHOT_V2_R0_SIZE is rejected; a
+     * reader that declares exactly the older prefix is served the older fields
+     * and nothing is written past the size it declared.
+     */
+    uint32_t dual_mode;
+    uint32_t dual_state;
+    uint32_t dual_freeze_reason;
+    uint32_t dual_local_seat;
+    uint32_t dual_authority_seat;
+    uint32_t dual_seats_confirmed;
+    uint64_t dual_seat_revision;
+    uint64_t dual_frame_index;
+    uint64_t dual_verified_through;
+    uint64_t dual_commit_frontier;
+    uint64_t dual_prediction_depth;
+    uint8_t dual_content_hash[32];
+    uint8_t dual_session_id[16];
+    uint8_t dual_branch_id[16];
 } fly_session_snapshot_v2;
 
+/*
+ * The pre-DUAL prefix. offsetof(dual_mode) is the size the structure had before
+ * the DUAL block was appended, so an older caller that declares exactly this
+ * much is still a legal reader.
+ */
+#define FLY_SESSION_SNAPSHOT_V2_R0_SIZE \
+    ((uint32_t)(offsetof(fly_session_snapshot_v2, dual_mode)))
 #define FLY_SESSION_SNAPSHOT_V2_SIZE ((uint32_t)sizeof(fly_session_snapshot_v2))
+
+/*
+ * DUAL simulation lifecycle. Mirrors the internal DUAL seam's
+ * DualSimStateV1 (shared/src/session/dual/dual_run_scheduler.hpp) so that a
+ * platform reads one vocabulary, not two.
+ */
+enum fly_session_dual_state_v2
+{
+    FLY_SESSION_DUAL_UNLOADED_V2 = 0,
+    FLY_SESSION_DUAL_READY_V2 = 1,
+    FLY_SESSION_DUAL_RUNNING_V2 = 2,
+    FLY_SESSION_DUAL_FROZEN_V2 = 3
+};
+
+/*
+ * Why a DUAL run stopped being steppable. Mirrors DualFreezeReasonV1. This
+ * release has no STREAM fallback, so a freeze is explicit and never a silent
+ * mode switch.
+ */
+enum fly_session_dual_freeze_reason_v2
+{
+    FLY_SESSION_DUAL_FREEZE_NONE_V2 = 0,
+    FLY_SESSION_DUAL_FREEZE_INPUT_WINDOW_EXCEEDED_V2 = 1,
+    FLY_SESSION_DUAL_FREEZE_PREDICTION_DEPTH_EXCEEDED_V2 = 2,
+    FLY_SESSION_DUAL_FREEZE_COMMITTED_HISTORY_REWRITE_V2 = 3,
+    FLY_SESSION_DUAL_FREEZE_DIGEST_MISMATCH_V2 = 4,
+    FLY_SESSION_DUAL_FREEZE_AUTHENTICATED_ACTIVITY_TIMEOUT_V2 = 5,
+    FLY_SESSION_DUAL_FREEZE_TRANSPORT_TERMINAL_V2 = 6,
+    FLY_SESSION_DUAL_FREEZE_PAUSED_V2 = 7,
+    FLY_SESSION_DUAL_FREEZE_SHUTDOWN_V2 = 8,
+    FLY_SESSION_DUAL_FREEZE_SEAT_OR_AUTHORITY_CHANGED_V2 = 9
+};
+
+/* The DUAL mode discriminator carried by `dual_mode`. */
+enum fly_session_dual_mode_v2
+{
+    FLY_SESSION_DUAL_MODE_NONE_V2 = 0,
+    FLY_SESSION_DUAL_MODE_DUAL_V2 = 1
+};
 
 enum fly_session_pairing_stage_v2
 {
@@ -863,6 +1125,10 @@ typedef struct fly_session_action_v2
 
 #define FLY_SESSION_ACTION_V2_SIZE ((uint32_t)sizeof(fly_session_action_v2))
 
+/*
+ * DUAL port count is defined with the DUAL runtime block above
+ * (FLY_SESSION_DUAL_PORT_COUNT_V2).
+ */
 typedef struct fly_session_input_v2
 {
     uint32_t struct_size;
@@ -873,9 +1139,29 @@ typedef struct fly_session_input_v2
     uint32_t buttons;
     uint32_t reserved_zero;
     fly_session_clock_sample_v2 capture_clock;
+    /*
+     * DUAL complete four-port mask, appended. The DUAL input unit is always a
+     * full four-port bundle, never one mask and never an implicit port 0, and
+     * each entry is normalized (UP+DOWN and LEFT+RIGHT cleared together) before
+     * it is ever built into a canonical bundle. This field is authoritative
+     * only when the caller's struct_size reaches FLY_SESSION_INPUT_V2_SIZE; an
+     * older, shorter declaration is still accepted and then carries the
+     * single-player `buttons` mask, so the appended field can never be read out
+     * of a buffer the caller did not fill.
+     */
+    uint32_t port_mask[FLY_SESSION_DUAL_PORT_COUNT_V2];
 } fly_session_input_v2;
 
+/* The pre-DUAL prefix: the largest honest size that has no port_mask. */
+#define FLY_SESSION_INPUT_V2_R0_SIZE \
+    ((uint32_t)(offsetof(fly_session_input_v2, port_mask)))
 #define FLY_SESSION_INPUT_V2_SIZE ((uint32_t)sizeof(fly_session_input_v2))
+#ifdef __cplusplus
+static_assert(FLY_SESSION_INPUT_V2_SIZE ==
+                  FLY_SESSION_INPUT_V2_R0_SIZE +
+                      FLY_SESSION_DUAL_PORT_COUNT_V2 * 4u,
+              "the DUAL port mask is a pure tail append");
+#endif
 
 enum fly_session_notice_kind_v2
 {

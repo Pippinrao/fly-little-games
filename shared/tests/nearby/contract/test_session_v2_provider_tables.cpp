@@ -78,6 +78,10 @@ fly_session_result_v2 unavailable_put_immutable(
     const std::uint8_t[32], fly_session_buffer_v2_t*,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
+fly_session_result_v2 unavailable_read_immutable(
+    void*, const fly_session_op_token_v2*, std::uint32_t,
+    const std::uint8_t[32], fly_session_inbox_v2_t*)
+{ return FLY_SESSION_V2_UNAVAILABLE; }
 
 fly_session_result_v2 read_clock(void*, fly_session_clock_sample_v2* out)
 {
@@ -168,6 +172,7 @@ struct Fixture
         object_store.retain = retain;
         object_store.release = release;
         object_store.put_immutable = unavailable_put_immutable;
+        object_store.read = unavailable_read_immutable;
         object_store.cancel = unavailable_stop;
 
         ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
@@ -258,6 +263,27 @@ void test_invalid_tables_retain_nothing()
     check(fly_session_create_v2(&fixture.config, &fixture.ports, &engine) ==
               FLY_SESSION_V2_UNSUPPORTED,
           "object store cannot omit durable immutable put");
+
+    fixture.ports.object_store = &fixture.object_store;
+    auto missing_read = fixture.object_store;
+    missing_read.read = nullptr;
+    fixture.ports.object_store = &missing_read;
+    check(fly_session_create_v2(&fixture.config, &fixture.ports, &engine) ==
+              FLY_SESSION_V2_UNSUPPORTED,
+          "object store cannot omit the R3 exact-byte read gate");
+
+    /* An R2-sized table is not silently accepted with a null read: the tail
+     * append is gated by struct_size exactly like every earlier provider port. */
+    fixture.ports.object_store = &fixture.object_store;
+    auto r2_table = fixture.object_store;
+    r2_table.struct_size = FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE;
+    r2_table.read = unavailable_read_immutable;
+    fixture.ports.object_store = &r2_table;
+    check(fly_session_create_v2(&fixture.config, &fixture.ports, &engine) ==
+              FLY_SESSION_V2_ABI_MISMATCH,
+          "an R2-sized object store table is rejected after the R3 tail append");
+
+    fixture.ports.object_store = &fixture.object_store;
     check(fixture.clock_counts.retains == 0 && fixture.executor_counts.retains == 0 &&
               fixture.platform_counts.retains == 0 &&
               fixture.crypto_counts.retains == 0 &&

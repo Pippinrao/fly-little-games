@@ -34,6 +34,8 @@ public:
                          bearer_, has_bearer_);
         capture_optional(ports, offsetof(fly_session_ports_v2, object_store),
                          object_store_, has_object_store_);
+        capture_optional(ports, offsetof(fly_session_ports_v2, dual_runtime),
+                         dual_runtime_, has_dual_runtime_);
         clock_.retain(clock_.context);
         executor_.retain(executor_.context);
         platform_state_.retain(platform_state_.context);
@@ -49,6 +51,7 @@ public:
         retain_optional(discovery_, has_discovery_);
         retain_optional(bearer_, has_bearer_);
         retain_optional(object_store_, has_object_store_);
+        retain_optional(dual_runtime_, has_dual_runtime_);
     }
 
     SessionPorts(const SessionPorts&) = delete;
@@ -56,6 +59,7 @@ public:
 
     ~SessionPorts()
     {
+        release_optional(dual_runtime_, has_dual_runtime_);
         release_optional(object_store_, has_object_store_);
         release_optional(bearer_, has_bearer_);
         release_optional(discovery_, has_discovery_);
@@ -108,6 +112,16 @@ public:
     [[nodiscard]] bool has_bearer() const noexcept { return has_bearer_; }
     [[nodiscard]] bool has_object_store() const noexcept
     { return has_object_store_; }
+    /*
+     * DUAL runtime, optional and tail-appended. A pre-DUAL provider table has no
+     * slot for it, so DUAL must fail closed with UNAVAILABLE rather than run
+     * without a simulation worker.
+     */
+    [[nodiscard]] bool has_dual_runtime() const noexcept
+    { return has_dual_runtime_; }
+    [[nodiscard]] const fly_session_dual_runtime_port_v2* dual_runtime()
+        const noexcept
+    { return has_dual_runtime_ ? &dual_runtime_ : nullptr; }
     [[nodiscard]] bool has_pairing_stack() const noexcept
     {
         return has_key_ && has_crypto_ && has_tls_ && has_bearer_;
@@ -292,6 +306,24 @@ public:
         return has_object_store_
             ? object_store_.cancel(object_store_.context, token)
             : FLY_SESSION_V2_UNAVAILABLE;
+    }
+
+    /* R3 appended read primitive. An R2-sized table has no read; the durable
+     * read-back gate then fails closed instead of assuming a previous write. */
+    [[nodiscard]] bool has_object_store_read() const noexcept
+    {
+        return has_object_store_ && object_store_.read != nullptr;
+    }
+
+    fly_session_result_v2 read_immutable_object(
+        const fly_session_op_token_v2* token, std::uint32_t object_kind,
+        const std::uint8_t expected_hash[32],
+        fly_session_inbox_v2_t* inbox) const
+    {
+        return has_object_store_read()
+            ? object_store_.read(object_store_.context, token, object_kind,
+                                 expected_hash, inbox)
+            : FLY_SESSION_V2_UNSUPPORTED;
     }
 
     fly_session_result_v2 read_secure_store(
@@ -586,6 +618,7 @@ private:
     fly_session_discovery_port_v2 discovery_{};
     fly_session_bearer_port_v2 bearer_{};
     fly_session_object_store_port_v2 object_store_{};
+    fly_session_dual_runtime_port_v2 dual_runtime_{};
     bool has_camera_ = false;
     bool has_key_ = false;
     bool has_crypto_ = false;
@@ -595,6 +628,7 @@ private:
     bool has_discovery_ = false;
     bool has_bearer_ = false;
     bool has_object_store_ = false;
+    bool has_dual_runtime_ = false;
 };
 
 } // namespace flynes::session

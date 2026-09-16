@@ -74,5 +74,33 @@ Status decode_channel_bind_ack_v1(
 
 std::array<std::uint8_t, 8> bind_stream_preamble_v1() noexcept;
 
+/*
+ * The ONE canonical channel-bind identity, and the only definition in the tree.
+ *
+ *   domain_hash("flynes-channel-bind-binding-v1",
+ *               channel_id[16] || connector_proof_hash[32] ||
+ *               listener_proof_hash[32], 80)
+ *
+ * The approved 2026-09-04 spec:437 identifies a bind by exactly three
+ * authenticated values — channel_id plus the two proof hashes — and both proof
+ * hashes are carried inside the 96-byte CHANNEL_BIND_ACK body, so both roles
+ * hold them only after each has verified the ACK. This function canonicalises
+ * those three values into the single 32-byte value LINK_READY binds as
+ * channel_bind_hash; it replaces the u64 channel_bind_id that the first contract
+ * revision invented.
+ *
+ * Both proof hashes MUST be wire::channel_bind_proof_hash_v1(<the exact 248-byte
+ * proof>) outputs. Never recompute them by another route: that would be a second
+ * definition of the bind identity.
+ *
+ * Fails closed (Status::InvalidField) on a null output or an all-zero input, so
+ * an unwired caller cannot install a zero bind identity.
+ */
+Status channel_bind_binding_hash_v1(
+    const std::array<std::uint8_t, 16>& channel_id,
+    const std::array<std::uint8_t, 32>& connector_proof_hash,
+    const std::array<std::uint8_t, 32>& listener_proof_hash,
+    std::array<std::uint8_t, 32>* out_hash) noexcept;
+
 } // namespace flynes::session::wire
 #endif

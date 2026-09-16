@@ -2,6 +2,7 @@
   "hash_domain_strings": [
     "flynes-canonical-input-component-chunk-v1",
     "flynes-canonical-input-component-manifest-v1",
+    "flynes-channel-bind-binding-v1",
     "flynes-channel-bind-proof-hash-v1",
     "flynes-channel-bind-proof-v1",
     "flynes-channel-resume-summary-v1",
@@ -25,6 +26,11 @@
     "flynes-input-sequence-reserve-finalized-v1",
     "flynes-input-sequence-reserve-grant-v1",
     "flynes-input-sequence-reserve-req-v1",
+    "flynes-link-hello-object-v1",
+    "flynes-link-hello-v1",
+    "flynes-link-negotiated-result-v1",
+    "flynes-link-ready-object-v1",
+    "flynes-link-ready-v1",
     "flynes-offline-release-certificate-hash-v1",
     "flynes-offline-save-manifest-v1",
     "flynes-opaque-recovery-failure-evidence-v1",
@@ -3352,6 +3358,68 @@
       "version_u16be": 1
     },
     {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pretag",
+          "wire_type": "u8[424]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 488,
+      "hash_domain": "flynes-link-hello-object-v1",
+      "hash_preimage": "SHA256(\"flynes-link-hello-object-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0216",
+      "layout": "fixed",
+      "max_decode_length": 488,
+      "name": "LINK_HELLO_V1",
+      "notes": "Sender signature digest uses flynes-link-hello-v1 over the 424-byte pretag only. Pretag layout: version u16be || reserved_zero[6] || sender_role u8 || receiver_role u8 || phase u8 || reserved_zero[5] || session_id[16] || link_id[16] || channel_id[16] || connection_generation u64be || link_generation u64be || wire_major u16be || wire_minor u16be || capability_bits u16be || critical_extension_mask u16be || determinism_profile u8 || core_state_format u8 || reserved_zero[2] || selected_plan_hash[32] || endpoint_offer_hash[32] || pair_transcript_object_hash[32] || session_signing_binding_hash[32] || identity_verifier_ref[112] || session_signing_public_key[65] || reserved_zero[27].",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pretag",
+          "wire_type": "u8[368]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "signature",
+          "wire_type": "u8[64]"
+        }
+      ],
+      "fixed_length": 432,
+      "hash_domain": "flynes-link-ready-object-v1",
+      "hash_preimage": "SHA256(\"flynes-link-ready-object-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0217",
+      "layout": "fixed",
+      "max_decode_length": 432,
+      "name": "LINK_READY_V1",
+      "notes": "Same bytes carry both READY (ready_phase=1) and the required ACK (ready_phase=2). Sender signature digest uses flynes-link-ready-v1 over the 368-byte pretag only. Pretag layout: version u16be || reserved_zero[6] || sender_role u8 || receiver_role u8 || phase u8 || ready_phase u8 || reserved_zero[4] || session_id[16] || link_id[16] || channel_id[16] || connection_generation u64be || reconnect_attempt u64be || link_generation u64be || channel_bind_hash[32] || local_hello_object_hash[32] || peer_hello_object_hash[32] || negotiated_result_hash[32] || local_summary_hash[32] || peer_summary_hash[32] || merge_result_hash[32] || reserved_zero[56].",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
       "children": [
         {
           "cardinality": "exactly_1",
@@ -4419,6 +4487,338 @@
       "hash_domain": "flynes-channel-resume-summary-v1",
       "name": "ChannelResumeSummaryV1",
       "notes": "Not an ObjectKind. 176-byte exact-size wire message."
+    },
+    {
+      "endian": "network",
+      "enums": {
+        "capability_bits": {
+          "DUAL": 1,
+          "STREAM_AUDIO": 4,
+          "STREAM_VIDEO": 2
+        },
+        "phase": {
+          "INITIAL": 1,
+          "RECONCILE": 2
+        },
+        "sender_role": {
+          "INITIATOR": 1,
+          "RESPONDER": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sender_role",
+          "note": "1 initiator, 2 responder",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "receiver_role",
+          "note": "must be the mirrored role",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "phase",
+          "note": "INITIAL=1",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[5]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "link_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "channel_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "connection_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "link_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "wire_major",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "wire_minor",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "capability_bits",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "critical_extension_mask",
+          "note": "MUST be 0",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "determinism_profile",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "core_state_format",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_3",
+          "wire_type": "u8[2]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "selected_plan_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "endpoint_offer_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pair_transcript_object_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_signing_binding_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "identity_verifier_ref",
+          "wire_type": "u8[112]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_signing_public_key",
+          "wire_type": "u8[65]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_4",
+          "wire_type": "u8[27]"
+        }
+      ],
+      "fixed_length": 424,
+      "hash_domain": "flynes-link-hello-v1",
+      "name": "LinkHelloV1",
+      "notes": "Control-channel message tag 0xFF06; the 64-byte canonical low-S signature is appended after this 424-byte pretag, so the persisted LINK_HELLO_V1 object (kind 0x0216) is exactly 488 bytes. Persist-before-send: the 0x0212 binding object must be durable first. STREAM bits are never advertised by this release and a STREAM-only offer is rejected as unsupported."
+    },
+    {
+      "endian": "network",
+      "enums": {
+        "phase": {
+          "INITIAL": 1,
+          "RECONCILE": 2
+        },
+        "ready_phase": {
+          "ACK": 2,
+          "READY": 1
+        },
+        "sender_role": {
+          "INITIATOR": 1,
+          "RESPONDER": 2
+        }
+      },
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[6]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "sender_role",
+          "note": "1 initiator, 2 responder",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "receiver_role",
+          "note": "must be the mirrored role",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "phase",
+          "note": "RECONCILE=2",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "ready_phase",
+          "note": "READY=1 ACK=2",
+          "wire_type": "u8"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_2",
+          "wire_type": "u8[4]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "session_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "link_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "channel_id",
+          "wire_type": "u8[16]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "connection_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reconnect_attempt",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "link_generation",
+          "wire_type": "u64be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "channel_bind_hash",
+          "note": "domain flynes-channel-bind-binding-v1",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "local_hello_object_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "peer_hello_object_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "negotiated_result_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "local_summary_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "peer_summary_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "merge_result_hash",
+          "wire_type": "bytes32"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero_3",
+          "wire_type": "u8[56]"
+        }
+      ],
+      "fixed_length": 368,
+      "hash_domain": "flynes-link-ready-v1",
+      "name": "LinkReadyV1",
+      "notes": "Control-channel message tag 0xFF07; the 64-byte canonical low-S signature is appended after this 368-byte pretag, so the persisted LINK_READY_V1 object (kind 0x0217) is exactly 432 bytes. The same bytes carry the required ACK with ready_phase=ACK. READY is legal only in phase RECONCILE."
     }
   ],
   "quic_channels": [

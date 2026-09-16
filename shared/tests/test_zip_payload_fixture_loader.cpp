@@ -263,7 +263,7 @@ int main()
             expect_load_error(corpus, "Java int overflow", {"allowed range"});
         }
 
-        for (const std::string& value : {"+1", "01", "-0"})
+        for (const std::string value : {"+1", "01", "-0"})
         {
             corpus = scratch.copy_corpus("noncanonical_" + std::to_string(value.size()));
             replace_field(corpus, 1u, 4u, value);

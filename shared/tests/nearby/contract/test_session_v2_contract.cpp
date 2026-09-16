@@ -558,11 +558,27 @@ void test_input_contract_rejects_invalid_or_inactive_input()
     input.capture_clock.suspend_inclusive = 1;
     input.capture_clock.boot_generation[0] = 1;
 
-    auto undersized = input;
-    --undersized.struct_size;
-    check(fly_session_submit_input_v2(engine, &undersized) ==
+    /*
+     * The DUAL four-port mask is a tail append, so the required prefix is the
+     * pre-DUAL size. `--struct_size` from the *new* full size is therefore a
+     * legal (if mask-less) input, and the boundary that must still be refused is
+     * one byte below the pre-DUAL prefix.
+     */
+    auto below_prefix = input;
+    below_prefix.struct_size = FLY_SESSION_INPUT_V2_R0_SIZE - 1;
+    check(fly_session_submit_input_v2(engine, &below_prefix) ==
               FLY_SESSION_V2_ABI_MISMATCH,
-          "undersized input is rejected synchronously");
+          "an input shorter than the pre-DUAL prefix is rejected synchronously");
+    auto pre_dual_input = input;
+    pre_dual_input.struct_size = FLY_SESSION_INPUT_V2_R0_SIZE;
+    check(fly_session_submit_input_v2(engine, &pre_dual_input) !=
+              FLY_SESSION_V2_ABI_MISMATCH,
+          "a pre-DUAL input prefix stays a legal input after the tail append");
+    auto oversized_mask = input;
+    oversized_mask.port_mask[2] = 0x100u;
+    check(fly_session_submit_input_v2(engine, &oversized_mask) ==
+              FLY_SESSION_V2_INVALID_ARGUMENT,
+          "a DUAL port mask wider than one byte is rejected");
     auto reserved = input;
     reserved.reserved_zero = 1;
     check(fly_session_submit_input_v2(engine, &reserved) ==
@@ -583,6 +599,75 @@ void test_input_contract_rejects_invalid_or_inactive_input()
           "input contract engine shuts down");
 }
 
+/*
+ * Step 1 of the DUAL integration: the public ABI grew by tail appends only, so
+ * every older caller stays legal and nothing may be written past the size it
+ * declared.
+ */
+void test_dual_prefix_appends_keep_older_callers_legal()
+{
+    check(FLY_SESSION_INPUT_V2_R0_SIZE < FLY_SESSION_INPUT_V2_SIZE &&
+              FLY_SESSION_SNAPSHOT_V2_R0_SIZE < FLY_SESSION_SNAPSHOT_V2_SIZE &&
+              FLY_SESSION_PORTS_V2_R1_SIZE < FLY_SESSION_PORTS_V2_SIZE,
+          "every DUAL append grew its structure");
+
+    Counts clock_counts;
+    Counts executor_counts;
+    Counts platform_counts;
+    auto clock = make_clock(&clock_counts);
+    auto executor = make_executor(&executor_counts);
+    auto platform = make_platform(&platform_counts);
+    fly_session_ports_v2 ports{};
+    /* Exactly the pre-DUAL table: no dual_runtime slot at all. */
+    ports.struct_size = FLY_SESSION_PORTS_V2_R1_SIZE;
+    ports.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ports.clock = &clock;
+    ports.executor = &executor;
+    ports.platform_state = &platform;
+    auto config = make_config();
+
+    fly_session_v2_t* engine = nullptr;
+    check(fly_session_create_v2(&config, &ports, &engine) == FLY_SESSION_V2_OK,
+          "a pre-DUAL provider table still creates an engine");
+
+    fly_session_view_v2_t* view = nullptr;
+    check(fly_session_acquire_view_v2(engine, &view) == FLY_SESSION_V2_OK,
+          "a pre-DUAL engine publishes a view");
+
+    struct Guarded
+    {
+        fly_session_snapshot_v2 snapshot;
+        std::uint64_t canary;
+    };
+    Guarded guarded{};
+    guarded.canary = 0xA5A5A5A5A5A5A5A5ull;
+    guarded.snapshot.struct_size = FLY_SESSION_SNAPSHOT_V2_R0_SIZE;
+    guarded.snapshot.abi_version = FLY_SESSION_ABI_VERSION_2;
+    check(fly_session_view_read_v2(view, &guarded.snapshot) == FLY_SESSION_V2_OK,
+          "an older snapshot prefix reads successfully");
+    check(guarded.canary == 0xA5A5A5A5A5A5A5A5ull,
+          "the snapshot read never writes past the size the caller declared");
+    check(guarded.snapshot.dual_mode == 0 && guarded.snapshot.dual_state == 0 &&
+              guarded.snapshot.dual_freeze_reason == 0 &&
+              guarded.snapshot.dual_frame_index == 0,
+          "a pre-DUAL reader sees none of the appended DUAL block");
+
+    fly_session_snapshot_v2 full{};
+    full.struct_size = FLY_SESSION_SNAPSHOT_V2_SIZE;
+    full.abi_version = FLY_SESSION_ABI_VERSION_2;
+    check(fly_session_view_read_v2(view, &full) == FLY_SESSION_V2_OK,
+          "a current snapshot reads successfully");
+    check(full.dual_mode == FLY_SESSION_DUAL_MODE_NONE_V2 &&
+              full.dual_state == FLY_SESSION_DUAL_UNLOADED_V2 &&
+              full.dual_freeze_reason == FLY_SESSION_DUAL_FREEZE_NONE_V2,
+          "a non-DUAL engine reports the neutral DUAL run state");
+
+    fly_session_view_release_v2(view);
+    check(fly_session_begin_shutdown_v2(engine, 1301) == FLY_SESSION_V2_ACCEPTED &&
+              fly_session_destroy_v2(engine) == FLY_SESSION_V2_OK,
+          "pre-DUAL engine shuts down");
+}
+
 } // namespace
 
 int main()
@@ -591,6 +676,7 @@ int main()
     test_view_and_token_outlive_engine();
     test_bounded_action_and_notice_queues();
     test_input_contract_rejects_invalid_or_inactive_input();
+    test_dual_prefix_appends_keep_older_callers_legal();
     test_fail_closed_shutdown();
     if (failures != 0)
     {

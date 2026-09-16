@@ -396,6 +396,13 @@ Status check(const char* type_name, const std::uint8_t* bytes, std::size_t size,
         {"0x0211", 336u, "flynes-input-range-authorization-v1", 8u, 3u, true},
         {"0x0212", 312u, "flynes-session-signing-key-binding-hash-v1", 56u, 2u, true},
         {"0x0213", 880u, "flynes-pair-transcript-object-v1", 8u, 2u, true},
+        // Link control plane. The enum byte is the phase discriminant at offset
+        // 10 in both messages (INITIAL=1 / RECONCILE=2); the ready_phase
+        // discriminant at offset 11 is checked by the link_ready codec, which is
+        // the authority for this object, exactly as validate_session_signing_
+        // binding is for 0x0212.
+        {"0x0216", 488u, "flynes-link-hello-object-v1", 10u, 2u, true},
+        {"0x0217", 432u, "flynes-link-ready-object-v1", 10u, 2u, true},
         {"0x0301", 312u, "flynes-offline-release-certificate-hash-v1", 0u, 0u, false},
         {"0x0303", 392u, "flynes-save-commit-certificate-hash-v1", 0u, 0u, false},
         {"0x0304", 208u, "flynes-save-commit-decision-v1", 24u, 2u, true},

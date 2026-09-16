@@ -13,6 +13,9 @@
 #include "wire/quic_contract.hpp"
 #include "wire/session_signing_binding.hpp"
 #include "wire/sha256.hpp"
+#include "wire/app_frame.hpp"
+#include "wire/link_hello.hpp"
+#include "link/link_control_contract.hpp"
 
 #include <array>
 #include <algorithm>
@@ -24,6 +27,9 @@
 #include <vector>
 
 namespace {
+
+namespace wire = flynes::session::wire;
+namespace link = flynes::session::link;
 
 int failures = 0;
 void check(bool value, const char* message)
@@ -42,128 +48,131 @@ fly_session_result_v2 read_clock(void*, fly_session_clock_sample_v2* out)
     return FLY_SESSION_V2_OK;
 }
 
-fly_session_result_v2 unavailable_cancel(
+[[maybe_unused]] fly_session_result_v2 unavailable_cancel(
     void*, const fly_session_op_token_v2*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_generate(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_generate(
     void*, const fly_session_op_token_v2*, std::uint32_t,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_open(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_open(
     void*, const fly_session_op_token_v2*, std::uint32_t,
     fly_session_bytes_v2, fly_session_bytes_v2, const std::uint8_t[32],
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_public(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_public(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_sign(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_sign(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, fly_session_bytes_v2, const std::uint8_t[32],
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_agree(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_agree(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_release(
     void*, fly_session_resource_handle_v2)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_key_destroy(
+[[maybe_unused]] fly_session_result_v2 unavailable_key_destroy(
     void*, const fly_session_op_token_v2*, fly_session_bytes_v2,
     std::uint64_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_random(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_random(
     void*, const fly_session_op_token_v2*, std::uint32_t,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_hkdf(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_hkdf(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, std::uint32_t,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_aead(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_aead(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, fly_session_bytes_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_verify(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_verify(
     void*, const fly_session_op_token_v2*, fly_session_bytes_v2,
     fly_session_bytes_v2, const std::uint8_t[32], fly_session_bytes_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_crypto_hmac(
+[[maybe_unused]] fly_session_result_v2 unavailable_crypto_hmac(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_secret_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_secret_release(
     void*, fly_session_resource_handle_v2)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_tls_create(
+[[maybe_unused]] fly_session_result_v2 unavailable_tls_create(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_tls_restore(
+[[maybe_unused]] fly_session_result_v2 unavailable_tls_restore(
     void*, const fly_session_op_token_v2*, fly_session_bytes_v2,
     const std::uint8_t[32], fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_tls_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_tls_release(
     void*, fly_session_resource_handle_v2)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_bearer_start(
+[[maybe_unused]] fly_session_result_v2 unavailable_bearer_start(
     void*, const fly_session_op_token_v2*, const std::uint8_t[32],
     fly_session_resource_handle_v2, std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_bearer_resolve(
+[[maybe_unused]] fly_session_result_v2 unavailable_bearer_resolve(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_bearer_release(
+[[maybe_unused]] fly_session_result_v2 unavailable_bearer_release(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_prepare_credential(
+[[maybe_unused]] fly_session_result_v2 unavailable_prepare_credential(
     void*, const fly_session_op_token_v2*, const std::uint8_t[32],
     fly_session_bytes_v2, fly_session_resource_handle_v2, std::uint32_t,
     fly_session_bytes_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_start(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_start(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_resource_handle_v2,
     const fly_session_quic_connect_policy_v2*, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_inspect(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_inspect(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_exporter(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_exporter(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_bytes_v2, fly_session_bytes_v2, std::uint32_t,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_stream(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_stream(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_write(
+/* Kept for symmetry with the rest of the unavailable_quic_* stub family; the
+ * port table currently wires writes through unavailable_quic_stream, so GCC
+ * flags this one as unused while MSVC does not. */
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_write(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_buffer_v2_t*, std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_control(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_control(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint64_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_datagram(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_datagram(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_resource_handle_v2, std::uint64_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_query(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_query(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
-fly_session_result_v2 unavailable_quic_close(
+[[maybe_unused]] fly_session_result_v2 unavailable_quic_close(
     void*, const fly_session_op_token_v2*, fly_session_resource_handle_v2,
     std::uint32_t, fly_session_inbox_v2_t*)
 { return FLY_SESSION_V2_UNAVAILABLE; }
@@ -317,7 +326,13 @@ struct EngineFixture final
             fly_session_inbox_v2_t* inbox)
         {
             auto* self = static_cast<Key*>(context);
-            if (resource == 0 || purpose != FLY_SESSION_KEY_DEVICE_IDENTITY_V2 ||
+            /* Two purposes legitimately reach this port in this fixture: the
+             * long-term device identity key (pair transcript) and the session
+             * signing key minted by SessionSigningScheduler, which is what
+             * LINK_HELLO/READY/ACK are signed with. Anything else is a bug. */
+            if (resource == 0 ||
+                (purpose != FLY_SESSION_KEY_DEVICE_IDENTITY_V2 &&
+                 purpose != FLY_SESSION_KEY_SESSION_SIGNING_V2) ||
                 !digest)
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->signs;
@@ -995,11 +1010,36 @@ struct EngineFixture final
         int puts = 0;
         int cancels = 0;
         std::uint32_t last_kind = 0;
+        // Every object kind this generation asked to persist, in order. Used to
+        // prove the engine never persists a 0x0216/0x0217 control object while
+        // the ABI has no object-read primitive.
+        std::vector<std::uint32_t> kinds;
         std::array<std::uint8_t, 32> last_hash{};
         std::vector<std::uint8_t> last_value;
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
-        ~ObjectStore() { fly_session_inbox_release_v2(inbox); }
+        /* R3 durable re-read gate: every read-back request this generation made,
+         * with its object kind and expected content hash, plus the objects that
+         * were actually persisted so a read can return the exact bytes. */
+        int reads = 0;
+        int missing_reads = 0;
+        std::uint32_t last_read_kind = 0;
+        std::array<std::uint8_t, 32> last_read_hash{};
+        fly_session_op_token_v2 last_read_token{};
+        fly_session_inbox_v2_t* read_inbox = nullptr;
+        std::vector<std::uint32_t> read_kinds;
+        struct StoredObject
+        {
+            std::uint32_t kind = 0;
+            std::array<std::uint8_t, 32> hash{};
+            std::vector<std::uint8_t> value;
+        };
+        std::vector<StoredObject> stored;
+        ~ObjectStore()
+        {
+            fly_session_inbox_release_v2(inbox);
+            fly_session_inbox_release_v2(read_inbox);
+        }
 
         static fly_session_result_v2 put_immutable(
             void* context, const fly_session_op_token_v2* token,
@@ -1022,11 +1062,57 @@ struct EngineFixture final
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->puts;
             self->last_kind = object_kind;
+            self->kinds.push_back(object_kind);
             std::copy_n(expected_hash, 32, self->last_hash.begin());
             self->last_token = *token;
+            StoredObject record{};
+            record.kind = object_kind;
+            std::copy_n(expected_hash, 32, record.hash.begin());
+            record.value = self->last_value;
+            self->stored.push_back(std::move(record));
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
+            return FLY_SESSION_V2_ACCEPTED;
+        }
+
+        /*
+         * The R3 read primitive. It records the exact request and then answers
+         * with the retained object for (kind, hash), or with
+         * FLY_SESSION_V2_UNAVAILABLE when this store never held it. The two
+         * failure modes the ABI keeps apart are therefore both reachable: an
+         * absent object is UNAVAILABLE, while an object whose bytes or hash
+         * disagree is injected by the test as a non-OK terminal.
+         */
+        static fly_session_result_v2 read(
+            void* context, const fly_session_op_token_v2* token,
+            std::uint32_t object_kind, const std::uint8_t expected_hash[32],
+            fly_session_inbox_v2_t* inbox)
+        {
+            auto* self = static_cast<ObjectStore*>(context);
+            if (!token || object_kind == 0 || !expected_hash)
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
+            ++self->reads;
+            self->last_read_kind = object_kind;
+            std::copy_n(expected_hash, 32, self->last_read_hash.begin());
+            self->last_read_token = *token;
+            self->read_kinds.push_back(object_kind);
+            const auto found = std::find_if(
+                self->stored.begin(), self->stored.end(),
+                [&](const StoredObject& item) {
+                    return item.kind == object_kind &&
+                           std::equal(item.hash.begin(), item.hash.end(),
+                                      expected_hash);
+                });
+            if (found == self->stored.end())
+            {
+                ++self->missing_reads;
+                return FLY_SESSION_V2_UNAVAILABLE;
+            }
+            if (inbox == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
+            fly_session_inbox_retain_v2(inbox);
+            fly_session_inbox_release_v2(self->read_inbox);
+            self->read_inbox = inbox;
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -1114,6 +1200,7 @@ struct EngineFixture final
         object_store_port.retain = retain_noop;
         object_store_port.release = release_noop;
         object_store_port.put_immutable = ObjectStore::put_immutable;
+        object_store_port.read = ObjectStore::read;
         object_store_port.cancel = ObjectStore::cancel;
         bearer_port.struct_size = FLY_SESSION_BEARER_PORT_V2_SIZE;
         bearer_port.abi_version = FLY_SESSION_ABI_VERSION_2;
@@ -2508,7 +2595,11 @@ enum class SessionSigningTail
 {
     DurableAcrossBothGates,
     WrongObjectHash,
-    ShutdownCancelsThroughObjectStore
+    ShutdownCancelsThroughObjectStore,
+    /* R3 durable re-read negatives: the object is absent, and the object exists
+     * but the bytes read back do not match the expected content hash. */
+    ReadObjectMissing,
+    ReadObjectContentMismatch
 };
 
 // The hash domain the wire codec uses for the 0x0212 binding object. Verified
@@ -2729,6 +2820,12 @@ void drive_session_signing_persistence(
         "an old connection generation cannot complete the current 0x0212 "
         "object request");
 
+    // A store that lost the object between the durable put and the required
+    // re-read: the R3 read must then answer FLY_SESSION_V2_UNAVAILABLE, never a
+    // fabricated success.
+    if (tail == SessionSigningTail::ReadObjectMissing)
+        fixture.object_store.stored.clear();
+
     // Step 2: only the exact immutable-object completion releases the second
     // gate. Local material is then fully durable, so CONNECTING afterwards can
     // only mean the remaining gate is the peer HELLO/READY exchange.
@@ -2737,7 +2834,16 @@ void drive_session_signing_persistence(
         FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 320, expected_hash);
     fixture.executor.run_all();
     const auto durable = fixture.snapshot();
-    check(durable.link_state == FLY_SESSION_LINK_CONNECTING_V2 &&
+    /*
+     * Both persistence gates are satisfied here, so the link is CONNECTING for
+     * every tail. The missing-object failure is no longer visible at this point
+     * because gap 4 puts the Control stream open BEFORE the durable re-read, and
+     * that open is answered further down: the re-read (and therefore the
+     * UNAVAILABLE failure) happens after it, which is where the negative branch
+     * below asserts FAILED.
+     */
+    const auto state_after_second_gate = FLY_SESSION_LINK_CONNECTING_V2;
+    check(durable.link_state == state_after_second_gate &&
               durable.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
               fixture.object_store.puts == object_puts + 1 &&
               fixture.secure_store.writes == secure_writes &&
@@ -2749,6 +2855,233 @@ void drive_session_signing_persistence(
               fixture.key.cancels == 0,
           "both persistence gates satisfied still leaves CONNECTING until the "
           "peer HELLO/READY exchange");
+
+    /*
+     * gap 4: the handshake opens (connector) or accepts (listener) its own
+     * Control stream before it re-reads the binding, because the bind stream's
+     * send side is FINed. This fixture is the listener, so the bind accept has
+     * already happened and this second stream operation is the Control stream.
+     * Answer it with the two-handle terminal a real transport produces; without
+     * it the handshake has no stream and nothing further is dispatched.
+     */
+    check(fixture.quic.accepted_bidi + fixture.quic.opened_bidi == 2,
+          "the link handshake opens exactly one Control stream after CHANNEL_BIND");
+    deliver_provider_resource_pair(
+        fixture.quic.inbox, fixture.quic.last_token,
+        FLY_SESSION_PROVIDER_QUIC_STREAM_V2, 601, 602);
+    fixture.executor.run_all();
+
+    /*
+     * Decision 1 negative A: the object is absent. The port answers UNAVAILABLE
+     * and the engine must fail the link closed - a binding it cannot read back
+     * is not durable, and no in-memory copy may stand in for it.
+     */
+    if (tail == SessionSigningTail::ReadObjectMissing)
+    {
+        check(fixture.object_store.reads == 1 &&
+                  fixture.object_store.missing_reads == 1 &&
+                  fixture.object_store.reads == fixture.object_store.missing_reads &&
+                  fixture.object_store.last_read_kind ==
+                      flynes::session::wire::kSessionSigningBindingObjectKindV1 &&
+                  fixture.object_store.last_read_hash == expected_hash,
+              "an absent 0x0212 object is reported as UNAVAILABLE by the read "
+              "port, never as a successful read");
+        const auto state = fixture.snapshot();
+        check(state.link_state == FLY_SESSION_LINK_FAILED_V2 &&
+                  state.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+                  fixture.quic.writes == quic_writes &&
+                  std::none_of(fixture.object_store.kinds.begin(),
+                               fixture.object_store.kinds.end(),
+                               [](std::uint32_t kind) {
+                                   return kind ==
+                                              flynes::session::link::
+                                                  kLinkHelloObjectKindV1 ||
+                                          kind ==
+                                              flynes::session::link::
+                                                  kLinkReadyObjectKindV1;
+                               }),
+              "a failed durable re-read fails the link closed without emitting "
+              "LINK_HELLO or reaching a lobby");
+        return;
+    }
+
+    // Task 9 milestone: at exactly this point start_link_handshake_locked() runs,
+    // so the scheduler's first effect (ReadLocalBindingObject) is dispatched and
+    // serviced through the R3 object-store read primitive. The engine asks for
+    // object kind 0x0212 with the *local binding hash* as the expected content
+    // hash, and the mock store really held that object, so this is a genuine
+    // durable read-back and not an in-memory assumption.
+    check(fixture.object_store.reads == 1 &&
+              fixture.object_store.missing_reads == 0 &&
+              fixture.object_store.last_read_kind ==
+                  flynes::session::wire::kSessionSigningBindingObjectKindV1 &&
+              fixture.object_store.last_read_hash == expected_hash &&
+              fixture.object_store.read_kinds.size() == 1,
+          "the link handshake really re-reads the durable 0x0212 binding "
+          "through the R3 object-store read port");
+
+    // Deliver the exact stored bytes and hash. The scheduler verifies the
+    // re-read 312 bytes and their content hash, marks the local binding durable
+    // and then asks for the LINK_HELLO signature.
+    //
+    // As of the 2026-09-16 channel-identity correction the channel id and the
+    // canonical channel-bind binding hash DO have a producer
+    // (InitialQuicBindScheduler owns them and the engine hands them over), so the
+    // attempt now legitimately advances past the binding re-read and dispatches
+    // the session-signing key effect for HELLO. It still cannot reach
+    // CONNECTED_LOBBY, and the reason is unchanged and narrower: the negotiated
+    // result, the peer's accepted 0x0212 binding and the inbound Control stream
+    // have no producer. The link must therefore stay CONNECTING (never FAILED,
+    // never CONNECTED_LOBBY) and must persist no 0x0216/0x0217 control object
+    // yet, because persisting HELLO requires a signature this fixture's key port
+    // never answers.
+    if (tail == SessionSigningTail::ReadObjectContentMismatch)
+    {
+        /*
+         * Decision 1 negative B: the object exists but the bytes read back do
+         * not hash to the expected content hash. The port must not answer
+         * UNAVAILABLE for this, and the engine must not treat it as a success:
+         * the mismatching 312 bytes fail the link closed.
+         */
+        auto tampered = expected_binding;
+        tampered[180] = static_cast<std::uint8_t>(tampered[180] ^ 0xffu);
+        const auto hash_of_tampered = flynes::session::wire::domain_hash(
+            kSessionSigningBindingHashDomainV1, tampered.data(), tampered.size());
+        deliver_provider_hash_buffer(
+            fixture.object_store.read_inbox, fixture.object_store.last_read_token,
+            FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 321, tampered.data(),
+            tampered.size(), hash_of_tampered);
+        fixture.executor.run_all();
+        const auto state = fixture.snapshot();
+        check(fixture.object_store.missing_reads == 0 &&
+                  fixture.object_store.reads == 1,
+              "an existing-but-wrong object is not reported as a missing object");
+        check(state.link_state == FLY_SESSION_LINK_FAILED_V2 &&
+                  state.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+                  fixture.quic.writes == quic_writes,
+              "a 0x0212 object whose bytes do not match its expected hash fails "
+              "the link closed");
+        return;
+    }
+
+    deliver_provider_hash_buffer(
+        fixture.object_store.read_inbox, fixture.object_store.last_read_token,
+        FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 321, expected_binding.data(),
+        expected_binding.size(), expected_hash);
+    fixture.executor.run_all();
+    const auto after_read = fixture.snapshot();
+    check(after_read.link_state == FLY_SESSION_LINK_CONNECTING_V2 &&
+              after_read.link_state != FLY_SESSION_LINK_FAILED_V2 &&
+              after_read.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              fixture.object_store.reads == 1 &&
+              fixture.object_store.puts == object_puts + 1 &&
+              std::none_of(fixture.object_store.kinds.begin(),
+                           fixture.object_store.kinds.end(),
+                           [](std::uint32_t kind) {
+                               return kind ==
+                                          flynes::session::link::
+                                              kLinkHelloObjectKindV1 ||
+                                      kind ==
+                                          flynes::session::link::
+                                              kLinkReadyObjectKindV1;
+                           }),
+          "the verified local re-read keeps CONNECTING, persists no 0x0216/"
+          "0x0217 object, and advances to the HELLO signature request now that "
+          "the 16-byte channel id and the channel-bind binding hash have a real "
+          "producer; the peer 0x0212 binding and the peer HELLO/READY/ACK "
+          "exchange still have not happened");
+
+    /*
+     * gap 4 + gap 3, engine level. What the engine actually put on the Control
+     * stream is a real framed record, and it is its OWN 0x0212 binding: the exact
+     * bytes it just re-read from the ObjectStore, on wire::QuicChannel::Control,
+     * parseable by the same app_frame the receiving engine will use.
+     */
+    check(fixture.quic.writes == quic_writes + 1,
+          "the engine published exactly one record after the durable re-read");
+    {
+        wire::AppFrame frame{};
+        const auto framed = fixture.quic.last_write;
+        check(wire::parse_app_frame(wire::QuicChannel::Control, framed.data(),
+                                    framed.size(), &frame) == wire::Status::Ok &&
+                  frame.frame_type_tag ==
+                      wire::kSessionSigningBindingObjectKindV1 &&
+                  frame.object_size == wire::kSessionSigningBindingSizeV1,
+              "the engine's Control-stream record is a parseable 0x0212 frame");
+        check(frame.object_size == expected_binding.size() &&
+                  std::equal(frame.object_bytes,
+                             frame.object_bytes + frame.object_size,
+                             expected_binding.begin()),
+              "the published binding is exactly the bytes it re-read");
+    }
+
+    /*
+     * Now answer the HELLO signature request and the HELLO object write, and
+     * check that the engine frames and publishes a real LINK_HELLO. The signature
+     * bytes only have to be a canonical low-S encoding: this side's own verifier
+     * never sees them, and the peer's does through the crypto port.
+     */
+    {
+        /* Complete the binding write first: only then does the scheduler ask for
+         * the HELLO signature. */
+        deliver_provider_end(
+            fixture.quic.inbox, fixture.quic.last_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        fixture.executor.run_all();
+        check(fixture.key.last_token.operation_id != 0 &&
+                  fixture.key.last_token.scope.kind ==
+                      FLY_SESSION_SCOPE_LINK_V2,
+              "the engine requested the LINK_HELLO signature after publishing its "
+              "binding");
+
+        std::array<std::uint8_t, 64> signature{};
+        signature[0] = 0x01;  /* R non-zero and below the group order */
+        signature[32] = 0x40; /* S non-zero and at or below half the order */
+        deliver_provider_buffer(
+            fixture.key.inbox, fixture.key.last_token,
+            FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2, signature.data(),
+            signature.size());
+        fixture.executor.run_all();
+        check(fixture.object_store.last_kind ==
+                  flynes::session::link::kLinkHelloObjectKindV1 &&
+                  fixture.object_store.last_value.size() ==
+                      flynes::session::link::kLinkHelloSizeV1,
+              "the engine persisted the exact 488-byte LINK_HELLO object");
+        const auto hello_object_hash = fixture.object_store.last_hash;
+        deliver_provider_hash(
+            fixture.object_store.inbox, fixture.object_store.last_token,
+            FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 332, hello_object_hash);
+        fixture.executor.run_all();
+
+        check(fixture.quic.writes == quic_writes + 2,
+              "the engine then wrote exactly one more Control record");
+        wire::AppFrame hello{};
+        const auto framed = fixture.quic.last_write;
+        check(wire::parse_app_frame(wire::QuicChannel::Control, framed.data(),
+                                    framed.size(), &hello) == wire::Status::Ok &&
+                  hello.frame_type_tag ==
+                      flynes::session::link::kLinkHelloObjectKindV1 &&
+                  hello.object_size ==
+                      flynes::session::link::kLinkHelloSizeV1,
+              "the engine's second record is a parseable 488-byte LINK_HELLO");
+        /* The HELLO names the very binding the engine just published, so a peer
+         * that accepted that record can check this message. */
+        check(std::equal(hello.object_bytes +
+                             link::kLinkHelloBindingHashOffsetV1,
+                         hello.object_bytes +
+                             link::kLinkHelloBindingHashOffsetV1 + 32,
+                         expected_hash.begin()),
+              "the HELLO binds the same 0x0212 hash the engine published");
+        /* And it echoes the channel id the bind scheduler produced: a non-zero
+         * 16-byte value, which is what the peer will compare against its own
+         * derivation. */
+        check(std::any_of(hello.object_bytes +
+                              link::kLinkHelloChannelIdOffsetV1,
+                          hello.object_bytes +
+                              link::kLinkHelloChannelIdOffsetV1 + 16,
+                          [](std::uint8_t value) { return value != 0; }),
+              "the HELLO carries a non-zero 16-byte channel id");
+    }
 }
 
 void drive_initiator_pair_flow(EngineFixture& fixture, SessionSigningTail tail)
@@ -4132,6 +4465,26 @@ void test_session_signing_binding_shutdown_cancels_through_object_store()
         fixture, SessionSigningTail::ShutdownCancelsThroughObjectStore);
 }
 
+/*
+ * Decision 1 negatives for the R3 object-store read primitive, driven through
+ * the real public engine and the real link handshake mount point: an absent
+ * object and an object whose bytes disagree with the expected content hash are
+ * two different failures, and neither may be mistaken for the other or for a
+ * successful re-read.
+ */
+void test_link_handshake_read_object_missing_fails_closed()
+{
+    EngineFixture fixture;
+    drive_initiator_pair_flow(fixture, SessionSigningTail::ReadObjectMissing);
+}
+
+void test_link_handshake_read_object_hash_mismatch_fails_closed()
+{
+    EngineFixture fixture;
+    drive_initiator_pair_flow(fixture,
+                              SessionSigningTail::ReadObjectContentMismatch);
+}
+
 } // namespace
 
 int main()
@@ -4145,6 +4498,8 @@ int main()
     test_inviter_generates_and_sends_pair_context_from_crypto_port();
     test_session_signing_binding_object_hash_mismatch_fails_closed();
     test_session_signing_binding_shutdown_cancels_through_object_store();
+    test_link_handshake_read_object_missing_fails_closed();
+    test_link_handshake_read_object_hash_mismatch_fails_closed();
     test_public_candidate_projection_and_stop();
     return failures == 0 ? 0 : 1;
 }

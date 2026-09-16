@@ -226,6 +226,45 @@ std::uint32_t session_signing_payload_kind(
     return 0;
 }
 
+std::uint32_t link_handshake_payload_kind(
+    flynes::session::LinkHandshakeEffectKind kind) noexcept
+{
+    using Kind = flynes::session::LinkHandshakeEffectKind;
+    switch (kind)
+    {
+    case Kind::ReadLocalBindingObject:
+    case Kind::PersistHelloObject:
+    case Kind::PersistPeerHelloObject:
+    case Kind::PersistReadyObject:
+    case Kind::PersistPeerReadyObject:
+    case Kind::PersistAckObject:
+    case Kind::PersistPeerAckObject:
+        return FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2;
+    case Kind::SignHello:
+    case Kind::SignReady:
+    case Kind::SignAck:
+        return FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2;
+    case Kind::VerifyPeerSignature:
+        return FLY_SESSION_PROVIDER_CRYPTO_VERIFICATION_V2;
+    case Kind::PersistNegotiatedResult:
+        return FLY_SESSION_PROVIDER_SECURE_STORE_REVISION_V2;
+    case Kind::SendHello:
+    case Kind::SendReady:
+    case Kind::SendAck:
+    /* Publishing this side's own 0x0212 object on the Control stream is a plain
+     * QUIC write, exactly like the control messages. */
+    case Kind::SendLocalBinding:
+        return FLY_SESSION_PROVIDER_QUIC_END_V2;
+    /* gap 4: opening the Control stream answers with a stream handle pair, and a
+     * Control read answers with the bytes the peer wrote. */
+    case Kind::OpenControlStream:
+        return FLY_SESSION_PROVIDER_QUIC_STREAM_V2;
+    case Kind::ReadControlBytes:
+        return FLY_SESSION_PROVIDER_QUIC_DATA_V2;
+    }
+    return 0;
+}
+
 } // namespace
 
 namespace flynes::session {
@@ -322,8 +361,86 @@ void SessionEngine::publish_link_view_locked(std::uint32_t link_state)
     fly_session_view_release_v2(old);
 }
 
+/*
+ * The engine hands operation ids to two kinds of consumers:
+ *
+ *   * itself, through make_link_operation_token_locked() (GATT write and ack
+ *     tokens); and
+ *   * each scheduler, which owns a contiguous BLOCK of ids and mints its own
+ *     tokens by walking that block with a private cursor that it advances one
+ *     step per provider operation it issues.
+ *
+ * A scheduler never reports its cursor back to the engine: the engine only
+ * learns it when it processes one of that scheduler's completions and folds
+ * available_operation_id_ up to it. The engine counter is therefore stale for as
+ * long as a scheduler is in flight, and `available_operation_id_++` minted there
+ * can hand out an id that belongs to a block the scheduler has already been
+ * given — including ids the scheduler has not reached yet. That is what makes
+ * one operation id carry two different provider requests, after which neither
+ * can be answered under a token of its own: the first completion is recorded,
+ * the second is a different event under the same (operation_id,
+ * event_sequence) key and is refused with FLY_SESSION_V2_CONTRACT_VIOLATION.
+ *
+ * `available_operation_id_` is the single monotonic high-water mark for the whole
+ * engine, so the invariant every mint must preserve is:
+ *
+ *   an id is never issued to a second consumer, and after allocating a block
+ *   the mark is one past the END of that block rather than one past its first
+ *   id.
+ *
+ * It is preserved by two rules that together cover both directions:
+ *
+ *   1. reserve_operation_ids_locked() is the ONLY way a scheduler receives its
+ *      first_operation_id, and it advances the mark past the whole block. A
+ *      scheduler can therefore never mint an id that the engine already handed
+ *      to somebody else, not even in the window before its first completion.
+ *   2. make_link_operation_token_locked() skips any id a live scheduler cursor
+ *      has already reached. This keeps rule 1 honest even if a scheduler were
+ *      to mint more of its block than it reserved.
+ *
+ * Every block is oversized relative to the ids its scheduler can actually
+ * consume, because an unused id costs nothing while a shared one is a defect.
+ */
+std::uint64_t SessionEngine::reserve_operation_ids_locked(
+    std::uint64_t block) noexcept
+{
+    if (block == 0 || available_operation_id_ >
+            (std::numeric_limits<std::uint64_t>::max)() - block)
+        return 0;
+    const auto base = available_operation_id_;
+    available_operation_id_ = base + block;
+    return base;
+}
+
 fly_session_op_token_v2 SessionEngine::make_link_operation_token_locked()
 {
+    if (pair_material_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_material_->next_operation_id());
+    if (pair_reveal_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_reveal_->next_operation_id());
+    if (pair_signature_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_signature_->next_operation_id());
+    if (pair_known_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_known_->next_operation_id());
+    if (pair_sas_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_sas_->next_operation_id());
+    if (pair_key_confirm_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_key_confirm_->next_operation_id());
+    if (pair_capability_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_capability_->next_operation_id());
+    if (initial_plan_) available_operation_id_ = (std::max)(
+        available_operation_id_, initial_plan_->next_operation_id());
+    if (initial_bearer_) available_operation_id_ = (std::max)(
+        available_operation_id_, initial_bearer_->next_operation_id());
+    if (endpoint_offer_) available_operation_id_ = (std::max)(
+        available_operation_id_, endpoint_offer_->next_operation_id());
+    if (initial_quic_bind_) available_operation_id_ = (std::max)(
+        available_operation_id_, initial_quic_bind_->next_operation_id());
+    if (session_signing_) available_operation_id_ = (std::max)(
+        available_operation_id_, session_signing_->next_operation_id());
+    if (link_handshake_) available_operation_id_ = (std::max)(
+        available_operation_id_, link_handshake_->next_operation_id());
+
     fly_session_op_token_v2 value{};
     value.struct_size = FLY_SESSION_OP_TOKEN_V2_SIZE;
     value.abi_version = FLY_SESSION_ABI_VERSION_2;
@@ -335,12 +452,15 @@ fly_session_op_token_v2 SessionEngine::make_link_operation_token_locked()
     value.scope.kind = FLY_SESSION_SCOPE_LINK_V2;
     value.scope.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     value.connection_generation = link_generation_;
-    value.operation_id = next_operation_id_++;
+    value.operation_id = available_operation_id_;
+    if (available_operation_id_ != (std::numeric_limits<std::uint64_t>::max)())
+        ++available_operation_id_;
     return value;
 }
 
 void SessionEngine::cancel_pair_material_locked() noexcept
 {
+    cancel_link_handshake_locked();
     cancel_session_signing_locked();
     cancel_initial_quic_bind_locked();
     cancel_endpoint_offer_locked();
@@ -417,6 +537,65 @@ void SessionEngine::cancel_session_signing_locked() noexcept
     session_signing_active_ = false;
     session_signing_dispatch_pending_ = false;
     session_signing_.reset();
+}
+
+void SessionEngine::cancel_link_handshake_locked() noexcept
+{
+    if (!link_handshake_) return;
+    const auto effect = link_handshake_->poll_effect();
+    if (effect && link_handshake_active_)
+    {
+        fly_session_result_v2 result = FLY_SESSION_V2_INVALID_STATE;
+        switch (effect->kind)
+        {
+        case LinkHandshakeEffectKind::ReadLocalBindingObject:
+        case LinkHandshakeEffectKind::PersistHelloObject:
+        case LinkHandshakeEffectKind::PersistPeerHelloObject:
+        case LinkHandshakeEffectKind::PersistReadyObject:
+        case LinkHandshakeEffectKind::PersistPeerReadyObject:
+        case LinkHandshakeEffectKind::PersistAckObject:
+        case LinkHandshakeEffectKind::PersistPeerAckObject:
+            result = ports_.cancel_object_store(&effect->token);
+            break;
+        case LinkHandshakeEffectKind::SignHello:
+        case LinkHandshakeEffectKind::SignReady:
+        case LinkHandshakeEffectKind::SignAck:
+            result = ports_.cancel_key(&effect->token);
+            break;
+        case LinkHandshakeEffectKind::VerifyPeerSignature:
+            result = ports_.cancel_crypto(&effect->token);
+            break;
+        case LinkHandshakeEffectKind::PersistNegotiatedResult:
+            result = ports_.cancel_secure_store(&effect->token);
+            break;
+        case LinkHandshakeEffectKind::SendHello:
+        case LinkHandshakeEffectKind::SendReady:
+        case LinkHandshakeEffectKind::SendAck:
+        /* The local 0x0212 publication is a write on the Control stream too. */
+        case LinkHandshakeEffectKind::SendLocalBinding:
+        /* gap 4: opening and reading the Control stream are both QUIC
+         * operations on the same port, so they cancel through it too. */
+        case LinkHandshakeEffectKind::OpenControlStream:
+        case LinkHandshakeEffectKind::ReadControlBytes:
+            result = ports_.cancel_quic(&effect->token);
+            break;
+        }
+        if (result == FLY_SESSION_V2_OK || result == FLY_SESSION_V2_CANCELLED ||
+            result == FLY_SESSION_V2_DUPLICATE)
+            link_handshake_->cancel_pending();
+    }
+    else if (effect)
+    {
+        link_handshake_->cancel_pending();
+    }
+    /* The scheduler owns the Control stream it opened, but the QUIC provider
+     * releases stream handles with the connection, so nothing is released here:
+     * initial_quic_bind_ owns the connection and releases everything under it.
+     * Only the outstanding operation is cancelled, so the engine never
+     * double-releases a handle. */
+    link_handshake_active_ = false;
+    link_handshake_dispatch_pending_ = false;
+    link_handshake_.reset();
 }
 
 void SessionEngine::cancel_pair_known_locked() noexcept
@@ -682,6 +861,10 @@ void SessionEngine::release_pair_sas_locked() noexcept
     pair_sas_.reset();
     pair_sas_dispatch_pending_ = false;
     pair_sas_expected_kind_ = 0;
+    // Releasing the SAS stage invalidates every held known-status envelope: the
+    // gate that made them legal for this link no longer holds, so a later link
+    // must never replay them.
+    pending_pair_known_envelopes_.discard();
 }
 
 void SessionEngine::cancel_pair_signature_locked() noexcept
@@ -728,6 +911,9 @@ void SessionEngine::release_pair_signature_locked() noexcept
     pair_signature_.reset();
     pair_signature_dispatch_pending_ = false;
     pair_signature_expected_kind_ = 0;
+    // Same reason as release_pair_sas_locked: the pair flow that legitimised a
+    // buffered known-status envelope is gone.
+    pending_pair_known_envelopes_.discard();
 }
 
 void SessionEngine::release_pair_material_locked() noexcept
@@ -746,6 +932,9 @@ void SessionEngine::release_pair_material_locked() noexcept
     pair_material_.reset();
     pair_material_dispatch_pending_ = false;
     pair_material_expected_kind_ = 0;
+    // The pair flow is over for this link; nothing that arrived for it may
+    // survive into the next one.
+    pending_pair_known_envelopes_.discard();
 }
 
 void SessionEngine::cancel_pair_reveal_locked() noexcept
@@ -799,9 +988,7 @@ bool SessionEngine::start_pair_reveal_locked() noexcept
     if (!pair_material_ || !pair_material_->ready() || !pair_exchange_ ||
         !pair_context_ || pair_exchange_->failed() || pair_reveal_ ||
         (local_pair_role_ != wire::PairRoleV1::Initiator &&
-         local_pair_role_ != wire::PairRoleV1::Responder) ||
-        next_operation_id_ >
-            (std::numeric_limits<std::uint64_t>::max)() - 8)
+         local_pair_role_ != wire::PairRoleV1::Responder))
         return false;
     const auto material = pair_material_->material();
     if (!material)
@@ -812,7 +999,8 @@ bool SessionEngine::start_pair_reveal_locked() noexcept
               reveal_start.engine_instance_id.begin());
     reveal_start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     reveal_start.generation = link_generation_;
-    reveal_start.first_operation_id = next_operation_id_;
+    reveal_start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     reveal_start.local_role = local_pair_role_;
     reveal_start.context = *pair_context_;
     reveal_start.initiator_commit = pair_exchange_->initiator_commit();
@@ -829,7 +1017,6 @@ bool SessionEngine::start_pair_reveal_locked() noexcept
     {
         return false;
     }
-    next_operation_id_ += 8;
     pair_reveal_dispatch_pending_ = true;
     return true;
 }
@@ -841,9 +1028,7 @@ bool SessionEngine::start_pair_signature_locked() noexcept
         !pair_reveal_->ready() || !pair_exchange_->ready() ||
         !ports_.has_object_store() ||
         (local_pair_role_ != wire::PairRoleV1::Initiator &&
-         local_pair_role_ != wire::PairRoleV1::Responder) ||
-        next_operation_id_ >
-            (std::numeric_limits<std::uint64_t>::max)() - 10)
+         local_pair_role_ != wire::PairRoleV1::Responder))
         return false;
     const auto material = pair_material_->material();
     const auto reveal_secrets = pair_reveal_->owned_secrets();
@@ -856,7 +1041,8 @@ bool SessionEngine::start_pair_signature_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.local_identity_key = material->identity_key;
     start.ecdh_secret = reveal_secrets.ecdh_secret;
@@ -880,7 +1066,6 @@ bool SessionEngine::start_pair_signature_locked() noexcept
     {
         return false;
     }
-    next_operation_id_ += 10;
     pair_signature_dispatch_pending_ = true;
     return true;
 }
@@ -899,7 +1084,8 @@ bool SessionEngine::start_pair_sas_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.ecdh_secret = reveal_secrets.ecdh_secret;
     start.transcript_hash = pair_signature_->transcript_hash();
     try
@@ -921,8 +1107,7 @@ bool SessionEngine::start_pair_known_locked() noexcept
 {
     if (!pair_signature_ || !pair_sas_ || !pair_exchange_ || !pair_material_ ||
         pair_known_ ||
-        !pair_signature_->ready() || !pair_sas_->ready() ||
-        next_operation_id_ > (std::numeric_limits<std::uint64_t>::max)() - 12)
+        !pair_signature_->ready() || !pair_sas_->ready())
         return false;
     const auto signature = pair_signature_->owned_secrets();
     const auto sas = pair_sas_->owned_secrets();
@@ -937,7 +1122,8 @@ bool SessionEngine::start_pair_known_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = pair_signature_->transcript_hash();
     start.initiator_public_key =
@@ -960,8 +1146,77 @@ bool SessionEngine::start_pair_known_locked() noexcept
         pair_known_ = std::move(known);
     }
     catch (const std::bad_alloc&) { return false; }
-    next_operation_id_ += 12;
     pair_known_dispatch_pending_ = pair_known_->poll_effect().has_value();
+    return drain_pair_known_envelopes_locked();
+}
+
+bool SessionEngine::buffer_pair_known_envelope_locked(
+    std::uint8_t type, const std::uint8_t* body, std::size_t size,
+    const std::array<std::uint8_t, 32>& logical_hash)
+{
+    /*
+     * This gate answers one question: has THIS side locally entered the pair
+     * flow for the current link, so that a peer Status/Branch is plausible at
+     * all? It deliberately does not ask whether the stages that may lag behind
+     * are already finished.
+     *
+     * pair_sas_->ready() is set only by the scheduler's final HmacSas step and
+     * pair_material_->ready() only once the local key derivation returns, so
+     * both are legitimately still pending during exactly the window this hold
+     * exists for. Requiring either of them (or pair_signature_->ready()) would
+     * refuse the very envelope the hold was written for, because pair_known_
+     * itself only exists once pair_sas_ is ready.
+     *
+     * A non-null pair_signature_ is the strongest cheap proof that the peer is
+     * entitled to send a Status: the local signature stage is created only
+     * after the peer context and both commits were accepted, and the peer
+     * emits its own Status only once its signature stage has completed.
+     * pair_exchange_ and pair_material_ are created no later than that stage,
+     * so the four non-null checks together mean this is a live exchange bound
+     * to this link generation.
+     *
+     * Being early is not the same as being wrong, and holding defers rather
+     * than skips: every held envelope is replayed through the same
+     * accept_peer_envelope a live one goes through, which still enforces the
+     * stage, the counter and the HMAC. Anything not structurally legal for
+     * this pair exchange is rejected by the queue's own validation before it
+     * is ever held.
+     */
+    if (!pair_context_ ||
+        (local_pair_role_ != wire::PairRoleV1::Initiator &&
+         local_pair_role_ != wire::PairRoleV1::Responder) ||
+        !pair_signature_ || !pair_sas_ || !pair_exchange_ || !pair_material_)
+        return false;
+    if (current_view_->snapshot.link_state != FLY_SESSION_LINK_AUTHENTICATING_V2)
+        return false;
+    const auto result = pending_pair_known_envelopes_.enqueue(
+        type, body, size, logical_hash);
+    return result == link::PairKnownQueueResult::Queued;
+}
+
+bool SessionEngine::drain_pair_known_envelopes_locked() noexcept
+{
+    if (!pair_known_ || pair_known_->failed()) return false;
+    std::vector<link::QueuedPairKnownEnvelope> ready;
+    try
+    {
+        if (pending_pair_known_envelopes_.release(&ready) !=
+            link::PairKnownQueueResult::Released)
+            return false;
+        for (auto& record : ready)
+        {
+            const auto accepted = pair_known_->accept_peer_envelope(
+                record.logical_type, record.body.data(), record.body.size(),
+                record.logical_hash);
+            if (accepted != FLY_SESSION_V2_ACCEPTED) return false;
+            if (pair_known_->poll_effect())
+                pair_known_dispatch_pending_ = true;
+        }
+    }
+    catch (const std::bad_alloc&)
+    {
+        return false;
+    }
     return true;
 }
 
@@ -979,7 +1234,8 @@ bool SessionEngine::start_pair_key_confirm_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = pair_signature_->transcript_hash();
     start.initiator_contribution = pair_exchange_->initiator_contribution();
@@ -1030,7 +1286,8 @@ bool SessionEngine::start_pair_capability_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = pair_signature_->transcript_hash();
     start.local_summary = *local_pair_capability_;
@@ -1314,7 +1571,8 @@ bool SessionEngine::start_initial_plan_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.evidence = *verified_pair_evidence_;
     start.selected_plan = *selected_pair_plan_;
@@ -1378,7 +1636,8 @@ bool SessionEngine::start_initial_bearer_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = initial_plan_->verified_plan().transcript;
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
@@ -1447,7 +1706,8 @@ bool SessionEngine::start_endpoint_offer_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = initial_plan_->verified_plan().transcript;
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
@@ -1509,7 +1769,8 @@ bool SessionEngine::start_initial_quic_bind_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = initial_plan_->verified_plan().transcript;
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
@@ -1552,7 +1813,8 @@ bool SessionEngine::start_session_signing_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.pair_transcript_hash = pair_signature_->transcript_hash();
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
                 start.session_id.begin());
@@ -1568,6 +1830,161 @@ bool SessionEngine::start_session_signing_locked() noexcept
     catch (const std::bad_alloc&) { return false; }
     session_signing_dispatch_pending_ =
         session_signing_->poll_effect().has_value();
+    return true;
+}
+
+/*
+ * LINK_HELLO / LINK_READY. The only legal mount point is the moment the local
+ * 0x0212 binding becomes durable through *both* persistence gates (SecureStore
+ * revision + immutable object), i.e. session_signing_->ready().
+ *
+ * Both former blockers are now wired:
+ *
+ *   1. ObjectStore read (R3, appended to fly_session_object_store_port_v2).
+ *      The first effect is ReadLocalBindingObject: the scheduler re-reads the
+ *      persisted exact 312-byte 0x0212 object and verifies its hash instead of
+ *      assuming the write landed. The engine dispatches it through
+ *      ports_.read_immutable_object(); a missing object is UNAVAILABLE and a
+ *      disagreeing object is a contract/auth failure, never conflated.
+ *   2. Signature verification goes through the existing asynchronous
+ *      verify_prehashed port. The W1 decoders are two-stage, so a peer message
+ *      is parsed first and accepted only after the crypto terminal returns.
+ *
+ * Still absent, and deliberately left zero rather than fabricated:
+ *
+ *   3. The negotiated capability/runtime result and its hash. Its byte layout is
+ *      not frozen by any approved document, so this engine cannot produce a
+ *      canonical value yet (flagged for owner arbitration; see the report).
+ *   4. The peer's accepted 0x0212 binding (peer_binding_hash /
+ *      peer_identity_key_id / peer_session_signing_public_key): the peer binding
+ *      is only carried inside the peer's LINK_HELLO, and this engine has no
+ *      inbound Control stream to receive it on.
+ *
+ * The 16-byte channel id and the canonical channel-bind binding hash used to be
+ * on this list. They are now produced by initial_quic_bind_ (channel_id() plus
+ * connector/listener proof hashes canonicalised by
+ * wire::channel_bind_binding_hash_v1), because the owner corrected the contract
+ * on 2026-09-16: the former u64 channel_id / channel_bind_id were invented and
+ * matched no implementation.
+ *
+ * Because of 3 and 4 the scheduler stops as soon as one of them is needed and
+ * reports missing_inputs(). The engine then keeps the link at
+ * FLY_SESSION_LINK_CONNECTING_V2 - the honest projection, since no peer
+ * HELLO/READY exchange took place - instead of publishing a failure for a seam
+ * that is simply not wired.
+ *
+ * Every other field is copied from exactly one scheduler that already owns the
+ * value, so no protocol byte is invented here:
+ *
+ *   engine_instance_id            authorization_->engine_instance_id
+ *   link_id / generation          link_generation_
+ *   first_operation_id            available_operation_id_
+ *   local_role                    local_pair_role_
+ *   session_id                    pair_context_->bytes[32..48)
+ *   control_stream                initial_quic_bind_->owned_resources().send_stream
+ *   pair_transcript_hash          pair_signature_->transcript_hash()
+ *   pair_transcript_object_hash   pair_signature_->transcript_object_hash()
+ *   endpoint_offer_hash           pair_signature_->transcript_hash() (the offer
+ *                                 and the QUIC bind derive from one transcript)
+ *   selected_plan_hash            initial_plan_->verified_plan().selected_plan_hash
+ *   local_binding_hash            session_signing_->material().binding_hash
+ *   local_identity_public_key     pair_material_->material()->contribution.identity_public_key
+ *   local_session_signing_public_key  session_signing_->material().public_key
+ *   peer_identity_public_key      pair_reveal_->peer_contribution()->identity_public_key
+ *   local_summary_hash            pending_local_capability_hash_
+ *   peer_summary_hash             pair_capability_->peer_logical_hash()
+ *   merge_result_hash             initial_plan_->verified_plan().final_logical_hash
+ *   session_signing_key           session_signing_->material().key
+ *
+ * The scheduler owns no provider resource: the signing key belongs to
+ * session_signing_ and the control stream to initial_quic_bind_, and each
+ * releases its own handle. Cancellation below therefore cancels only the
+ * outstanding operation and never releases a borrowed handle.
+ *
+ * Every field below is copied from exactly one owner that already produced it.
+ * The negotiated result and the peer's accepted 0x0212 binding have no producer
+ * in this build, so they stay zero: the handshake starts, reads the local
+ * binding back through the R3 object-store read port, signs a real LINK_HELLO
+ * and then stops at the first absent input by reporting missing_inputs() rather
+ * than inventing a value or publishing a failed link.
+ */
+bool SessionEngine::start_link_handshake_locked() noexcept
+{
+    if (link_handshake_ || !session_signing_ || !session_signing_->ready() ||
+        !initial_quic_bind_ || !initial_quic_bind_->channel_bound() ||
+        !pair_signature_ || !pair_signature_->ready() ||
+        !pair_material_ || !pair_material_->ready() || !pair_capability_ ||
+        !initial_plan_ || !authorization_)
+        return false;
+    const auto material = pair_material_->material();
+    const auto signing = session_signing_->material();
+    if (!material || signing.key == 0 || !ports_.has_object_store() ||
+        !ports_.has_object_store_read())
+        return false;
+
+    LinkHandshakeStartV1 start{};
+    std::copy(authorization_->engine_instance_id.begin(),
+              authorization_->engine_instance_id.end(),
+              start.engine_instance_id.begin());
+    start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
+    start.generation = link_generation_;
+    start.link_generation = link_generation_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
+    start.session_id = initial_quic_bind_->session_id();
+    start.local_role = local_pair_role_;
+    /*
+     * Channel identity and bind binding, both owned by initial_quic_bind_ and
+     * both read only after channel_bound() is true (guarded above).
+     *
+     *   channel_id        the 16-byte wire::derive_channel_id_v1 value: the
+     *                     exact same value the bind codec and the ACK use.
+     *   channel_bind_hash the canonical hash of (channel_id, connector proof
+     *                     hash, listener proof hash) — the three values the
+     *                     approved design uses to identify a bind. The proofs
+     *                     here are the ones this side actually built or verified
+     *                     inside the bind, never assumed.
+     */
+    start.channel_id = initial_quic_bind_->channel_id();
+    if (wire::channel_bind_binding_hash_v1(
+            start.channel_id, initial_quic_bind_->connector_proof_hash(),
+            initial_quic_bind_->listener_proof_hash(),
+            &start.channel_bind_hash) != wire::Status::Ok)
+        return false;
+    start.pair_transcript_hash = pair_signature_->transcript_hash();
+    start.pair_transcript_object_hash = pair_signature_->transcript_object_hash();
+    /* The locked bearer path and the offer derive from the same transcript. */
+    start.endpoint_offer_hash = pair_signature_->transcript_hash();
+    start.selected_plan_hash = initial_plan_->verified_plan().selected_plan_hash;
+    start.local_binding_hash = signing.binding_hash;
+    start.local_identity_public_key = material->contribution.identity_public_key;
+    start.local_session_signing_public_key = signing.public_key;
+    start.local_summary_hash = pending_local_capability_hash_;
+    start.peer_summary_hash = pair_capability_->peer_logical_hash();
+    start.merge_result_hash = initial_plan_->verified_plan().final_logical_hash;
+    start.session_signing_key = signing.key;
+    /*
+     * gap 4: the Control stream is NOT the bind stream. The bind stream's send
+     * side is already FINed, so handing it over here is exactly the defect this
+     * fixes. The scheduler opens or accepts its own Control stream on the bound
+     * connection, which is why it takes the connection handle and this side's
+     * physical TLS role instead.
+     */
+    start.quic_connection = initial_quic_bind_->owned_resources().connection;
+    start.local_is_listener = initial_quic_bind_->listener();
+    if (pair_reveal_) {
+        const auto peer = pair_reveal_->peer_contribution();
+        if (peer) start.peer_identity_public_key = peer->identity_public_key;
+    }
+    try
+    {
+        LinkHandshakeScheduler handshake;
+        if (!handshake.begin(start)) return false;
+        link_handshake_ = std::move(handshake);
+    }
+    catch (const std::bad_alloc&) { return false; }
+    link_handshake_dispatch_pending_ =
+        link_handshake_->poll_effect().has_value();
     return true;
 }
 
@@ -1681,10 +2098,34 @@ bool SessionEngine::accept_completed_gatt_locked(
     }
     if (type == 21 || type == 17)
     {
-        if (!pair_known_ || pair_known_->failed()) return false;
+        if (pair_known_ && pair_known_->failed()) return false;
         std::array<std::uint8_t, 32> logical_hash{};
         std::copy_n(message.logical_hash, logical_hash.size(),
                     logical_hash.begin());
+        if (!pair_known_)
+        {
+            // Two engines that run at different speeds is the normal case on a
+            // real bearer: the peer that finishes SAS first publishes its known
+            // status while this side is still a few provider operations short of
+            // its own PairKnownScheduler. The envelope is already legal for this
+            // link generation, so dropping it would fail a link that is merely
+            // early rather than wrong. Hold the bytes exactly as they arrived and
+            // replay them the moment the local decoder exists; anything that is
+            // not legal for this generation still fails closed right here.
+            //
+            // Holding copies bytes, so an allocation failure is handled the same way
+            // every other allocating branch in this function handles it: the message
+            // is refused instead of escaping as an exception.
+            try
+            {
+                return buffer_pair_known_envelope_locked(
+                    type, message.body, message.body_size, logical_hash);
+            }
+            catch (const std::bad_alloc&)
+            {
+                return false;
+            }
+        }
         const auto accepted = pair_known_->accept_peer_envelope(
             type, message.body, message.body_size, logical_hash);
         if (accepted == FLY_SESSION_V2_ACCEPTED && pair_known_->poll_effect())
@@ -2075,6 +2516,8 @@ fly_session_result_v2 SessionEngine::deliver(
             same_token(event.token, initial_quic_bind_token_);
         const bool session_signing_event = session_signing_active_ &&
             same_token(event.token, session_signing_token_);
+        const bool link_handshake_event = link_handshake_active_ &&
+            same_token(event.token, link_handshake_token_);
         const bool gatt_write_event = gatt_write_active_ &&
             same_token(event.token, gatt_write_token_);
         if (!platform_event && !discovery_event && !gatt_event &&
@@ -2085,7 +2528,7 @@ fly_session_result_v2 SessionEngine::deliver(
             !pair_key_confirm_event && !pair_capability_event &&
             !initial_plan_event && !initial_bearer_event &&
             !endpoint_offer_event && !initial_quic_bind_event &&
-            !session_signing_event &&
+            !session_signing_event && !link_handshake_event &&
             !gatt_write_event)
         {
             return FLY_SESSION_V2_STALE;
@@ -2098,6 +2541,7 @@ fly_session_result_v2 SessionEngine::deliver(
             pair_capability_event || initial_plan_event ||
             initial_bearer_event || endpoint_offer_event ||
             initial_quic_bind_event || session_signing_event ||
+            link_handshake_event ||
             gatt_write_event)
         {
             if (gatt_event &&
@@ -2125,6 +2569,7 @@ fly_session_result_v2 SessionEngine::deliver(
                 : endpoint_offer_event ? endpoint_offer_token_
                 : initial_quic_bind_event ? initial_quic_bind_token_
                 : session_signing_event ? session_signing_token_
+                : link_handshake_event ? link_handshake_token_
                                        : gatt_write_token_;
             const auto expected_kind = pair_context_random_event
                 ? static_cast<std::uint32_t>(
@@ -2144,6 +2589,7 @@ fly_session_result_v2 SessionEngine::deliver(
                 : endpoint_offer_event ? endpoint_offer_expected_kind_
                 : initial_quic_bind_event ? initial_quic_bind_expected_kind_
                 : session_signing_event ? session_signing_expected_kind_
+                : link_handshake_event ? link_handshake_expected_kind_
                 : gatt_write_event
                     ? static_cast<std::uint32_t>(
                           FLY_SESSION_PROVIDER_DISCOVERY_END_V2)
@@ -3446,6 +3892,183 @@ void SessionEngine::run_work() noexcept
             continue;
         }
 
+        bool dispatch_link_handshake = false;
+        LinkHandshakeEffect link_handshake_effect{};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (link_handshake_dispatch_pending_ && link_handshake_ &&
+                !shutdown_requested_)
+            {
+                const auto effect = link_handshake_->poll_effect();
+                if (effect)
+                {
+                    link_handshake_dispatch_pending_ = false;
+                    link_handshake_effect = *effect;
+                    link_handshake_token_ = effect->token;
+                    link_handshake_expected_kind_ =
+                        link_handshake_payload_kind(effect->kind);
+                    link_handshake_active_ = true;
+                    dispatch_link_handshake = true;
+                }
+            }
+        }
+        if (dispatch_link_handshake)
+        {
+            const fly_session_bytes_v2 name_space{
+                link_handshake_effect.name_space.data(),
+                static_cast<std::uint32_t>(
+                    link_handshake_effect.name_space.size()), 0};
+            const fly_session_bytes_v2 record_key{
+                link_handshake_effect.record_key.data(),
+                static_cast<std::uint32_t>(
+                    link_handshake_effect.record_key.size()), 0};
+            const fly_session_bytes_v2 value{
+                link_handshake_effect.value.data(),
+                static_cast<std::uint32_t>(
+                    link_handshake_effect.value.size()), 0};
+            fly_session_result_v2 result = FLY_SESSION_V2_INVALID_STATE;
+            switch (link_handshake_effect.kind)
+            {
+            case LinkHandshakeEffectKind::OpenControlStream:
+                /*
+                 * gap 4. The link control plane runs on its own bidirectional
+                 * Control stream: the connector opens it, the listener accepts
+                 * it. The bind stream's send side is FINed and is never reused,
+                 * and the stream kind is wire::QuicChannel::Control, the channel
+                 * wire/app_frame.cpp registers 0x0216/0x0217 on.
+                 */
+                result = ports_.open_quic_stream(
+                    true, link_handshake_effect.accept,
+                    &link_handshake_effect.token,
+                    link_handshake_effect.resource,
+                    link_handshake_effect.opener_role,
+                    static_cast<std::uint32_t>(wire::QuicChannel::Control),
+                    inbox_);
+                break;
+            case LinkHandshakeEffectKind::ReadControlBytes:
+                /*
+                 * gap 4. Credit, not a read call: the provider answers with the
+                 * peer's bytes as a data event, which the scheduler deframes
+                 * through app_frame before anything reaches the handshake.
+                 */
+                result = ports_.grant_quic_read(
+                    &link_handshake_effect.token,
+                    link_handshake_effect.resource,
+                    link_handshake_effect.read_credit, inbox_);
+                break;
+            case LinkHandshakeEffectKind::ReadLocalBindingObject:
+                /*
+                 * The durable re-read gate. The engine reads the exact 0x0212
+                 * object back through the R3 object-store read primitive and the
+                 * scheduler then verifies the returned 312 bytes and their hash,
+                 * so a write that never landed can never be assumed.
+                 *
+                 * A missing object is FLY_SESSION_V2_UNAVAILABLE from the port;
+                 * an object whose bytes or hash disagree is a terminal failure in
+                 * the scheduler's completion branch. The two are never merged.
+                 */
+                result = ports_.read_immutable_object(
+                    &link_handshake_effect.token,
+                    link_handshake_effect.object_kind,
+                    link_handshake_effect.expected_hash.data(), inbox_);
+                break;
+            case LinkHandshakeEffectKind::VerifyPeerSignature:
+            {
+                /* All cryptography goes through the port, asynchronously; the
+                 * engine thread never verifies a signature itself. */
+                const fly_session_bytes_v2 public_key{
+                    link_handshake_effect.signer_public_key.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.signer_public_key.size()), 0};
+                const fly_session_bytes_v2 signature{
+                    link_handshake_effect.signature.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.signature.size()), 0};
+                const fly_session_bytes_v2 verify_domain{
+                    link_handshake_effect.domain.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.domain.size()), 0};
+                result = ports_.verify_prehashed(
+                    &link_handshake_effect.token, public_key, verify_domain,
+                    link_handshake_effect.digest.data(), signature, inbox_);
+                break;
+            }
+            case LinkHandshakeEffectKind::SignHello:
+            case LinkHandshakeEffectKind::SignReady:
+            case LinkHandshakeEffectKind::SignAck:
+            {
+                const fly_session_bytes_v2 domain{
+                    link_handshake_effect.domain.data(),
+                    static_cast<std::uint32_t>(
+                        link_handshake_effect.domain.size()), 0};
+                result = ports_.sign_prehashed(
+                    &link_handshake_effect.token,
+                    link_handshake_effect.resource,
+                    link_handshake_effect.key_purpose, domain,
+                    link_handshake_effect.digest.data(), inbox_);
+                break;
+            }
+            case LinkHandshakeEffectKind::PersistNegotiatedResult:
+            {
+                fly_session_buffer_v2_t* buffer = nullptr;
+                if (fly_session_buffer_create_copy_v2(value, &buffer) ==
+                    FLY_SESSION_V2_OK)
+                    result = ports_.compare_replace_secure_store(
+                        &link_handshake_effect.token, name_space, record_key,
+                        link_handshake_effect.expected_revision, buffer, inbox_);
+                else result = FLY_SESSION_V2_OUT_OF_MEMORY;
+                fly_session_buffer_release_v2(buffer);
+                break;
+            }
+            case LinkHandshakeEffectKind::PersistHelloObject:
+            case LinkHandshakeEffectKind::PersistPeerHelloObject:
+            case LinkHandshakeEffectKind::PersistReadyObject:
+            case LinkHandshakeEffectKind::PersistPeerReadyObject:
+            case LinkHandshakeEffectKind::PersistAckObject:
+            case LinkHandshakeEffectKind::PersistPeerAckObject:
+            {
+                fly_session_buffer_v2_t* buffer = nullptr;
+                if (fly_session_buffer_create_copy_v2(value, &buffer) ==
+                    FLY_SESSION_V2_OK)
+                    result = ports_.put_immutable_object(
+                        &link_handshake_effect.token,
+                        link_handshake_effect.object_kind,
+                        link_handshake_effect.expected_hash.data(), buffer,
+                        inbox_);
+                else result = FLY_SESSION_V2_OUT_OF_MEMORY;
+                fly_session_buffer_release_v2(buffer);
+                break;
+            }
+            case LinkHandshakeEffectKind::SendHello:
+            case LinkHandshakeEffectKind::SendReady:
+            case LinkHandshakeEffectKind::SendAck:
+            case LinkHandshakeEffectKind::SendLocalBinding:
+            {
+                fly_session_buffer_v2_t* buffer = nullptr;
+                if (fly_session_buffer_create_copy_v2(value, &buffer) ==
+                    FLY_SESSION_V2_OK)
+                    result = ports_.write_quic(
+                        &link_handshake_effect.token,
+                        link_handshake_effect.resource, buffer, false, inbox_);
+                else result = FLY_SESSION_V2_OUT_OF_MEMORY;
+                fly_session_buffer_release_v2(buffer);
+                break;
+            }
+            }
+            if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                link_handshake_active_ = false;
+                link_handshake_dispatch_pending_ = false;
+                cancel_link_handshake_locked();
+                cancel_pair_material_locked();
+                release_pair_material_locked();
+                discovery_disconnect_pending_ = discovery_connection_ != 0;
+                publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+            }
+            continue;
+        }
+
         bool dispatch_bearer_probe = false;
         fly_session_op_token_v2 local_bearer_probe_token{};
         {
@@ -3735,9 +4358,12 @@ void SessionEngine::run_work() noexcept
                                 capability.data(), capability.size()) ==
                                 wire::Status::Ok;
                     }
-                    if (accepted && pair_context_ &&
-                        next_operation_id_ <=
-                            (std::numeric_limits<std::uint64_t>::max)() - 8)
+                    const auto pair_material_base =
+                        accepted && pair_context_
+                        ? reserve_operation_ids_locked(
+                              kSchedulerOperationBlockV1)
+                        : 0;
+                    if (pair_material_base != 0)
                     {
                         local_pair_capability_ = capability;
                         PairMaterialStartV1 start{};
@@ -3747,8 +4373,7 @@ void SessionEngine::run_work() noexcept
                         start.link_id[0] =
                             static_cast<std::uint8_t>(link_generation_);
                         start.generation = link_generation_;
-                        start.first_operation_id = next_operation_id_;
-                        next_operation_id_ += 8;
+                        start.first_operation_id = pair_material_base;
                         start.context = *pair_context_;
                         start.role = local_pair_role_;
                         start.capability_summary_hash = wire::domain_hash(
@@ -3814,19 +4439,35 @@ void SessionEngine::run_work() noexcept
                                     FLY_SESSION_LINK_FAILED_V2);
                             }
                             else if (completed_type == static_cast<std::uint8_t>(
-                                         wire::GattLogicalType::PairSignature) &&
-                                     (!pair_signature_ ||
-                                      pair_signature_->mark_local_signature_sent() !=
-                                          FLY_SESSION_V2_OK ||
-                                      (pair_signature_->ready() &&
-                                       !start_pair_sas_locked())))
+                                         wire::GattLogicalType::PairSignature))
                             {
-                                cancel_pair_material_locked();
-                                release_pair_material_locked();
-                                discovery_disconnect_pending_ =
-                                    discovery_connection_ != 0;
-                                publish_link_view_locked(
-                                    FLY_SESSION_LINK_FAILED_V2);
+                                /*
+                                 * Having sent the local signature is not the end of this
+                                 * stage for the non-initiator: mark_local_signature_sent
+                                 * derives the durable transcript persist, which is a
+                                 * provider effect like any other and has to be
+                                 * dispatched. Without that dispatch the engine sits on a
+                                 * pending effect that no port ever sees, so the pair
+                                 * stalls with nothing outstanding - the same silent-stall
+                                 * shape the known-status hold removes. The success path
+                                 * mirrors the crypto-completion handler above.
+                                 */
+                                const bool ok = pair_signature_ &&
+                                    pair_signature_->mark_local_signature_sent() ==
+                                        FLY_SESSION_V2_OK &&
+                                    (!pair_signature_->ready() ||
+                                     start_pair_sas_locked());
+                                if (ok && pair_signature_->poll_effect())
+                                    pair_signature_dispatch_pending_ = true;
+                                if (!ok)
+                                {
+                                    cancel_pair_material_locked();
+                                    release_pair_material_locked();
+                                    discovery_disconnect_pending_ =
+                                        discovery_connection_ != 0;
+                                    publish_link_view_locked(
+                                        FLY_SESSION_LINK_FAILED_V2);
+                                }
                             }
                             else if ((completed_type == static_cast<std::uint8_t>(
                                           wire::GattLogicalType::PairKnownStatus) ||
@@ -3903,8 +4544,8 @@ void SessionEngine::run_work() noexcept
                                         FLY_SESSION_V2_OK;
                                 if (accepted)
                                 {
-                                    next_operation_id_ = (std::max)(
-                                        next_operation_id_,
+                                    available_operation_id_ = (std::max)(
+                                        available_operation_id_,
                                         initial_plan_->next_operation_id());
                                     initial_plan_dispatch_pending_ =
                                         initial_plan_->poll_effect().has_value();
@@ -3930,8 +4571,8 @@ void SessionEngine::run_work() noexcept
                                         FLY_SESSION_V2_OK;
                                 if (accepted)
                                 {
-                                    next_operation_id_ = (std::max)(
-                                        next_operation_id_,
+                                    available_operation_id_ = (std::max)(
+                                        available_operation_id_,
                                         initial_bearer_->next_operation_id());
                                     publish_link_view_locked(
                                         FLY_SESSION_LINK_CONNECTING_V2);
@@ -3963,8 +4604,8 @@ void SessionEngine::run_work() noexcept
                                         FLY_SESSION_V2_OK;
                                 if (accepted)
                                 {
-                                    next_operation_id_ = (std::max)(
-                                        next_operation_id_,
+                                    available_operation_id_ = (std::max)(
+                                        available_operation_id_,
                                         endpoint_offer_->next_operation_id());
                                     accepted = start_initial_quic_bind_locked();
                                 }
@@ -3983,8 +4624,8 @@ void SessionEngine::run_work() noexcept
                                      pair_key_confirm_ &&
                                      pair_key_confirm_->ready())
                             {
-                                next_operation_id_ = (std::max)(
-                                    next_operation_id_,
+                                available_operation_id_ = (std::max)(
+                                    available_operation_id_,
                                     pair_key_confirm_->next_operation_id());
                                 if (start_pair_capability_locked())
                                     publish_link_view_locked(
@@ -4147,8 +4788,8 @@ void SessionEngine::run_work() noexcept
                     }
                     else if (result == FLY_SESSION_V2_OK)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_, pair_sas_->next_operation_id());
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_, pair_sas_->next_operation_id());
                         if (!start_pair_known_locked())
                         {
                             release_pair_sas_locked();
@@ -4184,8 +4825,8 @@ void SessionEngine::run_work() noexcept
                     }
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_, pair_known_->next_operation_id());
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_, pair_known_->next_operation_id());
                     if (accepted && pair_known_->poll_effect())
                         pair_known_dispatch_pending_ = true;
                     if (accepted && pair_known_->local_envelope_ready() &&
@@ -4219,8 +4860,8 @@ void SessionEngine::run_work() noexcept
                     }
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             pair_key_confirm_->next_operation_id());
                     if (accepted && pair_key_confirm_->poll_effect())
                         pair_key_confirm_dispatch_pending_ = true;
@@ -4231,8 +4872,8 @@ void SessionEngine::run_work() noexcept
                         accepted = queue_local_pair_key_confirm_locked();
                     if (accepted && pair_key_confirm_->ready())
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             pair_key_confirm_->next_operation_id());
                         accepted = start_pair_capability_locked();
                         if (accepted)
@@ -4264,8 +4905,8 @@ void SessionEngine::run_work() noexcept
                     }
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             pair_capability_->next_operation_id());
                     if (accepted && pair_capability_->poll_effect())
                         pair_capability_dispatch_pending_ = true;
@@ -4301,8 +4942,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             initial_plan_->next_operation_id());
                         initial_plan_dispatch_pending_ =
                             initial_plan_->poll_effect().has_value();
@@ -4339,8 +4980,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             initial_bearer_->next_operation_id());
                         initial_bearer_dispatch_pending_ =
                             initial_bearer_->poll_effect().has_value();
@@ -4379,8 +5020,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             endpoint_offer_->next_operation_id());
                         endpoint_offer_dispatch_pending_ =
                             endpoint_offer_->poll_effect().has_value();
@@ -4416,8 +5057,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             initial_quic_bind_->next_operation_id());
                         initial_quic_bind_dispatch_pending_ =
                             initial_quic_bind_->poll_effect().has_value();
@@ -4458,17 +5099,35 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             session_signing_->next_operation_id());
                         session_signing_dispatch_pending_ =
                             session_signing_->poll_effect().has_value();
                     }
                     if (accepted && session_signing_->ready())
                     {
-                        // The exact local binding is durable. LINK_HELLO is the
-                        // next protocol gate and will carry these same bytes.
+                        // The exact local binding is durable through both gates.
+                        // LINK_HELLO is the next protocol gate and carries these
+                        // same bytes; the projection stays CONNECTING until the
+                        // scheduler's own projection says both sides closed the
+                        // READY/ACK exchange.
                         publish_link_view_locked(FLY_SESSION_LINK_CONNECTING_V2);
+                        if (!link_handshake_)
+                            start_link_handshake_locked();
+                    }
+                    if (accepted && link_handshake_ &&
+                        (!link_handshake_->begun() || link_handshake_->failed()))
+                    {
+                        // Only a handshake that actually began and then failed may
+                        // fail the link. A start that was never possible is a
+                        // not-started gate, not a link failure: publishing FAILED
+                        // there would report a protocol failure that never
+                        // happened, and CONNECTING is already the honest
+                        // projection (no peer READY/ACK exchange took place).
+                        link_handshake_dispatch_pending_ = false;
+                        cancel_link_handshake_locked();
+                        accepted = false;
                     }
                     if (!accepted)
                     {
@@ -4476,6 +5135,80 @@ void SessionEngine::run_work() noexcept
                         release_pair_material_locked();
                         discovery_disconnect_pending_ = discovery_connection_ != 0;
                         publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                    }
+                }
+                else if (link_handshake_active_ && link_handshake_ &&
+                         same_token(event.token, link_handshake_token_))
+                {
+                    link_handshake_active_ = false;
+                    const auto result = link_handshake_->complete(event);
+                    if (shutdown_requested_)
+                    {
+                        link_handshake_dispatch_pending_ = false;
+                        cancel_link_handshake_locked();
+                        cancel_pair_material_locked();
+                        release_pair_material_locked();
+                        complete_shutdown_locked();
+                        continue;
+                    }
+                    bool accepted = result == FLY_SESSION_V2_OK;
+                    if (accepted)
+                    {
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
+                            link_handshake_->next_operation_id());
+                        link_handshake_dispatch_pending_ =
+                            link_handshake_->poll_effect().has_value();
+                    }
+                    if (accepted)
+                    {
+                        // Step 2: CONNECTED_LOBBY has exactly one gate. The
+                        // scheduler's connected() is
+                        // project_link_control_state_v1(progress) ==
+                        // ConnectedLobby, which requires a durable local READY
+                        // AND a verified peer READY AND the peer ACK. A
+                        // one-sided READY therefore can never reach the lobby,
+                        // and no other code path in this engine publishes it.
+                        if (link_handshake_->connected())
+                        {
+                            publish_link_view_locked(
+                                FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                        }
+                        else if (link_handshake_->failed())
+                        {
+                            link_handshake_dispatch_pending_ = false;
+                            cancel_link_handshake_locked();
+                            cancel_pair_material_locked();
+                            release_pair_material_locked();
+                            discovery_disconnect_pending_ =
+                                discovery_connection_ != 0;
+                            publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                        }
+                    }
+                    else
+                    {
+                        link_handshake_dispatch_pending_ = false;
+                        const bool not_wired_yet =
+                            link_handshake_->missing_inputs();
+                        cancel_link_handshake_locked();
+                        cancel_pair_material_locked();
+                        release_pair_material_locked();
+                        if (not_wired_yet)
+                        {
+                            // A start input this build has no producer for (the
+                            // contract's u64 channel_bind_id, the negotiated
+                            // result, the peer's accepted binding). That is a
+                            // seam that is not wired, not a protocol failure:
+                            // publishing FAILED would assert an exchange that
+                            // never happened. CONNECTING is already published
+                            // and is the honest projection.
+                        }
+                        else
+                        {
+                            discovery_disconnect_pending_ =
+                                discovery_connection_ != 0;
+                            publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                        }
                     }
                 }
                 else if (pair_material_active_ && pair_material_ &&
@@ -5173,10 +5906,12 @@ void SessionEngine::complete_shutdown_locked() noexcept
         endpoint_offer_dispatch_pending_ || endpoint_offer_active_ ||
         initial_quic_bind_dispatch_pending_ || initial_quic_bind_active_ ||
         session_signing_dispatch_pending_ || session_signing_active_ ||
+        link_handshake_dispatch_pending_ || link_handshake_active_ ||
         gatt_write_pending_ || gatt_write_active_)
     {
         return;
     }
+    pending_pair_known_envelopes_.discard();
     auto* old_view = current_view_;
     current_view_ = shutdown_complete_view_;
     shutdown_complete_view_ = nullptr;

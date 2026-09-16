@@ -7,6 +7,7 @@
 #include "../link/pair_signature_scheduler.hpp"
 #include "../link/pair_sas_scheduler.hpp"
 #include "../link/pair_key_confirm_scheduler.hpp"
+#include "../link/pair_known_envelope_queue.hpp"
 #include "../link/pair_known_scheduler.hpp"
 #include "../link/pair_capability_scheduler.hpp"
 #include "../link/initial_plan_scheduler.hpp"
@@ -14,6 +15,7 @@
 #include "../link/endpoint_offer_scheduler.hpp"
 #include "../link/initial_quic_bind_scheduler.hpp"
 #include "../link/session_signing_scheduler.hpp"
+#include "../link/link_handshake_scheduler.hpp"
 #include "../view/session_view.hpp"
 #include "../wire/gatt_fragment.hpp"
 #include "../wire/pair_handshake.hpp"
@@ -52,9 +54,25 @@ public:
     void run_work() noexcept;
 
 private:
+    /*
+     * Every scheduler receives a contiguous block of operation ids that is at
+     * least as large as the number of provider operations it can issue, and the
+     * engine mark moves one past the END of the block before the scheduler
+     * mints anything. A block is reserved, never shared: see the invariant
+     * comment on reserve_operation_ids_locked() in session_engine.cpp.
+     */
+    static constexpr std::uint64_t kSchedulerOperationBlockV1 = 16;
+
     void complete_shutdown_locked() noexcept;
     void publish_link_view_locked(std::uint32_t link_state);
     fly_session_op_token_v2 make_link_operation_token_locked();
+    /*
+     * Reserves `block` consecutive ids for one scheduler and returns the first
+     * of them, or 0 when the id space is exhausted. This is the only way a
+     * scheduler is given its first_operation_id, so the engine mark is always
+     * past every block a live scheduler can still draw from.
+     */
+    std::uint64_t reserve_operation_ids_locked(std::uint64_t block) noexcept;
     bool accept_completed_gatt_locked(
         const std::vector<std::uint8_t>& logical) noexcept;
     bool queue_gatt_ack_locked(
@@ -75,9 +93,14 @@ private:
     void cancel_endpoint_offer_locked() noexcept;
     void cancel_initial_quic_bind_locked() noexcept;
     void cancel_session_signing_locked() noexcept;
+    void cancel_link_handshake_locked() noexcept;
     bool start_pair_reveal_locked() noexcept;
     bool start_pair_signature_locked() noexcept;
     bool start_pair_known_locked() noexcept;
+    bool drain_pair_known_envelopes_locked() noexcept;
+    bool buffer_pair_known_envelope_locked(
+        std::uint8_t type, const std::uint8_t* body, std::size_t size,
+        const std::array<std::uint8_t, 32>& logical_hash);
     bool start_pair_sas_locked() noexcept;
     bool start_pair_key_confirm_locked() noexcept;
     bool start_pair_capability_locked() noexcept;
@@ -96,6 +119,7 @@ private:
     bool queue_local_endpoint_offer_locked() noexcept;
     bool start_initial_quic_bind_locked() noexcept;
     bool start_session_signing_locked() noexcept;
+    bool start_link_handshake_locked() noexcept;
 
     struct PendingAction final
     {
@@ -192,8 +216,15 @@ private:
     fly_session_op_token_v2 endpoint_offer_token_{};
     fly_session_op_token_v2 initial_quic_bind_token_{};
     fly_session_op_token_v2 session_signing_token_{};
+    fly_session_op_token_v2 link_handshake_token_{};
     fly_session_op_token_v2 gatt_write_token_{};
-    std::uint64_t next_operation_id_ = 2;
+    /*
+     * The engine-wide operation-id high-water mark. It is only ever advanced:
+     * any id below it has already been handed to a consumer, either directly
+     * by make_link_operation_token_locked() or inside a scheduler block reserved
+     * by reserve_operation_ids_locked().
+     */
+    std::uint64_t available_operation_id_ = 2;
     std::uint64_t link_generation_ = 1;
     bool discovery_active_ = false;
     bool gatt_subscribe_pending_ = false;
@@ -240,6 +271,9 @@ private:
     bool session_signing_dispatch_pending_ = false;
     bool session_signing_active_ = false;
     std::uint32_t session_signing_expected_kind_ = 0;
+    bool link_handshake_dispatch_pending_ = false;
+    bool link_handshake_active_ = false;
+    std::uint32_t link_handshake_expected_kind_ = 0;
     bool gatt_write_pending_ = false;
     bool gatt_write_active_ = false;
     fly_session_resource_handle_v2 discovery_connection_ = 0;
@@ -259,6 +293,10 @@ private:
     std::unique_ptr<PairRevealScheduler> pair_reveal_{};
     std::unique_ptr<PairSignatureScheduler> pair_signature_{};
     std::unique_ptr<PairKnownScheduler> pair_known_{};
+    // A peer can legitimately send at most one known status and one known
+    // branch before this side is ready, so four records of 1 KiB total is two
+    // full exchanges of headroom before the link fails closed.
+    link::PairKnownEnvelopeQueue pending_pair_known_envelopes_{1024, 4};
     std::unique_ptr<PairSasScheduler> pair_sas_{};
     std::unique_ptr<PairKeyConfirmScheduler> pair_key_confirm_{};
     std::unique_ptr<PairCapabilityScheduler> pair_capability_{};
@@ -267,6 +305,7 @@ private:
     std::unique_ptr<EndpointOfferScheduler> endpoint_offer_{};
     std::unique_ptr<InitialQuicBindScheduler> initial_quic_bind_{};
     std::unique_ptr<SessionSigningScheduler> session_signing_{};
+    std::optional<LinkHandshakeScheduler> link_handshake_{};
     std::optional<CapabilitySummary> local_pair_capability_{};
     std::array<std::uint8_t, 32> pending_local_capability_hash_{};
     std::array<std::uint8_t, 32> pending_local_known_hash_{};

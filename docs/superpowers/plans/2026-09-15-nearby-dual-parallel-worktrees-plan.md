@@ -45,7 +45,7 @@
 
 新 worktree 只能通过 `tools/versioning/New-VersionedWorktree.ps1` 创建。W0 没有交付共同基线 SHA 前，不启动 W1/W2/W3。
 
-## Task 1（W0）：收尾当前 `0x0212` 持久化并恢复全量绿色
+## Task 1（W0）：收尾当前 `0x0212` 持久化并恢复全量绿色 — ✅ 已完成，见 §19
 
 **当前状态：** scheduler 生产代码和 focused 测试已经绿色；公开 engine 测试与全量回归未完成。
 
@@ -98,7 +98,7 @@ Expected: 当前注册的全部测试通过；按现有目录应为 84/84，若 
 
 **Acceptance `BASE-0212`:** exact 312-byte binding 同时在 SecureStore 记录 KeyRef、在 ObjectStore 注册 `0x0212`；两个 durability gate 缺一不可继续。完整 shared 回归为 0 failure。
 
-## Task 2（W0）：冻结并提交并行共同合同
+## Task 2（W0）：冻结并提交并行共同合同 — ✅ 已完成，见 §19
 
 **Purpose:** W1/W2/W3 不得各自发明 HELLO/READY 或 DUAL seam。共同基线必须先冻结这些边界。
 
@@ -511,3 +511,151 @@ ROM bytes 只走独立 bulk stream，不混入 input/control；支持 8 MiB 上�
 - 物理触控到屏幕延迟、功耗、温度、刷新率和九方向/18 seat 设备矩阵。
 
 延期不代表删除：mode/capability/channel/object kind 继续保留扩展性，未实现路径必须显式 unsupported/fail-closed。
+
+---
+
+## 19. 执行记录：W0 波次 0（2026-09-15 完成）
+
+**共同基线提交 SHA：`e8703e4fdb598277a25d42c515486bea720ea757`**（`e8703e4`，336 个文件，hook 自动将 VERSION 由 1.4.0 递增为 1.4.1）。提交后工作区干净。
+
+### Task 1 证据
+
+| 步骤 | 状态 | 证据 |
+|---|---|---|
+| Step 1–3 0x0212 公开 engine 断言与负例 | ✅ | `test_two_engine_empty_lobby.cpp` 3910 → 4150 行；新增 `drive_session_signing_persistence`、`SessionSigningTail` 与两个测试函数（`test_session_signing_binding_object_hash_mismatch_fails_closed`、`test_session_signing_binding_shutdown_cancels_through_object_store`），二者均被 `main` 调用，非空跑 |
+| Step 4 focused | ✅ | `flynes_two_engine_empty_lobby` PASSED (0.14 s) |
+| Step 5 全量回归 | ✅ | `ctest` **86/86 PASSED，0 failed**，24.77 s（基线 84 + 本轮 2 个新合同测试） |
+
+`nearby_*` 标签门禁非空：`nearby_protocol` 23、`nearby_auth` 12、`nearby_ports` 11、`nearby_abi` 5、`nearby_integration` 1、`nearby_race` 1。
+
+**Acceptance `BASE-0212`：✅** exact 312 字节 binding 同时在 SecureStore 记 KeyRef、在 ObjectStore 注册 `0x0212`，两个 durability gate 缺一不可继续；全量回归 0 failure。
+
+### Task 2 证据
+
+| 步骤 | 状态 | 证据 |
+|---|---|---|
+| Step 1 三份获批文档纳入 W0 | ✅ | 复制前后 `Get-FileHash -Algorithm SHA256` 三对完全一致（`52CFC416…`、`633FDDE1…`、`98EBA20A…`）；主工作区原件仍为 untracked，未移动/改名 |
+| Step 2 LINK_HELLO exact layout 冻结 | ✅ | `shared/src/session/link/link_control_contract.hpp`：kind `0x0216`、tag `0xFF06`、exact 480 字节（pretag 416 + 签名 64）、大端、reserved 全零、domain 字符串、DSL |
+| Step 3 LINK_READY/ACK exact layout 冻结 | ✅ | 同文件：kind `0x0217`、tag `0xFF07`、exact 384 字节（pretag 320 + 签名 64）；phase 必须为 RECONCILE；双方 durable → send → verify → ACK → 才投影 `CONNECTED_LOBBY` |
+| Step 4 DUAL 内部 seam 冻结 | ✅ | `shared/src/session/dual/dual_runtime_contract.hpp`：`DualRuntimePort`（load/step/export_state/import_state/state_digest）、四端口完整 mask、输入主键元组、12 槽回滚环、预测 10 帧冻结、mode 仅 DUAL |
+| Step 5 合同编译测试 | ✅ | `flynes_link_control_contract`、`flynes_dual_runtime_contract` 均 PASSED；静态检查 enum 数值、结构大小、reserved 字段与 callback 签名；运行期覆盖 STREAM capability=false、未知 critical bit 拒绝、checked 单调 generation/sequence 溢出拒绝 |
+| Step 6 共同基线提交 | ✅ | `e8703e4` |
+
+**Acceptance `BASE-PARALLEL`：✅** 三份需求源文件已受版本控制且 SHA-256 与获批源一致；存在真实共同基线提交 SHA；合同不存在"拟议但未冻结"的 HELLO/READY 字段；shared 全量 0 failure。
+
+### 执行中发现并处理的计划外问题
+
+1. **`.gitignore` 漏掉 Rust 构建产物。** `git status --porcelain` 默认折叠未跟踪目录只显示 64 项，实际用 `--untracked-files=all` 展开是 **2024 项**，其中 `shared/nearby-quic-provider/target/` 占 **1865 项 / 1.36 GB** 且没有任何 ignore 规则。直接 `git add -A` 会把整个 cargo 构建树提交进基线。已追加 `/shared/nearby-quic-provider/target/`，untracked 降至 159 项且全部可归属 nearby 工作。
+2. **三份获批文档并未冻结 HELLO/READY 的字节布局。** 它们只冻结语义与门禁。exact 布局、object kind、message tag、domain 字符串由 W0 按 Task 2 Step 2/3 设计并冻结于上述两份合同头；object kind 分配依据是仓库现有 registry（`0x0210`–`0x0213` 已占用，`0x0214/0x0215` 被 invite-code amendment 占用）。**注册进 `shared/schema/` 与三端镜像仍属 Task 9，本轮合同头中不注册。**
+3. **构建环境 `MSB6001` 代理变量坑。** PowerShell `env:` 提供程序按大小写折叠重复项，常规"分组删重复"删不掉。已提供包装器 `out/dsh-exec.ps1`（解析 `cmd /c set` 原始环境块、按大写去重后重建 `ProcessStartInfo`）。另注意该包装器的参数名是 `$Rest`，`-R`/`-C` 会被 PowerShell 当作 `-Rest` 缩写，**ctest 一律使用长选项** `--tests-regex` / `--build-config`。
+
+### 并行 worktree（已创建，均由 `e8703e4` 分出）
+
+| worker | 分支 | 目录 | 版本 | 任务 |
+|---|---|---|---|---|
+| W1 链路控制 | `codex/nearby-dual-link-control` | `.worktrees/nearby-dual-link-control` | 1.5.0 | Task 3 + 4 |
+| W2 DUAL 数据面 | `codex/nearby-dual-runtime` | `.worktrees/nearby-dual-runtime` | 1.6.0 | Task 5 + 6 |
+| W3 双引擎夹具 | `codex/nearby-dual-e2e-harness` | `.worktrees/nearby-dual-e2e-harness` | 1.7.0 | Task 7 + 8 |
+
+三个 worker 已并行启动。交接约定与构建手册见 `out/logs/w1w2w3-conventions.md`（忽略目录，不入版本控制）。
+
+**已知需要 W0 在集成阶段处理的开放点：**
+
+- W1/W2 的测试需要注册进 `shared/CMakeLists.txt`（W0 独占文件），本轮允许各 worker **仅追加**自己带标记的注册块，W0 顺序合并。
+- W3 的 `CONNECTED_LOBBY` 正向断言在 W0 把 HELLO/READY 接进 `SessionEngine`（Task 9）之前不可能成立；W3 须如实标注待启用断言，不得伪造。
+- 真实 loopback QUIC 能否在本机 Windows 上构建并链接（`shared/nearby-quic-provider` Rust crate）尚未验证，W3 正在确认；若不可用须记 BLOCKED 而非 PASS。
+- 平台验收环境已确认可用（用户 2026-09-15 告知）：Windows 本机 Android/HarmonyOS 模拟器 + `ssh apple` 远程 Mac，因此 Task 13–15 的平台验收项应真实执行，**不再默认记 NOT_RUN**。
+
+### 波次 0 之后的 W0 增量（`e22cbff`）
+
+**真实 loopback QUIC 已打通 —— 这是本轮解除的最大计划风险。**
+
+此前 `shared/CMakeLists.txt` **完全没有引用** `shared/nearby-quic-provider`，因此没有任何 CTest 套件执行过真实 provider 代码，所有传输测试用的都是假实现。这会让 Task 7/8 的 `E2E-HARNESS` 与 Task 9 的 `MVP-LOBBY`（要求「真实 loopback Quinn」）无法成立。
+
+已落地的接线：
+
+- `FLYNES_ENABLE_RUST_QUIC_PROVIDER`（默认 ON；找不到 cargo 时打印 status 并降级）
+- 自定义目标 `flynes_nearby_quic_provider_build` 触发 `cargo build --release`（crate 源码与 Cargo.toml 列为 DEPENDS），实测 13.45 秒完成
+- IMPORTED STATIC 目标 `flynes_nearby_quic_provider`，带 C ABI 头目录与 Rust 依赖需要的 MSVC 系统库
+- 新增 `shared/tests/nearby/contract/test_quic_provider_linkage.cpp`
+
+**证据：** `flynes_quic_provider_linkage` PASSED。该测试不是"加了一行链接就算通过"——它调用 provider 自己的参数校验与引用计数（`struct_size`/`abi_version`/三个回调非空校验、null 句柄 release 无副作用、最终 release 恰好释放上下文一次），能通过只可能是真实 Rust 实现执行了。全量 `ctest` **87/87 PASSED，0 failed**（16.27 s）。
+
+### Android unit 基线（§17「Android unit/build 0 failure」）
+
+**证据：** `gradlew.bat :app:testDebugUnitTest` → `BUILD SUCCESSFUL in 22s`；测试结果 XML 汇总 **97 个测试类 / 468 tests / 0 failures / 0 errors / 2 skipped**，其中包含 nearby 相关类 `NearbyInviteHostStateTest`、`NearbyInviteTickerTest`、`SessionSchemaRegistryTest`、`BuiltinGamesTest`。**不是 0 tests matched。**
+
+### 平台验收环境（2026-09-15 实测探测，非仅用户口述）
+
+| 平台 | 实测命令 | 结果 |
+|---|---|---|
+| Android | `adb devices` | `emulator-5554` / `emulator-5564` / `emulator-5570` 均 `device` |
+| HarmonyOS | `hdc list targets` | `127.0.0.1:5557` |
+| iOS | `ssh -o BatchMode=yes apple 'xcrun simctl list devices booted'` | iPhone 14 / iOS 16.4 **Booted**（UDID `988243AC-5704-45B6-9151-FF3A9B7AFD35`） |
+
+### Task 9 集成点已定位
+
+`shared/src/session/engine/session_engine.cpp:4467`：`session_signing_->ready()` 成立（exact 312 字节 `0x0212` 的两个持久化门禁都过）时，当前只 `publish_link_view_locked(FLY_SESSION_LINK_CONNECTING_V2)`，注释写明「LINK_HELLO is the next protocol gate」。需照抄 `session_signing_` 的 8 处接线（effect kind 映射、cancel、start、事件归属判定、effect 派发、完成分支、shutdown 忙判定、状态投影）已逐条记入 `out/logs/task9-integration-notes.md`（忽略目录）。
+
+---
+
+## 20. 执行记录：并行波次与集成（2026-09-15 进行中）
+
+### 20.1 测试运行环境改为 WSL（用户 2026-09-15 明确要求）
+
+**原因：** 在 Windows 上运行失败的 MSVC Debug 测试会弹出 "Debug Assertion Failed" 对话框打扰用户。因此约定：**C++ 测试只在 WSL(Ubuntu-24.04) 构建并运行；Windows 上只允许 `cmake --build`。**
+
+WSL 环境实测：`cmake 3.28.3`(/usr/bin)、`g++ 13.3`、`make 4.3`、`openssl 3.0.13`、`cargo 1.96`、`zlib.h`、32 核；仓库经 `/mnt/e/...` 可达。配方：
+
+```bash
+cmake -S shared -B out/nearby-host-linux/shared/build -DFLYNES_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/nearby-host-linux/shared/build -j 24
+# 直接跑二进制；用 ctest 时必须用长选项（--test-dir/--build-config/--tests-regex）
+```
+
+新 worktree 首次 configure 前需 `git submodule update --init core/vendor/nestopiaue`。
+
+### 20.2 Linux 上暴露并已修复的既有缺陷（`9826703`）
+
+MSVC 全部接受、GCC 加 `-Werror` 全部拒绝；这些只有换到 Linux 才暴露。**其中一处是真实未定义行为**，不是单纯的告警：
+
+| 文件 | 问题 | 性质 |
+|---|---|---|
+| `test_initial_quic_bind_scheduler.cpp:249` | 同一实参列表里两次 `next_resource++`（未定序） | **真实 UB**，GCC 正确拒绝、MSVC 只默默选一个顺序 |
+| `test_zip_payload_fixture_loader.cpp:266` | `const std::string&` 绑定由 `const char*` 构造的临时对象 | 可移植性缺陷 |
+| `initial_bearer_scheduler.cpp` / `pair_signature_scheduler.cpp` | 两个匿名 namespace 死函数 | 死代码，已删 |
+| `test_two_engine_empty_lobby.cpp`（30 处）/ `test_real_pair_pipeline.cpp`（2 处） | 未使用的 `unavailable_*` 端口桩与 CNG-only 辅助 | 标 `[[maybe_unused]]`，保留桩族以记录完整端口面 |
+
+Windows 侧仍然干净：`cmake --build` exit 0、**0 个 `error C`**（131 个 warning 全部来自 nestopia 既有代码）。**Linux 上 `nearby_*` 标签全部通过。**
+
+**仍存在、本轮未处理的 2 个既有 Linux 失败**（与本轮 Nearby 工作无关，且不在 DUAL 门禁内，仅记录）：
+- `flynes_runtime_pcm_contention` 编译失败：`shared/src/runtime/flynes_runtime.cpp:292` 的 `-Werror=subobject-linkage`（匿名声明的 `Snapshot` / `NesDeleter` 被外部链接的 `fly_runtime_handle` 当作成员）——真实缺陷，需结构性改动。
+- `flynes_zip_payload_fixture_corpus_check` 失败：4 个 fixture 文件在 Linux 检出下的字节与生成结果不一致（`deflate_large_signed_descriptor_exact_limits.zip`、`directory_payload_not_rejected.zip`、`truncated_deflate_incomplete.zip`、`manifest.tsv`），疑似行尾/`.gitattributes` 差异。
+
+### 20.3 W1 已合并（`fe91ff1`）
+
+- W1 交付 `32b0d1e`（Task 3 codec）+ `66c048e`（Task 4 scheduler）。
+- 合并冲突面只有 4 个文件：**`shared/CMakeLists.txt` 自动合并成功**（已核对 W0 的 QUIC 接线三个定义各 1 次、W1 的 4 个测试注册块都在、0 处冲突标记）；3 个版本元数据文件按设计文档处理——取 W0 侧版本后跑 `tools/versioning/Sync-Version.ps1` 重新同步三端（`synchronized: 1.4.6`），**未手改 versionName/versionCode**。
+- **合并后验证绿色**（设计文档要求"合并后的全量测试失败必须先恢复绿色，再接收下一个分支"）：WSL 上 **90 个测试 / 98% 通过**，W1 的 `link_hello_wire` / `link_ready_wire` / `link_handshake_scheduler` / `link_handshake_races` 全部通过；仅剩 §20.2 记录的 2 个既有非 Nearby 失败。
+- W1 的 golden 向量经**独立手工核对**：按合同偏移逐字段比对 `kHelloInitiatorBytes`（480 字节）——version/reserved/角色互反/phase/session_id/link_id/channel_id/两个 generation/wire 版本/**capability 仅含 DUAL 位**/critical_extension_mask=0/四个 32 字节 hash 的偏移/identity_verifier_ref 内 version=1 与 reserved/其 `identity_key_id` 与单独声明的常量逐字节相等/公钥首字节 `0x04`——全部正确，排除了"脚本与实现从同一处误读而一起出错"的风险。
+- W1 留有一个临时静态库 `flynes_link_control_w1`，按 Task 9 Step 3「集中式 CMake」要求需收编进 `flynes_session_codec` / `flynes_initial_plan_lock` 后删除。
+
+### 20.4 W3 真实 loopback QUIC 探针（`3df0deb`）——`E2E-HARNESS` 的硬门禁已有硬证据
+
+此前 W3 报 BLOCKED，根因是缺少能生成 91 字节 canonical P-256 DER-SPKI 证书与 low-S 签名的工具。WSL 有 `openssl 3.0.13` 后打通，**卡点正是 low-S 归一**：`ECDSA_do_sign` 的原始输出约一半是 high-S，必须 `s = min(s, n-s)` 再 `i2d_ECDSA_SIG` 重编码，否则 provider 用 ring 验证会正确拒绝。
+
+WSL 实测输出（提交 `3df0deb`）：
+
+```
+PROBE register-tls-material-accepted: PASS
+PROBE loopback-handshake-completed: PASS
+PROBE connector/listener-handshake-facts: PASS  (TLS1.3 + ALPN flynes-nearby/2 + pin + peer_certificate_verified + peer_der_spki_hash==pin)
+PROBE exporters-agree: PASS        PROBE stream-payload-round-trip: PASS
+PROBE datagram-round-trip: PASS    PROBE all-resources-closed: PASS
+PROBE signer-context-balanced: PASS   PROBE_EXIT=0   PASS=37  FAIL=0
+```
+
+Windows 降级路径已验证：同时具备 cargo 与 OpenSSL 才注册该探针，否则打印 `W3 loopback QUIC probe: skipped (needs cargo and OpenSSL libcrypto)`。
+
+**验收记录须注明**：`two_engine_fixture.hpp`（2235 行）**不是手写**，而是从 `test_two_engine_empty_lobby.cpp` 逐行 carve（生成器在 git-ignored 的 `out/tools/`，不受版本控制），三处显式 delta 为 per-engine clock、可换 QUIC port、engine ordinal+ledger。
+
