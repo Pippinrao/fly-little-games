@@ -2195,6 +2195,480 @@ inline void deliver_cancelled_provider_terminal(
 }
 
 
+/*
+ * ------------------------------------------------------------------------- *
+ * The loopback transport: increment 1 of the two-engine driver.
+ *
+ * Provider events come in two kinds, and this class exists to keep them apart:
+ *
+ *   class 1 — OPERATION TERMINALS: the result of an effect the engine itself
+ *     issued. They carry that effect's token and terminal = 1. Answering them is
+ *     local provider work (the counted pump in the next increment).
+ *
+ *   class 2 — EXTERNALLY ORIGINATED EVENTS: not the result of any local effect but
+ *     a fact about the transport or the peer: DISCOVERY_CONNECTION (the peer is
+ *     connected), DISCOVERY_BYTES (the peer wrote a GATT fragment), QUIC_DATA (the
+ *     peer wrote stream bytes), PLATFORM_STATE.
+ *
+ * Class 2 is produced ONLY here. A test must never author one: doing so is exactly
+ * the fake-transport shortcut the MVP-LOBBY acceptance line forbids, and it is what
+ * makes an exchange stop being a real one. The single-engine regression test does
+ * author its own DISCOVERY_CONNECTION (resources 161 / 41); that is acceptable
+ * there precisely because it makes no two-engine claim, and it is what this class
+ * replaces for the real one.
+ *
+ * Topology lives here too, not in the test: which end advertises, which scans, and
+ * that both ends are on the SAME link.
+ * ------------------------------------------------------------------------- */
+
+enum class LoopbackRole : std::uint8_t
+{
+    /* Advertises and serves the connection; the provider reports it as the
+     * peripheral end. */
+    AdvertiserPeripheral = 1,
+    /* Scans, connects and subscribes; reported as the central end. */
+    ScannerCentral = 2
+};
+
+class LoopbackTransport final
+{
+public:
+    void attach(LoopbackRole role, EngineFixture& fixture) noexcept
+    {
+        if (role == LoopbackRole::AdvertiserPeripheral)
+            peripheral_ = &fixture;
+        else
+            central_ = &fixture;
+    }
+
+    /*
+     * Hands the provider-owned connection to each attached end that has started its
+     * discovery role. Both ends receive the SAME link handle, which is what makes
+     * them two ends of one link rather than two unrelated connections. Idempotent:
+     * an end is connected at most once.
+     */
+    int connect_ends()
+    {
+        int delivered = 0;
+        if (peripheral_ != nullptr && !peripheral_connected_ &&
+            peripheral_->discovery.advertisements == 1)
+        {
+            deliver_connection(*peripheral_,
+                               FLY_SESSION_DISCOVERY_PHYSICAL_PERIPHERAL_V2);
+            peripheral_connected_ = true;
+            ++delivered;
+        }
+        if (central_ != nullptr && !central_connected_ &&
+            central_->discovery.scans == 1)
+        {
+            deliver_connection(*central_,
+                               FLY_SESSION_DISCOVERY_PHYSICAL_CENTRAL_V2);
+            central_connected_ = true;
+            ++delivered;
+        }
+        connections_ += delivered;
+        return delivered;
+    }
+
+    [[nodiscard]] fly_session_resource_handle_v2 link_resource() const noexcept
+    {
+        return link_resource_;
+    }
+    [[nodiscard]] int connections() const noexcept { return connections_; }
+    [[nodiscard]] bool peripheral_connected() const noexcept
+    {
+        return peripheral_connected_;
+    }
+    [[nodiscard]] bool central_connected() const noexcept
+    {
+        return central_connected_;
+    }
+
+private:
+    void deliver_connection(EngineFixture& fixture, std::uint64_t physical)
+    {
+        fly_session_port_event_v2 event{};
+        event.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+        event.abi_version = FLY_SESSION_ABI_VERSION_2;
+        event.token = fixture.discovery.last_token;
+        event.event_sequence = 1;
+        event.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+        event.terminal = 1;
+        event.result = FLY_SESSION_V2_OK;
+        event.payload_kind = FLY_SESSION_PROVIDER_DISCOVERY_CONNECTION_V2;
+        fly_session_provider_resource_event_v2 payload{};
+        payload.struct_size = FLY_SESSION_PROVIDER_RESOURCE_EVENT_V2_SIZE;
+        payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+        payload.resource = link_resource_;
+        payload.generation = event.token.connection_generation;
+        payload.value0 = physical;
+        payload.value1 = 23;
+        event.payload_size = sizeof(payload);
+        std::memcpy(event.payload, &payload, sizeof(payload));
+        check(fly_session_deliver_v2(fixture.discovery.inbox, &event) ==
+                  FLY_SESSION_V2_ACCEPTED,
+              "the transport's own discovery connection enters the engine");
+    }
+
+    EngineFixture* peripheral_ = nullptr;
+    EngineFixture* central_ = nullptr;
+    /* One link, one handle: both ends are told they are on this same link. */
+    fly_session_resource_handle_v2 link_resource_ = 0x5100;
+    int connections_ = 0;
+    bool peripheral_connected_ = false;
+    bool central_connected_ = false;
+};
+
+/*
+ * ------------------------------------------------------------------------- *
+ * Increment 2 of the two-engine driver: the counted, bounded provider pump.
+ *
+ * WHAT THE PUMP IS ALLOWED TO DO
+ *   Answer CLASS-1 operation terminals, and nothing else. It never delivers a
+ *   connection, never delivers bytes, never advances a stage and never decides an
+ *   outcome: those are the transport's and the engine's jobs. Every answer below
+ *   is the provider's own report about work the engine asked *this* engine to do.
+ *
+ * WHAT IT IS NOT ALLOWED TO DO
+ *   Invent an answer for an operation no port asked for. The pump is driven purely
+ *   by the fixture's own per-callback counters, so an answer can only exist for a
+ *   request that really happened, and the counts it reports are exactly the
+ *   requests this phase produced. There is no "answer whatever comes next" path.
+ *
+ * BOUNDS
+ *   `PumpLimits` is a hard ceiling. Exceeding it is a FAILURE, never a hang and
+ *   never a silent stop: an engine that keeps asking for unbounded provider work
+ *   is a defect, and a test that spun forever would hide it.
+ *
+ * IDEMPOTENCE
+ *   The state records how many operations of each kind it has already answered, so
+ *   re-running the pump can never answer the same terminal twice (a repeat is
+ *   judged STALE by the engine, which would be a false failure).
+ *
+ * WHAT IT DELIBERATELY SKIPS
+ *   The key and crypto ports. In this harness both ports answer themselves inline
+ *   from the shared `LoopbackWorld`, so their operations never stay pending; a
+ *   pump answer for them would be a second terminal for one request.
+ * ------------------------------------------------------------------------- */
+
+struct PumpLimits final
+{
+    int max_rounds = 128;
+    int max_answers = 512;
+};
+
+/*
+ * Per-port counts of what the pump actually answered. A test asserts these to show
+ * that the pump answered precisely the requests the ports really made, rather than
+ * a scripted guess at what should happen next.
+ */
+struct PumpCounts final
+{
+    int rounds = 0;
+    int answers = 0;
+    int tls_materials = 0;
+    int bearer_capabilities = 0;
+    int bearer_paths = 0;
+    int bearer_credentials = 0;
+    int bearer_endpoints = 0;
+    int discovery_write_ends = 0;
+    int secure_store_revisions = 0;
+    int object_puts = 0;
+    int object_reads = 0;
+};
+
+/* Provider-side bookkeeping: how much of each port's work is already answered. */
+struct PumpState final
+{
+    PumpCounts counts{};
+    int tls_creates = 0;
+    int bearer_probes = 0;
+    int bearer_creates = 0;
+    int bearer_joins = 0;
+    int bearer_prepares = 0;
+    int bearer_resolves = 0;
+    int discovery_writes = 0;
+    int secure_store_writes = 0;
+    int object_puts = 0;
+    int object_reads = 0;
+    /* Deterministic, non-zero resource handles for provider-owned objects. */
+    fly_session_resource_handle_v2 next_handle = 0x4000;
+};
+
+enum class PumpOutcome : std::uint8_t
+{
+    /* Exactly one class-1 terminal was answered; the engine may now progress. */
+    Answered = 1,
+    /*
+     * Every class-1 request this engine has made is answered. The engine is now
+     * waiting for something the transport has not delivered: in this increment that
+     * is peer bytes, which the GATT byte loopback (increment 3) and the QUIC byte
+     * loopback (increment 4) supply. Being idle here is not an error.
+     */
+    Idle = 2
+};
+
+/*
+ * The credential a provider mints for an initial bearer. `codec` is the plan's own
+ * credential codec, so the shape has to follow the plan rather than be chosen
+ * here. The value is derived only from the plan, which both ends agree on, so the
+ * creator's and the receiver's canonical join parameters come out identical - which
+ * is what `Stage::PrepareReceiver` requires when it compares them byte for byte.
+ */
+inline std::array<std::uint8_t, flynes::session::wire::kBearerCredentialBytesSizeV1>
+loopback_bearer_credential(std::uint8_t codec)
+{
+    std::array<std::uint8_t,
+               flynes::session::wire::kBearerCredentialBytesSizeV1> credential{};
+    credential[0] = 1;
+    if (codec == 1)
+    {
+        /* Codec 1: two printable, zero-padded text fields (lengths 1..32 and
+         * 8..63). */
+        credential[1] = 1;
+        credential[2] = 16;
+        credential[3] = 8;
+        std::fill_n(credential.begin() + 4, 16, std::uint8_t{0x41});
+        std::fill_n(credential.begin() + 36, 8, std::uint8_t{0x42});
+        return credential;
+    }
+    /* Codec 2: one opaque non-zero field and no second field. */
+    credential[1] = 1;
+    credential[2] = 16;
+    credential[3] = 0;
+    std::fill_n(credential.begin() + 4, 16, std::uint8_t{0xc1});
+    return credential;
+}
+
+/*
+ * Answers at most one pending class-1 request, chosen by which port counter grew.
+ * Because the engine dispatches a single effect per iteration and then continues,
+ * at most one port can have an unanswered request at a time, so a single pass in a
+ * fixed port order is exact.
+ */
+inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
+{
+    fixture.executor.run_all();
+
+    if (fixture.tls.creates > state.tls_creates)
+    {
+        ++state.tls_creates;
+        const auto handle = state.next_handle++;
+        deliver_provider_resource(fixture.tls.inbox, fixture.tls.last_token,
+                                  FLY_SESSION_PROVIDER_TLS_MATERIAL_V2, handle);
+        ++state.counts.tls_materials;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.bearer.probes > state.bearer_probes)
+    {
+        ++state.bearer_probes;
+        /* The provider reports the bearer capabilities it really has. */
+        deliver_capability(fixture);
+        ++state.counts.bearer_capabilities;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.bearer.creates > state.bearer_creates ||
+        fixture.bearer.joins > state.bearer_joins)
+    {
+        const bool creator = fixture.bearer.creates > state.bearer_creates;
+        if (creator) ++state.bearer_creates; else ++state.bearer_joins;
+        const auto handle = state.next_handle++;
+        deliver_provider_resource(fixture.bearer.inbox, fixture.bearer.last_token,
+                                  FLY_SESSION_PROVIDER_BEARER_PATH_V2, handle);
+        ++state.counts.bearer_paths;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.bearer.prepares > state.bearer_prepares)
+    {
+        ++state.bearer_prepares;
+        check(fixture.bearer.last_plan.size() ==
+                  sizeof(flynes::session::wire::BearerPlanBytes),
+              "the provider is asked to prepare a credential for a 48-byte plan");
+        flynes::session::wire::BearerPlanBytes plan{};
+        std::copy(fixture.bearer.last_plan.begin(),
+                  fixture.bearer.last_plan.end(), plan.begin());
+        const auto credential = loopback_bearer_credential(plan[3]);
+        std::array<std::uint8_t,
+                   flynes::session::wire::kBearerJoinParamsSizeV1> join_params{};
+        /* The lifetime is a fixed provider policy value, not a clock reading, so
+         * both ends of the loopback publish byte-identical join parameters. */
+        constexpr std::uint32_t kLoopbackCredentialValidForMs = 60000;
+        check(flynes::session::wire::encode_bearer_join_params_v1(
+                  plan, kLoopbackCredentialValidForMs, credential, &join_params) ==
+                  flynes::session::wire::Status::Ok,
+              "the provider encodes canonical join parameters for its own plan");
+        const auto hash = flynes::session::wire::sha256(join_params.data(),
+                                                       join_params.size());
+        const auto handle = state.next_handle++;
+        deliver_provider_hash_buffer(
+            fixture.bearer.inbox, fixture.bearer.last_token,
+            FLY_SESSION_PROVIDER_BEARER_CREDENTIAL_V2, handle,
+            join_params.data(), join_params.size(), hash);
+        ++state.counts.bearer_credentials;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.bearer.resolves > state.bearer_resolves)
+    {
+        ++state.bearer_resolves;
+        /* One loopback link has one endpoint; this is the address the peer's QUIC
+         * listener is reachable at, which is what `resolve` asks for. */
+        std::array<std::uint8_t, 18> endpoint{};
+        endpoint[12] = 192;
+        endpoint[13] = 168;
+        endpoint[14] = 1;
+        endpoint[15] = 9;
+        endpoint[16] = 0xd6;
+        endpoint[17] = 0xd8;
+        deliver_provider_buffer(fixture.bearer.inbox, fixture.bearer.last_token,
+                                FLY_SESSION_PROVIDER_BEARER_ENDPOINT_V2,
+                                endpoint.data(), endpoint.size());
+        ++state.counts.bearer_endpoints;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.discovery.writes > state.discovery_writes)
+    {
+        ++state.discovery_writes;
+        /* Completing the local write effect. The bytes themselves are read back by
+         * the peer through the transport, not from here. */
+        deliver_discovery_end(fixture);
+        ++state.counts.discovery_write_ends;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.secure_store.writes > state.secure_store_writes)
+    {
+        ++state.secure_store_writes;
+        const auto handle = state.next_handle++;
+        deliver_provider_resource(fixture.secure_store.inbox,
+                                  fixture.secure_store.last_token,
+                                  FLY_SESSION_PROVIDER_SECURE_STORE_REVISION_V2,
+                                  handle);
+        ++state.counts.secure_store_revisions;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.object_store.puts > state.object_puts)
+    {
+        ++state.object_puts;
+        /* The store reports the object it durably holds. It answers with the
+         * content hash the caller declared for the bytes it just handed over,
+         * which is the pair this store recorded; the read path below returns those
+         * same bytes, and the engine's own re-read verification is what proves the
+         * pair is the one it asked for. */
+        const auto handle = state.next_handle++;
+        deliver_provider_hash(fixture.object_store.inbox,
+                             fixture.object_store.last_token,
+                             FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, handle,
+                             fixture.object_store.last_hash);
+        ++state.counts.object_puts;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.object_store.reads > state.object_reads)
+    {
+        ++state.object_reads;
+        /* `read` already located the retained object for the requested
+         * (kind, hash); a request this store cannot serve returned UNAVAILABLE
+         * synchronously and never reached here. */
+        const auto found = std::find_if(
+            fixture.object_store.stored.begin(), fixture.object_store.stored.end(),
+            [&](const EngineFixture::ObjectStore::StoredObject& item) {
+                return item.kind == fixture.object_store.last_read_kind &&
+                       std::equal(item.hash.begin(), item.hash.end(),
+                                  fixture.object_store.last_read_hash.begin());
+            });
+        check(found != fixture.object_store.stored.end(),
+              "the provider answers only a re-read of an object it really stored");
+        if (found != fixture.object_store.stored.end())
+        {
+            const auto handle = state.next_handle++;
+            deliver_provider_hash_buffer(
+                fixture.object_store.read_inbox,
+                fixture.object_store.last_read_token,
+                FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, handle,
+                found->value.data(), found->value.size(), found->hash);
+            ++state.counts.object_reads;
+            ++state.counts.answers;
+            return PumpOutcome::Answered;
+        }
+    }
+
+    /*
+     * Nothing is pending. `quic` operations are deliberately absent: answering one
+     * would require the link-wide TLS facts and stream bytes that increments 3 and
+     * 4 introduce, and in this increment the two engines never get past the GATT
+     * exchange, so no quic operation is ever requested. If one were, the ports
+     * would keep it pending and the test would see the stall rather than a
+     * fabricated completion.
+     */
+    return PumpOutcome::Idle;
+}
+
+/* Runs `pump_once` until the engine is idle, failing hard if a bound is exceeded. */
+inline void pump_engine(EngineFixture& fixture, PumpState& state,
+                        PumpLimits limits = {})
+{
+    for (;;)
+    {
+        if (state.counts.rounds >= limits.max_rounds)
+        {
+            check(false,
+                  "the pump exceeded max_rounds: this engine kept asking for more "
+                  "provider work than the bound allows");
+            return;
+        }
+        ++state.counts.rounds;
+        if (pump_once(fixture, state) == PumpOutcome::Idle) return;
+        if (state.counts.answers > limits.max_answers)
+        {
+            check(false,
+                  "the pump exceeded max_answers: more terminals were answered than "
+                  "the bound allows");
+            return;
+        }
+    }
+}
+
+/*
+ * Shuts one engine down and asserts that it really destroyed.
+ *
+ * A provider that cancels synchronously says so once, here: `cancel` returning
+ * ACCEPTED would tell the engine to wait for a cancellation terminal this provider
+ * would never send, and shutdown would then be waiting on the harness rather than
+ * on the engine. That is the one provider capability this helper declares; every
+ * terminal it does send still has to be earned by a real request, because the pump
+ * is driven by the ports' own counters.
+ *
+ * Destroying with `destroy == OK` is asserted rather than ignored: an engine that
+ * will not release its resources is a defect, not a teardown detail.
+ */
+inline void shutdown_engine_with_the_pump(EngineFixture& fixture,
+                                         PumpState& state,
+                                         PumpLimits limits = {})
+{
+    fixture.bearer.cancel_result = FLY_SESSION_V2_OK;
+    fly_session_begin_shutdown_v2(fixture.engine, 900);
+    fixture.executor.run_all();
+    pump_engine(fixture, state, limits);
+    fixture.executor.run_all();
+    check(fly_session_destroy_v2(fixture.engine) == FLY_SESSION_V2_OK,
+          "the engine destroys after the pump answered its provider work");
+    fixture.engine = nullptr;
+}
+
 } // namespace flynes::session::loopback
 
 #endif

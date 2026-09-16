@@ -9,16 +9,20 @@
  *                  approval-token action.
  *   step 2 (done)  the P-256 point table (re-validated by the repository's own
  *                  curve check and pinned against its shipped constants) and the
- *                  shared deterministic provider world. The two engines are still
- *                  NOT connected: no byte crosses between them yet.
- *   step 3         byte-accurate GATT/discovery loopback.
- *   step 4         byte-accurate QUIC loopback (bind stream + Control).
- *   step 5         alternate pumping until BOTH engines project
+ *                  shared deterministic provider world.
+ *   step 3 (done)  the loopback TRANSPORT, which is the only producer of externally
+ *                  originated events, and the counted, bounded provider pump. Both
+ *                  ends are on one link and each engine really writes its own first
+ *                  GATT fragment; the fragments are not carried across yet, so this
+ *                  step claims neither CONNECTED_LOBBY nor a self-driven teardown.
+ *   step 4         byte-accurate GATT/discovery loopback.
+ *   step 5         byte-accurate QUIC loopback (bind stream + Control).
+ *   step 6         alternate pumping until BOTH engines project
  *                  FLY_SESSION_LINK_CONNECTED_LOBBY_V2.
  *
  * The deliverable this file is working towards is the MVP-LOBBY acceptance line:
  * two public engines, real byte-level loopback, no ROM, zero fabricated peer
- * bytes, both sides in CONNECTED_LOBBY. Until step 5 lands, this file makes no
+ * bytes, both sides in CONNECTED_LOBBY. Until step 6 lands, this file makes no
  * claim about CONNECTED_LOBBY and the test names say so.
  */
 
@@ -300,6 +304,187 @@ void loopback_world_is_deterministic_and_shared()
           "the same purpose maps to a different point on each side");
 }
 
+/*
+ * The pump's report has to match the ports' report, request for request.
+ *
+ * Every terminal the pump sends is counted, and every port callback that leaves an
+ * operation pending is counted by the fixture itself. The two must line up exactly:
+ * an extra terminal would mean the pump invented a completion, and a missing one
+ * would mean a real request was left unanswered. The later phases (paths,
+ * credentials, endpoints, durable stores, TLS material) are asserted to zero here,
+ * because this phase genuinely produced none of them - if a real run ever did, this
+ * is where it must be noticed rather than answered from a script.
+ */
+void check_pump_matches_the_requests_this_phase_produced(
+    EngineFixture& fixture, flynes::session::loopback::PumpState& pump,
+    const char* role)
+{
+    const auto& counts = pump.counts;
+    char message[256];
+    std::snprintf(message, sizeof(message),
+                  "the pump answered exactly the GATT write terminals the %s engine "
+                  "really produced", role);
+    check(counts.discovery_write_ends == fixture.discovery.writes, message);
+
+    std::snprintf(message, sizeof(message),
+                  "the pump answered exactly the bearer capability probes the %s "
+                  "engine really made", role);
+    check(counts.bearer_capabilities == fixture.bearer.probes, message);
+
+    std::snprintf(message, sizeof(message),
+                  "every terminal the pump sent to the %s engine completed a request "
+                  "one of its ports really made", role);
+    check(counts.answers == counts.discovery_write_ends +
+                                counts.bearer_capabilities,
+          message);
+
+    std::snprintf(message, sizeof(message),
+                  "the pump answered nothing on the ports the %s engine never reached "
+                  "in this step", role);
+    check(counts.tls_materials == 0 && counts.bearer_paths == 0 &&
+              counts.bearer_credentials == 0 && counts.bearer_endpoints == 0 &&
+              counts.secure_store_revisions == 0 && counts.object_puts == 0 &&
+              counts.object_reads == 0,
+          message);
+}
+
+/*
+ * step 3: the loopback TRANSPORT and the counted, bounded provider pump.
+ *
+ * The connection each engine receives is produced ONLY by `LoopbackTransport`, from
+ * this run's own discovery roles and its own link handle. This test never authors a
+ * connection, a byte or a stream record; the only events it delivers are the
+ * completions of operations the ports themselves reported (see pump_once).
+ *
+ * WHAT THIS INCREMENT DOES NOT CLAIM
+ *   It does not claim CONNECTED_LOBBY. With no byte loopback yet, the GATT fragments
+ *   each engine writes are never carried to the other engine, so both engines stop
+ *   after their own local work and wait for peer bytes. What IS asserted is: the
+ *   transport connected both ends of one link, both engines moved into
+ *   AUTHENTICATING, the pump answered precisely the requests this phase really
+ *   produced, and both engines then destroy cleanly on their own - the destroy
+ *   result is asserted here, not ignored. The byte-accurate GATT loopback (step 4),
+ *   the QUIC loopback (step 5) and CONNECTED_LOBBY (step 6) are what make the
+ *   remaining assertions possible.
+ */
+void two_engines_connect_through_the_transport_and_are_pumped_to_idle()
+{
+    using flynes::session::loopback::LoopbackRole;
+    using flynes::session::loopback::LoopbackSide;
+    using flynes::session::loopback::LoopbackTransport;
+    using flynes::session::loopback::LoopbackWorld;
+    using flynes::session::loopback::PumpLimits;
+    using flynes::session::loopback::PumpState;
+    using flynes::session::loopback::pump_engine;
+    using flynes::session::loopback::shutdown_engine_with_the_pump;
+    using flynes::session::loopback::submit;
+
+    LoopbackWorld world;
+    EngineFixture inviter(world, LoopbackSide::Initiator);
+    EngineFixture joiner(world, LoopbackSide::Responder);
+
+    inviter.platform.ready();
+    joiner.platform.ready();
+    inviter.executor.run_all();
+    joiner.executor.run_all();
+
+    std::vector<fly_session_action_descriptor_v2> inviter_actions;
+    std::vector<fly_session_action_descriptor_v2> joiner_actions;
+    inviter.snapshot(&inviter_actions);
+    joiner.snapshot(&joiner_actions);
+    const auto* create =
+        find_action(inviter_actions, FLY_SESSION_ACTION_CREATE_INVITE_V2);
+    const auto* join =
+        find_action(joiner_actions, FLY_SESSION_ACTION_JOIN_CODE_V2);
+    check(create != nullptr && join != nullptr,
+          "both engines publish the link action their role needs");
+    if (create == nullptr || join == nullptr)
+    {
+        for (auto& action : inviter_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        for (auto& action : joiner_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        return;
+    }
+    submit(inviter, *create, 501, false);
+    submit(joiner, *join, 502, true);
+
+    /* The two engines took opposite discovery roles, which is what the transport
+     * below needs in order to know which end is which. */
+    check(inviter.discovery.advertisements == 1 && inviter.discovery.scans == 0,
+          "the inviter engine advertises and does not scan");
+    check(joiner.discovery.scans == 1 && joiner.discovery.advertisements == 0,
+          "the joiner engine scans and does not advertise");
+
+    LoopbackTransport transport;
+    transport.attach(LoopbackRole::AdvertiserPeripheral, inviter);
+    transport.attach(LoopbackRole::ScannerCentral, joiner);
+
+    check(transport.connect_ends() == 2,
+          "the transport produced the connection at both ends of one link");
+    check(transport.peripheral_connected() && transport.central_connected(),
+          "both ends are on the shared link");
+    /* Idempotence: a second connect must not re-deliver anything. */
+    check(transport.connect_ends() == 0,
+          "connecting an already connected pair delivers nothing further");
+    check(transport.connections() == 2,
+          "the transport reports exactly two connections for this run");
+
+    PumpState inviter_pump;
+    PumpState joiner_pump;
+    const PumpLimits limits{};
+    pump_engine(inviter, inviter_pump, limits);
+    pump_engine(joiner, joiner_pump, limits);
+
+    /*
+     * Both engines accepted the connection the TRANSPORT produced: each subscribed
+     * to the link and moved its own projection out of its discovery role into
+     * AUTHENTICATING. Neither fact can be scripted by the test - they follow from the
+     * transport's connection event alone.
+     */
+    check(inviter.discovery.subscriptions == 1 &&
+              joiner.discovery.subscriptions == 1,
+          "both engines subscribed to the link the transport connected");
+    check(inviter.snapshot().link_state == FLY_SESSION_LINK_AUTHENTICATING_V2 &&
+              joiner.snapshot().link_state == FLY_SESSION_LINK_AUTHENTICATING_V2,
+          "both engines advanced past their discovery role into AUTHENTICATING");
+
+    /*
+     * Only the advertising side speaks first: it is the one that draws fresh random
+     * bytes and publishes its own first GATT message, while the scanning side
+     * correctly waits for a peer message before it has anything to answer. Both are
+     * waiting for peer bytes by the end of this step, which is exactly what the byte
+     * loopback in step 4 supplies.
+     */
+    check(inviter.crypto.randoms >= 1 &&
+              inviter.discovery.writes > 0,
+          "the advertising engine really drew its own randomness and wrote its own "
+          "first GATT message");
+    check(joiner.discovery.writes == 0 && joiner.crypto.randoms == 0,
+          "the scanning engine wrote nothing, because no peer message has reached it "
+          "yet in this step");
+
+    check_pump_matches_the_requests_this_phase_produced(inviter, inviter_pump,
+                                                        "advertising");
+    check_pump_matches_the_requests_this_phase_produced(joiner, joiner_pump,
+                                                        "scanning");
+
+    /* No byte loopback yet, so neither engine can have finished the handshake. */
+    check(inviter.snapshot().link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              joiner.snapshot().link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          "with no byte loopback yet neither engine is in the connected lobby");
+
+    /* The one thing this increment must prove about teardown: both engines still
+     * destroy cleanly once their own provider work is answered. */
+    shutdown_engine_with_the_pump(inviter, inviter_pump, limits);
+    shutdown_engine_with_the_pump(joiner, joiner_pump, limits);
+
+    for (auto& action : inviter_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    for (auto& action : joiner_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+}
+
 } // namespace
 
 int main()
@@ -307,6 +492,7 @@ int main()
     two_engines_come_up_independently();
     p256_table_is_valid_and_matches_repository_constants();
     loopback_world_is_deterministic_and_shared();
+    two_engines_connect_through_the_transport_and_are_pumped_to_idle();
 
     if (failures != 0)
     {
@@ -315,6 +501,6 @@ int main()
         return 1;
     }
     std::puts("two-engine loopback (step 1: two engines come up; step 2: shared "
-              "deterministic world) passed");
+              "deterministic world; step 3: transport + bounded pump) passed");
     return 0;
 }
