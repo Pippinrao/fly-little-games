@@ -4353,19 +4353,35 @@ void SessionEngine::run_work() noexcept
                                     FLY_SESSION_LINK_FAILED_V2);
                             }
                             else if (completed_type == static_cast<std::uint8_t>(
-                                         wire::GattLogicalType::PairSignature) &&
-                                     (!pair_signature_ ||
-                                      pair_signature_->mark_local_signature_sent() !=
-                                          FLY_SESSION_V2_OK ||
-                                      (pair_signature_->ready() &&
-                                       !start_pair_sas_locked())))
+                                         wire::GattLogicalType::PairSignature))
                             {
-                                cancel_pair_material_locked();
-                                release_pair_material_locked();
-                                discovery_disconnect_pending_ =
-                                    discovery_connection_ != 0;
-                                publish_link_view_locked(
-                                    FLY_SESSION_LINK_FAILED_V2);
+                                /*
+                                 * Having sent the local signature is not the end of this
+                                 * stage for the non-initiator: mark_local_signature_sent
+                                 * derives the durable transcript persist, which is a
+                                 * provider effect like any other and has to be
+                                 * dispatched. Without that dispatch the engine sits on a
+                                 * pending effect that no port ever sees, so the pair
+                                 * stalls with nothing outstanding - the same silent-stall
+                                 * shape the known-status hold removes. The success path
+                                 * mirrors the crypto-completion handler above.
+                                 */
+                                const bool ok = pair_signature_ &&
+                                    pair_signature_->mark_local_signature_sent() ==
+                                        FLY_SESSION_V2_OK &&
+                                    (!pair_signature_->ready() ||
+                                     start_pair_sas_locked());
+                                if (ok && pair_signature_->poll_effect())
+                                    pair_signature_dispatch_pending_ = true;
+                                if (!ok)
+                                {
+                                    cancel_pair_material_locked();
+                                    release_pair_material_locked();
+                                    discovery_disconnect_pending_ =
+                                        discovery_connection_ != 0;
+                                    publish_link_view_locked(
+                                        FLY_SESSION_LINK_FAILED_V2);
+                                }
                             }
                             else if ((completed_type == static_cast<std::uint8_t>(
                                           wire::GattLogicalType::PairKnownStatus) ||
