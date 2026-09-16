@@ -36,6 +36,8 @@ public:
                          object_store_, has_object_store_);
         capture_optional(ports, offsetof(fly_session_ports_v2, dual_runtime),
                          dual_runtime_, has_dual_runtime_);
+        capture_optional(ports, offsetof(fly_session_ports_v2, content),
+                         content_, has_content_);
         clock_.retain(clock_.context);
         executor_.retain(executor_.context);
         platform_state_.retain(platform_state_.context);
@@ -52,6 +54,7 @@ public:
         retain_optional(bearer_, has_bearer_);
         retain_optional(object_store_, has_object_store_);
         retain_optional(dual_runtime_, has_dual_runtime_);
+        retain_optional(content_, has_content_);
     }
 
     SessionPorts(const SessionPorts&) = delete;
@@ -59,6 +62,7 @@ public:
 
     ~SessionPorts()
     {
+        release_optional(content_, has_content_);
         release_optional(dual_runtime_, has_dual_runtime_);
         release_optional(object_store_, has_object_store_);
         release_optional(bearer_, has_bearer_);
@@ -119,6 +123,14 @@ public:
      */
     [[nodiscard]] bool has_dual_runtime() const noexcept
     { return has_dual_runtime_; }
+    /*
+     * Content reference provider, optional and tail-appended. Absent means no
+     * content is available: the engine then publishes no game choice and every
+     * content-dependent action fails closed.
+     */
+    [[nodiscard]] bool has_content() const noexcept { return has_content_; }
+    [[nodiscard]] const fly_session_content_port_v2* content() const noexcept
+    { return has_content_ ? &content_ : nullptr; }
     [[nodiscard]] const fly_session_dual_runtime_port_v2* dual_runtime()
         const noexcept
     { return has_dual_runtime_ ? &dual_runtime_ : nullptr; }
@@ -619,6 +631,7 @@ private:
     fly_session_bearer_port_v2 bearer_{};
     fly_session_object_store_port_v2 object_store_{};
     fly_session_dual_runtime_port_v2 dual_runtime_{};
+    fly_session_content_port_v2 content_{};
     bool has_camera_ = false;
     bool has_key_ = false;
     bool has_crypto_ = false;
@@ -629,6 +642,7 @@ private:
     bool has_bearer_ = false;
     bool has_object_store_ = false;
     bool has_dual_runtime_ = false;
+    bool has_content_ = false;
 };
 
 } // namespace flynes::session

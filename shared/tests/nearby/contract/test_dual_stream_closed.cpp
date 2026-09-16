@@ -55,11 +55,22 @@ static_assert(FLY_SESSION_DUAL_RUNTIME_PORT_V2_SIZE ==
                       sizeof(((fly_session_dual_runtime_port_v2*)0)->state_digest),
               "the DUAL runtime provider ends at state_digest");
 
-/* The public provider table's last member is the DUAL runtime slot. */
+/* The public provider table's last member is the content reference slot, which is
+ * a read-only query for available content — not a media entry point. Anything
+ * appended after it (a codec, an encoder, a sink) breaks this promise. */
 static_assert(FLY_SESSION_PORTS_V2_SIZE ==
-                  FLY_SESSION_PORTS_V2_R1_SIZE +
-                      sizeof(((fly_session_ports_v2*)0)->dual_runtime),
-              "the provider table ends at the DUAL runtime slot");
+                  FLY_SESSION_PORTS_V2_R2_SIZE +
+                      sizeof(((fly_session_ports_v2*)0)->content),
+              "the provider table ends at the content reference slot");
+static_assert(FLY_SESSION_PORTS_V2_R2_SIZE ==
+                  offsetof(fly_session_ports_v2, content),
+              "the content slot is a pure tail append");
+
+/* The content port itself ends at its cancel: one read-only query, no media. */
+static_assert(FLY_SESSION_CONTENT_PORT_V2_SIZE ==
+                  offsetof(fly_session_content_port_v2, cancel) +
+                      sizeof(((fly_session_content_port_v2*)0)->cancel),
+              "the content port carries a query and a cancel and nothing else");
 
 /* The DUAL content/bundle/outcome/digest values carry no media surface. */
 static_assert(FLY_SESSION_DUAL_INPUT_BUNDLE_V2_SIZE ==

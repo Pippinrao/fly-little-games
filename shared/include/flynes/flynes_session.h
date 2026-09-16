@@ -779,6 +779,75 @@ typedef struct fly_session_dual_runtime_port_v2
 #define FLY_SESSION_DUAL_RUNTIME_PORT_V2_SIZE \
     ((uint32_t)sizeof(fly_session_dual_runtime_port_v2))
 
+/*
+ * ---------------------------------------------------------------------------
+ * Content reference provider (IF11's "content" family, read-only part).
+ *
+ * The engine owns every hash and revision the public layer binds; a platform
+ * never retransmits them in an action (nearby-interface-design:151). So the
+ * content the user may run must be *published by the engine* and then selected
+ * through a typed reference: this port is the only seam through which the engine
+ * learns what content exists, and `game_choices` in the view is the only place
+ * those references are published.
+ *
+ * Scope of this release, deliberately narrow (Task 11 owns the rest):
+ *   - ONE read-only query. No mutation, no permissions, no transfer, no bulk
+ *     stream: those are the offer/approve/import actions, which stay fail-closed.
+ *   - A query is an ordinary asynchronous provider operation: start with an
+ *     op token, answer through the inbox, cancel through `cancel`.
+ *   - A missing port is legal. Every content-dependent action then fails closed
+ *     with FLY_SESSION_V2_UNAVAILABLE and the engine behaves exactly as it did
+ *     before this port existed.
+ *
+ * `index` addresses the platform's content table; an out-of-range index is the
+ * provider's FLY_SESSION_V2_EMPTY, not an error. The answer is a canonical
+ * `fly_session_content_choice_v2` record (below), so a choice the engine
+ * publishes can always be resolved back to the exact bytes the provider
+ * answered with.
+ * ---------------------------------------------------------------------------
+ */
+
+/* Undecorated length bound of a choice's display name. */
+#define FLY_SESSION_CONTENT_CHOICE_V2_MAX_NAME 64u
+
+/*
+ * The canonical local encoding of one content choice. Network byte order:
+ *
+ *   off  size  field
+ *     0     2  version u16be (= 1)
+ *     2     2  reserved_zero[2]
+ *     4    16  source_choice_ref   (opaque; the typed reference the UI binds)
+ *    20    32  content_id          (the content identity the two ends compare)
+ *    52     4  display_name_size u32be (1..64)
+ *    56     n  display_name[display_name_size] (UTF-8, no NUL)
+ *
+ * Total 56 + display_name_size. The record hash is
+ * SHA256("flynes-content-choice-v1" || u32be(exact_length) || exact bytes),
+ * which is the value a provider answers with and the value the engine keeps, so
+ * a reference can never be resolved against a record that changed underneath it.
+ */
+#define FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE ((uint32_t)56)
+
+typedef fly_session_result_v2 (*fly_session_content_query_v2)(
+    void*, const fly_session_op_token_v2*, uint32_t index,
+    fly_session_inbox_v2_t*);
+
+typedef struct fly_session_content_port_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t reserved_zero;
+    uint32_t reserved_zero2;
+    void* context;
+    fly_session_context_retain_v2 retain;
+    fly_session_context_release_v2 release;
+    fly_session_content_query_v2 query;
+    fly_session_operation_cancel_v2 cancel;
+} fly_session_content_port_v2;
+
+#define FLY_SESSION_CONTENT_PORT_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_content_port_v2))
+
 typedef struct fly_session_ports_v2
 {
     uint32_t struct_size;
@@ -803,6 +872,13 @@ typedef struct fly_session_ports_v2
      * FLY_SESSION_V2_UNAVAILABLE instead of pretending to run.
      */
     const fly_session_dual_runtime_port_v2* dual_runtime;
+    /*
+     * Content reference provider, appended and optional. Absent means "no
+     * content is available": the engine publishes no game choice and every
+     * content-dependent action fails closed, so a pre-content caller sees
+     * exactly the behaviour it saw before this slot existed.
+     */
+    const fly_session_content_port_v2* content;
 } fly_session_ports_v2;
 
 #define FLY_SESSION_PORTS_V2_R0_SIZE \
@@ -811,9 +887,16 @@ typedef struct fly_session_ports_v2
 /* The largest table that has no DUAL runtime slot: the pre-DUAL prefix. */
 #define FLY_SESSION_PORTS_V2_R1_SIZE \
     ((uint32_t)(offsetof(fly_session_ports_v2, dual_runtime)))
+/* The largest table that has no content slot: the pre-content prefix. */
+#define FLY_SESSION_PORTS_V2_R2_SIZE \
+    ((uint32_t)(offsetof(fly_session_ports_v2, content)))
 #define FLY_SESSION_PORTS_V2_SIZE ((uint32_t)sizeof(fly_session_ports_v2))
 #ifdef __cplusplus
 static_assert(FLY_SESSION_PORTS_V2_SIZE ==
+                  FLY_SESSION_PORTS_V2_R2_SIZE +
+                      sizeof(const fly_session_content_port_v2*),
+              "the content slot is a pure tail append");
+static_assert(FLY_SESSION_PORTS_V2_R2_SIZE ==
                   FLY_SESSION_PORTS_V2_R1_SIZE +
                       sizeof(const fly_session_dual_runtime_port_v2*),
               "the DUAL runtime slot is a pure tail append");

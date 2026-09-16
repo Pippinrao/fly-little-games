@@ -324,6 +324,17 @@ fly_session_result_v2 validate_dual_runtime(
                : FLY_SESSION_V2_UNSUPPORTED;
 }
 
+fly_session_result_v2 validate_content(
+    const fly_session_content_port_v2* port) noexcept
+{
+    const auto prefix = validate_provider_prefix(
+        port, FLY_SESSION_CONTENT_PORT_V2_SIZE);
+    if (prefix != FLY_SESSION_V2_OK || !port)
+        return prefix;
+    return port->query && port->cancel ? FLY_SESSION_V2_OK
+                                       : FLY_SESSION_V2_UNSUPPORTED;
+}
+
 fly_session_result_v2 validate_ports(const fly_session_ports_v2* ports) noexcept
 {
     if (!ports)
@@ -399,8 +410,17 @@ fly_session_result_v2 validate_ports(const fly_session_ports_v2* ports) noexcept
      * slot is a legal pre-DUAL table, and DUAL is then unavailable rather than
      * rejected.
      */
-    return validate_dual_runtime(optional_port<fly_session_dual_runtime_port_v2>(
-        ports, offsetof(fly_session_ports_v2, dual_runtime)));
+    const auto dual = validate_dual_runtime(
+        optional_port<fly_session_dual_runtime_port_v2>(
+            ports, offsetof(fly_session_ports_v2, dual_runtime)));
+    if (dual != FLY_SESSION_V2_OK)
+        return dual;
+    /*
+     * Content: likewise optional and tail-appended. Absent means no content is
+     * available, which is a legal pre-content table rather than an error.
+     */
+    return validate_content(optional_port<fly_session_content_port_v2>(
+        ports, offsetof(fly_session_ports_v2, content)));
 }
 
 } // namespace

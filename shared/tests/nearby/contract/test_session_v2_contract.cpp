@@ -685,6 +685,81 @@ void test_dual_prefix_appends_keep_older_callers_legal()
           "pre-DUAL engine shuts down");
 }
 
+fly_session_result_v2 content_query(void*, const fly_session_op_token_v2*,
+                                   std::uint32_t, fly_session_inbox_v2_t*)
+{
+    return FLY_SESSION_V2_EMPTY;
+}
+
+fly_session_result_v2 content_cancel(void*, const fly_session_op_token_v2*)
+{
+    return FLY_SESSION_V2_OK;
+}
+
+/*
+ * The content reference port is optional and tail-appended: a table from before
+ * the slot must still create an engine, and a content table that cannot answer a
+ * query must be refused rather than silently ignored (a platform supplying half a
+ * port would otherwise look exactly like "no content is available", which is a
+ * different and much more confusing failure).
+ */
+void test_content_port_is_optional_and_validated()
+{
+    Counts clock_counts;
+    Counts executor_counts;
+    Counts platform_counts;
+    auto clock = make_clock(&clock_counts);
+    auto executor = make_executor(&executor_counts);
+    auto platform = make_platform(&platform_counts);
+    auto config = make_config();
+
+    fly_session_ports_v2 ports{};
+    ports.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ports.clock = &clock;
+    ports.executor = &executor;
+    ports.platform_state = &platform;
+
+    /* Exactly the pre-content table: no content slot at all. */
+    ports.struct_size = FLY_SESSION_PORTS_V2_R2_SIZE;
+    ports.content = nullptr;
+    fly_session_v2_t* pre_content = nullptr;
+    check(fly_session_create_v2(&config, &ports, &pre_content) ==
+              FLY_SESSION_V2_OK,
+          "a pre-content provider table still creates an engine");
+    check(fly_session_begin_shutdown_v2(pre_content, 1401) ==
+              FLY_SESSION_V2_ACCEPTED &&
+              fly_session_destroy_v2(pre_content) == FLY_SESSION_V2_OK,
+          "the pre-content engine shuts down");
+
+    /* A content port that cannot answer a query is refused, not ignored. */
+    fly_session_content_port_v2 broken{};
+    broken.struct_size = FLY_SESSION_CONTENT_PORT_V2_SIZE;
+    broken.abi_version = FLY_SESSION_ABI_VERSION_2;
+    broken.context = &platform_counts;
+    broken.retain = retain_context;
+    broken.release = release_context;
+    broken.query = nullptr;
+    broken.cancel = content_cancel;
+    ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
+    ports.content = &broken;
+    fly_session_v2_t* refused = nullptr;
+    check(fly_session_create_v2(&config, &ports, &refused) ==
+              FLY_SESSION_V2_UNSUPPORTED,
+          "a content port without a query is refused");
+
+    /* A complete read-only content port is accepted. */
+    auto content = broken;
+    content.query = content_query;
+    ports.content = &content;
+    fly_session_v2_t* engine = nullptr;
+    check(fly_session_create_v2(&config, &ports, &engine) == FLY_SESSION_V2_OK,
+          "a read-only content port is accepted");
+    check(fly_session_begin_shutdown_v2(engine, 1402) ==
+              FLY_SESSION_V2_ACCEPTED &&
+              fly_session_destroy_v2(engine) == FLY_SESSION_V2_OK,
+          "the content engine shuts down");
+}
+
 } // namespace
 
 int main()
@@ -694,6 +769,7 @@ int main()
     test_bounded_action_and_notice_queues();
     test_input_contract_rejects_invalid_or_inactive_input();
     test_dual_prefix_appends_keep_older_callers_legal();
+    test_content_port_is_optional_and_validated();
     test_fail_closed_shutdown();
     if (failures != 0)
     {

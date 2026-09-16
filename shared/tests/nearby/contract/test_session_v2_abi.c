@@ -66,6 +66,24 @@ _Static_assert(FLY_SESSION_SNAPSHOT_V2_R0_SIZE <=
 _Static_assert(FLY_SESSION_PORTS_V2_R1_SIZE ==
                    offsetof(fly_session_ports_v2, dual_runtime),
                "the pre-DUAL provider table stops before the runtime slot");
+_Static_assert(FLY_SESSION_PORTS_V2_R2_SIZE ==
+                   offsetof(fly_session_ports_v2, content),
+               "the pre-content provider table stops before the content slot");
+_Static_assert(FLY_SESSION_PORTS_V2_SIZE ==
+                   FLY_SESSION_PORTS_V2_R2_SIZE + sizeof(const void*),
+               "the content slot is a pure tail append");
+_Static_assert(FLY_SESSION_PORTS_V2_R2_SIZE ==
+                   FLY_SESSION_PORTS_V2_R1_SIZE + sizeof(const void*),
+               "the provider table prefixes stay ordered");
+_Static_assert(offsetof(fly_session_content_port_v2, struct_size) == 0,
+               "content port size prefix");
+_Static_assert(offsetof(fly_session_content_port_v2, query) >
+                   offsetof(fly_session_content_port_v2, release),
+               "the content port keeps the provider retain/release prefix");
+_Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE == 56,
+               "the content choice header is frozen");
+_Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_MAX_NAME == 64,
+               "the content choice name bound is frozen");
 _Static_assert(FLY_SESSION_PORTS_V2_SIZE > FLY_SESSION_PORTS_V2_R1_SIZE,
                "the DUAL runtime slot is appended");
 _Static_assert(offsetof(fly_session_dual_runtime_port_v2, struct_size) == 0,
