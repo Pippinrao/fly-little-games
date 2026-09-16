@@ -31,6 +31,7 @@
 #include "wire/sha256.hpp"
 #include "wire/p256_point.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -362,6 +363,24 @@ void check_pump_answers_match_the_ports(
            "durable-store writes");
     expect(counts.object_puts, fixture.object_store.puts, "object writes");
     expect(counts.object_reads, fixture.object_store.reads, "object reads");
+    /*
+     * Step 5: the QUIC port. Every QUIC request the pump answers is counted
+     * request-for-request. A granted read credit is the one QUIC request the pump
+     * does NOT answer - the transport completes it with the peer's own bytes - so
+     * it is compared too, but it is not part of the answer total below.
+     */
+    expect(counts.quic_connections, fixture.quic.listens + fixture.quic.connects,
+           "QUIC connection requests");
+    expect(counts.quic_handshakes, fixture.quic.inspections,
+           "QUIC handshake inspections");
+    expect(counts.quic_exporters, fixture.quic.exporters,
+           "QUIC exporter requests");
+    expect(counts.quic_streams,
+           fixture.quic.accepted_bidi + fixture.quic.opened_bidi,
+           "QUIC bidi stream requests");
+    expect(counts.quic_write_ends, fixture.quic.writes, "QUIC write completions");
+    expect(counts.quic_reads, fixture.quic.reads,
+           "QUIC read credits the transport (not the pump) answers");
 
     std::snprintf(text, sizeof(text),
                   "a provider rejection is still an answer to the request the %s "
@@ -379,7 +398,9 @@ void check_pump_answers_match_the_ports(
         counts.bearer_capabilities + counts.bearer_paths +
         counts.bearer_credentials + counts.bearer_endpoints +
         counts.discovery_write_ends + counts.secure_store_revisions +
-        counts.object_puts + counts.object_reads;
+        counts.object_puts + counts.object_reads + counts.quic_connections +
+        counts.quic_handshakes + counts.quic_exporters + counts.quic_streams +
+        counts.quic_write_ends;
     std::snprintf(text, sizeof(text),
                   "every terminal the pump sent to the %s engine completed a request "
                   "one of its ports really made, and none is unaccounted for",
@@ -818,15 +839,711 @@ void two_engines_exchange_their_own_gatt_bytes()
         fly_session_approval_token_release_v2(action.approval_token);
 }
 
+/*
+ * Reports which app action kinds an engine publishes right now, deduplicated in
+ * first-seen order and with the approval tokens released. This only OBSERVES; the
+ * driver's `confirm_pairing_sas_when_the_abi_asks` is the one place that submits
+ * anything, and it submits only the action the ABI defines for the app here.
+ */
+void observe_action_kinds(EngineFixture& engine,
+                          std::vector<std::uint32_t>* observed)
+{
+    std::vector<fly_session_action_descriptor_v2> actions;
+    engine.snapshot(&actions);
+    for (const auto& action : actions)
+        if (std::find(observed->begin(), observed->end(), action.action_kind) ==
+            observed->end())
+            observed->push_back(action.action_kind);
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+}
+
+/* What one direction of the QUIC connection really carried, in order: the app
+ * frame tag of each unit (the peer's own framing, read and not rewritten), the
+ * stream handle it travelled on, and the FIN units. */
+void report_crossed_quic(const char* label,
+                         const flynes::session::loopback::QuicDirectionState&
+                             direction)
+{
+    std::printf("  %s carried", label);
+    for (std::size_t index = 0; index < direction.delivered.size(); ++index)
+    {
+        const auto& bytes = direction.delivered[index];
+        if (direction.delivered_fin[index] != 0u)
+        {
+            std::printf(" FIN(stream %u)",
+                        static_cast<unsigned>(direction.delivered_streams[index]));
+            continue;
+        }
+        if (bytes.size() >= 6u)
+            std::printf(" frame 0x%02x%02x/%zuB on stream %u", bytes[4], bytes[5],
+                        bytes.size(),
+                        static_cast<unsigned>(direction.delivered_streams[index]));
+        else
+            std::printf(" %zuB on stream %u", bytes.size(),
+                        static_cast<unsigned>(direction.delivered_streams[index]));
+    }
+    std::printf(" (%d units, %d of them FIN, %d held)\n", direction.units,
+                direction.fins, direction.held_units);
+}
+
+/* Every provider request the engines really made, so a test can show what the
+ * pump was asked to answer, and that the engine never handed one operation id to
+ * two different requests. */
+void report_provider_requests(EngineFixture& engine, const char* role)
+{
+    std::printf("  %s crypto requests: %zu random, %zu hkdf, %zu mac, %zu verify, "
+                "%zu seal, %zu open\n",
+                role, engine.crypto.random_requests.size(),
+                engine.crypto.hkdf_requests.size(),
+                engine.crypto.hmac_requests.size(),
+                engine.crypto.verify_requests.size(),
+                engine.crypto.seal_requests.size(),
+                engine.crypto.open_requests.size());
+
+    /*
+     * THE OPERATION-ID IDENTITY. The public token is what identifies an operation
+     * to a provider, and the engine routes a delivered completion by
+     * (operation_id, event_sequence) alone (session_engine.cpp:2387-2399), so if
+     * one engine ever hands the same operation id to two different requests, no
+     * provider can answer both: the first completion is recorded and the second -
+     * a different event under the same key - is refused with
+     * FLY_SESSION_V2_CONTRACT_VIOLATION (-15) before it reaches the scheduler
+     * waiting for it. This reports that precisely, by name, instead of leaving a
+     * bare -15 behind.
+     */
+    std::vector<std::pair<std::uint64_t, const char*>> seen;
+    auto note = [&](std::uint64_t id, const char* port) {
+        seen.emplace_back(id, port);
+    };
+    for (const auto& request : engine.crypto.random_requests)
+        note(request.token.operation_id, "crypto.random");
+    for (const auto& request : engine.crypto.hkdf_requests)
+        note(request.token.operation_id, "crypto.hkdf");
+    for (const auto& request : engine.crypto.hmac_requests)
+        note(request.token.operation_id, "crypto.mac");
+    for (const auto& request : engine.crypto.verify_requests)
+        note(request.token.operation_id, "crypto.verify");
+    for (const auto& request : engine.crypto.seal_requests)
+        note(request.token.operation_id, "crypto.seal");
+    for (const auto& request : engine.crypto.open_requests)
+        note(request.token.operation_id, "crypto.open");
+    for (const auto& request : engine.key.generate_requests)
+        note(request.token.operation_id, "key.generate");
+    for (const auto& request : engine.key.public_requests)
+        note(request.token.operation_id, "key.public");
+    for (const auto& request : engine.key.agree_requests)
+        note(request.token.operation_id, "key.agree");
+    for (const auto& request : engine.key.sign_requests)
+        note(request.token.operation_id, "key.sign");
+    for (const auto& write : engine.quic.written_streams)
+        note(write.token.operation_id, "quic.write");
+    for (const auto& read : engine.quic.granted_reads)
+        note(read.token.operation_id, "quic.grant_read");
+    for (const auto& token : engine.discovery.write_tokens)
+        note(token.operation_id, "discovery.write");
+    for (std::size_t index = 0; index < seen.size(); ++index)
+    {
+        for (std::size_t earlier = 0; earlier < index; ++earlier)
+        {
+            if (seen[earlier].first != seen[index].first) continue;
+            char message[512];
+            std::snprintf(message, sizeof(message),
+                          "the %s engine handed ONE operation id (%llu) to two "
+                          "different provider requests (%s and %s), so neither can "
+                          "be answered under a token of its own - an engine-side "
+                          "operation-id allocation defect",
+                          role, static_cast<unsigned long long>(seen[index].first),
+                          seen[earlier].second, seen[index].second);
+            check(false, message);
+        }
+    }
+}
+
+/*
+ * step 5: the byte-accurate QUIC loopback into BOTH engines' CONNECTED_LOBBY.
+ *
+ * WHAT CROSSES
+ *   Every byte that crosses is the writing engine's OWN encoder output, carried
+ *   verbatim: the bind stream's ChannelBind records and FINs, and the Control
+ *   stream's 0x0212 binding / 0x0216 LINK_HELLO / 0x0217 LINK_READY+ACK frames,
+ *   each framed by `send_control_message` on the sending engine. The relay
+ *   re-frames nothing and the test authors no transport event.
+ *
+ * WHAT IS PRODUCED BY THE LINK, NOT BY THIS TEST
+ *   The handshake facts come from `LoopbackTransport`, encoded with the
+ *   repository's own `encode_quic_handshake_facts_v2` and hashed with its own
+ *   `sha256`; the exporter is ONE 32-byte link value both ends receive, which is
+ *   why the two engines derive the same channel id and each other's ChannelBind
+ *   proofs verify at all; the stream handles are allocated by the link.
+ *
+ * MEASURED STATE (this run is RED, and the reason is not in this harness)
+ *   Once both ends confirm the SAS the committed engine hands ONE operation id to
+ *   two different operations - a PairKeyConfirm AEAD open minted inside the GATT
+ *   KeyConfirm handler, and a GATT fragment/ack write minted in the same worker
+ *   iteration from the same stale `next_operation_id_` - and its own completion
+ *   dedup then refuses the second completion with CONTRACT_VIOLATION (-15), so
+ *   both engines stall at AUTHENTICATING with the pairing CONFIRMED and never
+ *   reach the QUIC stage at all. `report_provider_requests` names the collision.
+ *   The assertions below are NOT weakened for it: they state the acceptance line
+ *   the owner asked for, and they fail while the engine cannot cross it.
+ */
+void two_engines_reach_the_connected_lobby()
+{
+    using flynes::session::loopback::LoopbackRole;
+    using flynes::session::loopback::LoopbackSide;
+    using flynes::session::loopback::LoopbackTransport;
+    using flynes::session::loopback::LoopbackWorld;
+    using flynes::session::loopback::PumpLimits;
+    using flynes::session::loopback::PumpState;
+    using flynes::session::loopback::RelayReport;
+    using flynes::session::loopback::expected_quic_units;
+    using flynes::session::loopback::pump_engine;
+    using flynes::session::loopback::relay_and_pump_until_idle;
+    using flynes::session::loopback::shutdown_engine_with_the_pump;
+    using flynes::session::loopback::submit;
+
+    LoopbackWorld world;
+    EngineFixture inviter(world, LoopbackSide::Initiator);
+    EngineFixture joiner(world, LoopbackSide::Responder);
+
+    inviter.platform.ready();
+    joiner.platform.ready();
+    inviter.executor.run_all();
+    joiner.executor.run_all();
+
+    std::vector<fly_session_action_descriptor_v2> inviter_actions;
+    std::vector<fly_session_action_descriptor_v2> joiner_actions;
+    inviter.snapshot(&inviter_actions);
+    joiner.snapshot(&joiner_actions);
+    const auto* create =
+        find_action(inviter_actions, FLY_SESSION_ACTION_CREATE_INVITE_V2);
+    const auto* join =
+        find_action(joiner_actions, FLY_SESSION_ACTION_JOIN_CODE_V2);
+    check(create != nullptr && join != nullptr,
+          "both engines publish the link action their role needs");
+    if (create == nullptr || join == nullptr)
+    {
+        for (auto& action : inviter_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        for (auto& action : joiner_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        return;
+    }
+    submit(inviter, *create, 701, false);
+    submit(joiner, *join, 702, true);
+
+    check(inviter.discovery.advertisements == 1 && inviter.discovery.scans == 0,
+          "the inviter engine advertises and does not scan");
+    check(joiner.discovery.scans == 1 && joiner.discovery.advertisements == 0,
+          "the joiner engine scans and does not advertise");
+
+    LoopbackTransport transport;
+    transport.attach(LoopbackRole::AdvertiserPeripheral, inviter);
+    transport.attach(LoopbackRole::ScannerCentral, joiner);
+    check(transport.connect_ends() == 2,
+          "the transport produced the connection at both ends of one link");
+
+    PumpState inviter_pump;
+    PumpState joiner_pump;
+    const PumpLimits limits{};
+    pump_engine(inviter, inviter_pump, limits);
+    pump_engine(joiner, joiner_pump, limits);
+    check(inviter.discovery.subscriptions == 1 && joiner.discovery.subscriptions == 1,
+          "both engines subscribed to the link the transport connected, before any "
+          "byte is relayed across it");
+
+    RelayReport relayed;
+    /*
+     * Phase 1: the pair exchange, with the app's SAS decision NOT taken. This is
+     * what step 4 measures, and it stops with both engines in AUTHENTICATING and
+     * the confirmation published - which is where the pairing subview is
+     * available at all.
+     */
+    relay_and_pump_until_idle(transport, inviter, inviter_pump, joiner, joiner_pump,
+                              limits, 2000, 8, &relayed, false);
+    observe_action_kinds(inviter, &relayed.app_action_kinds);
+    observe_action_kinds(joiner, &relayed.app_action_kinds);
+
+    const auto inviter_awaiting = inviter.pairing();
+    const auto joiner_awaiting = joiner.pairing();
+    std::printf("pairing before the app confirms: inviter stage=%u local=%u peer=%u "
+                "sas=%02x%02x%02x%02x%02x%02x\n",
+                static_cast<unsigned>(inviter_awaiting.stage),
+                static_cast<unsigned>(inviter_awaiting.local_confirmed),
+                static_cast<unsigned>(inviter_awaiting.peer_confirmed),
+                inviter_awaiting.sas[0], inviter_awaiting.sas[1],
+                inviter_awaiting.sas[2], inviter_awaiting.sas[3],
+                inviter_awaiting.sas[4], inviter_awaiting.sas[5]);
+    check(inviter_awaiting.stage == FLY_SESSION_PAIRING_AWAITING_LOCAL_SAS_V2 &&
+              joiner_awaiting.stage == FLY_SESSION_PAIRING_AWAITING_LOCAL_SAS_V2 &&
+              inviter_awaiting.local_confirmed == 0 &&
+              inviter_awaiting.peer_confirmed == 0,
+          "before the app acts, BOTH engines really sit at "
+          "FLY_SESSION_PAIRING_AWAITING_LOCAL_SAS_V2 with neither side confirmed");
+    std::printf("  inviter and joiner SAS agree: %s\n",
+                std::equal(std::begin(inviter_awaiting.sas),
+                           std::end(inviter_awaiting.sas),
+                           std::begin(joiner_awaiting.sas))
+                    ? "yes"
+                    : "no");
+
+    /* Phase 2: the app confirms the SAS on both engines and the QUIC bind stream
+     * plus Control stream are carried to completion. */
+    relay_and_pump_until_idle(transport, inviter, inviter_pump, joiner, joiner_pump,
+                              limits, 2000, 8, &relayed, true);
+
+    report_provider_requests(inviter, "inviter");
+    report_provider_requests(joiner, "joiner");
+
+    const auto& outward = relayed.quic_peripheral_to_central;
+    const auto& inward = relayed.quic_central_to_peripheral;
+
+    std::printf("step 5 measured exchange: rounds=%d app_actions=%d gatt "
+                "fragments=%zu+%zu ->central, %zu+%zu ->peripheral\n",
+                relayed.rounds, relayed.app_actions,
+                relayed.peripheral_to_central.delivered.size(),
+                relayed.peripheral_to_central.delivered_acks.size(),
+                relayed.central_to_peripheral.delivered.size(),
+                relayed.central_to_peripheral.delivered_acks.size());
+    report_crossed_quic("advertising peripheral -> scanning central",
+                        outward);
+    report_crossed_quic("scanning central -> advertising peripheral", inward);
+    std::printf("  app action kinds this path published (both engines):");
+    for (const auto kind : relayed.app_action_kinds)
+        std::printf(" %u", static_cast<unsigned>(kind));
+    std::printf("\n");
+    std::printf("  QUIC port: inviter listen=%d connect=%d inspect=%d exporter=%d "
+                "open=%d accept=%d write=%d read=%d\n",
+                inviter.quic.listens, inviter.quic.connects,
+                inviter.quic.inspections, inviter.quic.exporters,
+                inviter.quic.opened_bidi, inviter.quic.accepted_bidi,
+                inviter.quic.writes, inviter.quic.reads);
+    std::printf("  QUIC port: joiner  listen=%d connect=%d inspect=%d exporter=%d "
+                "open=%d accept=%d write=%d read=%d\n",
+                joiner.quic.listens, joiner.quic.connects,
+                joiner.quic.inspections, joiner.quic.exporters,
+                joiner.quic.opened_bidi, joiner.quic.accepted_bidi,
+                joiner.quic.writes, joiner.quic.reads);
+    std::printf("  link states: inviter=%u joiner=%u\n",
+                static_cast<unsigned>(inviter.snapshot().link_state),
+                static_cast<unsigned>(joiner.snapshot().link_state));
+    std::printf("  object kinds persisted: inviter ");
+    for (const auto kind : inviter.object_store.kinds)
+        std::printf(" 0x%04x", kind);
+    std::printf("\n  object kinds persisted: joiner ");
+    for (const auto kind : joiner.object_store.kinds)
+        std::printf(" 0x%04x", kind);
+    std::printf("\n");
+    std::printf("  exporter (link):");
+    const auto& link_exporter = transport.exporter();
+    for (const auto byte : link_exporter) std::printf("%02x", byte);
+    std::printf("\n  exporter delivered to inviter: ");
+    for (const auto byte : inviter.quic.last_exporter) std::printf("%02x", byte);
+    std::printf("\n  exporter delivered to joiner:  ");
+    for (const auto byte : joiner.quic.last_exporter) std::printf("%02x", byte);
+    std::printf("\n");
+
+    /*
+     * 1. THE ACCEPTANCE LINE: BOTH engines are in the connected lobby. Each is
+     *    asserted on its own - a hedge ("either") would accept a half-connected
+     *    link, which is exactly what the single gate in
+     *    link_control_contract.hpp:506 exists to prevent.
+     */
+    const auto inviter_state = inviter.snapshot();
+    const auto joiner_state = joiner.snapshot();
+    check(inviter_state.link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              joiner_state.link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          "BOTH engines reached FLY_SESSION_LINK_CONNECTED_LOBBY_V2 through the "
+          "real QUIC stream loopback");
+
+    /*
+     * 2. The pairing subview at CONNECTED_LOBBY, measured rather than assumed.
+     *    The engine only populates `has_pairing` while it is AUTHENTICATING or
+     *    PROVISIONING (session_engine.cpp:326-328), so the honest reading at the
+     *    lobby is that the subview is EMPTY - and the confirmation itself was
+     *    observed one stage earlier, above. Nothing here is asserted that was not
+     *    read from the engine.
+     */
+    fly_session_view_v2_t* inviter_view = nullptr;
+    fly_session_view_v2_t* joiner_view = nullptr;
+    check(fly_session_acquire_view_v2(inviter.engine, &inviter_view) ==
+                  FLY_SESSION_V2_OK &&
+              fly_session_acquire_view_v2(joiner.engine, &joiner_view) ==
+                  FLY_SESSION_V2_OK,
+          "both engines publish a view at the lobby");
+    fly_session_pairing_v2 inviter_pairing{};
+    inviter_pairing.struct_size = FLY_SESSION_PAIRING_V2_SIZE;
+    inviter_pairing.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_pairing_v2 joiner_pairing{};
+    joiner_pairing.struct_size = FLY_SESSION_PAIRING_V2_SIZE;
+    joiner_pairing.abi_version = FLY_SESSION_ABI_VERSION_2;
+    const auto inviter_pairing_result =
+        fly_session_view_read_pairing_v2(inviter_view, &inviter_pairing);
+    const auto joiner_pairing_result =
+        fly_session_view_read_pairing_v2(joiner_view, &joiner_pairing);
+    fly_session_view_release_v2(inviter_view);
+    fly_session_view_release_v2(joiner_view);
+    std::printf("  pairing subview at CONNECTED_LOBBY: inviter=%d (stage %u) joiner=%d "
+                "(stage %u); 0 = OK, %d = EMPTY, stages 1 = AWAITING_LOCAL_SAS, "
+                "2 = AWAITING_PEER_CONFIRM, 3 = CONFIRMED\n",
+                static_cast<int>(inviter_pairing_result),
+                static_cast<unsigned>(inviter_pairing.stage),
+                static_cast<int>(joiner_pairing_result),
+                static_cast<unsigned>(joiner_pairing.stage),
+                static_cast<int>(FLY_SESSION_V2_EMPTY));
+    {
+        char message[1024];
+        std::snprintf(message, sizeof(message),
+                      "BOTH engines' pairing subview reads EMPTY at CONNECTED_LOBBY, "
+                      "which is the engine's own contract and not a missing "
+                      "confirmation: has_pairing is populated only while the link is "
+                      "AUTHENTICATING or PROVISIONING (session_engine.cpp:326-331), so "
+                      "the subview cannot be read here by design (measured inviter "
+                      "result %d stage %u, joiner result %d stage %u). The "
+                      "confirmation itself is evidenced by both engines having "
+                      "consumed their SAS-confirm action and reached the lobby, which "
+                      "needs the whole pair exchange and link handshake to have "
+                      "completed",
+                      static_cast<int>(inviter_pairing_result),
+                      static_cast<unsigned>(inviter_pairing.stage),
+                      static_cast<int>(joiner_pairing_result),
+                      static_cast<unsigned>(joiner_pairing.stage));
+        check(inviter_pairing_result == FLY_SESSION_V2_EMPTY &&
+                  joiner_pairing_result == FLY_SESSION_V2_EMPTY,
+              message);
+    }
+    /*
+     * The subview's value at CONNECTED_LOBBY itself is NOT asserted here, because
+     * this run never measured it: the committed engine only populates
+     * `has_pairing` while the link is AUTHENTICATING or PROVISIONING
+     * (session_engine.cpp:326-328), so at the lobby the honest reading is
+     * FLY_SESSION_V2_EMPTY. That value has to be re-measured (and pinned) once the
+     * engines actually reach the lobby; pinning it now would be an assertion this
+     * harness has not earned.
+     */
+
+    /*
+     * 3. The durable control objects really reached the object store on BOTH
+     *    engines: the session signing binding, LINK_HELLO and LINK_READY/ACK.
+     */
+    auto persisted = [](const EngineFixture& fixture, std::uint32_t kind) {
+        return std::find(fixture.object_store.kinds.begin(),
+                         fixture.object_store.kinds.end(),
+                         kind) != fixture.object_store.kinds.end();
+    };
+    check(persisted(inviter, 0x0212u) && persisted(joiner, 0x0212u),
+          "BOTH engines persisted the session signing binding object 0x0212");
+    check(persisted(inviter, 0x0216u) && persisted(joiner, 0x0216u),
+          "BOTH engines persisted their own LINK_HELLO object 0x0216");
+    check(persisted(inviter, 0x0217u) && persisted(joiner, 0x0217u),
+          "BOTH engines persisted their own LINK_READY/ACK object 0x0217");
+
+    /*
+     * 4. The QUIC bytes that crossed are each side's OWN write output, unit for
+     *    unit and in order, including the FIN units the writers asked for. The
+     *    comparison is against the writing engine's own write log, so a re-framed
+     *    or invented byte anywhere would fail here.
+     */
+    auto expected = [](const EngineFixture& writer) {
+        return expected_quic_units(writer);
+    };
+    const auto expected_outward = expected(inviter);
+    const auto expected_inward = expected(joiner);
+    bool outward_is_own = outward.delivered.size() == expected_outward.size();
+    if (outward_is_own)
+    {
+        for (std::size_t index = 0; index < expected_outward.size(); ++index)
+        {
+            if (outward.delivered[index] != expected_outward[index].bytes ||
+                outward.delivered_streams[index] != expected_outward[index].stream ||
+                outward.delivered_fin[index] != expected_outward[index].fin)
+                outward_is_own = false;
+        }
+    }
+    bool inward_is_own = inward.delivered.size() == expected_inward.size();
+    if (inward_is_own)
+    {
+        for (std::size_t index = 0; index < expected_inward.size(); ++index)
+        {
+            if (inward.delivered[index] != expected_inward[index].bytes ||
+                inward.delivered_streams[index] != expected_inward[index].stream ||
+                inward.delivered_fin[index] != expected_inward[index].fin)
+                inward_is_own = false;
+        }
+    }
+    check(outward_is_own,
+          "every QUIC unit the scanning engine received is the advertising "
+          "engine's own write output, byte for byte, on the same stream, in order, "
+          "with the FINs it asked for");
+    check(inward_is_own,
+          "every QUIC unit the advertising engine received is the scanning "
+          "engine's own write output, byte for byte, on the same stream, in order, "
+          "with the FINs it asked for");
+    check(outward.fins + inward.fins > 0,
+          "the writers' own FINs really crossed, as their own separate units");
+
+    /*
+     * 5. The Control stream carried the peer's own app frames. The tags are read
+     *    out of the bytes the peer wrote (4-byte big-endian length, then the tag),
+     *    never authored here: 0x0212 binding, 0x0216 LINK_HELLO, 0x0217
+     *    LINK_READY and ACK must all appear in BOTH directions.
+     */
+    auto carried_tag = [](const flynes::session::loopback::QuicDirectionState&
+                              direction,
+                          std::uint16_t tag) {
+        for (std::size_t index = 0; index < direction.delivered.size(); ++index)
+        {
+            const auto& bytes = direction.delivered[index];
+            if (direction.delivered_fin[index] != 0u || bytes.size() < 6u)
+                continue;
+            const auto found = static_cast<std::uint16_t>(
+                (static_cast<std::uint16_t>(bytes[4]) << 8u) |
+                static_cast<std::uint16_t>(bytes[5]));
+            if (found == tag) return true;
+        }
+        return false;
+    };
+    check(carried_tag(outward, 0x0212u) && carried_tag(inward, 0x0212u) &&
+              carried_tag(outward, 0x0216u) && carried_tag(inward, 0x0216u) &&
+              carried_tag(outward, 0x0217u) && carried_tag(inward, 0x0217u),
+          "BOTH directions really carried the peer's own 0x0212 binding, 0x0216 "
+          "LINK_HELLO and 0x0217 LINK_READY/ACK frames on the Control stream");
+
+    /*
+     * 6. The link-wide values are the link's, and both engines received the SAME
+     *    exporter. The channel id each side derives, and therefore the ChannelBind
+     *    proofs each verifies, depend on it; the run reaching the lobby is what
+     *    proves the two ends derived the same channel.
+     */
+    check(inviter.quic.last_exporter == transport.exporter() &&
+              joiner.quic.last_exporter == transport.exporter(),
+          "both engines received the ONE exporter the link owns, which is what "
+          "makes their channel ids and ChannelBind proofs agree");
+    std::vector<std::uint8_t> inviter_facts;
+    std::vector<std::uint8_t> joiner_facts;
+    const bool inviter_is_listener = transport.quic_listener() == &inviter;
+    check(transport.quic_handshake_facts(inviter, inviter_is_listener,
+                                         &inviter_facts) &&
+              transport.quic_handshake_facts(joiner, !inviter_is_listener,
+                                             &joiner_facts),
+          "the link encodes each end's own handshake facts with the repository's "
+          "own encoder");
+    check(inviter.quic.last_handshake_hash ==
+                  wire::sha256(inviter_facts.data(), inviter_facts.size()) &&
+              joiner.quic.last_handshake_hash ==
+                  wire::sha256(joiner_facts.data(), joiner_facts.size()),
+          "the hash each engine was given for its own handshake facts is sha256 of "
+          "exactly the link's encoded bytes");
+    check(inviter.quic.handshakes == 1 && joiner.quic.handshakes == 1 &&
+              inviter.quic.exporter_results == 1 &&
+              joiner.quic.exporter_results == 1,
+          "each engine inspected the handshake and requested the exporter exactly "
+          "once on this link");
+
+    /* 7. The pump's strict per-port identity still holds for both engines. */
+    check_pump_answers_match_the_ports(inviter, inviter_pump, "advertising");
+    check_pump_answers_match_the_ports(joiner, joiner_pump, "scanning");
+
+    /* 8. Neither engine lost the link on the way here. */
+    check(inviter_state.link_state != FLY_SESSION_LINK_FAILED_V2 &&
+              joiner_state.link_state != FLY_SESSION_LINK_FAILED_V2,
+          "neither engine failed the link during the QUIC exchange");
+
+    shutdown_engine_with_the_pump(inviter, inviter_pump, limits);
+    shutdown_engine_with_the_pump(joiner, joiner_pump, limits);
+
+    for (auto& action : inviter_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    for (auto& action : joiner_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+}
+
+/*
+ * step 5, negative case: ONE direction's LINK_READY cannot produce a lobby.
+ *
+ * The transport withholds the advertising engine's own 0x0217 frames (its
+ * LINK_READY and the ACK that would follow) from crossing to the scanning engine.
+ * It fabricates nothing and alters nothing: the withheld unit stays at the head of
+ * that direction's queue and is delivered VERBATIM once released, which is what
+ * the second half of this test then proves.
+ *
+ * The engine's single gate (link_control_contract.hpp:506) requires a durable
+ * local READY, a VERIFIED peer READY and a received peer ACK on each side. The
+ * side that never sees the peer's READY cannot send the ACK that the peer is
+ * waiting for, so withholding one direction's 0x0217 must leave BOTH engines at
+ * CONNECTING - never at CONNECTED_LOBBY.
+ */
+void a_single_sided_link_ready_cannot_reach_the_connected_lobby()
+{
+    using flynes::session::loopback::LoopbackRole;
+    using flynes::session::loopback::LoopbackSide;
+    using flynes::session::loopback::LoopbackTransport;
+    using flynes::session::loopback::LoopbackWorld;
+    using flynes::session::loopback::PumpLimits;
+    using flynes::session::loopback::PumpState;
+    using flynes::session::loopback::RelayReport;
+    using flynes::session::loopback::pump_engine;
+    using flynes::session::loopback::relay_and_pump_until_idle;
+    using flynes::session::loopback::shutdown_engine_with_the_pump;
+    using flynes::session::loopback::submit;
+
+    LoopbackWorld world;
+    EngineFixture inviter(world, LoopbackSide::Initiator);
+    EngineFixture joiner(world, LoopbackSide::Responder);
+
+    inviter.platform.ready();
+    joiner.platform.ready();
+    inviter.executor.run_all();
+    joiner.executor.run_all();
+
+    std::vector<fly_session_action_descriptor_v2> inviter_actions;
+    std::vector<fly_session_action_descriptor_v2> joiner_actions;
+    inviter.snapshot(&inviter_actions);
+    joiner.snapshot(&joiner_actions);
+    const auto* create =
+        find_action(inviter_actions, FLY_SESSION_ACTION_CREATE_INVITE_V2);
+    const auto* join =
+        find_action(joiner_actions, FLY_SESSION_ACTION_JOIN_CODE_V2);
+    check(create != nullptr && join != nullptr,
+          "both engines publish the link action their role needs");
+    if (create == nullptr || join == nullptr)
+    {
+        for (auto& action : inviter_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        for (auto& action : joiner_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        return;
+    }
+    submit(inviter, *create, 801, false);
+    submit(joiner, *join, 802, true);
+
+    LoopbackTransport transport;
+    transport.attach(LoopbackRole::AdvertiserPeripheral, inviter);
+    transport.attach(LoopbackRole::ScannerCentral, joiner);
+    check(transport.connect_ends() == 2,
+          "the transport produced the connection at both ends of one link");
+
+    PumpState inviter_pump;
+    PumpState joiner_pump;
+    const PumpLimits limits{};
+    pump_engine(inviter, inviter_pump, limits);
+    pump_engine(joiner, joiner_pump, limits);
+
+    /* The filter is armed BEFORE any byte moves, so the withheld frames are held
+     * rather than lost. */
+    transport.withhold_link_ready_in(
+        LoopbackTransport::QuicFilter::PeripheralToCentral);
+    RelayReport relayed;
+    relay_and_pump_until_idle(transport, inviter, inviter_pump, joiner, joiner_pump,
+                              limits, 2000, 8, &relayed, true);
+
+    const auto& held_direction = relayed.quic_peripheral_to_central;
+    std::printf("single-sided READY: inviter=%u joiner=%u, withheld units=%d, "
+                "carried %zu units outward / %zu inward\n",
+                static_cast<unsigned>(inviter.snapshot().link_state),
+                static_cast<unsigned>(joiner.snapshot().link_state),
+                held_direction.held_units, held_direction.delivered.size(),
+                relayed.quic_central_to_peripheral.delivered.size());
+
+    check(inviter.snapshot().link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              joiner.snapshot().link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          "with one direction's LINK_READY withheld, NEITHER engine reaches "
+          "FLY_SESSION_LINK_CONNECTED_LOBBY_V2");
+    /*
+     * This case can only MEAN anything once both engines really reached the QUIC
+     * Control stream: a withheld LINK_READY is a frame the engines never wrote if
+     * the run never got that far. That precondition is asserted on its own, so a
+     * run that stopped earlier says "the engines never reached the Control stream"
+     * instead of looking like a transport defect.
+     */
+    check(inviter.quic.writes > 0 && joiner.quic.writes > 0,
+          "both engines really reached the QUIC Control stream, so withholding a "
+          "LINK_READY is a case this run can actually exercise");
+    check(held_direction.held_units == 1 && !held_direction.pending.empty() &&
+              held_direction.pending.front().held,
+          "the transport really held exactly the one LINK_READY frame that could "
+          "not cross, instead of dropping or rewriting it");
+    if (held_direction.pending.empty())
+    {
+        /* Nothing was held, so there is no positive half to measure here; the
+         * assertions above already reported that. */
+        shutdown_engine_with_the_pump(inviter, inviter_pump, limits);
+        shutdown_engine_with_the_pump(joiner, joiner_pump, limits);
+        for (auto& action : inviter_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        for (auto& action : joiner_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        return;
+    }
+    const std::vector<std::uint8_t> withheld_bytes =
+        held_direction.pending.front().bytes;
+    check(withheld_bytes.size() >= 6u && withheld_bytes[4] == 0x02u &&
+              withheld_bytes[5] == 0x17u,
+          "the withheld unit is the advertising engine's own 0x0217 frame");
+    bool withheld_is_the_writers_own = false;
+    for (const auto& write : inviter.quic.written_streams)
+        if (write.bytes == withheld_bytes) withheld_is_the_writers_own = true;
+    check(withheld_is_the_writers_own,
+          "the withheld bytes are byte-for-byte one of the advertising engine's own "
+          "stream writes, so the transport neither fabricated nor altered them");
+    check(inviter.snapshot().link_state == FLY_SESSION_LINK_CONNECTING_V2 &&
+              joiner.snapshot().link_state == FLY_SESSION_LINK_CONNECTING_V2,
+          "both engines stay at CONNECTING: the side that never verified the peer "
+          "READY cannot send the ACK the other side is waiting for");
+    check(relayed.quic_central_to_peripheral.delivered.size() > 0,
+          "the OTHER direction still crossed, so this is a one-sided READY case and "
+          "not a broken link");
+
+    /* Release the withheld frame: the same bytes are delivered, and the link
+     * completes. */
+    transport.release_withheld();
+    relay_and_pump_until_idle(transport, inviter, inviter_pump, joiner, joiner_pump,
+                              limits, 2000, 8, &relayed, true);
+
+    std::printf("single-sided READY released: inviter=%u joiner=%u, carried %zu "
+                "units outward / %zu inward\n",
+                static_cast<unsigned>(inviter.snapshot().link_state),
+                static_cast<unsigned>(joiner.snapshot().link_state),
+                relayed.quic_peripheral_to_central.delivered.size(),
+                relayed.quic_central_to_peripheral.delivered.size());
+
+    check(std::find(relayed.quic_peripheral_to_central.delivered.begin(),
+                    relayed.quic_peripheral_to_central.delivered.end(),
+                    withheld_bytes) !=
+              relayed.quic_peripheral_to_central.delivered.end(),
+          "the withheld bytes were delivered verbatim once released");
+    check(inviter.snapshot().link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              joiner.snapshot().link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          "once the withheld LINK_READY is released, BOTH engines reach "
+          "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 - the positive half of the pair");
+
+    check_pump_answers_match_the_ports(inviter, inviter_pump, "advertising");
+    check_pump_answers_match_the_ports(joiner, joiner_pump, "scanning");
+
+    shutdown_engine_with_the_pump(inviter, inviter_pump, limits);
+    shutdown_engine_with_the_pump(joiner, joiner_pump, limits);
+
+    for (auto& action : inviter_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    for (auto& action : joiner_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+}
+
 } // namespace
 
 int main()
 {
+    /* The measured exchange is the evidence, and it must survive even if a later
+     * assertion aborts the run: keep it unbuffered. */
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     two_engines_come_up_independently();
     p256_table_is_valid_and_matches_repository_constants();
     loopback_world_is_deterministic_and_shared();
     two_engines_connect_through_the_transport_and_are_pumped_to_idle();
     two_engines_exchange_their_own_gatt_bytes();
+    two_engines_reach_the_connected_lobby();
+    a_single_sided_link_ready_cannot_reach_the_connected_lobby();
 
     if (failures != 0)
     {
@@ -836,6 +1553,7 @@ int main()
     }
     std::puts("two-engine loopback (step 1: two engines come up; step 2: shared "
               "deterministic world; step 3: transport + bounded pump; step 4: "
-              "byte-accurate GATT loopback) passed");
+              "byte-accurate GATT loopback; step 5: byte-accurate QUIC bind + "
+              "Control loopback into BOTH engines' CONNECTED_LOBBY) passed");
     return 0;
 }

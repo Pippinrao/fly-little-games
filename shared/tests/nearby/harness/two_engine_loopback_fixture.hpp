@@ -72,6 +72,7 @@ inline void check(bool value, const char* message)
 
 inline void retain_noop(void*) {}
 inline void release_noop(void*) {}
+
 inline fly_session_result_v2 read_clock(void*, fly_session_clock_sample_v2* out)
 {
     if (!out) return FLY_SESSION_V2_INVALID_ARGUMENT;
@@ -412,6 +413,8 @@ void loopback_deliver_verification(fly_session_inbox_v2_t* inbox,
                                    const fly_session_op_token_v2& token,
                                    fly_session_result_v2 result);
 
+class LoopbackTransport;
+
 struct EngineFixture final
 {
     struct Key final
@@ -447,6 +450,28 @@ struct EngineFixture final
         LoopbackWorld* world = nullptr;
         LoopbackSide side = LoopbackSide::Initiator;
 
+        /*
+         * Step 5: like the crypto port, this port can have several operations in
+         * flight at once (the session signing key is signed while the link
+         * handshake also reads a public key), so the `last_*` mirrors cannot
+         * identify WHICH request is being answered. Every request is recorded with
+         * its own token and arguments, per kind and in order.
+         */
+        struct Request final
+        {
+            fly_session_op_token_v2 token{};
+            fly_session_resource_handle_v2 resource = 0;
+            std::uint32_t purpose = 0;
+            std::uint32_t encoding = 0;
+            std::vector<std::uint8_t> peer;
+            std::vector<std::uint8_t> domain;
+            std::array<std::uint8_t, 32> digest{};
+        };
+        std::vector<Request> generate_requests;
+        std::vector<Request> public_requests;
+        std::vector<Request> agree_requests;
+        std::vector<Request> sign_requests;
+
         static std::size_t point_index_for(std::uint32_t purpose,
                                            LoopbackSide side)
         {
@@ -475,6 +500,10 @@ struct EngineFixture final
             self->last_token = *token;
             self->last_binding.assign(binding.data,
                                       binding.data + binding.size);
+            Request request{};
+            request.token = *token;
+            request.purpose = purpose;
+            self->generate_requests.push_back(std::move(request));
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
@@ -501,6 +530,11 @@ struct EngineFixture final
             self->last_token = *token;
             self->last_resource = resource;
             self->last_encoding = encoding;
+            Request request{};
+            request.token = *token;
+            request.resource = resource;
+            request.encoding = encoding;
+            self->public_requests.push_back(std::move(request));
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
@@ -521,6 +555,11 @@ struct EngineFixture final
             self->last_resource = resource;
             self->last_peer.assign(peer.data, peer.data + peer.size);
             self->last_binding.assign(binding.data, binding.data + binding.size);
+            Request request{};
+            request.token = *token;
+            request.resource = resource;
+            request.peer = self->last_peer;
+            self->agree_requests.push_back(std::move(request));
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
@@ -553,6 +592,13 @@ struct EngineFixture final
             self->last_domain.assign(domain.data, domain.data + domain.size);
             std::copy_n(digest, self->last_digest.size(),
                         self->last_digest.begin());
+            Request request{};
+            request.token = *token;
+            request.resource = resource;
+            request.purpose = purpose;
+            request.domain = self->last_domain;
+            request.digest = self->last_digest;
+            self->sign_requests.push_back(std::move(request));
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
@@ -599,6 +645,40 @@ struct EngineFixture final
         std::array<std::uint8_t, 32> last_digest{};
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
+        /*
+         * Step 5: several operations on this port can be IN FLIGHT AT ONCE - one
+         * per scheduler that dispatched an effect - and the engine routes each
+         * completion by the token it was dispatched with. The `last_*` mirrors are
+         * therefore not enough on their own: a later callback of another kind
+         * overwrites them, and the pump would then complete an earlier request
+         * with a later request's bytes and token. The engine reports that as
+         * CONTRACT_VIOLATION (-15), not as a wrong answer.
+         *
+         * Every request is therefore recorded in its own kind's FIFO, together
+         * with the token and the exact arguments it was made with, and the pump
+         * answers each kind strictly in request order.
+         */
+        struct Request final
+        {
+            fly_session_op_token_v2 token{};
+            fly_session_resource_handle_v2 resource = 0;
+            std::uint32_t size = 0;
+            std::vector<std::uint8_t> purpose;
+            std::vector<std::uint8_t> salt;
+            std::vector<std::uint8_t> info;
+            std::vector<std::uint8_t> nonce;
+            std::vector<std::uint8_t> aad;
+            std::vector<std::uint8_t> input;
+            std::vector<std::uint8_t> public_key;
+            std::vector<std::uint8_t> signature;
+            std::array<std::uint8_t, 32> digest{};
+        };
+        std::vector<Request> random_requests;
+        std::vector<Request> hkdf_requests;
+        std::vector<Request> hmac_requests;
+        std::vector<Request> verify_requests;
+        std::vector<Request> seal_requests;
+        std::vector<Request> open_requests;
         /* Step 2/4: every operation below is performed by the shared deterministic
          * world, but `pump_once` owns the completion: a provider callback may not
          * complete its own operation (the engine refuses a terminal delivered from
@@ -618,6 +698,11 @@ struct EngineFixture final
             self->last_random_size = size;
             self->last_token = *token;
             self->last_purpose.assign(purpose.data, purpose.data + purpose.size);
+            Request request{};
+            request.token = *token;
+            request.size = size;
+            request.purpose = self->last_purpose;
+            self->random_requests.push_back(std::move(request));
             self->capture(inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -636,6 +721,13 @@ struct EngineFixture final
             self->last_hkdf_size = size;
             self->last_salt.assign(salt.data, salt.data + salt.size);
             self->last_info.assign(info.data, info.data + info.size);
+            Request request{};
+            request.token = *token;
+            request.resource = secret;
+            request.size = size;
+            request.salt = self->last_salt;
+            request.info = self->last_info;
+            self->hkdf_requests.push_back(std::move(request));
             self->capture(inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -682,6 +774,13 @@ struct EngineFixture final
                 signature.data, signature.data + signature.size);
             std::copy_n(digest, self->last_digest.size(),
                         self->last_digest.begin());
+            Request request{};
+            request.token = *token;
+            request.public_key = self->last_public_key;
+            request.info = self->last_info;
+            request.signature = self->last_signature;
+            request.digest = self->last_digest;
+            self->verify_requests.push_back(std::move(request));
             self->capture(inbox);
             /* The mock verifier really recomputes the signature instead of accepting
              * anything, so a tampered signature is still caught; the recomputation
@@ -701,6 +800,11 @@ struct EngineFixture final
             self->last_token = *token;
             self->last_resource = key;
             self->last_input.assign(input.data, input.data + input.size);
+            Request request{};
+            request.token = *token;
+            request.resource = key;
+            request.input = self->last_input;
+            self->hmac_requests.push_back(std::move(request));
             self->capture(inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -726,6 +830,14 @@ struct EngineFixture final
             self->last_nonce.assign(nonce.data, nonce.data + nonce.size);
             self->last_aad.assign(aad.data, aad.data + aad.size);
             self->last_input.assign(input.data, input.data + input.size);
+            Request request{};
+            request.token = *token;
+            request.resource = key;
+            request.nonce = self->last_nonce;
+            request.aad = self->last_aad;
+            request.input = self->last_input;
+            if (sealing) self->seal_requests.push_back(std::move(request));
+            else self->open_requests.push_back(std::move(request));
             self->capture(inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -743,6 +855,15 @@ struct EngineFixture final
         int creates = 0;
         int releases = 0;
         fly_session_resource_handle_v2 last_key = 0;
+        /*
+         * The SPKI hash this provider reported for the TLS material it minted:
+         * sha256 of the 65-byte public point the shared world holds for
+         * `last_key`, which is exactly the hash the engine is required to answer
+         * its ping with. The link reads it back to build the connector's
+         * handshake facts, so the value the connector is told it observed is the
+         * listener's real SPKI hash instead of a value this harness imagined.
+         */
+        std::array<std::uint8_t, 32> last_spki_hash{};
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
         ~Tls() { fly_session_inbox_release_v2(inbox); }
@@ -906,6 +1027,15 @@ struct EngineFixture final
          * these fragments back to the peer the exchange stalls mid-message.
          */
         std::vector<std::vector<std::uint8_t>> ack_fragments;
+        /*
+         * Every write token this port was handed, in order. The public token is
+         * what identifies an operation to a provider, and the engine routes a
+         * completion by (operation_id, event_sequence) alone
+         * (session_engine.cpp:2387-2399); a test therefore needs the engine's own
+         * write tokens to show that it never hands one operation id to two
+         * different requests.
+         */
+        std::vector<fly_session_op_token_v2> write_tokens;
         fly_session_inbox_v2_t* inbox = nullptr;
 
         ~Discovery() { fly_session_inbox_release_v2(inbox); }
@@ -1001,6 +1131,7 @@ struct EngineFixture final
                 written != size)
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             self->write_token = *token;
+            self->write_tokens.push_back(*token);
             if (bytes.size() >= 2 && bytes[1] == static_cast<std::uint8_t>(
                     flynes::session::wire::GattLogicalType::PhysicalAck))
             {
@@ -1061,6 +1192,58 @@ struct EngineFixture final
         std::vector<std::uint8_t> last_label;
         std::vector<std::uint8_t> last_context;
         std::vector<std::uint8_t> last_write;
+        /*
+         * The exact SPKI pin this engine's own QUIC connect policy asked the
+         * provider to enforce, captured at listen/connect time. The link reports
+         * it back in a connector's handshake facts because the engine's own
+         * wire::verify_quic_handshake_v2 (quic_contract.cpp:131) compares the
+         * facts against the policy; any other value would be a fabricated
+         * success. `last_policy_spki` is only ever the value THIS engine asked
+         * for, never one the harness chose.
+         */
+        std::array<std::uint8_t, 32> last_policy_spki{};
+        /*
+         * Every stream write this engine really issued, in order, with the bytes
+         * its own encoder produced and the FIN flag it asked for. The QUIC relay
+         * carries these and nothing else, which is what makes the loopback
+         * byte-accurate rather than scripted.
+         */
+        struct StreamWrite final
+        {
+            fly_session_op_token_v2 token{};
+            fly_session_resource_handle_v2 stream = 0;
+            std::vector<std::uint8_t> bytes;
+            std::uint32_t finish = 0;
+        };
+        std::vector<StreamWrite> written_streams;
+        /*
+         * Every read credit this engine granted, in order. The engine accepts an
+         * inbound QUIC_DATA event only under the token of the read it dispatched
+         * (session_engine.cpp:2432/:2436 pick the scheduler by token and
+         * parse_provider_event_v2 then compares that same token), so the relay
+         * must use exactly the token recorded here - never `last_token`, which a
+         * later write or stream operation has overwritten.
+         */
+        struct StreamRead final
+        {
+            fly_session_op_token_v2 token{};
+            fly_session_resource_handle_v2 stream = 0;
+            std::uint64_t credit = 0;
+        };
+        std::vector<StreamRead> granted_reads;
+        fly_session_op_token_v2 last_read_token{};
+        fly_session_resource_handle_v2 last_read_stream = 0;
+        std::uint64_t last_read_credit = 0;
+        /*
+         * What this provider really reported back to the engine for the two
+         * link-wide QUIC values, so a test can compare the two ends with each
+         * other and with the transport instead of trusting the harness's own
+         * copy. `handshakes`/`exporters` are the counts of completions DELIVERED.
+         */
+        int handshakes = 0;
+        int exporter_results = 0;
+        std::array<std::uint8_t, 32> last_handshake_hash{};
+        std::array<std::uint8_t, 32> last_exporter{};
         fly_session_inbox_v2_t* inbox = nullptr;
 
         ~Quic() { fly_session_inbox_release_v2(inbox); }
@@ -1093,6 +1276,8 @@ struct EngineFixture final
             else ++self->listens;
             self->last_endpoint.assign(endpoint.data,
                                        endpoint.data + endpoint.size);
+            std::copy_n(policy->expected_der_spki_hash, 32,
+                        self->last_policy_spki.begin());
             self->capture(token, path, inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -1170,6 +1355,15 @@ struct EngineFixture final
             ++self->writes;
             self->last_finish = finish;
             self->capture(token, stream, inbox);
+            /* The write log is the ONLY source of bytes the QUIC relay carries:
+             * the engine's own encoder output, kept verbatim with the FIN flag
+             * the engine asked for. */
+            StreamWrite record{};
+            record.token = *token;
+            record.stream = stream;
+            record.bytes = self->last_write;
+            record.finish = finish;
+            self->written_streams.push_back(std::move(record));
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -1183,6 +1377,17 @@ struct EngineFixture final
             ++self->reads;
             self->last_credit = credit;
             self->capture(token, stream, inbox);
+            /* The token recorded here is the one the engine will accept inbound
+             * bytes under; `last_token` will be overwritten by the next write or
+             * stream operation long before the peer's bytes arrive. */
+            self->last_read_token = *token;
+            self->last_read_stream = stream;
+            self->last_read_credit = credit;
+            StreamRead record{};
+            record.token = *token;
+            record.stream = stream;
+            record.credit = credit;
+            self->granted_reads.push_back(std::move(record));
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -1388,6 +1593,15 @@ struct EngineFixture final
     fly_session_quic_port_v2 quic_port{};
     fly_session_ports_v2 ports{};
     fly_session_v2_t* engine = nullptr;
+    /*
+     * The loopback link this engine was attached to, if any. `LoopbackTransport`
+     * sets it in `attach`. The QUIC port is answered from the LINK's own facts
+     * (step 5: one TLS handshake, one exporter for both ends), so the pump needs
+     * the link; an engine that was never attached to a transport cannot
+     * legitimately reach the QUIC stage, and the pump reports that instead of
+     * inventing link facts.
+     */
+    LoopbackTransport* attached_link = nullptr;
 
     explicit EngineFixture(bool secure_pairing_ports = true)
         : EngineFixture(nullptr, LoopbackSide::Initiator, secure_pairing_ports)
@@ -1739,8 +1953,17 @@ inline void deliver_provider_buffer(
     payload.logical_size = size;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
-    check(fly_session_deliver_v2(inbox, &event) == FLY_SESSION_V2_ACCEPTED,
-          "typed provider buffer completion enters public engine");
+    const auto delivered = fly_session_deliver_v2(inbox, &event);
+    if (delivered != FLY_SESSION_V2_ACCEPTED)
+    {
+        char message[256];
+        std::snprintf(message, sizeof(message),
+                      "typed provider buffer completion enters public engine "
+                      "(kind 0x%04x, %zu bytes, terminal 1, result %d)",
+                      static_cast<unsigned>(kind), size,
+                      static_cast<int>(delivered));
+        check(false, message);
+    }
     fly_session_buffer_release_v2(buffer);
 }
 
@@ -1762,7 +1985,8 @@ inline void deliver_provider_end(
     payload.abi_version = FLY_SESSION_ABI_VERSION_2;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
-    check(fly_session_deliver_v2(inbox, &event) == FLY_SESSION_V2_ACCEPTED,
+    const auto end_result = fly_session_deliver_v2(inbox, &event);
+    check(end_result == FLY_SESSION_V2_ACCEPTED,
           "typed provider end completion enters public engine");
 }
 
@@ -2171,6 +2395,9 @@ public:
             peripheral_ = &fixture;
         else
             central_ = &fixture;
+        /* The engine's QUIC port is answered from the link's own facts, so the
+         * link must be reachable from the fixture the pump is driving. */
+        fixture.attached_link = this;
     }
 
     /*
@@ -2228,7 +2455,230 @@ public:
         return central_connected_;
     }
 
+    /*
+     * --------------------------------------------------------------------- *
+     * Step 5: the LINK's own QUIC facts.
+     *
+     * One link is one TLS session, so the values that must agree across the two
+     * ends are the link's, not a test's and not either engine's:
+     *
+     *   the exporter   - one 32-byte value for BOTH ends. The channel id each
+     *                    engine derives depends on it
+     *                    (InitialQuicBindScheduler::derive and the engine's own
+     *                    channel-id derivation), so two different values would
+     *                    make the ChannelBind proofs unverifiable. It is derived
+     *                    from the link's own material (an HMAC over a fixed link
+     *                    label keyed by the link handle), never from a peer
+     *                    claim.
+     *
+     *   the handshake  - the link's TLS facts, encoded by the repository's own
+     *                    wire::encode_quic_handshake_facts_v2 and hashed with
+     *                    the repository's own sha256. The connector's and the
+     *                    listener's facts are NOT byte-identical, and the engine
+     *                    requires that: verify_quic_handshake_v2
+     *                    (quic_contract.cpp:131) demands the connector report
+     *                    pin_verifier_invoked and peer_certificate_verified true
+     *                    with the SPKI hash equal to the policy pin, while
+     *                    verify_quic_listener_handshake_v2 (:148) demands the
+     *                    listener report both false with an all-zero hash. Every
+     *                    LINK-wide fact - TLS 1.3, full handshake, no resumption,
+     *                    no 0-RTT, the same ALPN - is shared and comes from here.
+     * --------------------------------------------------------------------- */
+
+    /*
+     * The Nth stream either role registers IS the same physical stream, so the
+     * two ends are paired by their own registration order, which the protocol
+     * fixes: the bind stream first, then the Control stream.
+     */
+    struct QuicStreamAnswer final
+    {
+        fly_session_resource_handle_v2 send = 0;
+        fly_session_resource_handle_v2 receive = 0;
+    };
+
+    /*
+     * Both handles are the SAME link-wide stream handle, and that is deliberate.
+     * The two schedulers that own the two streams use the two handles the answer
+     * carries differently: InitialQuicBindScheduler reads on `value0`
+     * (initial_quic_bind_scheduler.cpp:447-448:
+     * `resources_.send_stream = parsed.resource; resources_.receive_stream =
+     * parsed.value0;`) while LinkHandshakeScheduler takes `resource` as its one
+     * Control stream and uses that single handle for BOTH the write and the read
+     * (link_handshake_scheduler.cpp:1129 `control_stream_ =
+     * completion.payload.resource;`, then :355 `effect.resource =
+     * control_stream_;` for writes and :486 `effect.resource = control_stream_;`
+     * for reads). Handing the same handle back in `resource` and `value0` is the
+     * only assignment that satisfies both conventions on one physical stream, and
+     * it is also what QUIC itself does: a bidirectional stream has one id at
+     * both ends.
+     */
+    QuicStreamAnswer register_quic_stream(bool listener)
+    {
+        const std::size_t index =
+            listener ? listener_streams_++ : connector_streams_++;
+        while (streams_.size() <= index) streams_.push_back(QuicStream{});
+        QuicStream& stream = streams_[index];
+        if (stream.handle == 0) stream.handle = next_quic_handle_++;
+        if (listener)
+        {
+            check(!stream.listener_registered,
+                  "the link's QUIC listener accepts each stream position once");
+            stream.listener_registered = true;
+        }
+        else
+        {
+            check(!stream.connector_registered,
+                  "the link's QUIC connector opens each stream position once");
+            stream.connector_registered = true;
+        }
+        return QuicStreamAnswer{stream.handle, stream.handle};
+    }
+
+    /*
+     * Records which end of the link is the QUIC listener, from the engine's own
+     * `listen` request (Quic::start: a non-zero TLS material argument is a
+     * listen), and pins the listener's own SPKI hash as the link's pin.
+     */
+    void note_quic_listener(EngineFixture& fixture)
+    {
+        ensure_link_facts();
+        if (quic_listener_ == nullptr) quic_listener_ = &fixture;
+        check(quic_listener_ == &fixture,
+              "one link has exactly one QUIC listener");
+        const auto& spki = fixture.tls.last_spki_hash;
+        const bool nonzero = std::any_of(spki.begin(), spki.end(),
+                                         [](std::uint8_t value) {
+                                             return value != 0;
+                                         });
+        check(nonzero,
+              "the link knows the listener's real TLS SPKI hash before it reports "
+              "a handshake for either end");
+        pin_ = spki;
+    }
+
+    [[nodiscard]] EngineFixture* quic_listener() const noexcept
+    {
+        return quic_listener_;
+    }
+
+    /* Provider-owned QUIC objects (the connection, and the streams registered
+     * below) are allocated by the LINK, so a handle can never collide with one a
+     * test or the fixture invented. */
+    fly_session_resource_handle_v2 allocate_quic_handle() noexcept
+    {
+        return next_quic_handle_++;
+    }
+    [[nodiscard]] const std::array<std::uint8_t, 32>& exporter()
+    {
+        ensure_link_facts();
+        return exporter_;
+    }
+    [[nodiscard]] const std::array<std::uint8_t, 32>& pin() const noexcept
+    {
+        return pin_;
+    }
+
+    /*
+     * The encoded handshake facts for one end of the link. `listener` selects
+     * the role the engine's own verifier requires; a connector's facts carry the
+     * pin THIS engine asked for (captured from its own policy), and the transport
+     * refuses to report a pin the listener's own TLS material does not hash to.
+     */
+    bool quic_handshake_facts(EngineFixture& fixture, bool listener,
+                              std::vector<std::uint8_t>* out)
+    {
+        ensure_link_facts();
+        if (out == nullptr) return false;
+        wire::QuicHandshakeFactsV2 facts{};
+        facts.tls_major = 1;
+        facts.tls_minor = 3;
+        facts.full_handshake = true;
+        static constexpr char kAlpn[] = "flynes-nearby/2";
+        std::copy_n(kAlpn, sizeof(kAlpn) - 1, facts.alpn.begin());
+        if (!listener)
+        {
+            /* wire::verify_quic_handshake_v2 requires both to be true and the
+             * hash to equal the policy pin. */
+            facts.pin_verifier_invoked = true;
+            facts.peer_certificate_verified = true;
+            facts.der_spki_hash = fixture.quic.last_policy_spki;
+            check(facts.der_spki_hash == pin_,
+                  "the connector's own QUIC pin is the listener's real SPKI hash, "
+                  "so the facts the link reports are not a fabricated peer claim");
+        }
+        std::array<std::uint8_t, wire::kQuicHandshakeFactsWireSizeV2> encoded{};
+        if (wire::encode_quic_handshake_facts_v2(facts, &encoded) !=
+            wire::Status::Ok)
+            return false;
+        out->assign(encoded.begin(), encoded.end());
+        return true;
+    }
+
+    /*
+     * A TRANSPORT-side filter for the single-sided-READY negative case. While it
+     * is armed for a direction, the transport does not deliver that direction's
+     * LINK_READY/ACK frames; it does not alter, reorder or fabricate a byte. The
+     * withheld unit stays at the head of that direction's queue and is delivered
+     * verbatim by the next round after `release_withheld()`, so the same bytes
+     * that were withheld are the bytes that finally cross.
+     */
+    enum class QuicFilter : std::uint8_t
+    {
+        None = 0,
+        PeripheralToCentral = 1,
+        CentralToPeripheral = 2
+    };
+
+    void withhold_link_ready_in(QuicFilter direction) noexcept
+    {
+        withheld_ = direction;
+    }
+    void release_withheld() noexcept { withheld_ = QuicFilter::None; }
+    [[nodiscard]] QuicFilter withheld_direction() const noexcept
+    {
+        return withheld_;
+    }
+
+    /* True when this unit is a link-control READY/ACK frame from the direction
+     * the filter holds. The cell layout is the repository's own app frame:
+     * 4-byte big-endian length, then the 2-byte tag (wire/app_frame.cpp:480-482).
+     * Nothing is rewritten: the frame is recognised, not changed. */
+    [[nodiscard]] bool withholds(QuicFilter direction,
+                                 const std::vector<std::uint8_t>& bytes) const
+    {
+        if (withheld_ == QuicFilter::None || withheld_ != direction) return false;
+        if (bytes.size() < 6u) return false;
+        const auto tag = static_cast<std::uint16_t>(
+            (static_cast<std::uint16_t>(bytes[4]) << 8u) |
+            static_cast<std::uint16_t>(bytes[5]));
+        return tag == link::kLinkReadyObjectKindV1;
+    }
+
 private:
+    struct QuicStream final
+    {
+        fly_session_resource_handle_v2 handle = 0;
+        bool connector_registered = false;
+        bool listener_registered = false;
+    };
+
+    void ensure_link_facts()
+    {
+        if (link_facts_ready_) return;
+        link_facts_ready_ = true;
+        std::array<std::uint8_t, 8> key{};
+        for (int index = 0; index < 8; ++index)
+            key[static_cast<std::size_t>(index)] = static_cast<std::uint8_t>(
+                link_resource_ >> static_cast<unsigned>(56 - index * 8));
+        static constexpr char kLabel[] = "flynes-loopback-quic-link-exporter-v1";
+        exporter_ = loopback_hmac_sha256(
+            key.data(), key.size(),
+            reinterpret_cast<const std::uint8_t*>(kLabel), sizeof(kLabel) - 1);
+        check(std::any_of(exporter_.begin(), exporter_.end(),
+                          [](std::uint8_t value) { return value != 0; }),
+              "the link's exporter is 32 bytes of the link's own material");
+    }
+
     void deliver_connection(EngineFixture& fixture, std::uint64_t physical)
     {
         fly_session_port_event_v2 event{};
@@ -2261,6 +2711,16 @@ private:
     int connections_ = 0;
     bool peripheral_connected_ = false;
     bool central_connected_ = false;
+    /* Step 5: the link's own QUIC facts and provider-owned object table. */
+    EngineFixture* quic_listener_ = nullptr;
+    std::vector<QuicStream> streams_{};
+    fly_session_resource_handle_v2 next_quic_handle_ = 0x6100;
+    std::size_t connector_streams_ = 0;
+    std::size_t listener_streams_ = 0;
+    std::array<std::uint8_t, 32> exporter_{};
+    std::array<std::uint8_t, 32> pin_{};
+    bool link_facts_ready_ = false;
+    QuicFilter withheld_ = QuicFilter::None;
 };
 
 /*
@@ -2306,8 +2766,17 @@ private:
 
 struct PumpLimits final
 {
-    int max_rounds = 128;
-    int max_answers = 512;
+    /*
+     * One round answers at most ONE provider request, so this bound is "how many
+     * requests one engine may have outstanding inside a single call". The pair
+     * exchange, the durable persistence and the link handshake together produce
+     * several hundred legitimate requests per engine (measured: 270 and 249 answered
+     * in the step-4 run, more once the QUIC stage is reached), so a small bound fails
+     * a healthy engine. It stays a HARD failure: a burst beyond this is a defect, and
+     * spinning forever would hide it.
+     */
+    int max_rounds = 4096;
+    int max_answers = 4096;
 };
 
 /*
@@ -2342,6 +2811,19 @@ struct PumpCounts final
     int secure_store_revisions = 0;
     int object_puts = 0;
     int object_reads = 0;
+    /*
+     * Step 5: what the pump answered on the QUIC port. `quic_reads` is the one
+     * QUIC request the pump does NOT answer: a granted read credit is answered by
+     * the TRANSPORT with the peer's own stream bytes, so this counter exists only
+     * to prove the pump saw exactly the reads the engine issued (see
+     * check_pump_answers_match_the_ports).
+     */
+    int quic_connections = 0;
+    int quic_handshakes = 0;
+    int quic_exporters = 0;
+    int quic_streams = 0;
+    int quic_write_ends = 0;
+    int quic_reads = 0;
 };
 
 /* Provider-side bookkeeping: how much of each port's work is already answered. */
@@ -2369,10 +2851,14 @@ struct PumpState final
     int object_puts = 0;
     int object_reads = 0;
     /*
-     * The QUIC port is NOT answered by this increment (its byte loopback is step 5).
-     * These mirrors exist only so the guard at the end of `pump_once` can tell a
-     * genuine idle engine from one that asked for work this pump cannot answer: a
-     * stall must never hide a request. They are neutralised once reported.
+     * Step 5: the QUIC port. `pump_once` answers the connection, the handshake
+     * inspection, the exporter, the bidi stream and the write here; a granted
+     * read credit is deliberately left pending, because the operation that
+     * completes it is the TRANSPORT delivering the peer engine's own bytes as a
+     * class-2 QUIC_DATA event. These mirrors hold how much of each request is
+     * already answered (or, for reads, already accounted for) so a repeated pass
+     * can never answer the same terminal twice - a repeat is judged STALE by the
+     * engine, which would be a false failure.
      */
     int quic_listens = 0;
     int quic_connects = 0;
@@ -2458,6 +2944,11 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         std::array<std::uint8_t, 32> hash{};
         if (point != nullptr)
             hash = wire::sha256(point->data(), point->size());
+        /* The SPKI hash the engine is told it observed. The link reads it back
+         * for the connector's handshake facts, so both ends of the link agree on
+         * the listener's identity material without either one asserting a value
+         * the other never produced. */
+        fixture.tls.last_spki_hash = hash;
         deliver_provider_hash(fixture.tls.inbox, fixture.tls.last_token,
                               FLY_SESSION_PROVIDER_TLS_MATERIAL_V2, handle, hash);
         ++state.counts.tls_materials;
@@ -2650,6 +3141,8 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.key.generates > state.key_generates)
     {
+        const auto& request = fixture.key.generate_requests[
+            static_cast<std::size_t>(state.key_generates)];
         ++state.key_generates;
         /* KEY_HANDLE_V2 is a HASH form completion: the handle the WORLD allocated for
          * this (purpose, side) point, together with the digest of that point. The
@@ -2657,7 +3150,7 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
          * again for every later public_key/agree/sign use - so it is allocated here
          * and then looked up, rather than re-derived from the digest. */
         const auto handle = fixture.key.world->allocate_point(
-            EngineFixture::Key::point_index_for(fixture.key.last_purpose,
+            EngineFixture::Key::point_index_for(request.purpose,
                                                 fixture.key.side));
         const auto* point = fixture.key.world->point_of(handle);
         check(point != nullptr,
@@ -2665,7 +3158,7 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
               "request");
         if (point == nullptr) return PumpOutcome::Idle;
         const auto hash = wire::sha256(point->data(), point->size());
-        deliver_provider_hash(fixture.key.inbox, fixture.key.last_token,
+        deliver_provider_hash(fixture.key.inbox, request.token,
                               FLY_SESSION_PROVIDER_KEY_HANDLE_V2, handle, hash);
         ++state.counts.key_handles;
         ++state.counts.answers;
@@ -2674,16 +3167,17 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.key.public_reads > state.key_public_reads)
     {
+        const auto& request = fixture.key.public_requests[
+            static_cast<std::size_t>(state.key_public_reads)];
         ++state.key_public_reads;
         /* KEY_PUBLIC_V2 is a BUFFER form completion carrying the peer-visible X9.63
          * public bytes of the key the engine asked about. */
-        const auto* point =
-            fixture.key.world->point_of(fixture.key.last_resource);
+        const auto* point = fixture.key.world->point_of(request.resource);
         check(point != nullptr,
               "the provider reports a public key only for a handle the shared world "
               "really holds");
         if (point == nullptr) return PumpOutcome::Idle;
-        deliver_provider_buffer(fixture.key.inbox, fixture.key.last_token,
+        deliver_provider_buffer(fixture.key.inbox, request.token,
                                 FLY_SESSION_PROVIDER_KEY_PUBLIC_V2, point->data(),
                                 point->size());
         ++state.counts.key_publics;
@@ -2693,14 +3187,16 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.key.agreements > state.key_agreements)
     {
+        const auto& request = fixture.key.agree_requests[
+            static_cast<std::size_t>(state.key_agreements)];
         ++state.key_agreements;
-        const auto* mine = fixture.key.world->point_of(fixture.key.last_resource);
-        check(mine != nullptr && fixture.key.last_peer.size() == 65u,
+        const auto* mine = fixture.key.world->point_of(request.resource);
+        check(mine != nullptr && request.peer.size() == 65u,
               "the provider agrees a key it holds against a 65-byte peer point");
-        if (mine == nullptr || fixture.key.last_peer.size() != 65u)
+        if (mine == nullptr || request.peer.size() != 65u)
             return PumpOutcome::Idle;
         LoopbackPoint theirs{};
-        std::copy_n(fixture.key.last_peer.data(), theirs.size(), theirs.begin());
+        std::copy_n(request.peer.data(), theirs.size(), theirs.begin());
         /* ECDH STAND-IN, NOT ECDH. `LoopbackWorld::agree` hashes the two public keys
          * under its own domain: both ends derive the same secret, which is what the
          * protocol layer needs, but it implements no curve arithmetic and verifies no
@@ -2708,7 +3204,7 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
          * provider/device tests, never by this harness. */
         const auto secret = fixture.key.world->agree(*mine, theirs);
         const auto handle = fixture.key.world->allocate_secret(secret);
-        deliver_provider_resource(fixture.key.inbox, fixture.key.last_token,
+        deliver_provider_resource(fixture.key.inbox, request.token,
                                   FLY_SESSION_PROVIDER_KEY_AGREEMENT_V2, handle);
         ++state.counts.key_agreements;
         ++state.counts.answers;
@@ -2717,18 +3213,19 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.key.signs > state.key_signs)
     {
+        const auto& request = fixture.key.sign_requests[
+            static_cast<std::size_t>(state.key_signs)];
         ++state.key_signs;
         /* KEY_SIGNATURE_V2 is a BUFFER form completion: the 64-byte canonical low-S
          * signature the world really recomputed over the requested digest. */
-        const auto* point =
-            fixture.key.world->point_of(fixture.key.last_resource);
+        const auto* point = fixture.key.world->point_of(request.resource);
         check(point != nullptr,
               "the provider signs with a handle the shared world really holds");
         if (point == nullptr) return PumpOutcome::Idle;
         const auto signature = fixture.key.world->sign(
-            *point, fixture.key.last_domain.data(), fixture.key.last_domain.size(),
-            fixture.key.last_digest.data());
-        deliver_provider_buffer(fixture.key.inbox, fixture.key.last_token,
+            *point, request.domain.data(), request.domain.size(),
+            request.digest.data());
+        deliver_provider_buffer(fixture.key.inbox, request.token,
                                 FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2,
                                 signature.data(), signature.size());
         ++state.counts.key_signatures;
@@ -2738,14 +3235,15 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.crypto.randoms > state.crypto_randoms)
     {
+        const auto& request = fixture.crypto.random_requests[
+            static_cast<std::size_t>(state.crypto_randoms)];
         ++state.crypto_randoms;
         /* CRYPTO_RANDOM_V2 is a BUFFER form completion whose bytes the world derives
          * from the side, the request counter and the purpose it was asked with. */
         const auto bytes = fixture.crypto.world->random(
-            fixture.crypto.side, fixture.crypto.last_random_size,
-            fixture.crypto.last_purpose.data(),
-            fixture.crypto.last_purpose.size());
-        deliver_provider_buffer(fixture.crypto.inbox, fixture.crypto.last_token,
+            fixture.crypto.side, request.size, request.purpose.data(),
+            request.purpose.size());
+        deliver_provider_buffer(fixture.crypto.inbox, request.token,
                                 FLY_SESSION_PROVIDER_CRYPTO_RANDOM_V2, bytes.data(),
                                 bytes.size());
         ++state.counts.crypto_randoms;
@@ -2755,20 +3253,21 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.crypto.hkdfs > state.crypto_hkdfs)
     {
+        const auto& request = fixture.crypto.hkdf_requests[
+            static_cast<std::size_t>(state.crypto_hkdfs)];
         ++state.crypto_hkdfs;
         /* CRYPTO_SECRET_V2 is a RESOURCE form completion: the derived secret is
          * referenced by a handle the world allocated for it. */
         const auto* material =
-            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+            fixture.crypto.world->secret_of(request.resource);
         check(material != nullptr,
               "the provider derives from a secret the shared world really holds");
         if (material == nullptr) return PumpOutcome::Idle;
         const auto derived = fixture.crypto.world->hkdf(
-            *material, fixture.crypto.last_salt.data(),
-            fixture.crypto.last_salt.size(), fixture.crypto.last_info.data(),
-            fixture.crypto.last_info.size(), fixture.crypto.last_hkdf_size);
+            *material, request.salt.data(), request.salt.size(),
+            request.info.data(), request.info.size(), request.size);
         const auto handle = fixture.crypto.world->allocate_secret(derived);
-        deliver_provider_resource(fixture.crypto.inbox, fixture.crypto.last_token,
+        deliver_provider_resource(fixture.crypto.inbox, request.token,
                                   FLY_SESSION_PROVIDER_CRYPTO_SECRET_V2, handle);
         ++state.counts.crypto_secrets;
         ++state.counts.answers;
@@ -2777,17 +3276,18 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.crypto.hmacs > state.crypto_hmacs)
     {
+        const auto& request = fixture.crypto.hmac_requests[
+            static_cast<std::size_t>(state.crypto_hmacs)];
         ++state.crypto_hmacs;
         /* CRYPTO_MAC_V2 is a BUFFER form completion: the 32-byte tag. */
         const auto* material =
-            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+            fixture.crypto.world->secret_of(request.resource);
         check(material != nullptr,
               "the provider macs with a secret the shared world really holds");
         if (material == nullptr) return PumpOutcome::Idle;
         const auto tag = fixture.crypto.world->hmac(
-            *material, fixture.crypto.last_input.data(),
-            fixture.crypto.last_input.size());
-        deliver_provider_buffer(fixture.crypto.inbox, fixture.crypto.last_token,
+            *material, request.input.data(), request.input.size());
+        deliver_provider_buffer(fixture.crypto.inbox, request.token,
                                 FLY_SESSION_PROVIDER_CRYPTO_MAC_V2, tag.data(),
                                 tag.size());
         ++state.counts.crypto_macs;
@@ -2797,20 +3297,20 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.crypto.verifies > state.crypto_verifies)
     {
+        const auto& request = fixture.crypto.verify_requests[
+            static_cast<std::size_t>(state.crypto_verifies)];
         ++state.crypto_verifies;
         /* CRYPTO_VERIFICATION_V2 is an END form completion whose RESULT is the
          * verdict. The verifier really recomputes the signature instead of accepting
          * anything, so a tampered signature is reported AUTH_FAILED. */
         LoopbackPoint key{};
-        std::copy_n(fixture.crypto.last_public_key.data(), key.size(),
-                    key.begin());
+        std::copy_n(request.public_key.data(), key.size(), key.begin());
         const bool ok = fixture.crypto.world->verify(
-            key, fixture.crypto.last_info.data(), fixture.crypto.last_info.size(),
-            fixture.crypto.last_digest.data(),
-            fixture.crypto.last_signature.data());
+            key, request.info.data(), request.info.size(),
+            request.digest.data(), request.signature.data());
         if (!ok) ++state.counts.crypto_verify_failures;
         loopback_deliver_verification(
-            fixture.crypto.inbox, fixture.crypto.last_token,
+            fixture.crypto.inbox, request.token,
             ok ? FLY_SESSION_V2_OK : FLY_SESSION_V2_AUTH_FAILED);
         ++state.counts.crypto_verifies;
         ++state.counts.answers;
@@ -2819,19 +3319,20 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.crypto.aead_seals > state.crypto_seals)
     {
+        const auto& request = fixture.crypto.seal_requests[
+            static_cast<std::size_t>(state.crypto_seals)];
         ++state.crypto_seals;
         /* CRYPTO_AEAD_V2 is a BUFFER form completion: ciphertext with its tag. */
         const auto* material =
-            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+            fixture.crypto.world->secret_of(request.resource);
         check(material != nullptr,
               "the provider seals under a secret the shared world really holds");
         if (material == nullptr) return PumpOutcome::Idle;
         const auto sealed = fixture.crypto.world->seal(
-            *material, fixture.crypto.last_nonce.data(),
-            fixture.crypto.last_nonce.size(), fixture.crypto.last_aad.data(),
-            fixture.crypto.last_aad.size(), fixture.crypto.last_input.data(),
-            fixture.crypto.last_input.size());
-        deliver_provider_buffer(fixture.crypto.inbox, fixture.crypto.last_token,
+            *material, request.nonce.data(), request.nonce.size(),
+            request.aad.data(), request.aad.size(), request.input.data(),
+            request.input.size());
+        deliver_provider_buffer(fixture.crypto.inbox, request.token,
                                 FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2, sealed.data(),
                                 sealed.size());
         ++state.counts.crypto_aead_seals;
@@ -2841,30 +3342,30 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.crypto.aead_opens > state.crypto_opens)
     {
+        const auto& request = fixture.crypto.open_requests[
+            static_cast<std::size_t>(state.crypto_opens)];
         ++state.crypto_opens;
         /* CRYPTO_AEAD_V2 on the open side is a BUFFER form completion when the tag
          * verifies, and an END form completion carrying AUTH_FAILED when it does not.
          * A refusal is a real provider verdict, not a fabricated failure. */
         const auto* material =
-            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+            fixture.crypto.world->secret_of(request.resource);
         check(material != nullptr,
               "the provider opens under a secret the shared world really holds");
         if (material == nullptr) return PumpOutcome::Idle;
         std::vector<std::uint8_t> opened;
         const bool ok = fixture.crypto.world->open(
-            *material, fixture.crypto.last_nonce.data(),
-            fixture.crypto.last_nonce.size(), fixture.crypto.last_aad.data(),
-            fixture.crypto.last_aad.size(), fixture.crypto.last_input.data(),
-            fixture.crypto.last_input.size(), &opened);
+            *material, request.nonce.data(), request.nonce.size(),
+            request.aad.data(), request.aad.size(), request.input.data(),
+            request.input.size(), &opened);
         if (ok)
-            deliver_provider_buffer(fixture.crypto.inbox,
-                                    fixture.crypto.last_token,
+            deliver_provider_buffer(fixture.crypto.inbox, request.token,
                                     FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
                                     opened.data(), opened.size());
         else
         {
             ++state.counts.crypto_aead_open_failures;
-            loopback_deliver_end(fixture.crypto.inbox, fixture.crypto.last_token,
+            loopback_deliver_end(fixture.crypto.inbox, request.token,
                                  FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
                                  FLY_SESSION_V2_AUTH_FAILED);
         }
@@ -2874,13 +3375,29 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
     }
 
     /*
-     * The QUIC port is deliberately NOT answered: its byte loopback is step 5, and
-     * this increment must stop at the GATT exchange. A stall must never hide a
-     * request, so an engine that asked the QUIC port for work is reported as a
-     * failure instead of being reported idle. The mirrors are neutralised after the
-     * report so the same request is not re-reported on every later round.
-     */
-    if (fixture.quic.listens > state.quic_listens ||
+     * --------------------------------------------------------------------- *
+     * The QUIC port (step 5).
+     *
+     * Every answer below is driven by the port's own counter, so an answer can
+     * only exist for a request this engine really made, and each uses the payload
+     * form and terminal flag `shared/src/session/ports/provider_events.cpp`'s
+     * `contract_for` declares for that kind:
+     *
+     *   listen/connect   -> QUIC_CONNECTION_V2, RESOURCE form, terminal 1
+     *   inspect_handshake-> QUIC_HANDSHAKE_V2,  HASH form,   terminal 1
+     *   exporter         -> QUIC_EXPORTER_V2,   BUFFER form, terminal 1, 32 bytes
+     *   open/accept_bidi -> QUIC_STREAM_V2,     RESOURCE form, terminal 1
+     *   write            -> QUIC_END_V2,        END form,    terminal 1
+     *   grant_read_credit-> NO terminal: the operation is completed by the
+     *                       transport's own QUIC_DATA event, which is why the
+     *                       counter below is mirrored without being answered.
+     *
+     * The link-wide values (handshake facts, exporter, stream handles) come from
+     * `LoopbackTransport`, never from a constant in this file and never from a
+     * peer claim.
+     * --------------------------------------------------------------------- */
+    const bool quic_pending =
+        fixture.quic.listens > state.quic_listens ||
         fixture.quic.connects > state.quic_connects ||
         fixture.quic.inspections > state.quic_inspections ||
         fixture.quic.exporters > state.quic_exporters ||
@@ -2888,25 +3405,138 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         fixture.quic.opened_bidi > state.quic_opened_bidi ||
         fixture.quic.writes > state.quic_writes ||
         fixture.quic.reads > state.quic_reads ||
-        fixture.quic.cancels > state.quic_cancels)
+        fixture.quic.cancels > state.quic_cancels;
+    if (quic_pending && fixture.attached_link == nullptr)
     {
         check(false,
-              "the engine asked the QUIC port for work this increment does not "
-              "answer: the byte-accurate QUIC loopback is step 5, so this run reached "
-              "further than step 4 claims");
-        state.quic_listens = fixture.quic.listens;
-        state.quic_connects = fixture.quic.connects;
-        state.quic_inspections = fixture.quic.inspections;
-        state.quic_exporters = fixture.quic.exporters;
-        state.quic_accepted_bidi = fixture.quic.accepted_bidi;
-        state.quic_opened_bidi = fixture.quic.opened_bidi;
-        state.quic_writes = fixture.quic.writes;
-        state.quic_reads = fixture.quic.reads;
-        state.quic_cancels = fixture.quic.cancels;
+              "the engine asked the QUIC port for work but is not attached to a "
+              "loopback link, so no handshake facts, stream or exporter can be "
+              "truthfully reported");
         return PumpOutcome::Idle;
     }
 
-    /* Nothing is pending that this increment can answer. */
+    if (fixture.quic.listens > state.quic_listens ||
+        fixture.quic.connects > state.quic_connects)
+    {
+        const bool listener = fixture.quic.listens > state.quic_listens;
+        if (listener)
+        {
+            ++state.quic_listens;
+            fixture.attached_link->note_quic_listener(fixture);
+        }
+        else
+        {
+            ++state.quic_connects;
+        }
+        /* A real transport answers a started connection with a provider-owned
+         * connection handle, which every later inspect/exporter on this link
+         * refers to. */
+        const auto handle = fixture.attached_link->allocate_quic_handle();
+        deliver_provider_resource(fixture.quic.inbox, fixture.quic.last_token,
+                                  FLY_SESSION_PROVIDER_QUIC_CONNECTION_V2, handle);
+        ++state.counts.quic_connections;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.quic.inspections > state.quic_inspections)
+    {
+        ++state.quic_inspections;
+        /* QUIC_HANDSHAKE_V2 is a HASH form completion whose buffer is the link's
+         * own encoded handshake facts and whose hash is sha256 of exactly those
+         * bytes - the engine recomputes it and rejects anything else as
+         * CONTRACT_VIOLATION (initial_quic_bind_scheduler.cpp:398-401). */
+        const bool listener = fixture.quic.listens > 0;
+        std::vector<std::uint8_t> facts;
+        check(fixture.attached_link->quic_handshake_facts(fixture, listener,
+                                                          &facts),
+              "the link encodes its own handshake facts with the repository's own "
+              "encoder");
+        const auto hash = wire::sha256(facts.data(), facts.size());
+        fixture.quic.last_handshake_hash = hash;
+        ++fixture.quic.handshakes;
+        deliver_provider_hash_buffer(
+            fixture.quic.inbox, fixture.quic.last_token,
+            FLY_SESSION_PROVIDER_QUIC_HANDSHAKE_V2, fixture.quic.last_resource,
+            facts.data(), facts.size(), hash);
+        ++state.counts.quic_handshakes;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.quic.exporters > state.quic_exporters)
+    {
+        ++state.quic_exporters;
+        /* The engine asks for the exporter by its exact label and a context
+         * derived from the pair transcript; the link answers with the ONE value
+         * both ends must share, or the two engines would derive different
+         * channel ids and neither bind proof could verify. */
+        static constexpr char kExporterLabel[] = "EXPORTER-flynes-nearby-v1";
+        const std::vector<std::uint8_t> expected_label(
+            kExporterLabel, kExporterLabel + sizeof(kExporterLabel) - 1);
+        check(fixture.quic.last_label == expected_label,
+              "the engine asks the QUIC port for the link's own exporter label");
+        check(fixture.quic.last_context.size() == 32,
+              "the exporter is requested under a 32-byte channel context");
+        const auto& exporter = fixture.attached_link->exporter();
+        fixture.quic.last_exporter = exporter;
+        ++fixture.quic.exporter_results;
+        deliver_provider_buffer(fixture.quic.inbox, fixture.quic.last_token,
+                                FLY_SESSION_PROVIDER_QUIC_EXPORTER_V2,
+                                exporter.data(), exporter.size());
+        ++state.counts.quic_exporters;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.quic.opened_bidi > state.quic_opened_bidi ||
+        fixture.quic.accepted_bidi > state.quic_accepted_bidi)
+    {
+        const bool listener = fixture.quic.accepted_bidi > state.quic_accepted_bidi;
+        if (listener) ++state.quic_accepted_bidi;
+        else ++state.quic_opened_bidi;
+        /* The link owns the stream table: the Nth stream either role registers is
+         * the same physical stream, and the two handles the answer carries are
+         * documented on LoopbackTransport::register_quic_stream. */
+        const auto answer = fixture.attached_link->register_quic_stream(listener);
+        deliver_provider_resource_pair(
+            fixture.quic.inbox, fixture.quic.last_token,
+            FLY_SESSION_PROVIDER_QUIC_STREAM_V2, answer.send, answer.receive);
+        ++state.counts.quic_streams;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.quic.writes > state.quic_writes)
+    {
+        ++state.quic_writes;
+        /* QUIC_END_V2 is an END form completion, terminal 1: the provider reports
+         * that the bytes the engine handed over were really written. The bytes
+         * themselves are carried by the transport, straight from the engine's own
+         * write log. */
+        deliver_provider_end(fixture.quic.inbox, fixture.quic.last_token,
+                             FLY_SESSION_PROVIDER_QUIC_END_V2);
+        ++state.counts.quic_write_ends;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.quic.reads > state.quic_reads)
+    {
+        /* A granted read credit is NOT answered here: the operation stays pending
+         * until the peer engine's own bytes arrive as a QUIC_DATA event under this
+         * exact token. Mirroring the count is what proves the pump saw precisely
+         * the reads the engine issued. */
+        state.quic_reads = fixture.quic.reads;
+        ++state.counts.quic_reads;
+    }
+
+    if (fixture.quic.cancels > state.quic_cancels)
+    {
+        state.quic_cancels = fixture.quic.cancels;
+    }
+
+    /* Nothing is pending that this pump can answer. */
     return PumpOutcome::Idle;
 }
 
@@ -2992,10 +3622,58 @@ struct RelayDirectionState final
     std::vector<std::vector<std::uint8_t>> delivered_acks;
 };
 
+struct QuicDirectionState final
+{
+    /* How much of the source's write log is already staged, and how many of the
+     * sink's own granted reads have been answered. */
+    std::size_t writes_staged = 0;
+    std::size_t reads_answered = 0;
+    /* Class-2 event sequence for the RECEIVING inbox; strictly increasing. */
+    std::uint64_t next_sequence = 1;
+    /*
+     * One logical unit: the exact bytes of one write the source engine issued, or
+     * the empty unit that carries the FIN it asked for. A non-empty write that
+     * also asked for the FIN produces TWO units, because the reader learns about
+     * the FIN by issuing a further read for it.
+     */
+    struct Unit final
+    {
+        fly_session_resource_handle_v2 stream = 0;
+        std::vector<std::uint8_t> bytes;
+        bool fin = false;
+        bool held = false;
+    };
+    std::vector<Unit> pending;
+    /*
+     * Exactly what crossed, in order, kept so a test can compare it with the
+     * writing engine's own write log instead of taking this harness's word for it.
+     * `delivered` holds every unit (including FIN units, which are empty), and
+     * `delivered_fin` says which of them were the FIN rather than payload bytes.
+     */
+    std::vector<std::vector<std::uint8_t>> delivered;
+    std::vector<std::uint32_t> delivered_streams;
+    std::vector<std::uint32_t> delivered_fin;
+    int units = 0;
+    int fins = 0;
+    /* Units the transport's filter held back rather than delivered. */
+    int held_units = 0;
+};
+
 struct RelayReport final
 {
     RelayDirectionState peripheral_to_central{};
     RelayDirectionState central_to_peripheral{};
+    /* Step 5: the two directions of the one QUIC connection. */
+    QuicDirectionState quic_peripheral_to_central{};
+    QuicDirectionState quic_central_to_peripheral{};
+    /*
+     * Every app action kind the two engines published during the drive, in the
+     * order they were first seen. The driver reports them so a test can state
+     * which actions this path really offers; it submits only CONFIRM_SAS, because
+     * that is the only action the ABI defines as the app's own decision here, and
+     * it never invents a response for one it does not understand.
+     */
+    std::vector<std::uint32_t> app_action_kinds;
     int rounds = 0;
     int app_actions = 0;
 };
@@ -3090,6 +3768,14 @@ inline void relay_one_direction(EngineFixture& source, RelayDirectionState& stat
      * failure itself is reported by its link-state assertion.
      */
     if (sink.snapshot().link_state == FLY_SESSION_LINK_FAILED_V2) return;
+    /*
+     * Once the QUIC channel is bound the engine releases the BLE/Bonjour bootstrap
+     * (session_engine.cpp:4985-4986) and clears its own GATT subscription
+     * (:2605), so every later DISCOVERY_BYTES event would be judged STALE. The
+     * link knows the disconnect happened because the engine asked its own
+     * discovery port for it, so nothing further is carried in that direction.
+     */
+    if (sink.discovery.disconnects > 0) return;
 
     if (state.fragments_relayed < source.discovery.written_fragments.size())
     {
@@ -3156,22 +3842,291 @@ inline void relay_gatt(LoopbackTransport& transport, RelayReport& report)
 }
 
 /*
+ * ------------------------------------------------------------------------- *
+ * Step 5: the byte-accurate QUIC stream loopback.
+ *
+ * WHAT CROSSES
+ *   Only the source engine's OWN `write` bytes, verbatim and in order, plus the
+ *   empty unit that carries the FIN the writer asked for. Nothing here
+ *   re-frames, re-encodes or reorders anything: the receiving engine parses the
+ *   sender's own encoder output with its own decoders, which is what makes the
+ *   two engines two ends of one QUIC connection rather than two scripts.
+ *
+ * THE TOKEN
+ *   Inbound bytes are accepted ONLY under the token of the read the receiving
+ *   engine itself granted (session_engine.cpp:2432/:2436 select the scheduler by
+ *   event token and parse_provider_event_v2 then compares that same token), so
+ *   the relay uses the token recorded when `grant_read_credit` was called - never
+ *   `last_token`, which later writes overwrite.
+ *
+ * THE EVENT FORM
+ *   A class-2 QUIC_DATA event is BUFFER form with terminal = 0 (the contract in
+ *   provider_events.cpp:86-88); a terminal 1 data event is a CONTRACT_VIOLATION,
+ *   and the engine's Control reader is deliberately unjournaled for exactly this
+ *   reason (link_handshake_scheduler.cpp:488-499).
+ *
+ * PACING AND BACKPRESSURE
+ *   At most ONE unit per direction per round, and both engines are pumped to idle
+ *   between units. The delivery watermark and the receiving inbox's event
+ *   sequence advance ONLY on FLY_SESSION_V2_ACCEPTED; BACKPRESSURE (-7) means the
+ *   same unit is attempted again after the receiver is pumped, and any other
+ *   result is reported with its numeric code instead of being retried or hidden.
+ *
+ * A STREAM MUST BE READY TO RECEIVE
+ *   A unit is delivered only when the receiving engine's next unconsumed granted
+ *   read is for THAT stream. The write queue is FIFO, so a unit whose reader has
+ *   not asked yet simply waits at the head; nothing is ever handed to a read that
+ *   belongs to another stream.
+ * ------------------------------------------------------------------------- */
+
+struct QuicDirectionState;
+
+/* One unit as a class-2 QUIC_DATA event. Returns the engine's raw result so the
+ * caller can distinguish ACCEPTED, BACKPRESSURE and a real refusal. */
+inline fly_session_result_v2 deliver_quic_data_event(
+    EngineFixture& sink, const fly_session_op_token_v2& token,
+    const std::vector<std::uint8_t>& bytes, std::uint64_t sequence)
+{
+    fly_session_buffer_v2_t* buffer = nullptr;
+    const fly_session_bytes_v2 source{
+        bytes.empty() ? nullptr : bytes.data(),
+        static_cast<std::uint32_t>(bytes.size()), 0};
+    check(fly_session_buffer_create_copy_v2(source, &buffer) == FLY_SESSION_V2_OK,
+          "the relay owns an immutable copy of the stream bytes it carries");
+    fly_session_port_event_v2 event{};
+    event.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+    event.abi_version = FLY_SESSION_ABI_VERSION_2;
+    event.token = token;
+    event.event_sequence = sequence;
+    event.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+    /* terminal = 0: QUIC_DATA_V2's contract, and the reason the Control read is
+     * not journaled. */
+    event.terminal = 0;
+    event.result = FLY_SESSION_V2_OK;
+    event.payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
+    fly_session_provider_buffer_event_v2 payload{};
+    payload.struct_size = FLY_SESSION_PROVIDER_BUFFER_EVENT_V2_SIZE;
+    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+    payload.buffer = buffer;
+    payload.logical_size = bytes.size();
+    payload.generation = token.connection_generation;
+    event.payload_size = sizeof(payload);
+    std::memcpy(event.payload, &payload, sizeof(payload));
+    const auto result = fly_session_deliver_v2(sink.quic.inbox, &event);
+    fly_session_buffer_release_v2(buffer);
+    return result;
+}
+
+/* The units a writer's own write log says must cross. Kept next to the relay so
+ * the test's byte-for-byte proof is a comparison against the WRITER, not against
+ * a second copy of the relay's own logic. */
+struct QuicExpectedUnit final
+{
+    std::vector<std::uint8_t> bytes;
+    fly_session_resource_handle_v2 stream = 0;
+    std::uint32_t fin = 0;
+};
+
+inline std::vector<QuicExpectedUnit> expected_quic_units(
+    const EngineFixture& fixture)
+{
+    std::vector<QuicExpectedUnit> units;
+    for (const auto& write : fixture.quic.written_streams)
+    {
+        QuicExpectedUnit payload{};
+        payload.bytes = write.bytes;
+        payload.stream = write.stream;
+        payload.fin = write.finish != 0 && write.bytes.empty() ? 1u : 0u;
+        units.push_back(std::move(payload));
+        if (write.finish != 0 && !write.bytes.empty())
+        {
+            QuicExpectedUnit fin{};
+            fin.stream = write.stream;
+            fin.fin = 1;
+            units.push_back(std::move(fin));
+        }
+    }
+    return units;
+}
+
+enum class QuicRelayOutcome : std::uint8_t
+{
+    /* Nothing was staged, so this direction had nothing to do. */
+    Empty = 0,
+    /* One unit was delivered and accepted. */
+    Delivered = 1,
+    /* The receiver applied backpressure: the SAME unit is retried later. */
+    Backpressure = 2,
+    /* A unit is staged but the receiver has not granted a read for its stream
+     * yet (or the transport's filter is holding it): no byte was moved. */
+    Waiting = 3
+};
+
+/*
+ * Carries at most ONE unit from `source` to `sink`. The bytes are the source
+ * engine's own; this function chooses nothing but the destination.
+ */
+inline QuicRelayOutcome relay_quic_one_direction(
+    LoopbackTransport& transport, LoopbackTransport::QuicFilter direction,
+    EngineFixture& source, QuicDirectionState& state, EngineFixture& sink)
+{
+    /* Stage the next own write, if the queue is empty. */
+    if (state.pending.empty() &&
+        state.writes_staged < source.quic.written_streams.size())
+    {
+        const auto& write = source.quic.written_streams[state.writes_staged++];
+        QuicDirectionState::Unit unit{};
+        unit.stream = write.stream;
+        unit.bytes = write.bytes;
+        unit.fin = write.finish != 0 && write.bytes.empty();
+        state.pending.push_back(std::move(unit));
+        if (write.finish != 0 && !write.bytes.empty())
+        {
+            QuicDirectionState::Unit fin{};
+            fin.stream = write.stream;
+            fin.fin = true;
+            state.pending.push_back(std::move(fin));
+        }
+    }
+    if (state.pending.empty()) return QuicRelayOutcome::Empty;
+
+    QuicDirectionState::Unit& unit = state.pending.front();
+    /* The receiving engine's own next unconsumed read decides whether these bytes
+     * may be handed over at all, and under which token. */
+    if (state.reads_answered >= sink.quic.granted_reads.size())
+        return QuicRelayOutcome::Waiting;
+    const auto& read = sink.quic.granted_reads[state.reads_answered];
+    if (read.stream != unit.stream) return QuicRelayOutcome::Waiting;
+    if (unit.bytes.size() > read.credit)
+    {
+        check(false,
+              "the loopback QUIC relay would deliver more stream bytes than the "
+              "receiving engine granted credit for");
+        return QuicRelayOutcome::Waiting;
+    }
+    if (transport.withholds(direction, unit.bytes))
+    {
+        if (!unit.held)
+        {
+            unit.held = true;
+            ++state.held_units;
+        }
+        return QuicRelayOutcome::Waiting;
+    }
+
+    const auto result =
+        deliver_quic_data_event(sink, read.token, unit.bytes, state.next_sequence);
+    if (result == FLY_SESSION_V2_ACCEPTED)
+    {
+        ++state.next_sequence;
+        ++state.reads_answered;
+        state.delivered.push_back(unit.bytes);
+        state.delivered_streams.push_back(unit.stream);
+        state.delivered_fin.push_back(unit.fin ? 1u : 0u);
+        ++state.units;
+        if (unit.fin) ++state.fins;
+        state.pending.erase(state.pending.begin());
+        return QuicRelayOutcome::Delivered;
+    }
+    if (result == FLY_SESSION_V2_BACKPRESSURE) return QuicRelayOutcome::Backpressure;
+    char message[512];
+    const auto snapshot = sink.snapshot();
+    std::snprintf(message, sizeof(message),
+                  "the receiving engine refused a loopback QUIC stream event with "
+                  "result %d, which is neither ACCEPTED nor BACKPRESSURE (its link "
+                  "state is %u, reason '%s')",
+                  static_cast<int>(result),
+                  static_cast<unsigned>(snapshot.link_state),
+                  snapshot.primary_reason_key);
+    check(false, message);
+    return QuicRelayOutcome::Waiting;
+}
+
+struct QuicRelayRound final
+{
+    bool delivered = false;
+    bool backpressured = false;
+    int held = 0;
+};
+
+/* Both directions of the one QUIC connection the transport owns. */
+inline QuicRelayRound relay_quic(LoopbackTransport& transport, RelayReport& report)
+{
+    QuicRelayRound round{};
+    EngineFixture* peripheral = transport.peripheral_fixture();
+    EngineFixture* central = transport.central_fixture();
+    if (peripheral == nullptr || central == nullptr) return round;
+    const auto outward = relay_quic_one_direction(
+        transport, LoopbackTransport::QuicFilter::PeripheralToCentral,
+        *peripheral, report.quic_peripheral_to_central, *central);
+    const auto inward = relay_quic_one_direction(
+        transport, LoopbackTransport::QuicFilter::CentralToPeripheral,
+        *central, report.quic_central_to_peripheral, *peripheral);
+    round.delivered = outward == QuicRelayOutcome::Delivered ||
+                      inward == QuicRelayOutcome::Delivered;
+    round.backpressured = outward == QuicRelayOutcome::Backpressure ||
+                          inward == QuicRelayOutcome::Backpressure;
+    round.held = report.quic_peripheral_to_central.held_units +
+                 report.quic_central_to_peripheral.held_units;
+    return round;
+}
+
+/*
  * The APP's part of this flow, and nothing more: when an engine publishes the SAS
  * confirmation the public ABI requires the app to answer, this submits it on that
  * engine through the same public action ABI a real app uses. It authors no transport
  * event and no peer message - the engine still decides whether the action applies.
+ *
+ * `observed` (optional) collects every action kind the engines publish while this
+ * flow runs, so a test can state which actions the path really offers. Exactly one
+ * of them is ever submitted: CONFIRM_SAS, the app's own decision. No other kind is
+ * answered, because this harness does not understand the semantics of one it has
+ * never seen and will not invent a response for it.
  */
-inline bool confirm_pairing_sas_when_the_abi_asks(EngineFixture& fixture,
-                                                  std::uint64_t request_id)
+inline bool confirm_pairing_sas_when_the_abi_asks(
+    EngineFixture& fixture, std::uint64_t request_id,
+    std::vector<std::uint32_t>* observed = nullptr)
 {
     std::vector<fly_session_action_descriptor_v2> actions;
     fixture.snapshot(&actions);
+    if (observed != nullptr)
+    {
+        for (const auto& action : actions)
+            if (std::find(observed->begin(), observed->end(),
+                          action.action_kind) == observed->end())
+                observed->push_back(action.action_kind);
+    }
     const auto* confirm = find_action(actions, FLY_SESSION_ACTION_CONFIRM_SAS_V2);
     const bool submit_it = confirm != nullptr && confirm->enabled;
     if (submit_it) submit(fixture, *confirm, request_id, false);
     for (auto& action : actions)
         fly_session_approval_token_release_v2(action.approval_token);
     return submit_it;
+}
+
+/*
+ * Says whether this engine currently offers the SAS confirmation, i.e. whether
+ * the APP still owes its own decision on this end. It only inspects the published
+ * actions - it authors no event and submits nothing - and it releases the approval
+ * tokens it looked at, exactly like the submitter below.
+ */
+inline bool pairing_sas_is_offered(EngineFixture& fixture,
+                                   std::vector<std::uint32_t>* observed = nullptr)
+{
+    std::vector<fly_session_action_descriptor_v2> actions;
+    fixture.snapshot(&actions);
+    if (observed != nullptr)
+    {
+        for (const auto& action : actions)
+            if (std::find(observed->begin(), observed->end(),
+                          action.action_kind) == observed->end())
+                observed->push_back(action.action_kind);
+    }
+    const auto* confirm = find_action(actions, FLY_SESSION_ACTION_CONFIRM_SAS_V2);
+    const bool offered = confirm != nullptr && confirm->enabled;
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    return offered;
 }
 
 /*
@@ -3183,12 +4138,29 @@ inline bool confirm_pairing_sas_when_the_abi_asks(EngineFixture& fixture,
  * transport, never from the caller. Exceeding `max_rounds` is a FAILURE, never a
  * hang: an exchange that will not settle is a defect the test has to report.
  *
- * `answer_the_app_action` is opt-in because it moves the link PAST this increment:
- * a SAS confirmation is the app's own decision, and submitting it walks the two
- * engines out of the pair exchange into the capability/bearer/QUIC stages that
- * step 5 owns (where this pump deliberately answers nothing and reports the request
- * as a failure). Increments that stop at the pair exchange therefore leave it off,
- * and the confirmation stays visible in the engine's own projections.
+ * `answer_the_app_action` is opt-in because the SAS confirmation is the app's own
+ * decision: submitting it walks the two engines out of the pair exchange into the
+ * capability/bearer/QUIC stages. Increments that stop at the pair exchange leave
+ * it off, and the confirmation stays visible in the engine's own projections; the
+ * QUIC loopback (step 5) turns it on, because the engines cannot reach the QUIC
+ * stage without it. When it is on, the app answers on BOTH ends together - the two
+ * humans compare the SAS and confirm as a pair - which is a pacing choice about
+ * the app, not about the protocol.
+ *
+ * KNOWN ENGINE BLOCKER ON THIS PATH (reported, not worked around)
+ *   The committed engine hands ONE operation id to two different operations once
+ *   both ends confirm: `PairKeyConfirmScheduler` mints an AEAD operation from
+ *   `next_operation_id_` inside the GATT KeyConfirm handler
+ *   (session_engine.cpp:2058 -> accept_peer_envelope -> prepare_aead), and that
+ *   scheduler's ids are only folded back into `next_operation_id_` when one of its
+ *   COMPLETIONS is processed (:4777). A physical-ack or fragment write dispatched
+ *   in the same worker iteration mints its own token from the same stale counter
+ *   (`make_link_operation_token_locked`, :364 and :2773), so a crypto open and a
+ *   discovery write end up sharing one operation id. The engine's own
+ *   completion-record dedup keys on (operation_id, event_sequence) only (:2387-2399)
+ *   and then refuses the second completion with CONTRACT_VIOLATION (-15). The
+ *   harness reports that as an engine-side operation-id defect (see
+ *   report_provider_requests in the e2e test) instead of hiding it.
  */
 inline void relay_and_pump_until_idle(LoopbackTransport& transport,
                                       EngineFixture& first, PumpState& first_pump,
@@ -3215,40 +4187,67 @@ inline void relay_and_pump_until_idle(LoopbackTransport& transport,
             report->peripheral_to_central.delivered_acks.size() +
             report->central_to_peripheral.delivered.size() +
             report->central_to_peripheral.delivered_acks.size();
+        const int quic_units_before = report->quic_peripheral_to_central.units +
+                                      report->quic_central_to_peripheral.units;
         const int answers_before =
             first_pump.counts.answers + second_pump.counts.answers;
 
         relay_gatt(transport, *report);
+        const auto quic = relay_quic(transport, *report);
         pump_engine(first, first_pump, limits);
         pump_engine(second, second_pump, limits);
-        bool app_acted = false;
-        if (answer_the_app_action)
-        {
-            const bool first_acted =
-                confirm_pairing_sas_when_the_abi_asks(first, 700 + round);
-            const bool second_acted =
-                confirm_pairing_sas_when_the_abi_asks(second, 800 + round);
-            app_acted = first_acted || second_acted;
-            if (app_acted) ++report->app_actions;
-        }
 
         const std::size_t fragments_after =
             report->peripheral_to_central.delivered.size() +
             report->peripheral_to_central.delivered_acks.size() +
             report->central_to_peripheral.delivered.size() +
             report->central_to_peripheral.delivered_acks.size();
+        const int quic_units_after = report->quic_peripheral_to_central.units +
+                                     report->quic_central_to_peripheral.units;
         const int answers_after =
             first_pump.counts.answers + second_pump.counts.answers;
 
-        if (fragments_after == fragments_before &&
-            answers_after == answers_before && !app_acted)
+        /*
+         * A unit the transport's filter is holding is deliberately NOT progress:
+         * it never reached the `delivered` list, so the unit counts below already
+         * see the stall, and the exchange settles exactly as the withheld message
+         * says. A BACKPRESSURE retry IS progress in the sense that matters here -
+         * the receiver has to be pumped before the same unit can be offered again
+         * - so it prevents a premature idle, while a peer that refuses forever is
+         * still reported by the round bound as a failure rather than hanging.
+         */
+        const bool progressed =
+            fragments_after != fragments_before ||
+            quic_units_after != quic_units_before ||
+            answers_after != answers_before || quic.backpressured;
+        if (progressed) idle_rounds = 0; else ++idle_rounds;
+
+        bool app_acted = false;
+        if (answer_the_app_action)
         {
-            if (++idle_rounds >= idle_rounds_required) return;
+            /* The two humans compare the SAS and confirm together, so the app
+             * answers on BOTH ends at once - a pacing choice about the app, not
+             * about the protocol. See the header comment for the engine-side
+             * operation-id defect this path runs into afterwards. */
+            const bool first_ready =
+                pairing_sas_is_offered(first, &report->app_action_kinds);
+            const bool second_ready =
+                pairing_sas_is_offered(second, &report->app_action_kinds);
+            if (first_ready && second_ready)
+            {
+                const bool first_acted =
+                    confirm_pairing_sas_when_the_abi_asks(first, 700 + round);
+                const bool second_acted =
+                    confirm_pairing_sas_when_the_abi_asks(second, 800 + round);
+                app_acted = first_acted || second_acted;
+                if (app_acted) ++report->app_actions;
+            }
         }
-        else
-        {
-            idle_rounds = 0;
-        }
+        /* The app's own decision is progress: the engines have something new to
+         * do, so this round cannot be an idle one. */
+        if (app_acted) idle_rounds = 0;
+
+        if (idle_rounds >= idle_rounds_required) return;
     }
     check(false,
           "the two-engine driver did not settle within max_rounds: the engines kept "
