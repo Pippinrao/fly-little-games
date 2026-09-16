@@ -781,6 +781,10 @@ void SessionEngine::release_pair_sas_locked() noexcept
     pair_sas_.reset();
     pair_sas_dispatch_pending_ = false;
     pair_sas_expected_kind_ = 0;
+    // Releasing the SAS stage invalidates every held known-status envelope: the
+    // gate that made them legal for this link no longer holds, so a later link
+    // must never replay them.
+    pending_pair_known_envelopes_.discard();
 }
 
 void SessionEngine::cancel_pair_signature_locked() noexcept
@@ -827,6 +831,9 @@ void SessionEngine::release_pair_signature_locked() noexcept
     pair_signature_.reset();
     pair_signature_dispatch_pending_ = false;
     pair_signature_expected_kind_ = 0;
+    // Same reason as release_pair_sas_locked: the pair flow that legitimised a
+    // buffered known-status envelope is gone.
+    pending_pair_known_envelopes_.discard();
 }
 
 void SessionEngine::release_pair_material_locked() noexcept
@@ -845,6 +852,9 @@ void SessionEngine::release_pair_material_locked() noexcept
     pair_material_.reset();
     pair_material_dispatch_pending_ = false;
     pair_material_expected_kind_ = 0;
+    // The pair flow is over for this link; nothing that arrived for it may
+    // survive into the next one.
+    pending_pair_known_envelopes_.discard();
 }
 
 void SessionEngine::cancel_pair_reveal_locked() noexcept
@@ -1061,6 +1071,76 @@ bool SessionEngine::start_pair_known_locked() noexcept
     catch (const std::bad_alloc&) { return false; }
     next_operation_id_ += 12;
     pair_known_dispatch_pending_ = pair_known_->poll_effect().has_value();
+    return drain_pair_known_envelopes_locked();
+}
+
+bool SessionEngine::buffer_pair_known_envelope_locked(
+    std::uint8_t type, const std::uint8_t* body, std::size_t size,
+    const std::array<std::uint8_t, 32>& logical_hash)
+{
+    /*
+     * This gate answers one question: has THIS side locally entered the pair
+     * flow for the current link, so that a peer Status/Branch is plausible at
+     * all? It deliberately does not ask whether the stages that may lag behind
+     * are already finished.
+     *
+     * pair_sas_->ready() is set only by the scheduler's final HmacSas step and
+     * pair_material_->ready() only once the local key derivation returns, so
+     * both are legitimately still pending during exactly the window this hold
+     * exists for. Requiring either of them (or pair_signature_->ready()) would
+     * refuse the very envelope the hold was written for, because pair_known_
+     * itself only exists once pair_sas_ is ready.
+     *
+     * A non-null pair_signature_ is the strongest cheap proof that the peer is
+     * entitled to send a Status: the local signature stage is created only
+     * after the peer context and both commits were accepted, and the peer
+     * emits its own Status only once its signature stage has completed.
+     * pair_exchange_ and pair_material_ are created no later than that stage,
+     * so the four non-null checks together mean this is a live exchange bound
+     * to this link generation.
+     *
+     * Being early is not the same as being wrong, and holding defers rather
+     * than skips: every held envelope is replayed through the same
+     * accept_peer_envelope a live one goes through, which still enforces the
+     * stage, the counter and the HMAC. Anything not structurally legal for
+     * this pair exchange is rejected by the queue's own validation before it
+     * is ever held.
+     */
+    if (!pair_context_ ||
+        (local_pair_role_ != wire::PairRoleV1::Initiator &&
+         local_pair_role_ != wire::PairRoleV1::Responder) ||
+        !pair_signature_ || !pair_sas_ || !pair_exchange_ || !pair_material_)
+        return false;
+    if (current_view_->snapshot.link_state != FLY_SESSION_LINK_AUTHENTICATING_V2)
+        return false;
+    const auto result = pending_pair_known_envelopes_.enqueue(
+        type, body, size, logical_hash);
+    return result == link::PairKnownQueueResult::Queued;
+}
+
+bool SessionEngine::drain_pair_known_envelopes_locked() noexcept
+{
+    if (!pair_known_ || pair_known_->failed()) return false;
+    std::vector<link::QueuedPairKnownEnvelope> ready;
+    try
+    {
+        if (pending_pair_known_envelopes_.release(&ready) !=
+            link::PairKnownQueueResult::Released)
+            return false;
+        for (auto& record : ready)
+        {
+            const auto accepted = pair_known_->accept_peer_envelope(
+                record.logical_type, record.body.data(), record.body.size(),
+                record.logical_hash);
+            if (accepted != FLY_SESSION_V2_ACCEPTED) return false;
+            if (pair_known_->poll_effect())
+                pair_known_dispatch_pending_ = true;
+        }
+    }
+    catch (const std::bad_alloc&)
+    {
+        return false;
+    }
     return true;
 }
 
@@ -1934,10 +2014,34 @@ bool SessionEngine::accept_completed_gatt_locked(
     }
     if (type == 21 || type == 17)
     {
-        if (!pair_known_ || pair_known_->failed()) return false;
+        if (pair_known_ && pair_known_->failed()) return false;
         std::array<std::uint8_t, 32> logical_hash{};
         std::copy_n(message.logical_hash, logical_hash.size(),
                     logical_hash.begin());
+        if (!pair_known_)
+        {
+            // Two engines that run at different speeds is the normal case on a
+            // real bearer: the peer that finishes SAS first publishes its known
+            // status while this side is still a few provider operations short of
+            // its own PairKnownScheduler. The envelope is already legal for this
+            // link generation, so dropping it would fail a link that is merely
+            // early rather than wrong. Hold the bytes exactly as they arrived and
+            // replay them the moment the local decoder exists; anything that is
+            // not legal for this generation still fails closed right here.
+            //
+            // Holding copies bytes, so an allocation failure is handled the same way
+            // every other allocating branch in this function handles it: the message
+            // is refused instead of escaping as an exception.
+            try
+            {
+                return buffer_pair_known_envelope_locked(
+                    type, message.body, message.body_size, logical_hash);
+            }
+            catch (const std::bad_alloc&)
+            {
+                return false;
+            }
+        }
         const auto accepted = pair_known_->accept_peer_envelope(
             type, message.body, message.body_size, logical_hash);
         if (accepted == FLY_SESSION_V2_ACCEPTED && pair_known_->poll_effect())
@@ -5705,6 +5809,7 @@ void SessionEngine::complete_shutdown_locked() noexcept
     {
         return;
     }
+    pending_pair_known_envelopes_.discard();
     auto* old_view = current_view_;
     current_view_ = shutdown_complete_view_;
     shutdown_complete_view_ = nullptr;

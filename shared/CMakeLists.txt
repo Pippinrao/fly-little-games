@@ -264,6 +264,7 @@ add_library(flynes_initial_plan_lock STATIC
     src/session/link/endpoint_offer_scheduler.cpp
     src/session/link/initial_quic_bind_scheduler.cpp
     src/session/link/pair_capability_scheduler.cpp
+    src/session/link/pair_known_envelope_queue.cpp
     src/session/link/pair_known_scheduler.cpp
     src/session/link/pair_material_scheduler.cpp
     src/session/link/pair_key_confirm_scheduler.cpp
@@ -1321,6 +1322,21 @@ if(FLYNES_BUILD_TESTS)
     flynes_enable_strict_warnings(flynes_link_races_test)
     add_test(NAME flynes_link_races COMMAND flynes_link_races_test)
     set_tests_properties(flynes_link_races PROPERTIES
+        LABELS "nearby_race;nearby_protocol;nearby_auth")
+
+    add_executable(flynes_pair_known_envelope_queue_test
+        tests/nearby/race/test_pair_known_envelope_queue.cpp)
+    target_link_libraries(flynes_pair_known_envelope_queue_test PRIVATE
+        flynes_initial_plan_lock)
+    target_include_directories(flynes_pair_known_envelope_queue_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_pair_known_envelope_queue_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_pair_known_envelope_queue_test PROPERTIES
+        CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_pair_known_envelope_queue_test)
+    add_test(NAME flynes_pair_known_envelope_queue
+        COMMAND flynes_pair_known_envelope_queue_test)
+    set_tests_properties(flynes_pair_known_envelope_queue PROPERTIES
         LABELS "nearby_race;nearby_protocol;nearby_auth")
 
     # W0 frozen contracts for the parallel DUAL worktrees (Task 2). These only

@@ -7,6 +7,7 @@
 #include "../link/pair_signature_scheduler.hpp"
 #include "../link/pair_sas_scheduler.hpp"
 #include "../link/pair_key_confirm_scheduler.hpp"
+#include "../link/pair_known_envelope_queue.hpp"
 #include "../link/pair_known_scheduler.hpp"
 #include "../link/pair_capability_scheduler.hpp"
 #include "../link/initial_plan_scheduler.hpp"
@@ -80,6 +81,10 @@ private:
     bool start_pair_reveal_locked() noexcept;
     bool start_pair_signature_locked() noexcept;
     bool start_pair_known_locked() noexcept;
+    bool drain_pair_known_envelopes_locked() noexcept;
+    bool buffer_pair_known_envelope_locked(
+        std::uint8_t type, const std::uint8_t* body, std::size_t size,
+        const std::array<std::uint8_t, 32>& logical_hash);
     bool start_pair_sas_locked() noexcept;
     bool start_pair_key_confirm_locked() noexcept;
     bool start_pair_capability_locked() noexcept;
@@ -266,6 +271,10 @@ private:
     std::unique_ptr<PairRevealScheduler> pair_reveal_{};
     std::unique_ptr<PairSignatureScheduler> pair_signature_{};
     std::unique_ptr<PairKnownScheduler> pair_known_{};
+    // A peer can legitimately send at most one known status and one known
+    // branch before this side is ready, so four records of 1 KiB total is two
+    // full exchanges of headroom before the link fails closed.
+    link::PairKnownEnvelopeQueue pending_pair_known_envelopes_{1024, 4};
     std::unique_ptr<PairSasScheduler> pair_sas_{};
     std::unique_ptr<PairKeyConfirmScheduler> pair_key_confirm_{};
     std::unique_ptr<PairCapabilityScheduler> pair_capability_{};
