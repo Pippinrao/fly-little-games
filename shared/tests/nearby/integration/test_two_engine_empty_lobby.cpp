@@ -13,6 +13,8 @@
 #include "wire/quic_contract.hpp"
 #include "wire/session_signing_binding.hpp"
 #include "wire/sha256.hpp"
+#include "wire/app_frame.hpp"
+#include "wire/link_hello.hpp"
 #include "link/link_control_contract.hpp"
 
 #include <array>
@@ -25,6 +27,9 @@
 #include <vector>
 
 namespace {
+
+namespace wire = flynes::session::wire;
+namespace link = flynes::session::link;
 
 int failures = 0;
 void check(bool value, const char* message)
@@ -2983,8 +2988,100 @@ void drive_session_signing_persistence(
           "the verified local re-read keeps CONNECTING, persists no 0x0216/"
           "0x0217 object, and advances to the HELLO signature request now that "
           "the 16-byte channel id and the channel-bind binding hash have a real "
-          "producer; the negotiated result, the peer 0x0212 binding and the "
-          "inbound Control stream still have none");
+          "producer; the peer 0x0212 binding and the peer HELLO/READY/ACK "
+          "exchange still have not happened");
+
+    /*
+     * gap 4 + gap 3, engine level. What the engine actually put on the Control
+     * stream is a real framed record, and it is its OWN 0x0212 binding: the exact
+     * bytes it just re-read from the ObjectStore, on wire::QuicChannel::Control,
+     * parseable by the same app_frame the receiving engine will use.
+     */
+    check(fixture.quic.writes == quic_writes + 1,
+          "the engine published exactly one record after the durable re-read");
+    {
+        wire::AppFrame frame{};
+        const auto framed = fixture.quic.last_write;
+        check(wire::parse_app_frame(wire::QuicChannel::Control, framed.data(),
+                                    framed.size(), &frame) == wire::Status::Ok &&
+                  frame.frame_type_tag ==
+                      wire::kSessionSigningBindingObjectKindV1 &&
+                  frame.object_size == wire::kSessionSigningBindingSizeV1,
+              "the engine's Control-stream record is a parseable 0x0212 frame");
+        check(frame.object_size == expected_binding.size() &&
+                  std::equal(frame.object_bytes,
+                             frame.object_bytes + frame.object_size,
+                             expected_binding.begin()),
+              "the published binding is exactly the bytes it re-read");
+    }
+
+    /*
+     * Now answer the HELLO signature request and the HELLO object write, and
+     * check that the engine frames and publishes a real LINK_HELLO. The signature
+     * bytes only have to be a canonical low-S encoding: this side's own verifier
+     * never sees them, and the peer's does through the crypto port.
+     */
+    {
+        /* Complete the binding write first: only then does the scheduler ask for
+         * the HELLO signature. */
+        deliver_provider_end(
+            fixture.quic.inbox, fixture.quic.last_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        fixture.executor.run_all();
+        check(fixture.key.last_token.operation_id != 0 &&
+                  fixture.key.last_token.scope.kind ==
+                      FLY_SESSION_SCOPE_LINK_V2,
+              "the engine requested the LINK_HELLO signature after publishing its "
+              "binding");
+
+        std::array<std::uint8_t, 64> signature{};
+        signature[0] = 0x01;  /* R non-zero and below the group order */
+        signature[32] = 0x40; /* S non-zero and at or below half the order */
+        deliver_provider_buffer(
+            fixture.key.inbox, fixture.key.last_token,
+            FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2, signature.data(),
+            signature.size());
+        fixture.executor.run_all();
+        check(fixture.object_store.last_kind ==
+                  flynes::session::link::kLinkHelloObjectKindV1 &&
+                  fixture.object_store.last_value.size() ==
+                      flynes::session::link::kLinkHelloSizeV1,
+              "the engine persisted the exact 488-byte LINK_HELLO object");
+        const auto hello_object_hash = fixture.object_store.last_hash;
+        deliver_provider_hash(
+            fixture.object_store.inbox, fixture.object_store.last_token,
+            FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 332, hello_object_hash);
+        fixture.executor.run_all();
+
+        check(fixture.quic.writes == quic_writes + 2,
+              "the engine then wrote exactly one more Control record");
+        wire::AppFrame hello{};
+        const auto framed = fixture.quic.last_write;
+        check(wire::parse_app_frame(wire::QuicChannel::Control, framed.data(),
+                                    framed.size(), &hello) == wire::Status::Ok &&
+                  hello.frame_type_tag ==
+                      flynes::session::link::kLinkHelloObjectKindV1 &&
+                  hello.object_size ==
+                      flynes::session::link::kLinkHelloSizeV1,
+              "the engine's second record is a parseable 488-byte LINK_HELLO");
+        /* The HELLO names the very binding the engine just published, so a peer
+         * that accepted that record can check this message. */
+        check(std::equal(hello.object_bytes +
+                             link::kLinkHelloBindingHashOffsetV1,
+                         hello.object_bytes +
+                             link::kLinkHelloBindingHashOffsetV1 + 32,
+                         expected_hash.begin()),
+              "the HELLO binds the same 0x0212 hash the engine published");
+        /* And it echoes the channel id the bind scheduler produced: a non-zero
+         * 16-byte value, which is what the peer will compare against its own
+         * derivation. */
+        check(std::any_of(hello.object_bytes +
+                              link::kLinkHelloChannelIdOffsetV1,
+                          hello.object_bytes +
+                              link::kLinkHelloChannelIdOffsetV1 + 16,
+                          [](std::uint8_t value) { return value != 0; }),
+              "the HELLO carries a non-zero 16-byte channel id");
+    }
 }
 
 void drive_initiator_pair_flow(EngineFixture& fixture, SessionSigningTail tail)
