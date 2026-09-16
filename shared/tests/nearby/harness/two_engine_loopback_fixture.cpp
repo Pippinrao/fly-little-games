@@ -410,8 +410,18 @@ void loopback_deliver_buffer(fly_session_inbox_v2_t* inbox,
     payload.logical_size = size;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
-    fly_session_deliver_v2(inbox, &event);
+    const auto delivered = fly_session_deliver_v2(inbox, &event);
     fly_session_buffer_release_v2(buffer);
+    /*
+     * A provider callback may NOT complete its own operation: the engine rejects a
+     * terminal delivered from inside the callback (the completion record does not
+     * exist yet), and the refusal is silent, so the operation would stay pending
+     * forever. The pump hands these out after the callback returned; a refusal here
+     * is a real defect and is reported instead of dropped.
+     */
+    check(delivered == FLY_SESSION_V2_ACCEPTED,
+          "a loopback provider buffer terminal must be accepted by the engine, never "
+          "silently dropped");
 }
 
 void loopback_deliver_resource(fly_session_inbox_v2_t* inbox,
@@ -435,7 +445,9 @@ void loopback_deliver_resource(fly_session_inbox_v2_t* inbox,
     payload.generation = token.connection_generation;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
-    fly_session_deliver_v2(inbox, &event);
+    check(fly_session_deliver_v2(inbox, &event) == FLY_SESSION_V2_ACCEPTED,
+          "a loopback provider resource terminal must be accepted by the engine, "
+          "never silently dropped");
 }
 
 void loopback_deliver_end(fly_session_inbox_v2_t* inbox,
@@ -456,7 +468,9 @@ void loopback_deliver_end(fly_session_inbox_v2_t* inbox,
     payload.abi_version = FLY_SESSION_ABI_VERSION_2;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
-    fly_session_deliver_v2(inbox, &event);
+    check(fly_session_deliver_v2(inbox, &event) == FLY_SESSION_V2_ACCEPTED,
+          "a loopback provider end terminal must be accepted by the engine, never "
+          "silently dropped");
 }
 
 void loopback_deliver_verification(fly_session_inbox_v2_t* inbox,

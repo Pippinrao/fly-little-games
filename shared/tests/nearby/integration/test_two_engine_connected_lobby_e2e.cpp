@@ -305,46 +305,108 @@ void loopback_world_is_deterministic_and_shared()
 }
 
 /*
- * The pump's report has to match the ports' report, request for request.
+ * The pump's report has to match the ports' report, request for request, on EVERY
+ * port this harness answers.
  *
  * Every terminal the pump sends is counted, and every port callback that leaves an
  * operation pending is counted by the fixture itself. The two must line up exactly:
  * an extra terminal would mean the pump invented a completion, and a missing one
- * would mean a real request was left unanswered. The later phases (paths,
- * credentials, endpoints, durable stores, TLS material) are asserted to zero here,
- * because this phase genuinely produced none of them - if a real run ever did, this
- * is where it must be noticed rather than answered from a script.
+ * would mean a real request was left unanswered. The last check requires the answer
+ * total to be accounted for by the per-port counts, so a port cannot be added to the
+ * pump without being reported here.
+ */
+void check_pump_answers_match_the_ports(
+    EngineFixture& fixture, flynes::session::loopback::PumpState& pump,
+    const char* role)
+{
+    const auto& counts = pump.counts;
+    char text[256];
+    auto expect = [&](int pump_value, int port_value, const char* label) {
+        std::snprintf(text, sizeof(text),
+                      "the pump answered exactly the %s the %s engine really made",
+                      label, role);
+        check(pump_value == port_value, text);
+    };
+
+    expect(counts.key_handles, fixture.key.generates,
+           "key generation requests");
+    expect(counts.key_publics, fixture.key.public_reads,
+           "public-key reads");
+    expect(counts.key_agreements, fixture.key.agreements,
+           "key-agreement requests");
+    expect(counts.key_signatures, fixture.key.signs, "signature requests");
+    expect(counts.crypto_randoms, fixture.crypto.randoms,
+           "random-byte requests");
+    expect(counts.crypto_secrets, fixture.crypto.hkdfs,
+           "key-derivation requests");
+    expect(counts.crypto_macs, fixture.crypto.hmacs, "mac requests");
+    expect(counts.crypto_verifies, fixture.crypto.verifies,
+           "signature-verification requests");
+    expect(counts.crypto_aead_seals, fixture.crypto.aead_seals,
+           "sealing requests");
+    expect(counts.crypto_aead_opens, fixture.crypto.aead_opens,
+           "opening requests");
+    expect(counts.tls_materials, fixture.tls.creates,
+           "TLS-material requests");
+    expect(counts.bearer_capabilities, fixture.bearer.probes,
+           "bearer capability probes");
+    expect(counts.bearer_paths, fixture.bearer.creates + fixture.bearer.joins,
+           "bearer path requests");
+    expect(counts.bearer_credentials, fixture.bearer.prepares,
+           "bearer credential requests");
+    expect(counts.bearer_endpoints, fixture.bearer.resolves,
+           "bearer endpoint resolutions");
+    expect(counts.discovery_write_ends, fixture.discovery.writes,
+           "GATT write completions");
+    expect(counts.secure_store_revisions, fixture.secure_store.writes,
+           "durable-store writes");
+    expect(counts.object_puts, fixture.object_store.puts, "object writes");
+    expect(counts.object_reads, fixture.object_store.reads, "object reads");
+
+    std::snprintf(text, sizeof(text),
+                  "a provider rejection is still an answer to the request the %s "
+                  "engine really made, never an extra one",
+                  role);
+    check(counts.crypto_verify_failures <= counts.crypto_verifies &&
+              counts.crypto_aead_open_failures <= counts.crypto_aead_opens,
+          text);
+
+    const int accounted =
+        counts.key_handles + counts.key_publics + counts.key_agreements +
+        counts.key_signatures + counts.crypto_randoms + counts.crypto_secrets +
+        counts.crypto_macs + counts.crypto_verifies + counts.crypto_aead_seals +
+        counts.crypto_aead_opens + counts.tls_materials +
+        counts.bearer_capabilities + counts.bearer_paths +
+        counts.bearer_credentials + counts.bearer_endpoints +
+        counts.discovery_write_ends + counts.secure_store_revisions +
+        counts.object_puts + counts.object_reads;
+    std::snprintf(text, sizeof(text),
+                  "every terminal the pump sent to the %s engine completed a request "
+                  "one of its ports really made, and none is unaccounted for",
+                  role);
+    check(counts.answers == accounted, text);
+}
+
+/*
+ * The same identity, plus what THIS phase cannot have reached: the bearer, the
+ * durable store and the object store are later phases, so a non-zero count there
+ * would mean the run went further than the step-3 test claims.
  */
 void check_pump_matches_the_requests_this_phase_produced(
     EngineFixture& fixture, flynes::session::loopback::PumpState& pump,
     const char* role)
 {
+    check_pump_answers_match_the_ports(fixture, pump, role);
+
     const auto& counts = pump.counts;
     char message[256];
     std::snprintf(message, sizeof(message),
-                  "the pump answered exactly the GATT write terminals the %s engine "
-                  "really produced", role);
-    check(counts.discovery_write_ends == fixture.discovery.writes, message);
-
-    std::snprintf(message, sizeof(message),
-                  "the pump answered exactly the bearer capability probes the %s "
-                  "engine really made", role);
-    check(counts.bearer_capabilities == fixture.bearer.probes, message);
-
-    std::snprintf(message, sizeof(message),
-                  "every terminal the pump sent to the %s engine completed a request "
-                  "one of its ports really made", role);
-    check(counts.answers == counts.discovery_write_ends +
-                                counts.bearer_capabilities,
-          message);
-
-    std::snprintf(message, sizeof(message),
-                  "the pump answered nothing on the ports the %s engine never reached "
-                  "in this step", role);
-    check(counts.tls_materials == 0 && counts.bearer_paths == 0 &&
-              counts.bearer_credentials == 0 && counts.bearer_endpoints == 0 &&
-              counts.secure_store_revisions == 0 && counts.object_puts == 0 &&
-              counts.object_reads == 0,
+                  "the pump answered nothing on the bearer, durable-store and object "
+                  "ports the %s engine never reached in this step",
+                  role);
+    check(counts.bearer_paths == 0 && counts.bearer_credentials == 0 &&
+              counts.bearer_endpoints == 0 && counts.secure_store_revisions == 0 &&
+              counts.object_puts == 0 && counts.object_reads == 0,
           message);
 }
 
@@ -485,6 +547,277 @@ void two_engines_connect_through_the_transport_and_are_pumped_to_idle()
         fly_session_approval_token_release_v2(action.approval_token);
 }
 
+/*
+ * Reports the logical message types a direction carried, in order, from the fragments
+ * that actually crossed. The first-fragment flag (bit 0 of the flags byte,
+ * fragment[2]) marks the start of a logical message, so this reads the peer's own
+ * framing and adds nothing to it.
+ */
+void report_crossed_messages(
+    const char* label, const std::vector<std::vector<std::uint8_t>>& fragments)
+{
+    std::printf("  %s carried", label);
+    for (const auto& fragment : fragments)
+    {
+        if (fragment.size() < 3) continue;
+        if ((fragment[2] & 0x01u) != 0u)
+            std::printf(" 0x%02x", fragment[1]);
+    }
+    std::printf(" (%zu fragments)\n", fragments.size());
+}
+
+/*
+ * step 4: the byte-accurate GATT/discovery loopback between two REAL engines.
+ *
+ * Every fragment that crosses from one engine to the other is that engine's OWN
+ * encoder output, carried verbatim; the relay re-frames nothing and the test authors
+ * no transport event. Both ends are on the one link the `LoopbackTransport`
+ * connected, and the driver alternates carrying bytes with answering provider work.
+ *
+ * WHAT THIS INCREMENT CLAIMS
+ *   The two engines exchange their own GATT bytes in both directions; what crossed is
+ *   byte-for-byte and in order the writing engine's own `written_fragments`; the
+ *   scanning engine, which writes nothing at all without peer bytes (step 3), now
+ *   consumes the advertising engine's PairContext and answers with its own
+ *   PairCommit/PairReveal/PairSignature; and the committed engine fix is visible end
+ *   to end, because the scanning engine no longer fails on the peer's
+ *   PairKnownStatus but verifies it and publishes its own.
+ *
+ * WHAT IT DOES NOT CLAIM
+ *   CONNECTED_LOBBY. The QUIC stage is step 5, and if this run ever reached it the
+ *   pump reports that as a failure instead of hiding it. The SAS confirmation is the
+ *   app's decision, so this increment does not submit it (see the driver's
+ *   `answer_the_app_action`): doing so would walk the link into that stage.
+ */
+void two_engines_exchange_their_own_gatt_bytes()
+{
+    using flynes::session::loopback::LoopbackRole;
+    using flynes::session::loopback::LoopbackSide;
+    using flynes::session::loopback::LoopbackTransport;
+    using flynes::session::loopback::LoopbackWorld;
+    using flynes::session::loopback::PumpLimits;
+    using flynes::session::loopback::PumpState;
+    using flynes::session::loopback::RelayReport;
+    using flynes::session::loopback::pump_engine;
+    using flynes::session::loopback::relay_and_pump_until_idle;
+    using flynes::session::loopback::shutdown_engine_with_the_pump;
+    using flynes::session::loopback::submit;
+
+    LoopbackWorld world;
+    EngineFixture inviter(world, LoopbackSide::Initiator);
+    EngineFixture joiner(world, LoopbackSide::Responder);
+
+    inviter.platform.ready();
+    joiner.platform.ready();
+    inviter.executor.run_all();
+    joiner.executor.run_all();
+
+    std::vector<fly_session_action_descriptor_v2> inviter_actions;
+    std::vector<fly_session_action_descriptor_v2> joiner_actions;
+    inviter.snapshot(&inviter_actions);
+    joiner.snapshot(&joiner_actions);
+    const auto* create =
+        find_action(inviter_actions, FLY_SESSION_ACTION_CREATE_INVITE_V2);
+    const auto* join =
+        find_action(joiner_actions, FLY_SESSION_ACTION_JOIN_CODE_V2);
+    check(create != nullptr && join != nullptr,
+          "both engines publish the link action their role needs");
+    if (create == nullptr || join == nullptr)
+    {
+        for (auto& action : inviter_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        for (auto& action : joiner_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        return;
+    }
+    submit(inviter, *create, 601, false);
+    submit(joiner, *join, 602, true);
+
+    check(inviter.discovery.advertisements == 1 && inviter.discovery.scans == 0,
+          "the inviter engine advertises and does not scan");
+    check(joiner.discovery.scans == 1 && joiner.discovery.advertisements == 0,
+          "the joiner engine scans and does not advertise");
+
+    LoopbackTransport transport;
+    transport.attach(LoopbackRole::AdvertiserPeripheral, inviter);
+    transport.attach(LoopbackRole::ScannerCentral, joiner);
+    check(transport.connect_ends() == 2,
+          "the transport produced the connection at both ends of one link");
+
+    PumpState inviter_pump;
+    PumpState joiner_pump;
+    const PumpLimits limits{};
+
+    /*
+     * Both engines must be LISTENING before the first byte is relayed. Relaying into
+     * an engine that has not subscribed yet loses the bytes it would have accepted a
+     * moment later; an earlier attempt that relayed early deadlocked after
+     * PairContext + PairCommit with the scanning engine having written nothing.
+     */
+    pump_engine(inviter, inviter_pump, limits);
+    pump_engine(joiner, joiner_pump, limits);
+    check(inviter.discovery.subscriptions == 1 && joiner.discovery.subscriptions == 1,
+          "both engines subscribed to the link the transport connected, before any "
+          "byte is relayed across it");
+
+    RelayReport relayed;
+    relay_and_pump_until_idle(transport, inviter, inviter_pump, joiner, joiner_pump,
+                              limits, 400, 6, &relayed);
+
+    const auto& crossed_to_central = relayed.peripheral_to_central;
+    const auto& crossed_to_peripheral = relayed.central_to_peripheral;
+
+    std::printf("step 4 measured exchange: rounds=%d app_actions=%d\n",
+                relayed.rounds, relayed.app_actions);
+    report_crossed_messages("advertising peripheral -> scanning central",
+                            crossed_to_central.delivered);
+    report_crossed_messages("scanning central -> advertising peripheral",
+                            crossed_to_peripheral.delivered);
+    std::printf("  physical ack fragments: %zu -> central, %zu -> peripheral\n",
+                crossed_to_central.delivered_acks.size(),
+                crossed_to_peripheral.delivered_acks.size());
+    std::printf("  advertising engine: writes=%d randoms=%d generates=%d "
+                "public_reads=%d signs=%d agreements=%d hkdf=%d mac=%d "
+                "verify=%d seal=%d open=%d\n",
+                inviter.discovery.writes, inviter.crypto.randoms,
+                inviter.key.generates, inviter.key.public_reads,
+                inviter.key.signs, inviter.key.agreements, inviter.crypto.hkdfs,
+                inviter.crypto.hmacs, inviter.crypto.verifies,
+                inviter.crypto.aead_seals, inviter.crypto.aead_opens);
+    std::printf("  scanning engine:    writes=%d randoms=%d generates=%d "
+                "public_reads=%d signs=%d agreements=%d hkdf=%d mac=%d "
+                "verify=%d seal=%d open=%d\n",
+                joiner.discovery.writes, joiner.crypto.randoms,
+                joiner.key.generates, joiner.key.public_reads, joiner.key.signs,
+                joiner.key.agreements, joiner.crypto.hkdfs, joiner.crypto.hmacs,
+                joiner.crypto.verifies, joiner.crypto.aead_seals,
+                joiner.crypto.aead_opens);
+    std::printf("  link states: advertising=%u scanning=%u\n",
+                static_cast<unsigned>(inviter.snapshot().link_state),
+                static_cast<unsigned>(joiner.snapshot().link_state));
+    std::printf("  transcript persists asked for: advertising=%d scanning=%d\n",
+                inviter.object_store.puts, joiner.object_store.puts);
+    std::printf("  pump answers: advertising=%d scanning=%d\n",
+                inviter_pump.counts.answers, joiner_pump.counts.answers);
+
+    /* 1. Fragments really crossed, in both directions. */
+    check(!crossed_to_central.delivered.empty() &&
+              !crossed_to_peripheral.delivered.empty(),
+          "the transport carried this run's own GATT fragments in BOTH directions");
+
+    /*
+     * 2. What crossed IS the source engine's own encoder output, byte for byte and in
+     *    order - and it is the WHOLE of it, so nothing the engine wrote was dropped
+     *    or re-framed on the way. This is the "no fabricated peer bytes" proof: the
+     *    relay keeps a copy of every fragment it delivered, and that copy is compared
+     *    against the writer's own list rather than against a script.
+     */
+    check(crossed_to_central.delivered.size() ==
+                  inviter.discovery.written_fragments.size() &&
+              std::equal(crossed_to_central.delivered.begin(),
+                         crossed_to_central.delivered.end(),
+                         inviter.discovery.written_fragments.begin()),
+          "every fragment the scanning engine received is the advertising engine's "
+          "own written fragment, byte for byte and in order");
+    check(crossed_to_peripheral.delivered.size() ==
+                  joiner.discovery.written_fragments.size() &&
+              std::equal(crossed_to_peripheral.delivered.begin(),
+                         crossed_to_peripheral.delivered.end(),
+                         joiner.discovery.written_fragments.begin()),
+          "every fragment the advertising engine received is the scanning engine's "
+          "own written fragment, byte for byte and in order");
+
+    /*
+     * 3. The fragments were CONSUMED: both engines drew their own randomness and
+     *    wrote their own GATT messages. The scanning engine wrote nothing at all in
+     *    step 3, where no peer byte ever reached it, and its first own message here
+     *    is a PairCommit - which the protocol can only produce after decoding the
+     *    peer's own PairContext bytes.
+     */
+    check(inviter.crypto.randoms > 0 && inviter.discovery.writes > 0,
+          "the advertising engine drew its own randomness and wrote its own GATT "
+          "fragments");
+    check(joiner.crypto.randoms > 0 && joiner.discovery.writes > 0,
+          "the scanning engine drew its own randomness and wrote its own GATT "
+          "fragments, which it never does without peer bytes (step 3)");
+    check(!inviter.discovery.written_fragments.empty() &&
+              inviter.discovery.written_fragments.front().size() > 1 &&
+              inviter.discovery.written_fragments.front()[1] ==
+                  static_cast<std::uint8_t>(wire::GattLogicalType::PairContext),
+          "the advertising engine's first own GATT message is a PairContext");
+    check(!joiner.discovery.written_fragments.empty() &&
+              joiner.discovery.written_fragments.front().size() > 1 &&
+              joiner.discovery.written_fragments.front()[1] ==
+                  static_cast<std::uint8_t>(wire::GattLogicalType::PairCommit),
+          "the scanning engine's first own GATT message is a PairCommit, which can "
+          "only exist after it consumed the advertising engine's own PairContext");
+
+    /* 4. The pump's strict per-port identity holds for both engines. */
+    check_pump_answers_match_the_ports(inviter, inviter_pump, "advertising");
+    check_pump_answers_match_the_ports(joiner, joiner_pump, "scanning");
+
+    /*
+     * 5. The point of this increment: the committed engine fix (6ab2c7a, "hold an
+     *    early peer pair-known status instead of failing the link") is now visible
+     *    end to end. Before it, the slower side failed the link on the peer's
+     *    PairKnownStatus arriving before its own PairKnownScheduler existed; the
+     *    advertising engine's own PairKnownStatus does cross here, and the scanning
+     *    engine must now get PAST it instead of closing the link on it.
+     */
+    bool status_crossed = false;
+    for (const auto& fragment : crossed_to_central.delivered)
+        if (fragment.size() > 1 &&
+            fragment[1] == static_cast<std::uint8_t>(
+                               wire::GattLogicalType::PairKnownStatus))
+            status_crossed = true;
+    check(status_crossed,
+          "the advertising engine's own PairKnownStatus really crossed to the "
+          "scanning engine");
+    check(inviter.snapshot().link_state != FLY_SESSION_LINK_FAILED_V2 &&
+              joiner.snapshot().link_state != FLY_SESSION_LINK_FAILED_V2,
+          "neither engine failed the link: the scanning engine held the early peer "
+          "PairKnownStatus instead of closing the link on it");
+    check(joiner.crypto.hmacs > 0,
+          "the scanning engine reached Stage::HmacSas, which is what verifying the "
+          "peer's pair-known status requires and what the committed fix exists to "
+          "make reachable");
+    bool scanning_published_pair_known = false;
+    for (const auto& fragment : crossed_to_peripheral.delivered)
+        if (fragment.size() > 1 &&
+            (fragment[1] == static_cast<std::uint8_t>(
+                                wire::GattLogicalType::PairKnownStatus) ||
+             fragment[1] == static_cast<std::uint8_t>(
+                                wire::GattLogicalType::PairKnownBranch)))
+            scanning_published_pair_known = true;
+    check(scanning_published_pair_known,
+          "the scanning engine published its own pair-known message (type 0x15 or "
+          "0x11) once it had verified the peer's");
+    /*
+     * The transcript persist is what lets the NON-initiator build its own
+     * PairKnownScheduler at all: `pair_signature_->ready()` is set by that persist,
+     * and `start_pair_sas_locked()` - and therefore `pair_sas_`, which the fix's hold
+     * gate requires - only runs once the signature scheduler is ready. Both engines
+     * persist a transcript on this path, so both must ask for it.
+     */
+    check(inviter.object_store.puts > 0 && joiner.object_store.puts > 0,
+          "both engines asked their object store to persist the pair transcript, "
+          "which is what lets each side build its own PairKnownScheduler");
+
+    /* No CONNECTED_LOBBY claim is made in this step; the QUIC stage is step 5. */
+    check(inviter.snapshot().link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              joiner.snapshot().link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          "neither engine is in the connected lobby: the QUIC byte loopback is step "
+          "5 and this run did not silently skip to a later claim");
+
+    shutdown_engine_with_the_pump(inviter, inviter_pump, limits);
+    shutdown_engine_with_the_pump(joiner, joiner_pump, limits);
+
+    for (auto& action : inviter_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    for (auto& action : joiner_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+}
+
 } // namespace
 
 int main()
@@ -493,6 +826,7 @@ int main()
     p256_table_is_valid_and_matches_repository_constants();
     loopback_world_is_deterministic_and_shared();
     two_engines_connect_through_the_transport_and_are_pumped_to_idle();
+    two_engines_exchange_their_own_gatt_bytes();
 
     if (failures != 0)
     {
@@ -501,6 +835,7 @@ int main()
         return 1;
     }
     std::puts("two-engine loopback (step 1: two engines come up; step 2: shared "
-              "deterministic world; step 3: transport + bounded pump) passed");
+              "deterministic world; step 3: transport + bounded pump; step 4: "
+              "byte-accurate GATT loopback) passed");
     return 0;
 }

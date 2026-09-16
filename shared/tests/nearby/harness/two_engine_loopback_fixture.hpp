@@ -427,15 +427,23 @@ struct EngineFixture final
         std::uint32_t last_encoding = 0;
         fly_session_resource_handle_v2 last_resource = 0;
         std::vector<std::uint8_t> last_binding;
+        /* The peer's X9.63 point, as handed to `agree`. The pump needs it to answer
+         * the key-agreement operation after the callback returned. */
+        std::vector<std::uint8_t> last_peer;
         std::vector<std::uint8_t> last_domain;
         std::array<std::uint8_t, 32> last_digest{};
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
-        /* Step 2: when a world is attached, key material comes from it and the
-         * terminal is queued immediately. The point index is derived from the
-         * purpose and the side so that every key in the pair is a *different*
-         * on-curve point — the wire codecs require e.g. the long-term identity key
-         * and the session signing key to differ. */
+        /* Step 2/4: key material comes from the shared world, but the CALLBACK never
+         * completes its own operation. A terminal delivered from inside a provider
+         * callback is refused by the engine, and because the refusal is silent the
+         * operation would stay pending forever. The callback therefore only records
+         * the request and answers ACCEPTED; `pump_once` hands the completion out
+         * afterwards, driven purely by this struct's own counters.
+         *
+         * The point index is derived from the purpose and the side so that every key
+         * in the pair is a *different* on-curve point — the wire codecs require e.g.
+         * the long-term identity key and the session signing key to differ. */
         LoopbackWorld* world = nullptr;
         LoopbackSide side = LoopbackSide::Initiator;
 
@@ -470,14 +478,6 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
-            if (self->world != nullptr)
-            {
-                const auto handle = self->world->allocate_point(
-                    point_index_for(purpose, self->side));
-                loopback_deliver_resource(inbox, *token,
-                                          FLY_SESSION_PROVIDER_KEY_HANDLE_V2,
-                                          handle);
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -504,14 +504,6 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
-            if (self->world != nullptr)
-            {
-                const auto* point = self->world->point_of(resource);
-                if (point == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
-                loopback_deliver_buffer(inbox, *token,
-                                        FLY_SESSION_PROVIDER_KEY_PUBLIC_V2,
-                                        point->data(), point->size());
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -527,23 +519,14 @@ struct EngineFixture final
             ++self->agreements;
             self->last_token = *token;
             self->last_resource = resource;
+            self->last_peer.assign(peer.data, peer.data + peer.size);
+            self->last_binding.assign(binding.data, binding.data + binding.size);
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
-            if (self->world != nullptr)
-            {
-                const auto* mine = self->world->point_of(resource);
-                if (mine == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
-                LoopbackPoint theirs{};
-                std::copy_n(peer.data, theirs.size(), theirs.begin());
-                /* ECDH STAND-IN, NOT ECDH: see LoopbackWorld::agree. Both sides
-                 * derive the same secret, which is what the protocol layer needs;
-                 * no NIST P-256 key-agreement property is exercised here. */
-                const auto secret = self->world->agree(*mine, theirs);
-                const auto handle = self->world->allocate_secret(secret);
-                loopback_deliver_resource(
-                    inbox, *token, FLY_SESSION_PROVIDER_KEY_AGREEMENT_V2, handle);
-            }
+            /* ECDH STAND-IN, NOT ECDH: see LoopbackWorld::agree. `pump_once` derives
+             * the secret from the two public keys; it exercises no NIST P-256
+             * key-agreement property. */
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -573,16 +556,6 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
-            if (self->world != nullptr)
-            {
-                const auto* point = self->world->point_of(resource);
-                if (point == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
-                const auto signature = self->world->sign(
-                    *point, domain.data, domain.size, digest);
-                loopback_deliver_buffer(
-                    inbox, *token, FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2,
-                    signature.data(), signature.size());
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -607,6 +580,14 @@ struct EngineFixture final
         int cancels = 0;
         int releases = 0;
         std::uint32_t last_size = 0;
+        /* The sizes of the individual requests. `last_size` alone is ambiguous: a
+         * `random` and an `hkdf` can be in flight together, and answering each with
+         * the other's size would be a completion for a request nobody made. */
+        std::uint32_t last_random_size = 0;
+        std::uint32_t last_hkdf_size = 0;
+        /* The purpose bytes handed to `random`; the world derives its bytes from them,
+         * so the pump needs the exact request to answer it. */
+        std::vector<std::uint8_t> last_purpose;
         fly_session_resource_handle_v2 last_resource = 0;
         std::vector<std::uint8_t> last_salt;
         std::vector<std::uint8_t> last_info;
@@ -618,9 +599,10 @@ struct EngineFixture final
         std::array<std::uint8_t, 32> last_digest{};
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
-        /* Step 2: when a world is attached, every operation below is performed by
-         * the shared deterministic world and its terminal is queued immediately,
-         * instead of the test having to script an answer. */
+        /* Step 2/4: every operation below is performed by the shared deterministic
+         * world, but `pump_once` owns the completion: a provider callback may not
+         * complete its own operation (the engine refuses a terminal delivered from
+         * inside the callback, silently, leaving it pending forever). */
         LoopbackWorld* world = nullptr;
         LoopbackSide side = LoopbackSide::Initiator;
         ~Crypto() { fly_session_inbox_release_v2(inbox); }
@@ -633,16 +615,10 @@ struct EngineFixture final
             auto* self = static_cast<Crypto*>(context);
             ++self->randoms;
             self->last_size = size;
+            self->last_random_size = size;
             self->last_token = *token;
+            self->last_purpose.assign(purpose.data, purpose.data + purpose.size);
             self->capture(inbox);
-            if (self->world != nullptr)
-            {
-                const auto bytes = self->world->random(
-                    self->side, size, purpose.data, purpose.size);
-                loopback_deliver_buffer(inbox, *token,
-                                        FLY_SESSION_PROVIDER_CRYPTO_RANDOM_V2,
-                                        bytes.data(), bytes.size());
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -657,21 +633,10 @@ struct EngineFixture final
             self->last_token = *token;
             self->last_resource = secret;
             self->last_size = size;
+            self->last_hkdf_size = size;
             self->last_salt.assign(salt.data, salt.data + salt.size);
             self->last_info.assign(info.data, info.data + info.size);
             self->capture(inbox);
-            if (self->world != nullptr)
-            {
-                const auto* material = self->world->secret_of(secret);
-                if (material == nullptr)
-                    return FLY_SESSION_V2_INVALID_ARGUMENT;
-                const auto derived =
-                    self->world->hkdf(*material, salt.data, salt.size, info.data,
-                                      info.size, size);
-                const auto handle = self->world->allocate_secret(derived);
-                loopback_deliver_resource(
-                    inbox, *token, FLY_SESSION_PROVIDER_CRYPTO_SECRET_V2, handle);
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -718,18 +683,9 @@ struct EngineFixture final
             std::copy_n(digest, self->last_digest.size(),
                         self->last_digest.begin());
             self->capture(inbox);
-            if (self->world != nullptr)
-            {
-                /* The mock verifier really recomputes the signature instead of
-                 * accepting anything, so a tampered signature is still caught. */
-                LoopbackPoint key{};
-                std::copy_n(public_key.data, key.size(), key.begin());
-                const bool ok = self->world->verify(
-                    key, domain.data, domain.size, digest, signature.data);
-                loopback_deliver_verification(
-                    inbox, *token,
-                    ok ? FLY_SESSION_V2_OK : FLY_SESSION_V2_AUTH_FAILED);
-            }
+            /* The mock verifier really recomputes the signature instead of accepting
+             * anything, so a tampered signature is still caught; the recomputation
+             * happens in `pump_once`, which then reports OK or AUTH_FAILED. */
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -746,17 +702,6 @@ struct EngineFixture final
             self->last_resource = key;
             self->last_input.assign(input.data, input.data + input.size);
             self->capture(inbox);
-            if (self->world != nullptr)
-            {
-                const auto* material = self->world->secret_of(key);
-                if (material == nullptr)
-                    return FLY_SESSION_V2_INVALID_ARGUMENT;
-                const auto tag =
-                    self->world->hmac(*material, input.data, input.size);
-                loopback_deliver_buffer(inbox, *token,
-                                        FLY_SESSION_PROVIDER_CRYPTO_MAC_V2,
-                                        tag.data(), tag.size());
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -782,37 +727,6 @@ struct EngineFixture final
             self->last_aad.assign(aad.data, aad.data + aad.size);
             self->last_input.assign(input.data, input.data + input.size);
             self->capture(inbox);
-            if (self->world != nullptr)
-            {
-                const auto* material = self->world->secret_of(key);
-                if (material == nullptr)
-                    return FLY_SESSION_V2_INVALID_ARGUMENT;
-                if (sealing)
-                {
-                    const auto sealed = self->world->seal(
-                        *material, nonce.data, nonce.size, aad.data, aad.size,
-                        input.data, input.size);
-                    loopback_deliver_buffer(
-                        inbox, *token, FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
-                        sealed.data(), sealed.size());
-                }
-                else
-                {
-                    std::vector<std::uint8_t> opened;
-                    const bool ok = self->world->open(
-                        *material, nonce.data, nonce.size, aad.data, aad.size,
-                        input.data, input.size, &opened);
-                    if (!ok)
-                        loopback_deliver_end(
-                            inbox, *token,
-                            FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
-                            FLY_SESSION_V2_AUTH_FAILED);
-                    else
-                        loopback_deliver_buffer(
-                            inbox, *token, FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
-                            opened.data(), opened.size());
-                }
-            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -977,7 +891,21 @@ struct EngineFixture final
         bool asynchronous_stop = false;
         fly_session_op_token_v2 last_token{};
         fly_session_op_token_v2 write_token{};
+        /*
+         * The token the engine subscribed with. A class-2 DISCOVERY_BYTES event is
+         * accepted only when its token EQUALS the engine's own subscription token
+         * byte for byte; `last_token` is overwritten by every later scan, write or
+         * subscribe call and would be judged STALE (-3).
+         */
+        fly_session_op_token_v2 subscription_token{};
         std::vector<std::vector<std::uint8_t>> written_fragments;
+        /*
+         * The physical acknowledgements this end wrote. They were previously thrown
+         * away: the writer of a logical message stops half-way through it while the
+         * acknowledgement of what it already sent is outstanding, so without carrying
+         * these fragments back to the peer the exchange stalls mid-message.
+         */
+        std::vector<std::vector<std::uint8_t>> ack_fragments;
         fly_session_inbox_v2_t* inbox = nullptr;
 
         ~Discovery() { fly_session_inbox_release_v2(inbox); }
@@ -1077,6 +1005,7 @@ struct EngineFixture final
                     flynes::session::wire::GattLogicalType::PhysicalAck))
             {
                 ++self->physical_acks;
+                self->ack_fragments.push_back(std::move(bytes));
                 return FLY_SESSION_V2_OK;
             }
             else
@@ -1099,6 +1028,7 @@ struct EngineFixture final
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->subscriptions;
             self->last_token = *token;
+            self->subscription_token = *token;
             self->capture(inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -2027,7 +1957,9 @@ inline void deliver_logical(EngineFixture& fixture,
         fly_session_port_event_v2 event{};
         event.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
         event.abi_version = FLY_SESSION_ABI_VERSION_2;
-        event.token = fixture.discovery.last_token;
+        /* A class-2 byte event is accepted only under the engine's own subscription
+         * token; `last_token` has been overwritten by later operations. */
+        event.token = fixture.discovery.subscription_token;
         event.event_sequence = sequence++;
         event.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
         event.result = FLY_SESSION_V2_OK;
@@ -2275,6 +2207,18 @@ public:
         return link_resource_;
     }
     [[nodiscard]] int connections() const noexcept { return connections_; }
+    /*
+     * Topology belongs to the transport, not to the test: the relay asks the
+     * transport which end is which instead of trusting a caller's argument order.
+     */
+    [[nodiscard]] EngineFixture* peripheral_fixture() const noexcept
+    {
+        return peripheral_;
+    }
+    [[nodiscard]] EngineFixture* central_fixture() const noexcept
+    {
+        return central_;
+    }
     [[nodiscard]] bool peripheral_connected() const noexcept
     {
         return peripheral_connected_;
@@ -2345,10 +2289,19 @@ private:
  *   re-running the pump can never answer the same terminal twice (a repeat is
  *   judged STALE by the engine, which would be a false failure).
  *
- * WHAT IT DELIBERATELY SKIPS
- *   The key and crypto ports. In this harness both ports answer themselves inline
- *   from the shared `LoopbackWorld`, so their operations never stay pending; a
- *   pump answer for them would be a second terminal for one request.
+ * THE KEY AND CRYPTO PORTS
+ *   They are answered here too, from the shared `LoopbackWorld`. A provider callback
+ *   may not complete its own operation: the engine refuses a terminal delivered from
+ *   inside the callback, and the refusal is silent, so the operation would stay
+ *   pending forever. The callbacks therefore only record their arguments, and every
+ *   completion is handed out below, driven exclusively by the port's own counter.
+ *
+ * PAYLOAD FORM
+ *   Each completion uses the form `shared/src/session/ports/provider_events.cpp`'s
+ *   `contract_for` requires for that kind - resource, buffer, hash or end - and the
+ *   terminal flag that form implies. A kind delivered in the wrong form is rejected
+ *   with CONTRACT_VIOLATION, which is also silent unless the delivery is asserted,
+ *   so `loopback_deliver_*` asserts every result.
  * ------------------------------------------------------------------------- */
 
 struct PumpLimits final
@@ -2366,6 +2319,20 @@ struct PumpCounts final
 {
     int rounds = 0;
     int answers = 0;
+    int key_handles = 0;
+    int key_publics = 0;
+    int key_agreements = 0;
+    int key_signatures = 0;
+    int crypto_randoms = 0;
+    int crypto_secrets = 0;
+    int crypto_macs = 0;
+    int crypto_verifies = 0;
+    /* Sub-counts of `crypto_verifies` and `crypto_aead_opens`: a rejection is still
+     * an answer to the request the engine really made. */
+    int crypto_verify_failures = 0;
+    int crypto_aead_open_failures = 0;
+    int crypto_aead_seals = 0;
+    int crypto_aead_opens = 0;
     int tls_materials = 0;
     int bearer_capabilities = 0;
     int bearer_paths = 0;
@@ -2381,6 +2348,16 @@ struct PumpCounts final
 struct PumpState final
 {
     PumpCounts counts{};
+    int key_generates = 0;
+    int key_public_reads = 0;
+    int key_agreements = 0;
+    int key_signs = 0;
+    int crypto_randoms = 0;
+    int crypto_hkdfs = 0;
+    int crypto_verifies = 0;
+    int crypto_hmacs = 0;
+    int crypto_seals = 0;
+    int crypto_opens = 0;
     int tls_creates = 0;
     int bearer_probes = 0;
     int bearer_creates = 0;
@@ -2391,6 +2368,21 @@ struct PumpState final
     int secure_store_writes = 0;
     int object_puts = 0;
     int object_reads = 0;
+    /*
+     * The QUIC port is NOT answered by this increment (its byte loopback is step 5).
+     * These mirrors exist only so the guard at the end of `pump_once` can tell a
+     * genuine idle engine from one that asked for work this pump cannot answer: a
+     * stall must never hide a request. They are neutralised once reported.
+     */
+    int quic_listens = 0;
+    int quic_connects = 0;
+    int quic_inspections = 0;
+    int quic_exporters = 0;
+    int quic_accepted_bidi = 0;
+    int quic_opened_bidi = 0;
+    int quic_writes = 0;
+    int quic_reads = 0;
+    int quic_cancels = 0;
     /* Deterministic, non-zero resource handles for provider-owned objects. */
     fly_session_resource_handle_v2 next_handle = 0x4000;
 };
@@ -2454,8 +2446,20 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
     {
         ++state.tls_creates;
         const auto handle = state.next_handle++;
-        deliver_provider_resource(fixture.tls.inbox, fixture.tls.last_token,
-                                  FLY_SESSION_PROVIDER_TLS_MATERIAL_V2, handle);
+        /* TLS_MATERIAL_V2 is a HASH form completion whose hash must be the digest of
+         * the key's public bytes: the scheduler compares it against the SPKI it read
+         * through the key port, and rejects anything else as AUTH_FAILED. */
+        const auto* point = fixture.key.world != nullptr
+            ? fixture.key.world->point_of(fixture.tls.last_key)
+            : nullptr;
+        check(point != nullptr,
+              "the provider mints TLS material for a key the shared world really "
+              "holds");
+        std::array<std::uint8_t, 32> hash{};
+        if (point != nullptr)
+            hash = wire::sha256(point->data(), point->size());
+        deliver_provider_hash(fixture.tls.inbox, fixture.tls.last_token,
+                              FLY_SESSION_PROVIDER_TLS_MATERIAL_V2, handle, hash);
         ++state.counts.tls_materials;
         ++state.counts.answers;
         return PumpOutcome::Answered;
@@ -2607,39 +2611,648 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
     }
 
     /*
-     * Nothing is pending. `quic` operations are deliberately absent: answering one
-     * would require the link-wide TLS facts and stream bytes that increments 3 and
-     * 4 introduce, and in this increment the two engines never get past the GATT
-     * exchange, so no quic operation is ever requested. If one were, the ports
-     * would keep it pending and the test would see the stall rather than a
-     * fabricated completion.
+     * --------------------------------------------------------------------- *
+     * The key and crypto ports.
+     *
+     * These operations are answered HERE, and never from inside the provider
+     * callback that requested them: the engine refuses a terminal delivered from
+     * within a callback (the completion record does not exist yet), the refusal is
+     * silent, and the operation would stay pending forever. Each branch below is
+     * driven only by "this port's own counter grew", so the pump can never answer an
+     * operation no port requested, and each completion uses the payload form
+     * `contract_for` declares for its kind.
+     *
+     * The world is the same deterministic object both engines were built on, so the
+     * two ends derive matching material without exchanging these values. It is an
+     * ECDH/AEAD/HMAC stand-in: this pump certifies the protocol pipeline, never
+     * cryptography.
+     * --------------------------------------------------------------------- *
      */
+    const bool key_or_crypto_pending =
+        fixture.key.generates > state.key_generates ||
+        fixture.key.public_reads > state.key_public_reads ||
+        fixture.key.agreements > state.key_agreements ||
+        fixture.key.signs > state.key_signs ||
+        fixture.crypto.randoms > state.crypto_randoms ||
+        fixture.crypto.hkdfs > state.crypto_hkdfs ||
+        fixture.crypto.verifies > state.crypto_verifies ||
+        fixture.crypto.hmacs > state.crypto_hmacs ||
+        fixture.crypto.aead_seals > state.crypto_seals ||
+        fixture.crypto.aead_opens > state.crypto_opens;
+    if (key_or_crypto_pending &&
+        (fixture.key.world == nullptr || fixture.crypto.world == nullptr))
+    {
+        check(false,
+              "the pump cannot answer an unanswered key or crypto request because no "
+              "shared loopback world is attached to the engine");
+        return PumpOutcome::Idle;
+    }
+
+    if (fixture.key.generates > state.key_generates)
+    {
+        ++state.key_generates;
+        /* KEY_HANDLE_V2 is a HASH form completion: the handle the WORLD allocated for
+         * this (purpose, side) point, together with the digest of that point. The
+         * handle must be the one the world itself allocated - the world resolves it
+         * again for every later public_key/agree/sign use - so it is allocated here
+         * and then looked up, rather than re-derived from the digest. */
+        const auto handle = fixture.key.world->allocate_point(
+            EngineFixture::Key::point_index_for(fixture.key.last_purpose,
+                                                fixture.key.side));
+        const auto* point = fixture.key.world->point_of(handle);
+        check(point != nullptr,
+              "the shared world holds the point it just allocated for the key "
+              "request");
+        if (point == nullptr) return PumpOutcome::Idle;
+        const auto hash = wire::sha256(point->data(), point->size());
+        deliver_provider_hash(fixture.key.inbox, fixture.key.last_token,
+                              FLY_SESSION_PROVIDER_KEY_HANDLE_V2, handle, hash);
+        ++state.counts.key_handles;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.key.public_reads > state.key_public_reads)
+    {
+        ++state.key_public_reads;
+        /* KEY_PUBLIC_V2 is a BUFFER form completion carrying the peer-visible X9.63
+         * public bytes of the key the engine asked about. */
+        const auto* point =
+            fixture.key.world->point_of(fixture.key.last_resource);
+        check(point != nullptr,
+              "the provider reports a public key only for a handle the shared world "
+              "really holds");
+        if (point == nullptr) return PumpOutcome::Idle;
+        deliver_provider_buffer(fixture.key.inbox, fixture.key.last_token,
+                                FLY_SESSION_PROVIDER_KEY_PUBLIC_V2, point->data(),
+                                point->size());
+        ++state.counts.key_publics;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.key.agreements > state.key_agreements)
+    {
+        ++state.key_agreements;
+        const auto* mine = fixture.key.world->point_of(fixture.key.last_resource);
+        check(mine != nullptr && fixture.key.last_peer.size() == 65u,
+              "the provider agrees a key it holds against a 65-byte peer point");
+        if (mine == nullptr || fixture.key.last_peer.size() != 65u)
+            return PumpOutcome::Idle;
+        LoopbackPoint theirs{};
+        std::copy_n(fixture.key.last_peer.data(), theirs.size(), theirs.begin());
+        /* ECDH STAND-IN, NOT ECDH. `LoopbackWorld::agree` hashes the two public keys
+         * under its own domain: both ends derive the same secret, which is what the
+         * protocol layer needs, but it implements no curve arithmetic and verifies no
+         * NIST P-256 key-agreement property. Real key agreement is certified by the
+         * provider/device tests, never by this harness. */
+        const auto secret = fixture.key.world->agree(*mine, theirs);
+        const auto handle = fixture.key.world->allocate_secret(secret);
+        deliver_provider_resource(fixture.key.inbox, fixture.key.last_token,
+                                  FLY_SESSION_PROVIDER_KEY_AGREEMENT_V2, handle);
+        ++state.counts.key_agreements;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.key.signs > state.key_signs)
+    {
+        ++state.key_signs;
+        /* KEY_SIGNATURE_V2 is a BUFFER form completion: the 64-byte canonical low-S
+         * signature the world really recomputed over the requested digest. */
+        const auto* point =
+            fixture.key.world->point_of(fixture.key.last_resource);
+        check(point != nullptr,
+              "the provider signs with a handle the shared world really holds");
+        if (point == nullptr) return PumpOutcome::Idle;
+        const auto signature = fixture.key.world->sign(
+            *point, fixture.key.last_domain.data(), fixture.key.last_domain.size(),
+            fixture.key.last_digest.data());
+        deliver_provider_buffer(fixture.key.inbox, fixture.key.last_token,
+                                FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2,
+                                signature.data(), signature.size());
+        ++state.counts.key_signatures;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.crypto.randoms > state.crypto_randoms)
+    {
+        ++state.crypto_randoms;
+        /* CRYPTO_RANDOM_V2 is a BUFFER form completion whose bytes the world derives
+         * from the side, the request counter and the purpose it was asked with. */
+        const auto bytes = fixture.crypto.world->random(
+            fixture.crypto.side, fixture.crypto.last_random_size,
+            fixture.crypto.last_purpose.data(),
+            fixture.crypto.last_purpose.size());
+        deliver_provider_buffer(fixture.crypto.inbox, fixture.crypto.last_token,
+                                FLY_SESSION_PROVIDER_CRYPTO_RANDOM_V2, bytes.data(),
+                                bytes.size());
+        ++state.counts.crypto_randoms;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.crypto.hkdfs > state.crypto_hkdfs)
+    {
+        ++state.crypto_hkdfs;
+        /* CRYPTO_SECRET_V2 is a RESOURCE form completion: the derived secret is
+         * referenced by a handle the world allocated for it. */
+        const auto* material =
+            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+        check(material != nullptr,
+              "the provider derives from a secret the shared world really holds");
+        if (material == nullptr) return PumpOutcome::Idle;
+        const auto derived = fixture.crypto.world->hkdf(
+            *material, fixture.crypto.last_salt.data(),
+            fixture.crypto.last_salt.size(), fixture.crypto.last_info.data(),
+            fixture.crypto.last_info.size(), fixture.crypto.last_hkdf_size);
+        const auto handle = fixture.crypto.world->allocate_secret(derived);
+        deliver_provider_resource(fixture.crypto.inbox, fixture.crypto.last_token,
+                                  FLY_SESSION_PROVIDER_CRYPTO_SECRET_V2, handle);
+        ++state.counts.crypto_secrets;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.crypto.hmacs > state.crypto_hmacs)
+    {
+        ++state.crypto_hmacs;
+        /* CRYPTO_MAC_V2 is a BUFFER form completion: the 32-byte tag. */
+        const auto* material =
+            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+        check(material != nullptr,
+              "the provider macs with a secret the shared world really holds");
+        if (material == nullptr) return PumpOutcome::Idle;
+        const auto tag = fixture.crypto.world->hmac(
+            *material, fixture.crypto.last_input.data(),
+            fixture.crypto.last_input.size());
+        deliver_provider_buffer(fixture.crypto.inbox, fixture.crypto.last_token,
+                                FLY_SESSION_PROVIDER_CRYPTO_MAC_V2, tag.data(),
+                                tag.size());
+        ++state.counts.crypto_macs;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.crypto.verifies > state.crypto_verifies)
+    {
+        ++state.crypto_verifies;
+        /* CRYPTO_VERIFICATION_V2 is an END form completion whose RESULT is the
+         * verdict. The verifier really recomputes the signature instead of accepting
+         * anything, so a tampered signature is reported AUTH_FAILED. */
+        LoopbackPoint key{};
+        std::copy_n(fixture.crypto.last_public_key.data(), key.size(),
+                    key.begin());
+        const bool ok = fixture.crypto.world->verify(
+            key, fixture.crypto.last_info.data(), fixture.crypto.last_info.size(),
+            fixture.crypto.last_digest.data(),
+            fixture.crypto.last_signature.data());
+        if (!ok) ++state.counts.crypto_verify_failures;
+        loopback_deliver_verification(
+            fixture.crypto.inbox, fixture.crypto.last_token,
+            ok ? FLY_SESSION_V2_OK : FLY_SESSION_V2_AUTH_FAILED);
+        ++state.counts.crypto_verifies;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.crypto.aead_seals > state.crypto_seals)
+    {
+        ++state.crypto_seals;
+        /* CRYPTO_AEAD_V2 is a BUFFER form completion: ciphertext with its tag. */
+        const auto* material =
+            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+        check(material != nullptr,
+              "the provider seals under a secret the shared world really holds");
+        if (material == nullptr) return PumpOutcome::Idle;
+        const auto sealed = fixture.crypto.world->seal(
+            *material, fixture.crypto.last_nonce.data(),
+            fixture.crypto.last_nonce.size(), fixture.crypto.last_aad.data(),
+            fixture.crypto.last_aad.size(), fixture.crypto.last_input.data(),
+            fixture.crypto.last_input.size());
+        deliver_provider_buffer(fixture.crypto.inbox, fixture.crypto.last_token,
+                                FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2, sealed.data(),
+                                sealed.size());
+        ++state.counts.crypto_aead_seals;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (fixture.crypto.aead_opens > state.crypto_opens)
+    {
+        ++state.crypto_opens;
+        /* CRYPTO_AEAD_V2 on the open side is a BUFFER form completion when the tag
+         * verifies, and an END form completion carrying AUTH_FAILED when it does not.
+         * A refusal is a real provider verdict, not a fabricated failure. */
+        const auto* material =
+            fixture.crypto.world->secret_of(fixture.crypto.last_resource);
+        check(material != nullptr,
+              "the provider opens under a secret the shared world really holds");
+        if (material == nullptr) return PumpOutcome::Idle;
+        std::vector<std::uint8_t> opened;
+        const bool ok = fixture.crypto.world->open(
+            *material, fixture.crypto.last_nonce.data(),
+            fixture.crypto.last_nonce.size(), fixture.crypto.last_aad.data(),
+            fixture.crypto.last_aad.size(), fixture.crypto.last_input.data(),
+            fixture.crypto.last_input.size(), &opened);
+        if (ok)
+            deliver_provider_buffer(fixture.crypto.inbox,
+                                    fixture.crypto.last_token,
+                                    FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
+                                    opened.data(), opened.size());
+        else
+        {
+            ++state.counts.crypto_aead_open_failures;
+            loopback_deliver_end(fixture.crypto.inbox, fixture.crypto.last_token,
+                                 FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
+                                 FLY_SESSION_V2_AUTH_FAILED);
+        }
+        ++state.counts.crypto_aead_opens;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    /*
+     * The QUIC port is deliberately NOT answered: its byte loopback is step 5, and
+     * this increment must stop at the GATT exchange. A stall must never hide a
+     * request, so an engine that asked the QUIC port for work is reported as a
+     * failure instead of being reported idle. The mirrors are neutralised after the
+     * report so the same request is not re-reported on every later round.
+     */
+    if (fixture.quic.listens > state.quic_listens ||
+        fixture.quic.connects > state.quic_connects ||
+        fixture.quic.inspections > state.quic_inspections ||
+        fixture.quic.exporters > state.quic_exporters ||
+        fixture.quic.accepted_bidi > state.quic_accepted_bidi ||
+        fixture.quic.opened_bidi > state.quic_opened_bidi ||
+        fixture.quic.writes > state.quic_writes ||
+        fixture.quic.reads > state.quic_reads ||
+        fixture.quic.cancels > state.quic_cancels)
+    {
+        check(false,
+              "the engine asked the QUIC port for work this increment does not "
+              "answer: the byte-accurate QUIC loopback is step 5, so this run reached "
+              "further than step 4 claims");
+        state.quic_listens = fixture.quic.listens;
+        state.quic_connects = fixture.quic.connects;
+        state.quic_inspections = fixture.quic.inspections;
+        state.quic_exporters = fixture.quic.exporters;
+        state.quic_accepted_bidi = fixture.quic.accepted_bidi;
+        state.quic_opened_bidi = fixture.quic.opened_bidi;
+        state.quic_writes = fixture.quic.writes;
+        state.quic_reads = fixture.quic.reads;
+        state.quic_cancels = fixture.quic.cancels;
+        return PumpOutcome::Idle;
+    }
+
+    /* Nothing is pending that this increment can answer. */
     return PumpOutcome::Idle;
 }
 
-/* Runs `pump_once` until the engine is idle, failing hard if a bound is exceeded. */
+/*
+ * Runs `pump_once` until the engine is idle, failing hard if a bound is exceeded.
+ *
+ * The bounds are PER CALL, not cumulative: the driver pumps the same engine once per
+ * round for as many rounds as the exchange needs, and a cumulative bound would turn
+ * ordinary progress into a failure. `state.counts.rounds` and `state.counts.answers`
+ * stay cumulative because they are reported statistics, never the bound.
+ */
 inline void pump_engine(EngineFixture& fixture, PumpState& state,
                         PumpLimits limits = {})
 {
+    int rounds = 0;
+    int answers = 0;
     for (;;)
     {
-        if (state.counts.rounds >= limits.max_rounds)
+        if (rounds >= limits.max_rounds)
         {
             check(false,
-                  "the pump exceeded max_rounds: this engine kept asking for more "
-                  "provider work than the bound allows");
+                  "the pump exceeded max_rounds in one call: this engine kept asking "
+                  "for more provider work than the bound allows");
             return;
         }
+        ++rounds;
         ++state.counts.rounds;
         if (pump_once(fixture, state) == PumpOutcome::Idle) return;
-        if (state.counts.answers > limits.max_answers)
+        ++answers;
+        if (answers > limits.max_answers)
         {
             check(false,
-                  "the pump exceeded max_answers: more terminals were answered than "
-                  "the bound allows");
+                  "the pump exceeded max_answers in one call: more terminals were "
+                  "answered than the bound allows");
             return;
         }
     }
+}
+
+/*
+ * ------------------------------------------------------------------------- *
+ * Increment 4 of the two-engine driver: the byte-accurate GATT relay.
+ *
+ * WHAT CROSSES
+ *   Only the source engine's OWN written fragments, verbatim, and only once the
+ *   receiving engine has subscribed. Nothing here re-assembles, re-frames or
+ *   re-encodes anything: what the peer engine receives is the byte-for-byte encoder
+ *   output of the engine that wrote it, which is what makes the exchange a real one
+ *   and what lets a test compare "what crossed" against the writer's own bytes.
+ *
+ * PACING
+ *   One call carries at most ONE logical message and at most ONE physical
+ *   acknowledgement fragment per direction, and the driver alternates carrying bytes
+ *   with pumping provider work. The end of the current logical message is found by
+ *   feeding the source's own fragments into a `GattReassembler`, which is used only
+ *   as a locator: it never produces a byte that is delivered.
+ *
+ * THE RECEIVING END MUST BE LISTENING
+ *   A fragment is delivered only when the sink has already subscribed. Bytes relayed
+ *   before both engines have subscribed are lost to the receiving engine, and an
+ *   earlier attempt that relayed early (and paced differently) deadlocked after
+ *   PairContext + PairCommit with the scanning engine having written nothing.
+ *
+ * BACKPRESSURE
+ *   BACKPRESSURE (-7) means "retry after the receiver is pumped", so the delivery
+ *   watermark and the receiving inbox's event sequence are NOT advanced and the same
+ *   fragment is attempted again later. Any other refusal is a harness defect and is
+ *   reported with its numeric code rather than retried or hidden.
+ * ------------------------------------------------------------------------- */
+
+struct RelayDirectionState final
+{
+    /* Delivery watermarks into the source's own fragment lists. */
+    std::size_t fragments_relayed = 0;
+    std::size_t acks_relayed = 0;
+    /* Class-2 event sequence for the RECEIVING inbox; strictly increasing. */
+    std::uint64_t next_sequence = 1;
+    /*
+     * Exactly what crossed, in order, kept so a test can compare it with the writing
+     * engine's own `written_fragments` instead of taking this harness's word for it.
+     */
+    std::vector<std::vector<std::uint8_t>> delivered;
+    std::vector<std::vector<std::uint8_t>> delivered_acks;
+};
+
+struct RelayReport final
+{
+    RelayDirectionState peripheral_to_central{};
+    RelayDirectionState central_to_peripheral{};
+    int rounds = 0;
+    int app_actions = 0;
+};
+
+/*
+ * One delivery attempt of one fragment as a class-2 DISCOVERY_BYTES event.
+ *
+ * `terminal` is 0 and the token is the receiving engine's own subscription token:
+ * the engine accepts a byte event only under that exact token, and `last_token` has
+ * been overwritten by every later write by the time the relay runs.
+ */
+inline fly_session_result_v2 deliver_relay_fragment(
+    EngineFixture& sink, const std::vector<std::uint8_t>& fragment,
+    std::uint64_t sequence)
+{
+    fly_session_buffer_v2_t* buffer = nullptr;
+    const fly_session_bytes_v2 source{
+        fragment.data(), static_cast<std::uint32_t>(fragment.size()), 0};
+    check(fly_session_buffer_create_copy_v2(source, &buffer) == FLY_SESSION_V2_OK,
+          "the relay owns an immutable copy of the fragment it carries");
+    fly_session_port_event_v2 event{};
+    event.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+    event.abi_version = FLY_SESSION_ABI_VERSION_2;
+    event.token = sink.discovery.subscription_token;
+    event.event_sequence = sequence;
+    event.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+    event.terminal = 0;
+    event.result = FLY_SESSION_V2_OK;
+    event.payload_kind = FLY_SESSION_PROVIDER_DISCOVERY_BYTES_V2;
+    fly_session_provider_buffer_event_v2 payload{};
+    payload.struct_size = FLY_SESSION_PROVIDER_BUFFER_EVENT_V2_SIZE;
+    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+    payload.buffer = buffer;
+    payload.logical_size = fragment.size();
+    payload.generation = event.token.connection_generation;
+    event.payload_size = sizeof(payload);
+    std::memcpy(event.payload, &payload, sizeof(payload));
+    const auto result = fly_session_deliver_v2(sink.discovery.inbox, &event);
+    fly_session_buffer_release_v2(buffer);
+    return result;
+}
+
+/*
+ * One attempt for one fragment. Returns true when the receiver ACCEPTED it (the
+ * caller then advances its watermark); false when the receiver applied
+ * BACKPRESSURE, which means the attempt must be repeated after it is pumped. Any
+ * other result is reported with its numeric code.
+ */
+inline bool relay_fragment_once(EngineFixture& sink, RelayDirectionState& state,
+                                const std::vector<std::uint8_t>& fragment,
+                                std::vector<std::vector<std::uint8_t>>* record)
+{
+    const auto result = deliver_relay_fragment(sink, fragment, state.next_sequence);
+    if (result == FLY_SESSION_V2_ACCEPTED)
+    {
+        ++state.next_sequence;
+        record->push_back(fragment);
+        return true;
+    }
+    if (result == FLY_SESSION_V2_BACKPRESSURE) return false;
+    char message[512];
+    const auto snapshot = sink.snapshot();
+    std::snprintf(message, sizeof(message),
+                  "the receiving engine refused a loopback GATT byte event with "
+                  "result %d, which is neither ACCEPTED nor BACKPRESSURE (its link "
+                  "state is %u, reason '%s')",
+                  static_cast<int>(result),
+                  static_cast<unsigned>(snapshot.link_state),
+                  snapshot.primary_reason_key);
+    check(false, message);
+    return false;
+}
+
+/*
+ * Carries at most one logical message and at most one physical acknowledgement
+ * fragment from `source` to `sink`, in that order. `source_is_peripheral` selects the
+ * physical direction the locator reassembles under, which is the direction the
+ * SOURCE wrote in; the bytes themselves are never touched.
+ */
+inline void relay_one_direction(EngineFixture& source, RelayDirectionState& state,
+                                EngineFixture& sink, bool source_is_peripheral)
+{
+    /* The receiving end must be listening, or the bytes it would have accepted are
+     * simply lost. */
+    if (sink.discovery.subscriptions == 0) return;
+    /*
+     * An engine whose link has FAILED is not listening either: it clears its GATT
+     * subscription and judges every later byte event STALE (-3). Continuing to spray
+     * fragments at it would turn one real failure into a wall of identical refusals,
+     * so the relay stops for this direction - and the bytes that consequently never
+     * crossed are reported by the test's own byte-for-byte comparison, while the
+     * failure itself is reported by its link-state assertion.
+     */
+    if (sink.snapshot().link_state == FLY_SESSION_LINK_FAILED_V2) return;
+
+    if (state.fragments_relayed < source.discovery.written_fragments.size())
+    {
+        const auto direction = source_is_peripheral
+            ? wire::GattPhysicalDirection::PeripheralToCentral
+            : wire::GattPhysicalDirection::CentralToPeripheral;
+        const std::uint64_t generation =
+            source.discovery.write_token.connection_generation;
+        wire::GattReassembler locator(generation, direction);
+        std::size_t stop = source.discovery.written_fragments.size();
+        for (std::size_t index = state.fragments_relayed;
+             index < source.discovery.written_fragments.size(); ++index)
+        {
+            const auto& fragment = source.discovery.written_fragments[index];
+            std::vector<std::uint8_t> logical;
+            const auto result = locator.accept(generation, 0, fragment.data(),
+                                               fragment.size(), &logical, nullptr);
+            if (result == wire::GattFragmentResult::Complete)
+            {
+                stop = index + 1;
+                break;
+            }
+            if (result != wire::GattFragmentResult::Accepted &&
+                result != wire::GattFragmentResult::Duplicate)
+            {
+                check(false,
+                      "the relay could not locate the end of the source engine's own "
+                      "logical message inside its own written fragments");
+                return;
+            }
+        }
+        for (std::size_t index = state.fragments_relayed; index < stop; ++index)
+        {
+            if (!relay_fragment_once(sink, state,
+                                     source.discovery.written_fragments[index],
+                                     &state.delivered))
+                return;
+            ++state.fragments_relayed;
+        }
+    }
+
+    if (state.acks_relayed < source.discovery.ack_fragments.size())
+    {
+        /* An engine's own acknowledgements go back to the peer whose fragments they
+         * acknowledge, one fragment per call. Without them the writer of a logical
+         * message stops half-way through it while its acknowledgement is
+         * outstanding. */
+        if (!relay_fragment_once(sink, state,
+                                 source.discovery.ack_fragments[state.acks_relayed],
+                                 &state.delivered_acks))
+            return;
+        ++state.acks_relayed;
+    }
+}
+
+/* Both directions of the one link the transport connected. */
+inline void relay_gatt(LoopbackTransport& transport, RelayReport& report)
+{
+    EngineFixture* peripheral = transport.peripheral_fixture();
+    EngineFixture* central = transport.central_fixture();
+    if (peripheral == nullptr || central == nullptr) return;
+    relay_one_direction(*peripheral, report.peripheral_to_central, *central, true);
+    relay_one_direction(*central, report.central_to_peripheral, *peripheral, false);
+}
+
+/*
+ * The APP's part of this flow, and nothing more: when an engine publishes the SAS
+ * confirmation the public ABI requires the app to answer, this submits it on that
+ * engine through the same public action ABI a real app uses. It authors no transport
+ * event and no peer message - the engine still decides whether the action applies.
+ */
+inline bool confirm_pairing_sas_when_the_abi_asks(EngineFixture& fixture,
+                                                  std::uint64_t request_id)
+{
+    std::vector<fly_session_action_descriptor_v2> actions;
+    fixture.snapshot(&actions);
+    const auto* confirm = find_action(actions, FLY_SESSION_ACTION_CONFIRM_SAS_V2);
+    const bool submit_it = confirm != nullptr && confirm->enabled;
+    if (submit_it) submit(fixture, *confirm, request_id, false);
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    return submit_it;
+}
+
+/*
+ * The two-engine driver: alternate "carry the peer's own bytes" with "answer this
+ * engine's provider work" until neither bytes moved nor provider work was answered
+ * for `idle_rounds_required` consecutive rounds.
+ *
+ * `first` and `second` are the pump order; WHICH END IS WHICH comes from the
+ * transport, never from the caller. Exceeding `max_rounds` is a FAILURE, never a
+ * hang: an exchange that will not settle is a defect the test has to report.
+ *
+ * `answer_the_app_action` is opt-in because it moves the link PAST this increment:
+ * a SAS confirmation is the app's own decision, and submitting it walks the two
+ * engines out of the pair exchange into the capability/bearer/QUIC stages that
+ * step 5 owns (where this pump deliberately answers nothing and reports the request
+ * as a failure). Increments that stop at the pair exchange therefore leave it off,
+ * and the confirmation stays visible in the engine's own projections.
+ */
+inline void relay_and_pump_until_idle(LoopbackTransport& transport,
+                                      EngineFixture& first, PumpState& first_pump,
+                                      EngineFixture& second, PumpState& second_pump,
+                                      PumpLimits limits, int max_rounds,
+                                      int idle_rounds_required,
+                                      RelayReport* report = nullptr,
+                                      bool answer_the_app_action = false)
+{
+    RelayReport local{};
+    if (report == nullptr) report = &local;
+    check((transport.peripheral_fixture() == &first ||
+           transport.peripheral_fixture() == &second) &&
+              (transport.central_fixture() == &first ||
+               transport.central_fixture() == &second),
+          "the driver pumps exactly the two ends the transport connected");
+
+    int idle_rounds = 0;
+    for (int round = 0; round < max_rounds; ++round)
+    {
+        ++report->rounds;
+        const std::size_t fragments_before =
+            report->peripheral_to_central.delivered.size() +
+            report->peripheral_to_central.delivered_acks.size() +
+            report->central_to_peripheral.delivered.size() +
+            report->central_to_peripheral.delivered_acks.size();
+        const int answers_before =
+            first_pump.counts.answers + second_pump.counts.answers;
+
+        relay_gatt(transport, *report);
+        pump_engine(first, first_pump, limits);
+        pump_engine(second, second_pump, limits);
+        bool app_acted = false;
+        if (answer_the_app_action)
+        {
+            const bool first_acted =
+                confirm_pairing_sas_when_the_abi_asks(first, 700 + round);
+            const bool second_acted =
+                confirm_pairing_sas_when_the_abi_asks(second, 800 + round);
+            app_acted = first_acted || second_acted;
+            if (app_acted) ++report->app_actions;
+        }
+
+        const std::size_t fragments_after =
+            report->peripheral_to_central.delivered.size() +
+            report->peripheral_to_central.delivered_acks.size() +
+            report->central_to_peripheral.delivered.size() +
+            report->central_to_peripheral.delivered_acks.size();
+        const int answers_after =
+            first_pump.counts.answers + second_pump.counts.answers;
+
+        if (fragments_after == fragments_before &&
+            answers_after == answers_before && !app_acted)
+        {
+            if (++idle_rounds >= idle_rounds_required) return;
+        }
+        else
+        {
+            idle_rounds = 0;
+        }
+    }
+    check(false,
+          "the two-engine driver did not settle within max_rounds: the engines kept "
+          "relaying bytes or asking for provider work without ever becoming idle");
 }
 
 /*
