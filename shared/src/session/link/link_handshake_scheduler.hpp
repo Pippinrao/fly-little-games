@@ -190,15 +190,53 @@ public:
     fly_session_result_v2 accept_peer_ack(const std::uint8_t* bytes,
                                           std::size_t size);
 
+    /*
+     * gap 3 owner: the peer's ACCEPTED 0x0212 binding.
+     *
+     * LINK_HELLO can only be accepted against the three values the peer's own
+     * session signing binding authenticated: its binding object hash, its
+     * identity_key_id and the session signing public key that binding carries.
+     * This method is their single producer. It is deliberately NOT a setter for
+     * caller-supplied values: it takes the exact bytes of the peer's 0x0212
+     * object as read back from the ObjectStore plus the content hash they must
+     * have, and derives every field through
+     * wire::decode_session_signing_binding_v1 — so a value that was not actually
+     * decoded from a genuine, self-consistent peer binding can never be
+     * installed:
+     *
+     *   - the bytes must be exactly wire::kSessionSigningBindingSizeV1 (312);
+     *   - the recomputed object hash must equal expected_binding_hash, which the
+     *     handle_peer_hello() path supplies from the peer's own HELLO, so peer
+     *     binding and peer HELLO are cross-checked rather than both trusted;
+     *   - the embedded pair_transcript_hash, session_id and pair role must equal
+     *     this attempt's, and the embedded long-term identity public key must be
+     *     the peer identity the accepted pair transcript pinned.
+     *
+     * The engine still has no peer 0x0212 bytes to hand over (there is no inbound
+     * Control stream), so this has no production caller yet; it fails closed on
+     * malformed input and leaves the scheduler untouched on every failure.
+     */
+    fly_session_result_v2 accept_peer_binding(
+        const std::uint8_t* bytes, std::size_t size,
+        const std::array<std::uint8_t, 32>& expected_binding_hash);
+
+    /* True once accept_peer_binding() installed a decoded, accepted peer
+     * binding. */
+    [[nodiscard]] bool peer_binding_accepted() const noexcept
+    { return peer_binding_accepted_; }
+    [[nodiscard]] const wire::SessionSigningBindingV1& peer_binding() const
+        noexcept
+    { return peer_binding_; }
+
     [[nodiscard]] bool begun() const noexcept { return begun_; }
     [[nodiscard]] bool failed() const noexcept { return progress_.failed; }
-    /*
-     * True when the attempt stopped because this build has no producer for a
-     * start input the protocol needs further along the sequence (today: the u64
-     * channel_id / channel_bind_id / channel_bind_hash and the negotiated
-     * result). That is a seam that is not wired yet, never a protocol failure,
-     * and the engine must not publish a failed link for it.
-     */
+    /* True when the attempt stopped because this build has no producer for a
+     * start input the protocol needs further along the sequence (today: the
+     * negotiated result and, until accept_peer_binding() runs, the peer's
+     * accepted 0x0212 binding). That is a seam that is not wired yet, never a
+     * protocol failure, and the engine must not publish a failed link for it.
+     * The channel id and the channel-bind binding hash used to be on this list;
+     * InitialQuicBindScheduler produces both now. */
     [[nodiscard]] bool missing_inputs() const noexcept { return missing_inputs_; }
     [[nodiscard]] bool has_pending_operation() const noexcept
     { return operations_.has_pending(); }
@@ -322,6 +360,12 @@ private:
     std::uint32_t pending_peer_kind_ = 0;
     std::uint32_t pending_peer_value_ = 0;
     LinkHandshakeStageV1 pending_persist_stage_ = LinkHandshakeStageV1::Empty;
+    /* The peer's decoded, accepted 0x0212 binding: the single owner of
+     * peer_binding_hash / peer_identity_key_id / peer_session_signing_public_key.
+     * Written only by accept_peer_binding(), which derives every field through
+     * the wire decoder. */
+    wire::SessionSigningBindingV1 peer_binding_{};
+    bool peer_binding_accepted_ = false;
     bool begun_ = false;
     bool missing_inputs_ = false;
 };

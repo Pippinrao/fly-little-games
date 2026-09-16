@@ -731,6 +731,65 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_ack(
                                2, LinkHandshakeStageV1::PersistPeerAck);
 }
 
+/*
+ * gap 3 owner. The peer's accepted 0x0212 binding is the ONLY source of
+ * peer_binding_hash / peer_identity_key_id / peer_session_signing_public_key,
+ * and this method derives all three from the wire decoder rather than accepting
+ * them as inputs. Two independent cross-checks make it non-forgeable from this
+ * side:
+ *
+ *   1. Content hash: the exact 312 bytes must hash (under
+ *      flynes-session-signing-key-binding-hash-v1, inside the decoder) to
+ *      expected_binding_hash, which the caller takes from the peer's own HELLO.
+ *      So a peer binding cannot be substituted for a different HELLO, and a
+ *      HELLO cannot name a binding the peer never signed.
+ *   2. Freshness and role: the decoder itself rejects any pair_transcript_hash,
+ *      session_id, pair role or long-term identity public key that is not this
+ *      attempt's.
+ *
+ * Every failure path returns without touching the scheduler, so a malformed or
+ * mismatched binding can never half-install peer material.
+ */
+fly_session_result_v2 LinkHandshakeScheduler::accept_peer_binding(
+    const std::uint8_t* bytes, std::size_t size,
+    const std::array<std::uint8_t, 32>& expected_binding_hash)
+{
+    if (!begun_ || progress_.failed) return FLY_SESSION_V2_INVALID_STATE;
+    if (bytes == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
+    if (size != wire::kSessionSigningBindingSizeV1 ||
+        !nonzero(expected_binding_hash.data(), expected_binding_hash.size()))
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    if (!nonzero(start_.peer_identity_public_key.data(),
+                 start_.peer_identity_public_key.size()))
+        return FLY_SESSION_V2_INVALID_STATE;
+
+    /* The peer's binding is signed under the mirrored pair role: what the peer
+     * called itself. */
+    wire::SessionSigningBindingV1 decoded{};
+    if (wire::decode_session_signing_binding_v1(
+            bytes, size, start_.pair_transcript_hash, start_.session_id,
+            mirror_role(start_.local_role), start_.peer_identity_public_key,
+            wire::validate_p256_uncompressed_point_callback, nullptr,
+            &decoded) != wire::Status::Ok)
+        return FLY_SESSION_V2_AUTH_FAILED;
+    if (decoded.hash != expected_binding_hash)
+        return FLY_SESSION_V2_AUTH_FAILED;
+    if (!nonzero(decoded.identity_key_id.data(),
+                 decoded.identity_key_id.size()) ||
+        !nonzero(decoded.session_signing_public_key.data(),
+                 decoded.session_signing_public_key.size()) ||
+        decoded.session_signing_public_key == decoded.identity_public_key)
+        return FLY_SESSION_V2_AUTH_FAILED;
+
+    peer_binding_ = decoded;
+    peer_binding_accepted_ = true;
+    start_.peer_binding_hash = decoded.hash;
+    start_.peer_identity_key_id = decoded.identity_key_id;
+    start_.peer_identity_public_key = decoded.identity_public_key;
+    start_.peer_session_signing_public_key = decoded.session_signing_public_key;
+    return FLY_SESSION_V2_OK;
+}
+
 fly_session_result_v2 LinkHandshakeScheduler::complete(
     const fly_session_port_event_v2& event)
 {

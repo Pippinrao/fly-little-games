@@ -915,6 +915,76 @@ void third_party_codec_agrees()
 
 } // namespace
 
+/*
+ * gap 3: the peer's accepted 0x0212 binding is the only owner of
+ * peer_binding_hash / peer_identity_key_id / peer_session_signing_public_key.
+ * These checks drive accept_peer_binding() directly with the peer side's real
+ * 312 bytes, and with every hostile variant of them.
+ */
+void peer_binding_has_a_real_owner()
+{
+    auto pair = make_pair(kGeneration, 41);
+
+    /* Before any binding is installed there is no peer material at all. */
+    check(!pair.a.scheduler.peer_binding_accepted(),
+          "an attempt starts with no accepted peer binding");
+
+    /* The responder's genuine binding, installed on the initiator. */
+    check(pair.a.scheduler.accept_peer_binding(
+              pair.b.binding.data(), pair.b.binding.size(),
+              pair.b.binding_hash) == FLY_SESSION_V2_OK,
+          "the peer's genuine 0x0212 binding is accepted by hash");
+    check(pair.a.scheduler.peer_binding_accepted(),
+          "an accepted peer binding is reported as accepted");
+    check(pair.a.scheduler.peer_binding().hash == pair.b.binding_hash &&
+              pair.a.scheduler.peer_binding().identity_key_id ==
+                  pair.b.identity_key_id &&
+              pair.a.scheduler.peer_binding().session_signing_public_key ==
+                  pair.b.session_public,
+          "every peer field is derived from the decoded binding, not supplied");
+
+    /* A different hash must be refused: the binding is pinned by the hash the
+     * peer's own HELLO will name. */
+    auto fresh = make_pair(kGeneration, 41);
+    auto wrong_hash = pair.b.binding_hash;
+    wrong_hash[0] ^= 0xffu;
+    check(fresh.a.scheduler.accept_peer_binding(
+              pair.b.binding.data(), pair.b.binding.size(), wrong_hash) ==
+              FLY_SESSION_V2_AUTH_FAILED,
+          "a peer binding whose content hash does not match is refused");
+    check(!fresh.a.scheduler.peer_binding_accepted(),
+          "a refused peer binding installs nothing");
+
+    /* Truncated / trailing / tampered bytes all fail closed. */
+    fresh = make_pair(kGeneration, 41);
+    check(fresh.a.scheduler.accept_peer_binding(
+              pair.b.binding.data(), pair.b.binding.size() - 1,
+              pair.b.binding_hash) == FLY_SESSION_V2_INVALID_ARGUMENT,
+          "a truncated peer binding is refused");
+    fresh = make_pair(kGeneration, 41);
+    check(fresh.a.scheduler.accept_peer_binding(
+              nullptr, pair.b.binding.size(), pair.b.binding_hash) ==
+              FLY_SESSION_V2_INVALID_ARGUMENT,
+          "a null peer binding is refused");
+    fresh = make_pair(kGeneration, 41);
+    auto tampered = pair.b.binding;
+    tampered[176] ^= 0x01u; /* the session signing key inside the binding */
+    check(fresh.a.scheduler.accept_peer_binding(
+              tampered.data(), tampered.size(), pair.b.binding_hash) ==
+              FLY_SESSION_V2_AUTH_FAILED,
+          "a tampered peer binding fails its own content hash");
+    check(!fresh.a.scheduler.peer_binding_accepted(),
+          "a tampered peer binding installs nothing");
+
+    auto hostile = pair;
+    hostile.a.scheduler.accept_peer_binding(pair.b.binding.data(),
+                                            pair.b.binding.size(),
+                                            pair.b.binding_hash);
+    check(hostile.a.scheduler.peer_binding().session_signing_public_key ==
+              pair.b.session_public,
+          "the installed peer session signing key is the binding's own");
+}
+
 int main()
 {
     two_sided_legal_sequence();
@@ -922,6 +992,7 @@ int main()
     peer_messages_are_durable_before_ack();
     no_peer_ack_means_no_lobby();
     third_party_codec_agrees();
+    peer_binding_has_a_real_owner();
 
     if (failures != 0) {
         std::fprintf(stderr,

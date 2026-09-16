@@ -1,10 +1,12 @@
 #include "flynes/flynes_session.h"
 
 #include "link/link_control_contract.hpp"
+#include "wire/app_frame.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -296,6 +298,90 @@ void checked_arithmetic_contract()
           "sequence increments monotonically");
 }
 
+/*
+ * gap 7, part one: the contract's message tags and the schema-registered
+ * application-frame tags must be the same thing. The 0x0216/0x0217 objects and
+ * the 0xFF06/0xFF07 messages are now registered in shared/schema and in
+ * wire/app_frame.cpp; this keeps the frozen contract from drifting away from
+ * the registry that actually frames them on the Control channel.
+ *
+ * What this does NOT do: it does not put the 6-byte frame header on the wire.
+ * The link handshake still has no transport at all (see the report's gap 4), so
+ * nothing sends these bytes yet.
+ */
+void app_frame_registration_contract()
+{
+    wire::FrameTagInfo hello_tag{};
+    check(wire::frame_tag_info(link::kLinkHelloMessageTagV1, &hello_tag) &&
+              hello_tag.type_namespace == wire::FrameTypeNamespace::Message &&
+              std::strcmp(hello_tag.type_name, "LinkHelloV1") == 0,
+          "contract LINK_HELLO tag is the registered LinkHelloV1 message tag");
+    wire::FrameTagInfo ready_tag{};
+    check(wire::frame_tag_info(link::kLinkReadyMessageTagV1, &ready_tag) &&
+              ready_tag.type_namespace == wire::FrameTypeNamespace::Message &&
+              std::strcmp(ready_tag.type_name, "LinkReadyV1") == 0,
+          "contract LINK_READY tag is the registered LinkReadyV1 message tag");
+    check(wire::frame_tag_info(link::kLinkHelloObjectKindV1, &hello_tag) &&
+              hello_tag.type_namespace == wire::FrameTypeNamespace::ObjectKind,
+          "0x0216 is a registered ObjectKind frame tag");
+    check(wire::frame_tag_info(link::kLinkReadyObjectKindV1, &ready_tag) &&
+              ready_tag.type_namespace == wire::FrameTypeNamespace::ObjectKind,
+          "0x0217 is a registered ObjectKind frame tag");
+
+    /* Both are legal on the Control channel, and the Control-channel object
+     * bound admits their real sizes (488 / 432 bytes plus the frame header). */
+    check(wire::tag_is_legal_on(wire::QuicChannel::Control,
+                                link::kLinkHelloObjectKindV1) &&
+              wire::tag_is_legal_on(wire::QuicChannel::Control,
+                                    link::kLinkReadyObjectKindV1),
+          "both link control objects are legal on the Control channel");
+    check(wire::max_object_bytes(wire::QuicChannel::Control) >=
+              link::kLinkHelloSizeV1 &&
+              wire::max_object_bytes(wire::QuicChannel::Control) >=
+                  link::kLinkReadySizeV1,
+          "the Control channel bound admits the exact control object sizes");
+
+    /* The exact framing the engine will have to emit: a message-namespace
+     * record parses back under the Control channel as the same tag and body. */
+    const std::size_t body_size = link::kLinkHelloSizeV1;
+    std::vector<std::uint8_t> body(body_size, 0x5a);
+    std::vector<std::uint8_t> framed(6u + body_size, 0);
+    std::size_t written = 0;
+    check(wire::encode_app_frame(link::kLinkHelloMessageTagV1, body.data(),
+                                 body.size(), framed.data(), framed.size(),
+                                 &written) == wire::Status::Ok &&
+              written == framed.size(),
+          "the exact LINK_HELLO frame header encodes");
+    const std::uint32_t declared =
+        (static_cast<std::uint32_t>(framed[0]) << 24u) |
+        (static_cast<std::uint32_t>(framed[1]) << 16u) |
+        (static_cast<std::uint32_t>(framed[2]) << 8u) |
+        static_cast<std::uint32_t>(framed[3]);
+    check(declared == 2u + body_size,
+          "the frame length counts the 2-byte tag plus the object bytes");
+    check(framed[4] == static_cast<std::uint8_t>(
+                           link::kLinkHelloMessageTagV1 >> 8u) &&
+              framed[5] == static_cast<std::uint8_t>(
+                               link::kLinkHelloMessageTagV1 & 0xFFu),
+          "the frame tag field carries the contract's LINK_HELLO tag verbatim");
+    /* The framed window the parser validates is exactly the object after the
+     * header: check() still sees offset 0 of the exact 488 object bytes. A
+     * synthetic body must therefore be refused by the codec, which is what
+     * proves the header is outside the validated window. */
+    wire::AppFrame parsed{};
+    check(wire::parse_app_frame(wire::QuicChannel::Control, framed.data(),
+                                framed.size(), &parsed) != wire::Status::Ok,
+          "a body that is not a valid LINK_HELLO object is refused by the codec "
+          "inside the frame");
+
+    /* A tag that is not registered can never be framed, so a contract constant
+     * that is not in the schema fails closed rather than reaching the wire. */
+    check(wire::encode_app_frame(0xFFFFu, body.data(), body.size(),
+                                 framed.data(), framed.size(),
+                                 &written) == wire::Status::UnknownKind,
+          "an unregistered control tag is refused by the framer");
+}
+
 } // namespace
 
 int main()
@@ -305,6 +391,7 @@ int main()
     role_contract();
     projection_contract();
     checked_arithmetic_contract();
+    app_frame_registration_contract();
 
     if (failures != 0)
     {
