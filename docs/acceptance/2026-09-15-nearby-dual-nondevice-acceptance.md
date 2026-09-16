@@ -26,14 +26,43 @@
 | `LINK-SCHED` | PASS | `flynes_link_handshake_scheduler` / `flynes_link_handshake_races` PASS；`control_stream_loopback_closes_the_lobby()` 让两个公开 scheduler 在**零手工 `accept_peer_*` 注入**下闭合 |
 | `DUAL-INPUT` | PASS | `nearby_canonical_input` / `nearby_input_window` PASS（毫秒级）；规范化解 dpad 冲突、拒绝错 owner / 旧 revision / 跨 branch / sequence 回退 / 溢出 |
 | `DUAL-RUN` | PASS | `nearby_dual_run_scheduler` / `nearby_dual_run_races` PASS；600 帧确定性 trace 实测 18–42 ms |
-| `E2E-HARNESS` | PASS | 真实 loopback QUIC：产品 crate 探针 `PASS=37 FAIL=0`（TLS1.3 + ALPN `flynes-nearby/2` + pin + exporter 一致 + stream/datagram 往返）；`flynes_quic_provider_linkage` 证明静态库真的被链接并调用 |
+| `E2E-HARNESS` | PASS（**证据已更正**） | 见下方「真实 loopback QUIC 证据更正」：Rust provider 必须 `FLYNES_ENABLE_RUST_QUIC_PROVIDER=ON` 才有意义；本次实测 crate 真 loopback 测试 `cargo test --release` = **6 passed / 0 failed**（TLS1.3 + ALPN `flynes-nearby/2` + pin + exporter 一致 + stream/datagram 往返），`flynes_quic_provider_linkage` PASS 证明静态库真的被链接并调用。原先登记的「产品 crate 探针 `PASS=37 FAIL=0`」在本 worktree 的 CMake 里**不存在该目标**，已删除 |
 | `E2E-SCENARIOS` | **NOT_RUN** | W3 的 `scenarios/test_two_engine_*` 尚未收编（其 carve 早于当前 ABI，需先补 `object_store.read` 等）；篡改负例矩阵未在两个真 engine 上跑 |
-| `MVP-LOBBY` | **PASS** | 见下方 §MVP-LOBBY 证据 |
-| `MVP-DUAL` | **NOT_RUN** | 未开始（依赖 W2 的 DUAL 数据面接入公开 action/snapshot 边界） |
-| shared 全量 0 failure | **FAIL（2 项，均与本轮 Nearby 工作无关）** | Linux 全量 `94/96`：`flynes_runtime_pcm_contention`（既有 `-Werror=subobject-linkage`，未触碰）与 `flynes_zip_payload_fixture_corpus_check`（既有 fixture 字节在 Linux 检出下不一致）。**`nearby_*` 子集 39/39 全绿** |
-| Android unit/build 0 failure | **NOT_RUN（需复跑）** | 2026-09-15 基线为 97 类 / 468 tests / 0 failures；此后 ABI 与 schema 均有改动，**必须复跑** `:app:testDebugUnitTest` 与 `SessionSchemaRegistryTest` |
-| STREAM provider/codec/media 调用次数为 0 | **NOT_RUN** | 需执行后文「资源泄漏与负向审计」的全仓搜索 |
+| `MVP-LOBBY` | **PASS（限定为进程内回环，见更正）** | 见下方 §MVP-LOBBY 证据 |
+| `MVP-DUAL` | **NOT_RUN** | 未达成。已落地 4 笔绿增量（ABI / STREAM 关闭 / 154 字节输入编解码 + runtime port 适配器 / 运行 digest 上快照），见 §MVP-DUAL 现状；**引擎 reducer、State Commit 流、输入端到端、600 帧 E2E 均未开始** |
+| shared 全量 0 failure | **FAIL（2 项，均与本轮 Nearby 工作无关）** | Linux 全量（**provider ON**）`97/99`：`flynes_runtime_pcm_contention`（既有 `-Werror=subobject-linkage`，未触碰）与 `flynes_zip_payload_fixture_corpus_check`（既有 fixture 字节在 Linux 检出下不一致）。**`nearby_*` 子集 41/41 全绿** |
+| Android unit/build 0 failure | **NOT_RUN（需复跑）** | 2026-09-15 基线为 97 类 / 468 tests / 0 failures；此后 ABI 与 schema 均有改动，**必须复跑** `:app:testDebugUnitTest` 与 `SessionSchemaRegistryTest`。注意：本轮实测发现 `188bfd6` 之前存在**主仓库误跑**的日志（已改名 `*-WRONG-TREE-main-repo.log`），复跑时必须显式设定 worktree 工作目录并只读该 worktree 的 `app/build/test-results/testDebugUnitTest` |
+| STREAM provider/codec/media 调用次数为 0 | **PASS（结构证明 + 审计，见 §STREAM 证据）** | 公开 ABI 无任何 codec/media/encoder/decoder/sink provider 表，因此不存在可数的调用；以编译期结构钉住 + 全仓审计 `grep -rEn 'ports_?\.\w*(codec\|media\|encoder\|decoder\|sink)' shared/src/session \| wc -l` = 0 |
 | 所有真机条目明确 NOT_RUN | PASS（记录形式） | 真机与物理性能项一律 `DEFERRED`/`NOT_RUN`，未做任何设备认证声明 |
+
+### 真实 loopback QUIC 证据更正（2026-09-17）
+
+**发现**：`out/nearby-host-linux/shared/build/CMakeCache.txt` 里
+`FLYNES_CARGO_EXECUTABLE:FILEPATH=FLYNES_CARGO_EXECUTABLE-NOTFOUND`、
+`FLYNES_ENABLE_RUST_QUIC_PROVIDER:BOOL=OFF`，且不存在任何真实 QUIC 探针二进制。
+根因（本轮实测，与最初归因略有不同）：本 distro 里 **`cargo` 即使对 login shell 也不在 PATH**
+（`bash -lc 'command -v cargo'` 为空，而 `/home/pippin/.cargo/bin/cargo` 存在），
+`shared/CMakeLists.txt:352` 的 `find_program(FLYNES_CARGO_EXECUTABLE cargo)` 失败后
+`:356` 把 `FLYNES_ENABLE_RUST_QUIC_PROVIDER` **FORCE 置 OFF**——于是「真实 Quinn」被静默移除。
+
+**影响**：提交 `2128e7f` 记录的 `E2E-HARNESS`/`MVP-LOBBY` 证据里凡是「真实 loopback QUIC」的说法，
+在那次构建下**都不可复核**。
+
+**本轮更正与复验**（provider 确实 ON）：
+- 两个构建脚本（`out/logs/wsl-test.sh`、`out/logs/task10-cycle.sh`）改为：显式把
+  `$HOME/.cargo/bin` 加入 PATH、显式传 `-DFLYNES_ENABLE_RUST_QUIC_PROVIDER=ON -DFLYNES_CARGO_EXECUTABLE=…`，
+  并在 configure 之后**断言** `FLYNES_ENABLE_RUST_QUIC_PROVIDER:BOOL=ON` 且 cargo 不是 `-NOTFOUND`，
+  否则立刻 `ABORT_PROVIDER_OFF`/`ABORT_CARGO_NOTFOUND` 退出（静默降级不再可能）。
+- 复验结果：`cargo test --release`（`shared/nearby-quic-provider`）= **6 passed / 0 failed**；
+  `flynes_quic_provider_linkage_test` PASS（"QUIC provider linkage tests passed"）；
+  全量 CTest = `97/99`，两项失败与 provider 无关。
+- 同时删除本表中不可复核的「探针 `PASS=37 FAIL=0`」条目——该目标在本 worktree 的 CMake 中不存在。
+
+**两个**必须分开的**声明**（此前混为一谈）：
+1. `flynes_two_engine_connected_lobby_e2e_test` 走的是**夹具自带的进程内 `LoopbackTransport`**（byte-accurate，
+   零 injected class-2 事件），**不使用** Rust provider。它证明的是**引擎接线与协议闭合**。
+2. 「真实 Quinn」由 crate 自测 + `flynes_quic_provider_linkage` 证明，是**另一条**声明。
+§MVP-LOBBY 的 QUIC 端口计数因此只说明「引擎真的驱动了 QUIC 端口的全部原语」，不说明「跑在真 Quinn 上」。
 
 ### MVP-LOBBY 证据
 
@@ -45,14 +74,40 @@ object kinds persisted: 两侧均含 0x0212 / 0x0213 / 0x0216 / 0x0217
 exporter (link): 9e8fd3cd…（两侧交付值与之完全一致）
 双向真实单位：0x0001/252B(bind 流) → 0x0212/318B → 0x0216/494B → 0x0217/438B ×2 (Control 流)
   # 318 = 6 字节 app-frame 头 + 312；494 = 6 + 488；438 = 6 + 432，与冻结尺寸逐一对上
-QUIC 端口两侧都被真实驱动：
+**进程内**夹具回环上的 QUIC 端口两侧都被真实驱动（**不是** Rust Quinn，见上方更正）：
   inviter listen=1 connect=0 inspect=1 exporter=1 open=0 accept=2 write=6 read=7
   joiner  listen=0 connect=1 inspect=1 exporter=1 open=2 accept=0 write=6 read=6
 单边 READY 负例：扣留一个方向的 0x0217 → 双方停在 7(CONNECTING)；释放 → 双方到 8
 ```
 
 - **零 injected verified evidence**：跨端每个字节都 `std::equal` 于写入方自己的 `written_fragments`；测试**不自造** `DISCOVERY_CONNECTION`/`DISCOVERY_BYTES`/`QUIC_DATA`（这些「第 2 类」事件只由 `LoopbackTransport` 产生）；pump 只应答「第 1 类」操作终端，且逐 port 计数 1:1 恒等式成立。
-- `nearby_*` 39/39 PASSED。
+- `nearby_*` 41/41 PASSED（provider ON；新增 `nearby_dual_stream_closed`、`nearby_dual_runtime_seam`）。
+
+### STREAM 证据（结构证明 + 审计）
+
+公开 ABI 里**不存在**任何 codec/media/encoder/decoder/sink provider 表，因此「调用次数」不是可测量——
+本门禁以「不可能存在该调用」来证明，而不是数一个恒为 0 的计数器：
+- 编译期：`fly_session_dual_runtime_port_v2` 以 `state_digest` 结尾、`fly_session_ports_v2` 以 DUAL runtime
+  槽结尾（追加任何媒体入口即编译失败），见 `test_dual_stream_closed.cpp`；
+- capability：本机宣告掩码 `== kLinkCapabilityDualV1`；STREAM-only/空提案 → `UnsupportedByThisRelease`；
+  未知位 → `UnknownCriticalCapability`；`DualModeV1::HostStream` → `FLY_SESSION_V2_UNAVAILABLE`；
+- 审计（本次实跑）：`grep -rEn 'ports_?\.\w*(codec|media|encoder|decoder|sink)' shared/src/session | wc -l` = **0**；
+  `grep -cE 'fly_session_\w*(codec|media|encoder|decoder|sink)' shared/include/flynes/flynes_session.h` = **0**。
+
+### MVP-DUAL 现状（仍 NOT_RUN）
+
+已落地并绿的增量（每笔都以「删二进制重建 + `ctest -L nearby` 全绿」收尾）：
+
+| commit | 内容 |
+|---|---|
+| `d3f1e2d` | 最小公开 DUAL action/snapshot ABI（尾追加 + 旧 prefix 兼容；`SELECT_CONTENT_V2=42`、`START_DUAL_V2=43`、`input.port_mask[4]`、快照 DUAL 运行状态、`fly_session_dual_runtime_port_v2` + `ports_v2.dual_runtime`） |
+| `e87cbe3` | STREAM 显式关闭的测试与结构钉住 |
+| `53f734f` | `dual/canonical_input_wire`（冻结 154 字节 `CanonicalInputBundleV1` 编解码）+ `dual/dual_runtime_adapter`（用公开 C 表实现冻结 `DualRuntimePort`） |
+| `11b3179` | 快照发布 `dual_state_digest`/`dual_frame_digest`/`dual_pcm_digest`（60 帧收敛断言可观测的前提） |
+
+**未做（因此 `MVP-DUAL` 不成立）**：引擎 DUAL reducer（动作仍落到 `session_engine.cpp:5642` 的 catch-all）、
+State Commit 流、输入端到端传输、双 engine 600 帧 E2E。阻塞项与裁决请求见
+`out/logs/task10-integration-notes.md`；其中内容引用来源已由 W0 裁决为「尾追加只读 content 端口」（未开始）。
 
 **如实标注的一项**：`CONNECTED_LOBBY` 处 `pairing()` 子视图实测为 **EMPTY**（引擎只在 `AUTHENTICATING`/`PROVISIONING` 暴露该子视图，`session_engine.cpp:326-331`）。测试按**实测**钉住 EMPTY，**未伪造 CONFIRMED**。若平台 UI 需要在已连接状态展示配对信息，属后续平台波次的产品改动，本轮不改引擎。
 

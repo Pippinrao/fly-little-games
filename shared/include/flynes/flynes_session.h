@@ -998,6 +998,18 @@ typedef struct fly_session_snapshot_v2
     uint8_t dual_content_hash[32];
     uint8_t dual_session_id[16];
     uint8_t dual_branch_id[16];
+    /*
+     * The run's consistency digests, appended once more. These are the values the
+     * two engines must agree on: `dual_state_digest` covers the last committed
+     * frame's exported state, `dual_frame_digest` binds that frame to the
+     * canonical input bundle it was stepped with, and `dual_pcm_digest` covers
+     * the canonical PCM producer state of the same frame. They are published so
+     * that a reader can compare two engines at the same committed frame without
+     * taking either engine's word about the other.
+     */
+    uint8_t dual_state_digest[32];
+    uint8_t dual_frame_digest[32];
+    uint8_t dual_pcm_digest[32];
 } fly_session_snapshot_v2;
 
 /*
@@ -1007,7 +1019,22 @@ typedef struct fly_session_snapshot_v2
  */
 #define FLY_SESSION_SNAPSHOT_V2_R0_SIZE \
     ((uint32_t)(offsetof(fly_session_snapshot_v2, dual_mode)))
+/*
+ * The second prefix: the snapshot as it stood once the DUAL run state existed and
+ * before the digest block was appended. R0 stays the required size, so every
+ * older reader is still served and the copy stays bounded by what it declared.
+ */
+#define FLY_SESSION_SNAPSHOT_V2_R1_SIZE \
+    ((uint32_t)(offsetof(fly_session_snapshot_v2, dual_state_digest)))
 #define FLY_SESSION_SNAPSHOT_V2_SIZE ((uint32_t)sizeof(fly_session_snapshot_v2))
+#ifdef __cplusplus
+static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+                  FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96u,
+              "the DUAL digest block is a pure tail append");
+static_assert(FLY_SESSION_SNAPSHOT_V2_R0_SIZE <=
+                  FLY_SESSION_SNAPSHOT_V2_R1_SIZE,
+              "the pre-DUAL prefix is not larger than the pre-digest prefix");
+#endif
 
 /*
  * DUAL simulation lifecycle. Mirrors the internal DUAL seam's
