@@ -1474,31 +1474,13 @@ if(FLYNES_BUILD_TESTS)
 
     # =======================================================================
     # W3 (branch codex/nearby-dual-e2e-harness) -- APPEND ONLY BLOCK.
-    # Two-engine acceptance harness and scenarios. Nothing above this block is
-    # touched by W3. Merge conflict resolution must keep BOTH this block and
-    # W0's QUIC provider block: they are independent additions.
+    # The acceptance harness is W0's two_engine_loopback_fixture (kept verbatim,
+    # compiled directly into each scenario binary exactly like W0's own e2e test
+    # does); W3's stale two_engine_fixture was deleted once W0's was adopted.
+    # Nothing above this block is touched by W3. Merge conflict resolution must
+    # keep BOTH this block and W0's QUIC provider block: they are independent
+    # additions.
     # =======================================================================
-
-    add_library(flynes_two_engine_harness STATIC
-        tests/nearby/harness/two_engine_fixture.cpp
-    )
-    target_link_libraries(flynes_two_engine_harness PRIVATE flynes_session)
-    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
-        # PUBLIC so every scenario binary also gets the real provider symbols:
-        # the harness proves the real Rust implementation is linked.
-        target_link_libraries(flynes_two_engine_harness PUBLIC
-            flynes_nearby_quic_provider)
-        add_dependencies(flynes_two_engine_harness
-            flynes_nearby_quic_provider_build)
-    endif()
-    target_include_directories(flynes_two_engine_harness
-        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/session
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
-                ${CMAKE_CURRENT_SOURCE_DIR}/nearby-quic-provider/include
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
-    target_compile_features(flynes_two_engine_harness PRIVATE cxx_std_17)
-    set_target_properties(flynes_two_engine_harness PROPERTIES CXX_EXTENSIONS NO)
-    flynes_enable_strict_warnings(flynes_two_engine_harness)
 
     # Real loopback QUIC probe. Needs two things that are not everywhere:
     #   * the Rust/Quinn provider (cargo), and
@@ -1543,27 +1525,38 @@ if(FLYNES_BUILD_TESTS)
             "W3 loopback QUIC probe: skipped (needs cargo and OpenSSL libcrypto)")
     endif()
 
-    add_executable(flynes_two_engine_connected_lobby_test
-        tests/nearby/scenarios/test_two_engine_connected_lobby.cpp)
-    target_link_libraries(flynes_two_engine_connected_lobby_test PRIVATE
-        flynes_two_engine_harness flynes_session)
-    target_compile_features(flynes_two_engine_connected_lobby_test PRIVATE
-        cxx_std_17)
-    set_target_properties(flynes_two_engine_connected_lobby_test PROPERTIES
-        CXX_EXTENSIONS NO)
-    flynes_enable_strict_warnings(flynes_two_engine_connected_lobby_test)
-    add_test(NAME flynes_two_engine_connected_lobby
-        COMMAND flynes_two_engine_connected_lobby_test)
-    set_tests_properties(flynes_two_engine_connected_lobby PROPERTIES
+    # ======================================================================
+    # W3 two-engine acceptance scenarios. Each compiles W0's loopback fixture
+    # directly into its own binary, exactly like W0's own connected-lobby e2e
+    # test above, so there is one harness implementation and no library to keep
+    # in sync.
+    # ======================================================================
+    add_executable(flynes_two_engine_tamper_matrix_test
+        tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
+        tests/nearby/harness/two_engine_loopback_fixture.cpp)
+    target_link_libraries(flynes_two_engine_tamper_matrix_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_tamper_matrix_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+    target_compile_features(flynes_two_engine_tamper_matrix_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_tamper_matrix_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_tamper_matrix_test)
+    add_test(NAME flynes_two_engine_tamper_matrix
+        COMMAND flynes_two_engine_tamper_matrix_test)
+    set_tests_properties(flynes_two_engine_tamper_matrix PROPERTIES
         LABELS "nearby_integration;nearby_protocol;nearby_auth")
 
     add_executable(flynes_two_engine_dual_run_test
-        tests/nearby/scenarios/test_two_engine_dual_run.cpp)
-    target_link_libraries(flynes_two_engine_dual_run_test PRIVATE
-        flynes_two_engine_harness flynes_session)
+        tests/nearby/scenarios/test_two_engine_dual_run.cpp
+        tests/nearby/harness/two_engine_loopback_fixture.cpp)
+    target_link_libraries(flynes_two_engine_dual_run_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_dual_run_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
     target_compile_features(flynes_two_engine_dual_run_test PRIVATE cxx_std_17)
-    set_target_properties(flynes_two_engine_dual_run_test PROPERTIES
-        CXX_EXTENSIONS NO)
+    set_target_properties(flynes_two_engine_dual_run_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_two_engine_dual_run_test)
     add_test(NAME flynes_two_engine_dual_run
         COMMAND flynes_two_engine_dual_run_test)
@@ -1571,12 +1564,15 @@ if(FLYNES_BUILD_TESTS)
         LABELS "nearby_integration;nearby_protocol")
 
     add_executable(flynes_two_engine_recovery_test
-        tests/nearby/scenarios/test_two_engine_recovery.cpp)
-    target_link_libraries(flynes_two_engine_recovery_test PRIVATE
-        flynes_two_engine_harness flynes_session)
+        tests/nearby/scenarios/test_two_engine_recovery.cpp
+        tests/nearby/harness/two_engine_loopback_fixture.cpp)
+    target_link_libraries(flynes_two_engine_recovery_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_recovery_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
     target_compile_features(flynes_two_engine_recovery_test PRIVATE cxx_std_17)
-    set_target_properties(flynes_two_engine_recovery_test PROPERTIES
-        CXX_EXTENSIONS NO)
+    set_target_properties(flynes_two_engine_recovery_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_two_engine_recovery_test)
     add_test(NAME flynes_two_engine_recovery
         COMMAND flynes_two_engine_recovery_test)
