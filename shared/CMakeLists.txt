@@ -1290,6 +1290,27 @@ if(FLYNES_BUILD_TESTS)
     set_tests_properties(flynes_two_engine_empty_lobby PROPERTIES
         LABELS "nearby_integration;nearby_protocol")
 
+    # W0-owned path-A acceptance target: two public engines over a byte-accurate
+    # loopback. Grown in steps, and each step must keep this target green; see
+    # tests/nearby/integration/test_two_engine_connected_lobby_e2e.cpp for the
+    # step list. Deliberately separate from W3's two_engine_fixture/scenarios
+    # names and from flynes_two_engine_empty_lobby_test, which stays as the
+    # long-chain component regression.
+    add_executable(flynes_two_engine_connected_lobby_e2e_test
+        tests/nearby/integration/test_two_engine_connected_lobby_e2e.cpp
+        tests/nearby/harness/two_engine_loopback_fixture.cpp)
+    target_link_libraries(flynes_two_engine_connected_lobby_e2e_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_connected_lobby_e2e_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+    target_compile_features(flynes_two_engine_connected_lobby_e2e_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_connected_lobby_e2e_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_connected_lobby_e2e_test)
+    add_test(NAME flynes_two_engine_connected_lobby_e2e
+        COMMAND flynes_two_engine_connected_lobby_e2e_test)
+    set_tests_properties(flynes_two_engine_connected_lobby_e2e PROPERTIES
+        LABELS "nearby_integration")
+
     add_executable(flynes_link_races_test
         tests/nearby/race/test_link_races.cpp)
     target_link_libraries(flynes_link_races_test PRIVATE flynes_initial_plan_lock)
