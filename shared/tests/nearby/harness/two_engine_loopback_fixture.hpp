@@ -269,6 +269,149 @@ private:
     }
 };
 
+/* ------------------------------------------------------------------------- *
+ * Step 2: the shared deterministic provider world.
+ *
+ * Both engines are driven by ONE world instance, because the two sides must end
+ * up with the same pair state. Every operation here is a pure function of its
+ * inputs (plus a per-world counter for `random`), so an operation performed on
+ * one side and the matching operation on the other side agree exactly.
+ *
+ * WHAT THIS WORLD DOES *NOT* PROVE
+ *   It is a stand-in for real cryptography and it verifies protocol, wire
+ *   encoding and pipeline behaviour only. In particular `agree` below is an ECDH
+ *   STAND-IN: it derives a shared secret from the two public keys under its own
+ *   domain string. It does NOT implement or check any NIST P-256 key-agreement
+ *   property (no scalar multiplication, no point validation beyond the repository
+ *   curve check, no contributory-behaviour guarantee). A green run of any test
+ *   using this world is never evidence that ECDH, AEAD, HMAC, signatures or
+ *   transport work.
+ * ------------------------------------------------------------------------- */
+
+/* Which engine an operation belongs to. Used so that the two sides get different
+ * deterministic randomness; equal random bytes on both sides would hide real
+ * defects instead of exposing them. */
+enum class LoopbackSide : std::uint8_t
+{
+    Initiator = 1,
+    Responder = 2
+};
+
+inline constexpr std::size_t kLoopbackPointCount = 12;
+using LoopbackPoint = std::array<std::uint8_t, 65>;
+
+/* Distinct, on-curve NIST P-256 uncompressed points, k*G for k = 1..12. The
+ * fixture test re-validates every one of them with the repository's own
+ * wire::validate_p256_uncompressed_point and pins the first two against the
+ * constants the repository already ships, so this table cannot silently rot. */
+const std::array<LoopbackPoint, kLoopbackPointCount>& loopback_p256_points() noexcept;
+
+/* Real HMAC-SHA256 over the repository's sha256. */
+std::array<std::uint8_t, 32> loopback_hmac_sha256(
+    const std::uint8_t* key, std::size_t key_size,
+    const std::uint8_t* input, std::size_t input_size) noexcept;
+
+struct LoopbackWorld final
+{
+    /* A handle is opaque to the engine but meaningful here: it carries either a
+     * public point (a key), a secret (an agreement result or a derived key), or
+     * both. */
+    struct Entry final
+    {
+        fly_session_resource_handle_v2 handle = 0;
+        bool has_point = false;
+        LoopbackPoint point{};
+        std::vector<std::uint8_t> secret{};
+    };
+
+    /* Key material. */
+    fly_session_resource_handle_v2 allocate_point(std::size_t point_index);
+    fly_session_resource_handle_v2 allocate_secret(
+        const std::vector<std::uint8_t>& secret);
+    void release(fly_session_resource_handle_v2 handle) noexcept;
+    [[nodiscard]] const Entry* find(
+        fly_session_resource_handle_v2 handle) const noexcept;
+    [[nodiscard]] const LoopbackPoint* point_of(
+        fly_session_resource_handle_v2 handle) const noexcept;
+    [[nodiscard]] const std::vector<std::uint8_t>* secret_of(
+        fly_session_resource_handle_v2 handle) const noexcept;
+
+    /*
+     * ECDH STAND-IN, NOT ECDH.
+     *
+     * See the section comment above: this is sha256 over the two public keys in a
+     * fixed order under a private domain string. It gives both sides the same
+     * secret, which is all the protocol layer needs, and it deliberately does not
+     * pretend to be curve arithmetic. Do not read anything about P-256 key
+     * agreement out of a test that passes through here.
+     */
+    std::vector<std::uint8_t> agree(const LoopbackPoint& left,
+                                    const LoopbackPoint& right) const;
+
+    /* Deterministic derivations. Equal inputs always give equal output, which is
+     * what lets the two engines agree without exchanging these values. */
+    std::vector<std::uint8_t> hkdf(const std::vector<std::uint8_t>& secret,
+                                   const std::uint8_t* salt,
+                                   std::size_t salt_size,
+                                   const std::uint8_t* info,
+                                   std::size_t info_size,
+                                   std::size_t size) const;
+    std::array<std::uint8_t, 32> hmac(
+        const std::vector<std::uint8_t>& key, const std::uint8_t* input,
+        std::size_t input_size) const;
+
+    /* A faithful round trip: plaintext followed by a tag bound to
+     * (key, nonce, aad, plaintext). Opening with any other key fails, which is
+     * what makes a cross-key mistake visible rather than silent. */
+    std::vector<std::uint8_t> seal(const std::vector<std::uint8_t>& key,
+                                   const std::uint8_t* nonce,
+                                   std::size_t nonce_size,
+                                   const std::uint8_t* aad, std::size_t aad_size,
+                                   const std::uint8_t* input,
+                                   std::size_t input_size) const;
+    bool open(const std::vector<std::uint8_t>& key, const std::uint8_t* nonce,
+              std::size_t nonce_size, const std::uint8_t* aad,
+              std::size_t aad_size, const std::uint8_t* input,
+              std::size_t input_size, std::vector<std::uint8_t>* out) const;
+
+    /* Deterministic canonical low-S signature, so the wire codecs' canonicality
+     * checks are exercised for real rather than bypassed. */
+    std::array<std::uint8_t, 64> sign(const LoopbackPoint& key,
+                                      const std::uint8_t* domain,
+                                      std::size_t domain_size,
+                                      const std::uint8_t digest[32]) const;
+    bool verify(const LoopbackPoint& key, const std::uint8_t* domain,
+                std::size_t domain_size, const std::uint8_t digest[32],
+                const std::uint8_t signature[64]) const;
+
+    /* Counter-derived, and different per side on purpose. */
+    std::vector<std::uint8_t> random(LoopbackSide side, std::size_t size,
+                                     const std::uint8_t* purpose,
+                                     std::size_t purpose_size);
+
+    std::vector<Entry> entries{};
+    fly_session_resource_handle_v2 next_handle = 0x1000;
+    std::uint64_t random_counter = 0;
+};
+
+/* Self-contained terminal builders, declared before the fixture so the port
+ * callbacks below can complete an operation synchronously instead of relying on
+ * a test-side script. */
+void loopback_deliver_buffer(fly_session_inbox_v2_t* inbox,
+                             const fly_session_op_token_v2& token,
+                             std::uint32_t kind, const std::uint8_t* bytes,
+                             std::size_t size);
+void loopback_deliver_resource(fly_session_inbox_v2_t* inbox,
+                               const fly_session_op_token_v2& token,
+                               std::uint32_t kind,
+                               fly_session_resource_handle_v2 resource);
+void loopback_deliver_end(fly_session_inbox_v2_t* inbox,
+                          const fly_session_op_token_v2& token,
+                          std::uint32_t kind, fly_session_result_v2 result);
+void loopback_deliver_verification(fly_session_inbox_v2_t* inbox,
+                                   const fly_session_op_token_v2& token,
+                                   fly_session_result_v2 result);
+
 struct EngineFixture final
 {
     struct Key final
@@ -288,6 +431,28 @@ struct EngineFixture final
         std::array<std::uint8_t, 32> last_digest{};
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
+        /* Step 2: when a world is attached, key material comes from it and the
+         * terminal is queued immediately. The point index is derived from the
+         * purpose and the side so that every key in the pair is a *different*
+         * on-curve point — the wire codecs require e.g. the long-term identity key
+         * and the session signing key to differ. */
+        LoopbackWorld* world = nullptr;
+        LoopbackSide side = LoopbackSide::Initiator;
+
+        static std::size_t point_index_for(std::uint32_t purpose,
+                                           LoopbackSide side)
+        {
+            std::size_t slot = 0;
+            switch (purpose)
+            {
+            case FLY_SESSION_KEY_DEVICE_IDENTITY_V2: slot = 0; break;
+            case FLY_SESSION_KEY_PAIR_ECDH_V2: slot = 1; break;
+            case FLY_SESSION_KEY_TLS_V2: slot = 2; break;
+            case FLY_SESSION_KEY_SESSION_SIGNING_V2: slot = 3; break;
+            default: slot = 4; break;
+            }
+            return slot * 2 + (side == LoopbackSide::Responder ? 1u : 0u);
+        }
 
         ~Key() { fly_session_inbox_release_v2(inbox); }
 
@@ -305,6 +470,14 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
+            if (self->world != nullptr)
+            {
+                const auto handle = self->world->allocate_point(
+                    point_index_for(purpose, self->side));
+                loopback_deliver_resource(inbox, *token,
+                                          FLY_SESSION_PROVIDER_KEY_HANDLE_V2,
+                                          handle);
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -331,6 +504,14 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
+            if (self->world != nullptr)
+            {
+                const auto* point = self->world->point_of(resource);
+                if (point == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
+                loopback_deliver_buffer(inbox, *token,
+                                        FLY_SESSION_PROVIDER_KEY_PUBLIC_V2,
+                                        point->data(), point->size());
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -349,6 +530,20 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
+            if (self->world != nullptr)
+            {
+                const auto* mine = self->world->point_of(resource);
+                if (mine == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
+                LoopbackPoint theirs{};
+                std::copy_n(peer.data, theirs.size(), theirs.begin());
+                /* ECDH STAND-IN, NOT ECDH: see LoopbackWorld::agree. Both sides
+                 * derive the same secret, which is what the protocol layer needs;
+                 * no NIST P-256 key-agreement property is exercised here. */
+                const auto secret = self->world->agree(*mine, theirs);
+                const auto handle = self->world->allocate_secret(secret);
+                loopback_deliver_resource(
+                    inbox, *token, FLY_SESSION_PROVIDER_KEY_AGREEMENT_V2, handle);
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -378,13 +573,25 @@ struct EngineFixture final
             fly_session_inbox_retain_v2(inbox);
             fly_session_inbox_release_v2(self->inbox);
             self->inbox = inbox;
+            if (self->world != nullptr)
+            {
+                const auto* point = self->world->point_of(resource);
+                if (point == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
+                const auto signature = self->world->sign(
+                    *point, domain.data, domain.size, digest);
+                loopback_deliver_buffer(
+                    inbox, *token, FLY_SESSION_PROVIDER_KEY_SIGNATURE_V2,
+                    signature.data(), signature.size());
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
         static fly_session_result_v2 release_key(
-            void* context, fly_session_resource_handle_v2)
+            void* context, fly_session_resource_handle_v2 resource)
         {
-            ++static_cast<Key*>(context)->releases;
+            auto* self = static_cast<Key*>(context);
+            ++self->releases;
+            if (self->world != nullptr) self->world->release(resource);
             return FLY_SESSION_V2_OK;
         }
     } key;
@@ -411,20 +618,31 @@ struct EngineFixture final
         std::array<std::uint8_t, 32> last_digest{};
         fly_session_op_token_v2 last_token{};
         fly_session_inbox_v2_t* inbox = nullptr;
+        /* Step 2: when a world is attached, every operation below is performed by
+         * the shared deterministic world and its terminal is queued immediately,
+         * instead of the test having to script an answer. */
+        LoopbackWorld* world = nullptr;
+        LoopbackSide side = LoopbackSide::Initiator;
         ~Crypto() { fly_session_inbox_release_v2(inbox); }
 
         static fly_session_result_v2 random(
             void* context, const fly_session_op_token_v2* token,
-            std::uint32_t size, fly_session_bytes_v2,
+            std::uint32_t size, fly_session_bytes_v2 purpose,
             fly_session_inbox_v2_t* inbox)
         {
             auto* self = static_cast<Crypto*>(context);
             ++self->randoms;
             self->last_size = size;
             self->last_token = *token;
-            fly_session_inbox_retain_v2(inbox);
-            fly_session_inbox_release_v2(self->inbox);
-            self->inbox = inbox;
+            self->capture(inbox);
+            if (self->world != nullptr)
+            {
+                const auto bytes = self->world->random(
+                    self->side, size, purpose.data, purpose.size);
+                loopback_deliver_buffer(inbox, *token,
+                                        FLY_SESSION_PROVIDER_CRYPTO_RANDOM_V2,
+                                        bytes.data(), bytes.size());
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -442,6 +660,18 @@ struct EngineFixture final
             self->last_salt.assign(salt.data, salt.data + salt.size);
             self->last_info.assign(info.data, info.data + info.size);
             self->capture(inbox);
+            if (self->world != nullptr)
+            {
+                const auto* material = self->world->secret_of(secret);
+                if (material == nullptr)
+                    return FLY_SESSION_V2_INVALID_ARGUMENT;
+                const auto derived =
+                    self->world->hkdf(*material, salt.data, salt.size, info.data,
+                                      info.size, size);
+                const auto handle = self->world->allocate_secret(derived);
+                loopback_deliver_resource(
+                    inbox, *token, FLY_SESSION_PROVIDER_CRYPTO_SECRET_V2, handle);
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -463,7 +693,9 @@ struct EngineFixture final
             void* context, fly_session_resource_handle_v2 secret)
         {
             if (secret == 0) return FLY_SESSION_V2_INVALID_ARGUMENT;
-            ++static_cast<Crypto*>(context)->releases;
+            auto* self = static_cast<Crypto*>(context);
+            ++self->releases;
+            if (self->world != nullptr) self->world->release(secret);
             return FLY_SESSION_V2_OK;
         }
 
@@ -486,6 +718,18 @@ struct EngineFixture final
             std::copy_n(digest, self->last_digest.size(),
                         self->last_digest.begin());
             self->capture(inbox);
+            if (self->world != nullptr)
+            {
+                /* The mock verifier really recomputes the signature instead of
+                 * accepting anything, so a tampered signature is still caught. */
+                LoopbackPoint key{};
+                std::copy_n(public_key.data, key.size(), key.begin());
+                const bool ok = self->world->verify(
+                    key, domain.data, domain.size, digest, signature.data);
+                loopback_deliver_verification(
+                    inbox, *token,
+                    ok ? FLY_SESSION_V2_OK : FLY_SESSION_V2_AUTH_FAILED);
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -502,6 +746,17 @@ struct EngineFixture final
             self->last_resource = key;
             self->last_input.assign(input.data, input.data + input.size);
             self->capture(inbox);
+            if (self->world != nullptr)
+            {
+                const auto* material = self->world->secret_of(key);
+                if (material == nullptr)
+                    return FLY_SESSION_V2_INVALID_ARGUMENT;
+                const auto tag =
+                    self->world->hmac(*material, input.data, input.size);
+                loopback_deliver_buffer(inbox, *token,
+                                        FLY_SESSION_PROVIDER_CRYPTO_MAC_V2,
+                                        tag.data(), tag.size());
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -527,6 +782,37 @@ struct EngineFixture final
             self->last_aad.assign(aad.data, aad.data + aad.size);
             self->last_input.assign(input.data, input.data + input.size);
             self->capture(inbox);
+            if (self->world != nullptr)
+            {
+                const auto* material = self->world->secret_of(key);
+                if (material == nullptr)
+                    return FLY_SESSION_V2_INVALID_ARGUMENT;
+                if (sealing)
+                {
+                    const auto sealed = self->world->seal(
+                        *material, nonce.data, nonce.size, aad.data, aad.size,
+                        input.data, input.size);
+                    loopback_deliver_buffer(
+                        inbox, *token, FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
+                        sealed.data(), sealed.size());
+                }
+                else
+                {
+                    std::vector<std::uint8_t> opened;
+                    const bool ok = self->world->open(
+                        *material, nonce.data, nonce.size, aad.data, aad.size,
+                        input.data, input.size, &opened);
+                    if (!ok)
+                        loopback_deliver_end(
+                            inbox, *token,
+                            FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
+                            FLY_SESSION_V2_AUTH_FAILED);
+                    else
+                        loopback_deliver_buffer(
+                            inbox, *token, FLY_SESSION_PROVIDER_CRYPTO_AEAD_V2,
+                            opened.data(), opened.size());
+                }
+            }
             return FLY_SESSION_V2_ACCEPTED;
         }
 
@@ -1174,7 +1460,30 @@ struct EngineFixture final
     fly_session_v2_t* engine = nullptr;
 
     explicit EngineFixture(bool secure_pairing_ports = true)
+        : EngineFixture(nullptr, LoopbackSide::Initiator, secure_pairing_ports)
     {
+    }
+
+    /*
+     * Step 2: the two-engine form. Both engines share ONE world so that the
+     * operations they perform (key generation, agreement, derivation, sealing,
+     * signing) line up exactly; `side` only affects the deterministic randomness
+     * and which on-curve point a purpose maps to.
+     */
+    EngineFixture(LoopbackWorld& shared_world, LoopbackSide shared_side,
+                  bool secure_pairing_ports = true)
+        : EngineFixture(&shared_world, shared_side, secure_pairing_ports)
+    {
+    }
+
+private:
+    EngineFixture(LoopbackWorld* shared_world, LoopbackSide shared_side,
+                  bool secure_pairing_ports)
+    {
+        key.world = shared_world;
+        key.side = shared_side;
+        crypto.world = shared_world;
+        crypto.side = shared_side;
         clock.struct_size = FLY_SESSION_CLOCK_PORT_V2_SIZE;
         clock.abi_version = FLY_SESSION_ABI_VERSION_2;
         clock.retain = retain_noop;
@@ -1295,6 +1604,7 @@ struct EngineFixture final
               "public engine creates");
     }
 
+public:
     ~EngineFixture()
     {
         if (engine)
