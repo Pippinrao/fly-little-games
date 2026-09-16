@@ -1,5 +1,6 @@
 #include "channel_bind.hpp"
 
+#include "../link/link_control_contract.hpp"
 #include "p256_point.hpp"
 #include "sha256.hpp"
 
@@ -283,6 +284,37 @@ Status decode_channel_bind_ack_v1(
 std::array<std::uint8_t, 8> bind_stream_preamble_v1() noexcept
 {
     return {{0x46, 0x4e, 0x42, 0x31, 0x00, 0x01, 0x00, 0x01}};
+}
+
+/*
+ * The single canonical channel-bind identity. See the declaration in
+ * channel_bind.hpp for the preimage and why three values and no more.
+ *
+ * The domain string lives in the frozen contract header
+ * (link/link_control_contract.hpp) because it is a contract value, but this is
+ * the one and only implementation: nothing else in the tree may rebuild this
+ * hash, and link_ready.{hpp,cpp} no longer declares it.
+ */
+Status channel_bind_binding_hash_v1(
+    const std::array<std::uint8_t, 16>& channel_id,
+    const std::array<std::uint8_t, 32>& connector_proof_hash,
+    const std::array<std::uint8_t, 32>& listener_proof_hash,
+    std::array<std::uint8_t, 32>* out_hash) noexcept
+{
+    if (out_hash == nullptr) return Status::InvalidField;
+    if (!is_nonzero(channel_id.data(), channel_id.size()) ||
+        !is_nonzero(connector_proof_hash.data(), connector_proof_hash.size()) ||
+        !is_nonzero(listener_proof_hash.data(), listener_proof_hash.size()))
+        return Status::InvalidField;
+    std::array<std::uint8_t, 80> preimage{};
+    std::copy(channel_id.begin(), channel_id.end(), preimage.begin());
+    std::copy(connector_proof_hash.begin(), connector_proof_hash.end(),
+              preimage.begin() + 16);
+    std::copy(listener_proof_hash.begin(), listener_proof_hash.end(),
+              preimage.begin() + 48);
+    *out_hash = domain_hash(link::kLinkChannelBindBindingHashDomainV1,
+                            preimage.data(), preimage.size());
+    return Status::Ok;
 }
 
 } // namespace flynes::session::wire

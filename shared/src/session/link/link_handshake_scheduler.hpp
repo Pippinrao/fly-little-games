@@ -134,10 +134,16 @@ struct LinkHandshakeStartV1 final
     std::array<std::uint8_t, 32> peer_identity_key_id{};
     std::array<std::uint8_t, 65> peer_identity_public_key{};
     std::array<std::uint8_t, 65> peer_session_signing_public_key{};
-    /* Negotiated capability/runtime result, persisted verbatim; its hash is
-     * derived locally and must match negotiated_result_hash. */
-    std::vector<std::uint8_t> negotiated_result{};
-    std::array<std::uint8_t, 32> negotiated_result_hash{};
+    /* The negotiated result is NOT an input any more (owner decision
+     * 2026-09-16). It is derived inside the scheduler from the two HELLO object
+     * hashes, which are the only real negotiation evidence both sides hold:
+     *
+     *   preimage = initiator_hello_object_hash || responder_hello_object_hash
+     *   hash     = domain_hash("flynes-link-negotiated-result-v1", preimage, 64)
+     *
+     * Deriving it here removes the second source of truth a caller-supplied
+     * value would create, and it is independently checkable from READY, which
+     * already carries both HELLO object hashes. */
     std::array<std::uint8_t, 32> local_summary_hash{};
     std::array<std::uint8_t, 32> peer_summary_hash{};
     std::array<std::uint8_t, 32> merge_result_hash{};
@@ -274,6 +280,22 @@ public:
     { return peer_ack_; }
     [[nodiscard]] const std::array<std::uint8_t, 32>&
     negotiated_result_hash() const noexcept { return negotiated_result_hash_; }
+    /* The exact 64-byte preimage that hash covers, produced by
+     * request_negotiated_result(). Zero before that step. */
+    [[nodiscard]] const std::array<std::uint8_t,
+                                   link::kLinkNegotiatedResultPreimageSizeV1>&
+    negotiated_result_preimage() const noexcept
+    { return negotiated_result_preimage_; }
+    /* This side's own persisted HELLO object hash and the verified peer HELLO
+     * object hash. Zero until the corresponding step completed. These are the
+     * two inputs of the negotiated result, exposed so a caller (or a test) can
+     * recompute and check the derivation rather than trust it. */
+    [[nodiscard]] const std::array<std::uint8_t, 32>&
+    local_hello_object_hash() const noexcept
+    { return local_hello_object_hash_; }
+    [[nodiscard]] const std::array<std::uint8_t, 32>&
+    peer_hello_object_hash() const noexcept
+    { return peer_hello_object_hash_; }
 
 private:
     fly_session_op_token_v2 token(std::uint64_t operation_id) const noexcept;
@@ -341,6 +363,8 @@ private:
     std::array<std::uint8_t, 32> local_hello_object_hash_{};
     std::array<std::uint8_t, 32> peer_hello_object_hash_{};
     std::array<std::uint8_t, 32> negotiated_result_hash_{};
+    std::array<std::uint8_t, link::kLinkNegotiatedResultPreimageSizeV1>
+        negotiated_result_preimage_{};
     std::array<std::uint8_t, link::kLinkHelloPretagSizeV1> hello_pretag_{};
     std::array<std::uint8_t, link::kLinkReadyPretagSizeV1> ready_pretag_{};
     std::array<std::uint8_t, link::kLinkReadyPretagSizeV1> ack_pretag_{};

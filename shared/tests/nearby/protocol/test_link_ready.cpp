@@ -467,6 +467,85 @@ void negotiated_result_domain()
           "negotiated result hash rejects a null output");
 }
 
+/*
+ * The owner-frozen negotiated-result preimage (2026-09-16): the two HELLO object
+ * hashes in initiator-then-responder order, and nothing else.
+ */
+void negotiated_result_preimage()
+{
+    const auto initiator_hello =
+        hex_bytes<32>(kHelloInitiatorObjectHash);
+    const auto responder_hello =
+        hex_bytes<32>(kHelloResponderObjectHash);
+
+    std::array<std::uint8_t, link::kLinkNegotiatedResultPreimageSizeV1> preimage{};
+    check(wire::negotiated_result_preimage_v1(initiator_hello, responder_hello,
+                                              &preimage) == wire::Status::Ok,
+          "the negotiated result preimage encodes");
+    check(preimage.size() == 64u,
+          "the negotiated result preimage is exactly 64 bytes, not 512");
+    check(std::equal(preimage.begin(), preimage.begin() + 32,
+                     initiator_hello.begin()) &&
+              std::equal(preimage.begin() + 32, preimage.end(),
+                         responder_hello.begin()),
+          "the preimage is initiator HELLO hash then responder HELLO hash");
+
+    std::array<std::uint8_t, 32> hash{};
+    check(wire::negotiated_result_hash_v1(initiator_hello, responder_hello,
+                                          &hash) == wire::Status::Ok,
+          "the negotiated result hash derives from the two HELLO hashes");
+    check(hash == wire::domain_hash(link::kLinkNegotiatedResultHashDomainV1,
+                                    preimage.data(), preimage.size()),
+          "the negotiated result hash covers exactly that preimage");
+
+    /* Order is load-bearing: swapping the roles must change the value, so a side
+     * cannot present itself as the other role. */
+    std::array<std::uint8_t, 32> swapped{};
+    check(wire::negotiated_result_hash_v1(responder_hello, initiator_hello,
+                                          &swapped) == wire::Status::Ok &&
+              swapped != hash,
+          "swapping initiator and responder changes the negotiated result");
+
+    /* A different pair of HELLOs produces a different result. */
+    auto other_hello = initiator_hello;
+    other_hello[0] ^= 0x01u;
+    std::array<std::uint8_t, 32> other{};
+    check(wire::negotiated_result_hash_v1(other_hello, responder_hello, &other) ==
+              wire::Status::Ok &&
+              other != hash,
+          "a different HELLO pair produces a different negotiated result");
+
+    /* Fail closed on a zero input: an unnegotiated attempt must never install a
+     * zero result. */
+    const std::array<std::uint8_t, 32> zero{};
+    check(wire::negotiated_result_hash_v1(zero, responder_hello, &hash) ==
+              wire::Status::InvalidField,
+          "a zero initiator HELLO hash is refused");
+    check(wire::negotiated_result_hash_v1(initiator_hello, zero, &hash) ==
+              wire::Status::InvalidField,
+          "a zero responder HELLO hash is refused");
+    check(wire::negotiated_result_preimage_v1(initiator_hello, zero,
+                                              &preimage) ==
+              wire::Status::InvalidField,
+          "the preimage refuses a zero responder HELLO hash");
+    check(wire::negotiated_result_hash_v1(initiator_hello, responder_hello,
+                                          nullptr) ==
+              wire::Status::InvalidField,
+          "the negotiated result hash refuses a null output");
+
+    /* The value is independently recomputable from READY, which carries both
+     * HELLO object hashes: this is what makes the claim checkable. */
+    const auto ready = hex_bytes<432>(kReadyInitiatorBytes);
+    std::array<std::uint8_t, 32> ready_local{};
+    std::array<std::uint8_t, 32> ready_peer{};
+    std::copy_n(ready.begin() + 120, 32, ready_local.begin());
+    std::copy_n(ready.begin() + 152, 32, ready_peer.begin());
+    std::array<std::uint8_t, 32> from_ready{};
+    check(wire::negotiated_result_hash_v1(ready_local, ready_peer, &from_ready) ==
+              wire::Status::Ok,
+          "the negotiated result is recomputable from READY alone");
+}
+
 /* ------------------------------------------------------------- negatives */
 
 void structural_negatives()
@@ -834,6 +913,7 @@ int main()
     golden_ack_vector();
     exact_field_offsets();
     negotiated_result_domain();
+    negotiated_result_preimage();
     structural_negatives();
     binding_chain_negatives();
     signature_negatives();

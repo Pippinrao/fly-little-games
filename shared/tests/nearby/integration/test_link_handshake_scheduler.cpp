@@ -168,15 +168,6 @@ constexpr std::array<std::uint8_t, 16> kChannelId = {{
 constexpr std::uint64_t kGeneration = 7;
 constexpr std::uint64_t kLinkGeneration = 9;
 
-/* The negotiated result bytes both sides must agree on. */
-std::vector<std::uint8_t> negotiated_result()
-{
-    std::vector<std::uint8_t> out(96, 0);
-    for (std::size_t index = 0; index < out.size(); ++index)
-        out[index] = static_cast<std::uint8_t>(index + 1);
-    return out;
-}
-
 /* ------------------------------------------------------------ provider ---- */
 
 struct Side
@@ -187,8 +178,9 @@ struct Side
     std::array<std::uint8_t, 65> identity_public{};
     std::array<std::uint8_t, 65> session_public{};
     std::array<std::uint8_t, 32> identity_key_id{};
-    std::vector<std::uint8_t> negotiated{};
-    std::array<std::uint8_t, 32> negotiated_hash{};
+    /* There is deliberately no negotiated-result fixture: the scheduler derives
+     * it from the two HELLO object hashes, so a test-side copy would be a second
+     * definition of the value under test. */
     std::array<std::uint8_t, 32> local_summary{};
     std::array<std::uint8_t, 32> peer_summary{};
     /* Stub policy. */
@@ -323,11 +315,6 @@ Side make_side(wire::PairRoleV1 role,
     side.identity_key_id = wire::link_identity_key_id_v1(identity.data());
     side.local_summary = local_summary;
     side.peer_summary = peer_summary;
-    side.negotiated = negotiated_result();
-    check(wire::hash_link_negotiated_result_v1(
-              side.negotiated.data(), side.negotiated.size(),
-              &side.negotiated_hash) == wire::Status::Ok,
-          "fixture hashes the negotiated result");
 
     std::array<std::uint8_t, wire::kSessionSigningBindingPretagSizeV1> pretag{};
     std::array<std::uint8_t, 32> digest{};
@@ -368,8 +355,6 @@ Side make_side(wire::PairRoleV1 role,
         peer_identity.data());
     start.peer_identity_public_key = peer_identity;
     start.peer_session_signing_public_key = peer_session;
-    start.negotiated_result = side.negotiated;
-    start.negotiated_result_hash = side.negotiated_hash;
     start.local_summary_hash = local_summary;
     start.peer_summary_hash = peer_summary;
     start.merge_result_hash = merge_hash();
@@ -706,6 +691,50 @@ void two_sided_legal_sequence()
     check(pair.a.scheduler.local_ready().negotiated_result_hash ==
               pair.b.scheduler.local_ready().negotiated_result_hash,
           "both sides persisted the same negotiated result hash");
+
+    /*
+     * The negotiated result is DERIVED, not supplied (owner decision
+     * 2026-09-16), so both sides must have produced the same 64-byte preimage
+     * from their own local/peer HELLO object hashes ordered by their own pair
+     * role. The initiator's preimage is (initiator HELLO, responder HELLO) and
+     * the responder's is the same pair read the other way round.
+     */
+    const auto& a_preimage = pair.a.scheduler.negotiated_result_preimage();
+    const auto& b_preimage = pair.b.scheduler.negotiated_result_preimage();
+    std::array<std::uint8_t, 32> probe_hash{};
+    check(a_preimage.size() == 64u &&
+              b_preimage.size() == 64u,
+          "each side derived a 64-byte negotiated result preimage");
+    check(std::equal(a_preimage.begin(), a_preimage.end(), b_preimage.begin()),
+          "the derived preimages are byte-identical on both sides");
+
+    /* Each side orders the SAME two hashes by its own pair role, so the two
+     * preimages must be byte-identical — that is precisely why the derived value
+     * is a negotiation result both sides agree on without exchanging it. */
+    check(a_preimage == b_preimage,
+          "both roles order the same HELLO pair into the identical preimage");
+    check(std::equal(a_preimage.begin(), a_preimage.begin() + 32,
+                     pair.a.scheduler.local_hello_object_hash().begin()) &&
+              std::equal(a_preimage.begin() + 32, a_preimage.end(),
+                         pair.a.scheduler.peer_hello_object_hash().begin()),
+          "the initiator preimage is its own HELLO hash then the peer's");
+    check(std::equal(b_preimage.begin(), b_preimage.begin() + 32,
+                     pair.b.scheduler.peer_hello_object_hash().begin()) &&
+              std::equal(b_preimage.begin() + 32, b_preimage.end(),
+                         pair.b.scheduler.local_hello_object_hash().begin()),
+          "the responder preimage puts the initiator's HELLO hash first too");
+    check(wire::negotiated_result_hash_v1(
+              pair.a.scheduler.local_hello_object_hash(),
+              pair.a.scheduler.peer_hello_object_hash(),
+              &probe_hash) == wire::Status::Ok &&
+              probe_hash == pair.a.scheduler.negotiated_result_hash(),
+          "the initiator's READY binds exactly the hash of its derived preimage");
+    check(wire::negotiated_result_hash_v1(
+              pair.b.scheduler.peer_hello_object_hash(),
+              pair.b.scheduler.local_hello_object_hash(),
+              &probe_hash) == wire::Status::Ok &&
+              probe_hash == pair.b.scheduler.negotiated_result_hash(),
+          "the responder's READY binds the same value from the mirrored pair");
     check(pair.a.scheduler.local_ack().ready_phase ==
               link::LinkReadyPhaseV1::Ack,
           "the third message is an ACK");

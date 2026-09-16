@@ -101,6 +101,7 @@ void LinkHandshakeScheduler::reset_attempt(
     local_hello_object_hash_.fill(0);
     peer_hello_object_hash_.fill(0);
     negotiated_result_hash_.fill(0);
+    negotiated_result_preimage_.fill(0);
     hello_pretag_.fill(0);
     ready_pretag_.fill(0);
     ack_pretag_.fill(0);
@@ -388,10 +389,43 @@ fly_session_result_v2 LinkHandshakeScheduler::request_hello_signature()
 
 fly_session_result_v2 LinkHandshakeScheduler::request_negotiated_result()
 {
-    /* Persist-before-send: an empty negotiated result must never be persisted as
-     * if it were a negotiation. This build has no canonical result producer. */
-    const auto inputs = require_inputs(!start_.negotiated_result.empty());
+    /*
+     * The real producer of the negotiated result (owner decision 2026-09-16).
+     *
+     * There is no negotiated-result object format and no caller-supplied bytes.
+     * The result IS the pair of signed control objects both sides already hold
+     * and have verified, in the fixed order initiator then responder:
+     *
+     *   preimage = initiator_hello_object_hash || responder_hello_object_hash
+     *   hash     = domain_hash("flynes-link-negotiated-result-v1", preimage, 64)
+     *
+     * The local HELLO hash was recorded when this side finished and persisted its
+     * own HELLO; the peer HELLO hash came from the peer HELLO this side verified.
+     * Both are therefore real values, and each side orders them by its own pair
+     * role, so both sides compute the same 64 bytes.
+     */
+    const auto inputs = require_inputs(
+        nonzero(local_hello_object_hash_.data(),
+                local_hello_object_hash_.size()) &&
+        nonzero(peer_hello_object_hash_.data(),
+                peer_hello_object_hash_.size()));
     if (inputs != FLY_SESSION_V2_OK) return inputs;
+
+    const bool local_is_initiator =
+        start_.local_role == wire::PairRoleV1::Initiator;
+    const auto& initiator_hello_object_hash =
+        local_is_initiator ? local_hello_object_hash_ : peer_hello_object_hash_;
+    const auto& responder_hello_object_hash =
+        local_is_initiator ? peer_hello_object_hash_ : local_hello_object_hash_;
+
+    if (wire::negotiated_result_preimage_v1(
+            initiator_hello_object_hash, responder_hello_object_hash,
+            &negotiated_result_preimage_) != wire::Status::Ok ||
+        wire::negotiated_result_hash_v1(
+            initiator_hello_object_hash, responder_hello_object_hash,
+            &negotiated_result_hash_) != wire::Status::Ok)
+        return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+
     try {
         LinkHandshakeEffect effect{};
         effect.kind = LinkHandshakeEffectKind::PersistNegotiatedResult;
@@ -409,7 +443,8 @@ fly_session_result_v2 LinkHandshakeScheduler::request_negotiated_result()
                                  start_.link_id.begin(), start_.link_id.end());
         effect.record_key.push_back(
             static_cast<std::uint8_t>(start_.local_role));
-        effect.value = start_.negotiated_result;
+        effect.value.assign(negotiated_result_preimage_.begin(),
+                            negotiated_result_preimage_.end());
         effect.expected_revision = 0;
         return issue(std::move(effect),
                      LinkHandshakeStageV1::PersistNegotiatedResult);
@@ -873,13 +908,20 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
     if (kind == LinkHandshakeEffectKind::PersistNegotiatedResult) {
         if (completion.payload.resource == 0)
             return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+        /*
+         * The secure store answers a compare_replace with a revision, not with
+         * bytes, so there is nothing to read back. What must hold instead is that
+         * the 64-byte preimage this side persisted is exactly the preimage its
+         * hash covers: recomputing the hash over the stored preimage here catches
+         * any member that was clobbered between issuing the effect and its
+         * terminal, which is the only way this value could drift.
+         */
         std::array<std::uint8_t, 32> hash{};
         if (wire::hash_link_negotiated_result_v1(
-                start_.negotiated_result.data(), start_.negotiated_result.size(),
-                &hash) != wire::Status::Ok ||
-            hash != start_.negotiated_result_hash)
+                negotiated_result_preimage_.data(),
+                negotiated_result_preimage_.size(), &hash) != wire::Status::Ok ||
+            hash != negotiated_result_hash_)
             return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
-        negotiated_result_hash_ = hash;
         progress_.negotiated_result_durable = true;
         pending_.reset();
         return request_ready_signature();

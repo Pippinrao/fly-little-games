@@ -85,24 +85,55 @@ inline constexpr const char* kLinkHelloObjectHashDomainV1 =
 inline constexpr const char* kLinkReadyObjectHashDomainV1 =
     "flynes-link-ready-object-v1";
 
-/* Hash of the locally persisted negotiated capability/runtime result that
- * READY binds. It lives under its own domain so a negotiated result can never
- * be confused with either control message. */
+/* Domain for the negotiated-result hash that LINK_READY binds.
+ *
+ * PREIMAGE FROZEN BY THE OWNER, 2026-09-16. There is deliberately NO
+ * negotiated-result object format, and it is deliberately not 512 bytes: the
+ * "result" of negotiation is the pair of signed control objects both sides
+ * already hold and have verified, in a fixed order.
+ *
+ *   preimage = initiator_hello_object_hash[32] || responder_hello_object_hash[32]
+ *              (exactly 64 bytes, initiator first, both non-zero)
+ *   hash     = domain_hash(kLinkNegotiatedResultHashDomainV1, preimage, 64)
+ *
+ * A side that is the initiator puts its own HELLO object hash first and the
+ * peer's second; the responder does the reverse. Because READY already carries
+ * local_hello_object_hash and peer_hello_object_hash, any receiver can recompute
+ * this value from READY alone and reject a mismatch, so the claim is checkable
+ * rather than trusted. The single implementation is
+ * wire::negotiated_result_hash_v1 / wire::negotiated_result_preimage_v1 in
+ * shared/src/session/wire/link_ready.cpp. */
 inline constexpr const char* kLinkNegotiatedResultHashDomainV1 =
     "flynes-link-negotiated-result-v1";
+
+/* The exact 64-byte size of that preimage. */
+inline constexpr std::size_t kLinkNegotiatedResultPreimageSizeV1 = 64;
 
 /* Domain for the canonical channel-bind binding hash that LINK_READY carries.
  *
  * Provenance. The first contract revision invented both a u64 channel_id and a
- * u64 channel_bind_id. Neither exists in the implementation, and the approved
- * 2026-09-04 spec identifies a bind by exactly three authenticated values and
- * nothing else: `channel_id[16]`, `connector_proof_hash[32]` and
- * `listener_proof_hash[32]` (both are carried inside the 96-byte
- * CHANNEL_BIND_ACK body, spec:437). READY therefore binds those three values
- * through one canonical hash instead of a second, parallel identifier, and the
- * value is available on both sides only after each has verified the ACK. */
+ * u64 channel_bind_id. Neither exists in the implementation. The approved
+ * 2026-09-04 design identifies a bind by exactly three authenticated values and
+ * nothing else — `channel_id[16]`, `connector_proof_hash[32]` and
+ * `listener_proof_hash[32]`, both proof hashes being carried inside the 96-byte
+ * CHANNEL_BIND_ACK body (spec:437) — and initial_quic_bind_scheduler.hpp already
+ * documents that same triple. READY therefore binds those three values through
+ * one canonical hash instead of a second, parallel identifier, and both sides
+ * hold the value only after each has verified the ACK.
+ *
+ *   preimage = channel_id[16] || connector_proof_hash[32] ||
+ *              listener_proof_hash[32]                      (exactly 80 bytes)
+ *   hash     = domain_hash(kLinkChannelBindBindingHashDomainV1, preimage, 80)
+ *
+ * Both proof hashes MUST be wire::channel_bind_proof_hash_v1(<the exact 248-byte
+ * proof>) outputs. The single implementation is
+ * wire::channel_bind_binding_hash_v1 in shared/src/session/wire/channel_bind.cpp;
+ * no other definition of the bind identity may exist. */
 inline constexpr const char* kLinkChannelBindBindingHashDomainV1 =
     "flynes-channel-bind-binding-v1";
+
+/* The exact 80-byte size of that preimage. */
+inline constexpr std::size_t kLinkChannelBindBindingPreimageSizeV1 = 80;
 
 /* ------------------------------------------------------------------ sizes */
 

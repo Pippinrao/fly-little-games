@@ -418,24 +418,34 @@ Status hash_link_negotiated_result_v1(const std::uint8_t* bytes,
     return Status::Ok;
 }
 
-Status channel_bind_binding_hash_v1(
-    const std::array<std::uint8_t, 16>& channel_id,
-    const std::array<std::uint8_t, 32>& connector_proof_hash,
-    const std::array<std::uint8_t, 32>& listener_proof_hash,
+Status negotiated_result_preimage_v1(
+    const std::array<std::uint8_t, 32>& initiator_hello_object_hash,
+    const std::array<std::uint8_t, 32>& responder_hello_object_hash,
+    std::array<std::uint8_t, 64>* out_preimage) noexcept
+{
+    if (out_preimage == nullptr) return Status::InvalidField;
+    if (!nonzero(initiator_hello_object_hash.data(),
+                 initiator_hello_object_hash.size()) ||
+        !nonzero(responder_hello_object_hash.data(),
+                 responder_hello_object_hash.size()))
+        return Status::InvalidField;
+    copy_out(initiator_hello_object_hash.data(), 32, out_preimage->data());
+    copy_out(responder_hello_object_hash.data(), 32, out_preimage->data() + 32);
+    return Status::Ok;
+}
+
+Status negotiated_result_hash_v1(
+    const std::array<std::uint8_t, 32>& initiator_hello_object_hash,
+    const std::array<std::uint8_t, 32>& responder_hello_object_hash,
     std::array<std::uint8_t, 32>* out_hash) noexcept
 {
     if (out_hash == nullptr) return Status::InvalidField;
-    if (!nonzero(channel_id.data(), channel_id.size()) ||
-        !nonzero(connector_proof_hash.data(), connector_proof_hash.size()) ||
-        !nonzero(listener_proof_hash.data(), listener_proof_hash.size()))
-        return Status::InvalidField;
-    std::array<std::uint8_t, 80> preimage{};
-    copy_out(channel_id.data(), 16, preimage.data());
-    copy_out(connector_proof_hash.data(), 32, preimage.data() + 16);
-    copy_out(listener_proof_hash.data(), 32, preimage.data() + 48);
-    *out_hash = domain_hash(link::kLinkChannelBindBindingHashDomainV1,
-                            preimage.data(), preimage.size());
-    return Status::Ok;
+    std::array<std::uint8_t, 64> preimage{};
+    const auto status = negotiated_result_preimage_v1(
+        initiator_hello_object_hash, responder_hello_object_hash, &preimage);
+    if (status != Status::Ok) return status;
+    return hash_link_negotiated_result_v1(preimage.data(), preimage.size(),
+                                          out_hash);
 }
 
 } // namespace flynes::session::wire

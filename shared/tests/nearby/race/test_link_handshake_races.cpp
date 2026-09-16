@@ -122,14 +122,6 @@ constexpr std::array<std::uint8_t, 16> kChannelId = {{
 constexpr std::uint64_t kGeneration = 7;
 constexpr std::uint64_t kLinkGeneration = 9;
 
-std::vector<std::uint8_t> negotiated_result()
-{
-    std::vector<std::uint8_t> out(96, 0);
-    for (std::size_t index = 0; index < out.size(); ++index)
-        out[index] = static_cast<std::uint8_t>(index + 7);
-    return out;
-}
-
 struct Side
 {
     LinkHandshakeScheduler scheduler;
@@ -138,8 +130,8 @@ struct Side
     std::array<std::uint8_t, 32> binding_hash{};
     std::array<std::uint8_t, 65> identity_public{};
     std::array<std::uint8_t, 65> session_public{};
-    std::vector<std::uint8_t> negotiated{};
-    std::array<std::uint8_t, 32> negotiated_hash{};
+    /* No negotiated-result fixture: the scheduler derives it from the two HELLO
+     * object hashes, so a test-side copy would be a competing definition. */
     std::vector<LinkHandshakeEffectKind> answered{};
     int send_count = 0;
 };
@@ -326,11 +318,6 @@ Side make_side(wire::PairRoleV1 role,
     Side side;
     side.identity_public = identity;
     side.session_public = session;
-    side.negotiated = negotiated_result();
-    check(wire::hash_link_negotiated_result_v1(
-              side.negotiated.data(), side.negotiated.size(),
-              &side.negotiated_hash) == wire::Status::Ok,
-          "fixture hashes the negotiated result");
 
     std::array<std::uint8_t, wire::kSessionSigningBindingPretagSizeV1> pretag{};
     std::array<std::uint8_t, 32> digest{};
@@ -366,8 +353,6 @@ Side make_side(wire::PairRoleV1 role,
         peer_identity.data());
     start.peer_identity_public_key = peer_identity;
     start.peer_session_signing_public_key = peer_session;
-    start.negotiated_result = side.negotiated;
-    start.negotiated_result_hash = side.negotiated_hash;
     start.local_summary_hash = filled<32>(0xbb);
     start.peer_summary_hash = filled<32>(0xcc);
     start.merge_result_hash = filled<32>(0xdd);

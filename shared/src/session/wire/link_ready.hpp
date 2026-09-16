@@ -104,30 +104,38 @@ Status decode_link_ready_v1(
     link::LinkReadyV1* out) noexcept;
 
 /*
- * Hash of the locally persisted negotiated capability/runtime result, under the
- * dedicated contract domain so a negotiated result can never be confused with a
- * control message. READY binds exactly this hash. The result's own byte layout
- * belongs to the layer that negotiates it (see the W1 report's integration
- * request); this codec only fixes the domain.
+ * Hash of the negotiated capability/runtime result under the dedicated contract
+ * domain, so a negotiated result can never be confused with a control message.
+ * READY binds exactly the value produced by negotiated_result_hash_v1() below.
  */
 Status hash_link_negotiated_result_v1(const std::uint8_t* bytes,
                                       std::size_t size,
                                       std::array<std::uint8_t, 32>* out_hash) noexcept;
 
 /*
- * The canonical channel-bind binding hash LINK_READY carries in
- * channel_bind_hash. It is domain_hash(kLinkChannelBindBindingHashDomainV1,
- * channel_id[16] || connector_proof_hash[32] || listener_proof_hash[32], 80):
- * exactly the three values the approved 2026-09-04 spec uses to identify a
- * bind (spec:437 carries both proof hashes inside the CHANNEL_BIND_ACK body),
- * so neither side can substitute a different bind and no invented u64 bind id
- * is needed. Both proof hashes are
- * wire::channel_bind_proof_hash_v1(<the exact 248-byte proof>).
+ * The frozen preimage of the negotiated result that READY binds (owner decision
+ * 2026-09-16). There is deliberately NO negotiated-result object format: the
+ * "result" of negotiation is the pair of signed control objects both sides
+ * already hold and have verified, in a fixed order.
+ *
+ *   preimage = initiator_hello_object_hash[32] || responder_hello_object_hash[32]
+ *              (64 bytes, initiator first, both non-zero)
+ *   hash     = domain_hash(kLinkNegotiatedResultHashDomainV1, preimage, 64)
+ *
+ * Both sides already carry local_hello_object_hash and peer_hello_object_hash in
+ * READY, so the value can be recomputed and checked from READY alone.
+ *
+ * Fails closed on a null output or an all-zero input, so an unnegotiated attempt
+ * can never install a zero result.
  */
-Status channel_bind_binding_hash_v1(
-    const std::array<std::uint8_t, 16>& channel_id,
-    const std::array<std::uint8_t, 32>& connector_proof_hash,
-    const std::array<std::uint8_t, 32>& listener_proof_hash,
+Status negotiated_result_preimage_v1(
+    const std::array<std::uint8_t, 32>& initiator_hello_object_hash,
+    const std::array<std::uint8_t, 32>& responder_hello_object_hash,
+    std::array<std::uint8_t, 64>* out_preimage) noexcept;
+
+Status negotiated_result_hash_v1(
+    const std::array<std::uint8_t, 32>& initiator_hello_object_hash,
+    const std::array<std::uint8_t, 32>& responder_hello_object_hash,
     std::array<std::uint8_t, 32>* out_hash) noexcept;
 
 } // namespace flynes::session::wire
