@@ -311,6 +311,19 @@ fly_session_result_v2 validate_bearer(
                : FLY_SESSION_V2_UNSUPPORTED;
 }
 
+fly_session_result_v2 validate_dual_runtime(
+    const fly_session_dual_runtime_port_v2* port) noexcept
+{
+    const auto prefix = validate_provider_prefix(
+        port, FLY_SESSION_DUAL_RUNTIME_PORT_V2_SIZE);
+    if (prefix != FLY_SESSION_V2_OK || !port)
+        return prefix;
+    return port->load && port->step && port->export_state &&
+                   port->import_state && port->state_digest
+               ? FLY_SESSION_V2_OK
+               : FLY_SESSION_V2_UNSUPPORTED;
+}
+
 fly_session_result_v2 validate_ports(const fly_session_ports_v2* ports) noexcept
 {
     if (!ports)
@@ -376,8 +389,18 @@ fly_session_result_v2 validate_ports(const fly_session_ports_v2* ports) noexcept
         ports, offsetof(fly_session_ports_v2, bearer)));
     if (bearer != FLY_SESSION_V2_OK)
         return bearer;
-    return validate_object_store(optional_port<fly_session_object_store_port_v2>(
-        ports, offsetof(fly_session_ports_v2, object_store)));
+    const auto object_store = validate_object_store(
+        optional_port<fly_session_object_store_port_v2>(
+            ports, offsetof(fly_session_ports_v2, object_store)));
+    if (object_store != FLY_SESSION_V2_OK)
+        return object_store;
+    /*
+     * DUAL runtime: optional and tail-appended. A table that stops before the
+     * slot is a legal pre-DUAL table, and DUAL is then unavailable rather than
+     * rejected.
+     */
+    return validate_dual_runtime(optional_port<fly_session_dual_runtime_port_v2>(
+        ports, offsetof(fly_session_ports_v2, dual_runtime)));
 }
 
 } // namespace
@@ -472,8 +495,13 @@ extern "C" fly_session_result_v2 fly_session_submit_input_v2(
 {
     if (!engine || !input)
         return FLY_SESSION_V2_INVALID_ARGUMENT;
+    /*
+     * Tail-append compatibility: the pre-DUAL prefix is still a legal input, and
+     * the appended four-port mask is only read when the caller declared the
+     * enlarged size, so a shorter buffer is never read past its end.
+     */
     const auto prefix = validate_prefix(
-        input->struct_size, FLY_SESSION_INPUT_V2_SIZE, input->abi_version);
+        input->struct_size, FLY_SESSION_INPUT_V2_R0_SIZE, input->abi_version);
     if (prefix != FLY_SESSION_V2_OK)
         return prefix;
     const auto scope_prefix = validate_prefix(
@@ -497,6 +525,21 @@ extern "C" fly_session_result_v2 fly_session_submit_input_v2(
         !any_nonzero(input->capture_clock.boot_generation,
                      sizeof(input->capture_clock.boot_generation)))
         return FLY_SESSION_V2_INVALID_ARGUMENT;
+    if (input->struct_size >= FLY_SESSION_INPUT_V2_SIZE)
+    {
+        /*
+         * A DUAL port mask is one byte wide (the canonical input contract's
+         * kDualFullPortMaskV1). Bits above it are malformed input, not a d-pad
+         * conflict: an impossible UP+DOWN / LEFT+RIGHT pair is legal on the wire
+         * and is normalized by the engine before it is ever built into a
+         * canonical bundle.
+         */
+        for (std::uint32_t port = 0; port < FLY_SESSION_DUAL_PORT_COUNT_V2; ++port)
+        {
+            if ((input->port_mask[port] & ~0xFFu) != 0u)
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
+        }
+    }
     return engine->implementation->submit_input(*input);
 }
 

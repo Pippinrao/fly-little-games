@@ -124,12 +124,21 @@ extern "C" fly_session_result_v2 fly_session_view_read_v2(
     {
         return FLY_SESSION_V2_INVALID_ARGUMENT;
     }
-    if (out_snapshot->struct_size < FLY_SESSION_SNAPSHOT_V2_SIZE ||
+    /*
+     * Tail-append compatibility: the pre-DUAL prefix is the required size, and
+     * the copy is bounded by what the caller declared, so an older reader is
+     * served the older fields and never has its buffer overrun by the appended
+     * DUAL block. Requiring only the prefix is what keeps the append additive.
+     */
+    if (out_snapshot->struct_size < FLY_SESSION_SNAPSHOT_V2_R0_SIZE ||
         out_snapshot->abi_version != FLY_SESSION_ABI_VERSION_2)
     {
         return FLY_SESSION_V2_ABI_MISMATCH;
     }
-    *out_snapshot = view->snapshot;
+    const auto declared = out_snapshot->struct_size;
+    const auto available = FLY_SESSION_SNAPSHOT_V2_SIZE;
+    const auto copied = declared < available ? declared : available;
+    std::memcpy(out_snapshot, &view->snapshot, copied);
     return FLY_SESSION_V2_OK;
 }
 

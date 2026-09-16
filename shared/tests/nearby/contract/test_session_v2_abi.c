@@ -39,6 +39,36 @@ _Static_assert(offsetof(fly_session_input_v2, abi_version) == 4,
 _Static_assert(sizeof(((fly_session_input_v2*)0)->buttons) == 4,
                "input buttons preserve the complete mask");
 
+/* DUAL tail appends, checked from a C consumer. */
+_Static_assert(FLY_SESSION_DUAL_PORT_COUNT_V2 == 4, "DUAL port count");
+_Static_assert(FLY_SESSION_INPUT_V2_R0_SIZE ==
+                   offsetof(fly_session_input_v2, port_mask),
+               "the input R0 prefix stops before the DUAL port mask");
+_Static_assert(FLY_SESSION_INPUT_V2_SIZE ==
+                   FLY_SESSION_INPUT_V2_R0_SIZE +
+                       FLY_SESSION_DUAL_PORT_COUNT_V2 * 4,
+               "the DUAL port mask is a pure tail append");
+_Static_assert(offsetof(fly_session_snapshot_v2, dual_mode) ==
+                   FLY_SESSION_SNAPSHOT_V2_R0_SIZE,
+               "the snapshot R0 prefix stops before the DUAL block");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE >
+                   FLY_SESSION_SNAPSHOT_V2_R0_SIZE,
+               "the DUAL snapshot block is appended");
+_Static_assert(FLY_SESSION_PORTS_V2_R1_SIZE ==
+                   offsetof(fly_session_ports_v2, dual_runtime),
+               "the pre-DUAL provider table stops before the runtime slot");
+_Static_assert(FLY_SESSION_PORTS_V2_SIZE > FLY_SESSION_PORTS_V2_R1_SIZE,
+               "the DUAL runtime slot is appended");
+_Static_assert(offsetof(fly_session_dual_runtime_port_v2, struct_size) == 0,
+               "DUAL runtime size prefix");
+_Static_assert(offsetof(fly_session_dual_runtime_port_v2, load) >
+                   offsetof(fly_session_dual_runtime_port_v2, release),
+               "the DUAL runtime keeps the provider retain/release prefix");
+_Static_assert(FLY_SESSION_DUAL_FREEZE_TRANSPORT_TERMINAL_V2 == 6,
+               "freeze vocabulary matches the frozen DUAL seam");
+_Static_assert(FLY_SESSION_DUAL_FREEZE_SEAT_OR_AUTHORITY_CHANGED_V2 == 9,
+               "freeze vocabulary matches the frozen DUAL seam");
+
 int main(void)
 {
     fly_session_v2_t* engine = NULL;
