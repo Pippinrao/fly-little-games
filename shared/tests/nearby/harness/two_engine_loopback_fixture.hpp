@@ -2911,6 +2911,22 @@ public:
     {
         return gatt_reassembly_mismatches_;
     }
+
+    /*
+     * How many TAMPERED logical messages were actually accepted by the receiving
+     * engine's byte-event intake. This is the counter that separates "the harness
+     * rewrote a byte of a record that then crossed" from "the harness rewrote a
+     * byte that never left", and without it a negative case that still reaches
+     * the lobby cannot be attributed to the engine at all.
+     */
+    void note_tampered_group_delivered() noexcept
+    {
+        ++tampered_groups_delivered_;
+    }
+    [[nodiscard]] std::uint32_t tampered_logical_delivered() const noexcept
+    {
+        return tampered_groups_delivered_;
+    }
     [[nodiscard]] std::uint32_t logical_tamper_body_index() const noexcept
     {
         return gatt_tamper_index_;
@@ -2952,17 +2968,21 @@ public:
             (static_cast<std::size_t>(logical[5]) << 16u) |
             (static_cast<std::size_t>(logical[6]) << 8u) |
             static_cast<std::size_t>(logical[7]);
-        if (body_size == 0u || logical.size() != 8u + body_size + 32u)
+        if (body_size == 0u || logical.size() < 8u + body_size + 32u)
         {
-            /* Counted, not asserted: this is a limitation of the tamper HOOK's
-             * own fragment-to-logical reassembly, not a product failure, and a
-             * test that asserted it would be asserting a harness bug. It is
-             * reported through `logical_tamper_reassembly_mismatches()` so a
-             * caller can refuse to draw conclusions from a run where it happened.
+            /* The group the relay hands over starts at its own delivery
+             * watermark, which a BACKPRESSURE return can leave in the MIDDLE of a
+             * logical message; such a group is not this record's boundary and is
+             * not a harness error. It is COUNTED so a run where it happened is
+             * visible, and `logical_tamper_reassembly_mismatches()` lets a caller
+             * refuse to draw conclusions from one.
              */
             ++gatt_reassembly_mismatches_;
             return false;
         }
+        /* The record is the PREFIX of the reassembled bytes: anything past it
+         * belongs to the next logical message and must cross untouched. */
+        const std::size_t record_size = 8u + body_size + 32u;
         std::size_t index = gatt_tamper_.body_index;
         if (index == kLastBodyByte) index = body_size - 1u;
         if (index >= body_size)
@@ -2977,22 +2997,23 @@ public:
         gatt_tamper_before_ = logical[absolute];
         logical[absolute] = static_cast<std::uint8_t>(
             gatt_tamper_before_ ^ gatt_tamper_.xor_mask);
-        /* Recompute the record's own trailing integrity hash. */
+        /* Recompute THIS record's own trailing integrity hash. */
         const char* domain =
             logical[0] == 2u ? "flynes-gatt-logical-v2" : "flynes-gatt-logical-v1";
         const auto digest =
             wire::domain_hash(domain, logical.data(), 8u + body_size);
         std::copy(digest.begin(), digest.end(),
                   logical.begin() + static_cast<std::ptrdiff_t>(8u + body_size));
-        /* Write the whole logical message back into the same fragment payloads. */
+        /* Write the record back into the same fragment payloads, only as far as
+         * the record goes. */
         std::size_t cursor = 0;
         for (auto& fragment : *group)
         {
             const std::size_t payload = fragment.size() - header;
-            std::copy(logical.begin() + static_cast<std::ptrdiff_t>(cursor),
-                      logical.begin() + static_cast<std::ptrdiff_t>(cursor + payload),
-                      fragment.begin() + static_cast<std::ptrdiff_t>(header));
-            cursor += payload;
+            for (std::size_t offset = 0; offset < payload && cursor < record_size;
+                 ++offset, ++cursor)
+                fragment[header + offset] = logical[cursor];
+            if (cursor >= record_size) break;
         }
         ++tampered_logical_;
         /* A single-occurrence rule is spent after one injection; an "every
@@ -3101,6 +3122,7 @@ private:
     std::uint32_t gatt_tamper_index_ = 0;
     std::uint8_t gatt_tamper_before_ = 0;
     std::uint32_t gatt_reassembly_mismatches_ = 0;
+    std::uint32_t tampered_groups_delivered_ = 0;
 };
 
 /*
@@ -4017,6 +4039,40 @@ struct RelayDirectionState final
      */
     std::vector<std::vector<std::uint8_t>> delivered;
     std::vector<std::vector<std::uint8_t>> delivered_acks;
+    /*
+     * W3 tamper matrix: fragments that must be delivered INSTEAD of the source's
+     * own, stored per source-fragment index and PERSISTENTLY.
+     *
+     * This has to live in the direction's state rather than in a per-attempt
+     * local: a BACKPRESSURE return abandons the attempt and the fragment is
+     * offered again on a later round, so a tamper applied to a throw-away copy
+     * would simply be discarded and the ORIGINAL bytes would cross - which is
+     * exactly the bug that made three tamper cases look fail-open when nothing
+     * had in fact been tampered on the wire.
+     */
+    std::vector<std::size_t> replaced_index;
+    std::vector<std::vector<std::uint8_t>> replaced_bytes;
+    int replaced_delivered = 0;
+
+    void remember_replacement(std::size_t index, std::vector<std::uint8_t> bytes)
+    {
+        for (std::size_t slot = 0; slot < replaced_index.size(); ++slot)
+            if (replaced_index[slot] == index)
+            {
+                replaced_bytes[slot] = std::move(bytes);
+                return;
+            }
+        replaced_index.push_back(index);
+        replaced_bytes.push_back(std::move(bytes));
+    }
+
+    [[nodiscard]] const std::vector<std::uint8_t>* replacement_at(
+        std::size_t index) const
+    {
+        for (std::size_t slot = 0; slot < replaced_index.size(); ++slot)
+            if (replaced_index[slot] == index) return &replaced_bytes[slot];
+        return nullptr;
+    }
 };
 
 struct QuicDirectionState final
@@ -4211,33 +4267,50 @@ inline void relay_one_direction(EngineFixture& source, RelayDirectionState& stat
          * ordinary path still delivers the source's own fragment object without
          * a copy and without a chance of being altered.
          */
-        std::vector<std::vector<std::uint8_t>> tampered_group;
+        /*
+         * W3 tamper matrix. The armed rule is applied ONCE per logical message and
+         * the RESULT is remembered in the direction's state, so a retry after
+         * BACKPRESSURE re-offers the same tampered bytes instead of silently
+         * falling back to the sender's originals.
+         */
         const std::size_t group_begin = state.fragments_relayed;
         if (transport.logical_tamper_armed())
         {
-            tampered_group.assign(
+            std::vector<std::vector<std::uint8_t>> group(
                 source.discovery.written_fragments.begin() +
                     static_cast<std::ptrdiff_t>(group_begin),
                 source.discovery.written_fragments.begin() +
                     static_cast<std::ptrdiff_t>(stop));
-            transport.tamper_logical_group(
-                source_is_peripheral
-                    ? LoopbackTransport::QuicFilter::PeripheralToCentral
-                    : LoopbackTransport::QuicFilter::CentralToPeripheral,
-                &tampered_group);
+            if (transport.tamper_logical_group(
+                    source_is_peripheral
+                        ? LoopbackTransport::QuicFilter::PeripheralToCentral
+                        : LoopbackTransport::QuicFilter::CentralToPeripheral,
+                    &group))
+                for (std::size_t slot = 0; slot < group.size(); ++slot)
+                    state.remember_replacement(group_begin + slot,
+                                               std::move(group[slot]));
         }
+        int replacements_delivered = 0;
         for (std::size_t index = group_begin; index < stop; ++index)
         {
             /* `group_begin`, not `state.fragments_relayed`: the watermark advances
              * inside this loop, so subtracting it would re-deliver the first
              * fragment of the group forever. */
+            const std::vector<std::uint8_t>* replacement =
+                state.replacement_at(index);
             const std::vector<std::uint8_t>& fragment =
-                tampered_group.empty()
-                    ? source.discovery.written_fragments[index]
-                    : tampered_group[index - group_begin];
+                replacement != nullptr
+                    ? *replacement
+                    : source.discovery.written_fragments[index];
             if (!relay_fragment_once(sink, state, fragment, &state.delivered))
                 return;
+            if (replacement != nullptr) ++replacements_delivered;
             ++state.fragments_relayed;
+        }
+        if (replacements_delivered > 0)
+        {
+            state.replaced_delivered += replacements_delivered;
+            transport.note_tampered_group_delivered();
         }
     }
 

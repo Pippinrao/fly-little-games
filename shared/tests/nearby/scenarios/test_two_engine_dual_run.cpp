@@ -296,7 +296,13 @@ void the_two_public_engines_agree_on_their_semantic_state()
     check(run.inviter_link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
               run.joiner_link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
           "BOTH public engines complete the positive path to "
-          "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 over the real loopback QUIC link");
+          "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 with the engines really driving "
+          "every QUIC port primitive (listen/connect, handshake inspection, "
+          "exporter, bidi streams, write, granted read) over the fixture's "
+          "in-process loopback transport. This is NOT a real-Quinn claim: the "
+          "Rust provider is exercised separately by `flynes_loopback_quic_probe` "
+          "and `flynes_quic_provider_linkage`, and `LoopbackTransport` is a "
+          "test-side transport, not the product one");
 
     /* The semantic state SEQUENCE: both ends really walked the same ordered path
      * through AUTHENTICATING before the lobby, measured mid-run rather than
