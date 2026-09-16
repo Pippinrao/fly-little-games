@@ -102,6 +102,7 @@ PayloadContract contract_for(std::uint32_t kind) noexcept
     case FLY_SESSION_PROVIDER_BEARER_CREDENTIAL_V2:
     case FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2:
     case FLY_SESSION_PROVIDER_QUIC_HANDSHAKE_V2:
+    case FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2:
         return {PayloadForm::Hash, 1};
     case FLY_SESSION_PROVIDER_QUIC_STATS_V2:
         return {PayloadForm::Metrics, 1};

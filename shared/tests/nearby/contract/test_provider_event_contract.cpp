@@ -187,12 +187,13 @@ void test_every_payload_kind_and_buffer_lifetime()
         check(destroyed.load() == 1, "parsed event releases buffer exactly once");
     }
 
-    const std::array<std::uint32_t, 5> hash_kinds{{
+    const std::array<std::uint32_t, 6> hash_kinds{{
         FLY_SESSION_PROVIDER_KEY_HANDLE_V2,
         FLY_SESSION_PROVIDER_TLS_MATERIAL_V2,
         FLY_SESSION_PROVIDER_BEARER_CREDENTIAL_V2,
         FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2,
-        FLY_SESSION_PROVIDER_QUIC_HANDSHAKE_V2}};
+        FLY_SESSION_PROVIDER_QUIC_HANDSHAKE_V2,
+        FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2}};
     for (const auto kind : hash_kinds)
     {
         const std::array<std::uint8_t, 1> bytes{{4}};

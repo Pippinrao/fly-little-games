@@ -454,7 +454,6 @@ private:
     ProviderOperationJournal operations_{1};
     LinkHandshakeStartV1 start_{};
     std::optional<LinkHandshakeEffect> pending_{};
-    fly_session_result_v2 cancel_result_ = FLY_SESSION_V2_CANCELLED;
     /* gap 4: the Control stream handle this scheduler opened/accepted, and the
      * Control bytes not yet forming a complete frame. */
     fly_session_resource_handle_v2 control_stream_ = 0;

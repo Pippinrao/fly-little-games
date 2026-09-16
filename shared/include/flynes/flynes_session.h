@@ -1361,7 +1361,15 @@ enum fly_session_authenticated_operation_payload_kind_v2
     FLY_SESSION_PROVIDER_QUIC_DATA_V2 = 284,
     FLY_SESSION_PROVIDER_QUIC_PAYLOAD_BUDGET_V2 = 285,
     FLY_SESSION_PROVIDER_QUIC_STATS_V2 = 286,
-    FLY_SESSION_PROVIDER_QUIC_END_V2 = 287
+    FLY_SESSION_PROVIDER_QUIC_END_V2 = 287,
+    /*
+     * Content catalog completion. Hash form, terminal = 1, same shape as
+     * OBJECT_IMMUTABLE: hash[32] = SHA256("flynes-content-choice-v1" ||
+     * u32be(len) || exact record) and resource carries the queried index + 1
+     * (never zero). Buffer-form provider events cannot terminate a journaled
+     * operation, so this kind is hash-shaped on purpose.
+     */
+    FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2 = 290
 };
 
 typedef struct fly_session_provider_resource_event_v2

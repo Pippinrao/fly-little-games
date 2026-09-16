@@ -298,6 +298,20 @@ add_library(flynes_session STATIC
     src/session/flynes_session_v2.cpp
     src/session/engine/session_engine.cpp
     src/session/view/session_view.cpp
+    src/session/dual/canonical_input.cpp
+    src/session/dual/canonical_input_wire.cpp
+    src/session/dual/input_window.cpp
+    src/session/dual/dual_run_scheduler.cpp
+    src/session/dual/dual_state_digest.cpp
+    src/session/dual/dual_runtime_adapter.cpp
+    src/session/dual/dual_session_controller.cpp
+    src/session/content/content_offer_scheduler.cpp
+    src/session/content/content_offer_wire.cpp
+    src/session/content/content_transfer_controller.cpp
+    src/session/recovery/link_activity_watchdog.cpp
+    src/session/recovery/input_sequence_ledger.cpp
+    src/session/recovery/durable_root_store.cpp
+    src/session/recovery/recovery_reducer.cpp
 )
 target_include_directories(flynes_session PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -349,7 +363,8 @@ option(FLYNES_ENABLE_RUST_QUIC_PROVIDER
     "Build and link the Rust nearby QUIC provider (requires cargo)" ON)
 
 if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
-    find_program(FLYNES_CARGO_EXECUTABLE cargo)
+    find_program(FLYNES_CARGO_EXECUTABLE cargo
+        HINTS "$ENV{HOME}/.cargo/bin" "$ENV{USERPROFILE}/.cargo/bin")
     if(NOT FLYNES_CARGO_EXECUTABLE)
         message(STATUS
             "nearby QUIC provider: cargo not found; the provider target is disabled")
@@ -1659,6 +1674,127 @@ if(FLYNES_BUILD_TESTS)
              COMMAND flynes_nearby_dual_runtime_seam_test)
     set_tests_properties(nearby_dual_runtime_seam PROPERTIES
         LABELS "nearby_integration;nearby_protocol")
+
+    # Gap A+C: two public engines, content catalog, START_DUAL, 600-frame DUAL.
+    add_executable(flynes_two_engine_dual_mvp_test
+        tests/nearby/integration/test_two_engine_dual_mvp.cpp
+        tests/nearby/harness/two_engine_loopback_fixture.cpp)
+    target_link_libraries(flynes_two_engine_dual_mvp_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_dual_mvp_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby
+    )
+    target_compile_features(flynes_two_engine_dual_mvp_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_dual_mvp_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_dual_mvp_test)
+    add_test(NAME flynes_two_engine_dual_mvp
+             COMMAND flynes_two_engine_dual_mvp_test)
+    set_tests_properties(flynes_two_engine_dual_mvp PROPERTIES
+        LABELS "nearby_integration")
+
+    # ENG-01: receive W3 pair/link tamper negatives. LoopbackTransport is the
+    # in-process fixture, not Quinn; a green matrix is L1 engine fail-closed
+    # evidence only. Do not copy W3's older dual_run/recovery scenario binaries:
+    # W0 already has test_two_engine_dual_mvp and recovery/content sources.
+    add_executable(flynes_two_engine_tamper_matrix_test
+        tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
+        tests/nearby/harness/two_engine_loopback_fixture.cpp)
+    target_link_libraries(flynes_two_engine_tamper_matrix_test PRIVATE flynes_session)
+    target_include_directories(flynes_two_engine_tamper_matrix_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
+    target_compile_features(flynes_two_engine_tamper_matrix_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_two_engine_tamper_matrix_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_two_engine_tamper_matrix_test)
+    add_test(NAME flynes_two_engine_tamper_matrix
+             COMMAND flynes_two_engine_tamper_matrix_test)
+    set_tests_properties(flynes_two_engine_tamper_matrix PROPERTIES
+        LABELS "nearby_integration;nearby_protocol;nearby_auth")
+
+    # Task 11 / CONTENT-DUAL step 1: offer/check/permission state machine.
+    add_executable(flynes_content_offer_scheduler_test
+        tests/nearby/integration/test_content_offer_scheduler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/content/content_offer_scheduler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire/sha256.cpp
+    )
+    target_include_directories(flynes_content_offer_scheduler_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/content
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+    )
+    target_compile_features(flynes_content_offer_scheduler_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_content_offer_scheduler_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_content_offer_scheduler_test)
+    add_test(NAME flynes_content_offer_scheduler
+             COMMAND flynes_content_offer_scheduler_test)
+    set_tests_properties(flynes_content_offer_scheduler PROPERTIES
+        LABELS "nearby_integration;nearby_contract")
+
+    add_executable(flynes_content_transfer_controller_test
+        tests/nearby/integration/test_content_transfer_controller.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/content/content_offer_scheduler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/content/content_offer_wire.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/content/content_transfer_controller.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire/sha256.cpp
+    )
+    target_include_directories(flynes_content_transfer_controller_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/content
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+    )
+    target_compile_features(flynes_content_transfer_controller_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_content_transfer_controller_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_content_transfer_controller_test)
+    add_test(NAME flynes_content_transfer_controller
+             COMMAND flynes_content_transfer_controller_test)
+    set_tests_properties(flynes_content_transfer_controller PROPERTIES
+        LABELS "nearby_integration;nearby_contract")
+
+    add_executable(flynes_link_activity_watchdog_test
+        tests/nearby/recovery/test_link_activity_watchdog.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery/link_activity_watchdog.cpp
+    )
+    target_include_directories(flynes_link_activity_watchdog_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery
+    )
+    target_compile_features(flynes_link_activity_watchdog_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_link_activity_watchdog_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_link_activity_watchdog_test)
+    add_test(NAME flynes_link_activity_watchdog
+             COMMAND flynes_link_activity_watchdog_test)
+    set_tests_properties(flynes_link_activity_watchdog PROPERTIES
+        LABELS "nearby_integration;nearby_contract")
+
+    add_executable(flynes_recovery_rec_test
+        tests/nearby/recovery/test_recovery_rec.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery/link_activity_watchdog.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery/input_sequence_ledger.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery/durable_root_store.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery/recovery_reducer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire/sha256.cpp
+    )
+    target_include_directories(flynes_recovery_rec_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/recovery
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+    )
+    target_compile_features(flynes_recovery_rec_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_recovery_rec_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_recovery_rec_test)
+    add_test(NAME flynes_recovery_rec
+             COMMAND flynes_recovery_rec_test)
+    set_tests_properties(flynes_recovery_rec PROPERTIES
+        LABELS "nearby_integration;nearby_contract")
 endif()
 # =================== end Task 10 block ==============================
 

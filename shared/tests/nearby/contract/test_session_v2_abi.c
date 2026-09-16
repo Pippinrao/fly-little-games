@@ -80,6 +80,8 @@ _Static_assert(offsetof(fly_session_content_port_v2, struct_size) == 0,
 _Static_assert(offsetof(fly_session_content_port_v2, query) >
                    offsetof(fly_session_content_port_v2, release),
                "the content port keeps the provider retain/release prefix");
+_Static_assert(FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2 == 290,
+               "content choice completions use the frozen hash payload kind");
 _Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE == 56,
                "the content choice header is frozen");
 _Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_MAX_NAME == 64,

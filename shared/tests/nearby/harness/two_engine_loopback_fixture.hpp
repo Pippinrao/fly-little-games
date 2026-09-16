@@ -73,11 +73,23 @@ inline void check(bool value, const char* message)
 inline void retain_noop(void*) {}
 inline void release_noop(void*) {}
 
+inline std::uint64_t g_loopback_clock_ns = 1;
+
+inline void set_loopback_clock_ns(std::uint64_t ns) noexcept
+{
+    g_loopback_clock_ns = ns;
+}
+
+inline void reset_loopback_clock_ns() noexcept
+{
+    g_loopback_clock_ns = 1;
+}
+
 inline fly_session_result_v2 read_clock(void*, fly_session_clock_sample_v2* out)
 {
     if (!out) return FLY_SESSION_V2_INVALID_ARGUMENT;
-    out->continuous_ns = 1;
-    out->suspend_inclusive = 1;
+    out->continuous_ns = g_loopback_clock_ns;
+    out->suspend_inclusive = g_loopback_clock_ns;
     out->boot_generation[0] = 1;
     return FLY_SESSION_V2_OK;
 }
@@ -414,6 +426,44 @@ void loopback_deliver_verification(fly_session_inbox_v2_t* inbox,
                                    fly_session_result_v2 result);
 
 class LoopbackTransport;
+
+/*
+ * The provider clock, one per engine.
+ *
+ * This harness used to answer every clock read with the constant 1, which makes
+ * a case about ELAPSED TIME inexpressible: a link interruption that lasts two
+ * seconds and a link that was never interrupted produced byte-identical clock
+ * samples. The value is now per-engine and a test can advance it, so the
+ * recovery matrix can state how much time passed. It stays a pure function of
+ * that value - no wall clock, no randomness - and the default is the old
+ * constant, so every existing case is unchanged.
+ */
+struct ClockFixtureV1 final
+{
+    std::uint64_t continuous_ns = 1;
+    std::uint64_t suspend_inclusive_ns = 1;
+    int reads = 0;
+
+    /* Advance BOTH clocks by `milliseconds`, the way a real clock does. */
+    void advance_ms(std::uint64_t milliseconds) noexcept
+    {
+        continuous_ns += milliseconds * UINT64_C(1000000);
+        suspend_inclusive_ns += milliseconds * UINT64_C(1000000);
+    }
+
+    static fly_session_result_v2 read(void* context,
+                                      fly_session_clock_sample_v2* out)
+    {
+        if (context == nullptr || out == nullptr)
+            return FLY_SESSION_V2_INVALID_ARGUMENT;
+        auto* self = static_cast<ClockFixtureV1*>(context);
+        ++self->reads;
+        out->continuous_ns = self->continuous_ns;
+        out->suspend_inclusive = self->suspend_inclusive_ns;
+        out->boot_generation[0] = 1;
+        return FLY_SESSION_V2_OK;
+    }
+};
 
 struct EngineFixture final
 {
@@ -900,6 +950,16 @@ struct EngineFixture final
         int resolves = 0;
         int cancels = 0;
         fly_session_result_v2 cancel_result = FLY_SESSION_V2_ACCEPTED;
+        /*
+         * W3 tamper matrix (default off). When set, the credential THIS provider
+         * mints is encoded from canonical join parameters with one field byte
+         * XORed. The credential therefore no longer matches the plan both ends
+         * agreed on, and the receiving engine's own byte-for-byte comparison of
+         * the canonical join parameters is what has to reject it.
+         */
+        bool tamper_join_params = false;
+        std::uint8_t tamper_join_params_mask = 0x01;
+        int join_params_tampered = 0;
         fly_session_op_token_v2 last_token{};
         std::vector<std::uint8_t> last_policy;
         std::vector<std::uint8_t> last_plan;
@@ -1181,6 +1241,8 @@ struct EngineFixture final
         int exporters = 0;
         int accepted_bidi = 0;
         int opened_bidi = 0;
+        int rom_streams = 0;
+        std::uint32_t last_stream_kind = 0;
         int writes = 0;
         int reads = 0;
         int cancels = 0;
@@ -1244,6 +1306,16 @@ struct EngineFixture final
         int exporter_results = 0;
         std::array<std::uint8_t, 32> last_handshake_hash{};
         std::array<std::uint8_t, 32> last_exporter{};
+        /*
+         * W3 tamper matrix (default off). When set, THIS end is handed
+         * `exporter_override` instead of the link's own TLS exporter - i.e. it is
+         * told a different exporter than its peer. Both engines then derive
+         * different channel ids, so the ChannelBind proof/ACK can no longer
+         * verify. The value is still a provider answer, never a peer byte.
+         */
+        bool use_exporter_override = false;
+        std::array<std::uint8_t, 32> exporter_override{};
+        int exporter_overrides = 0;
         fly_session_inbox_v2_t* inbox = nullptr;
 
         ~Quic() { fly_session_inbox_release_v2(inbox); }
@@ -1316,8 +1388,12 @@ struct EngineFixture final
             std::uint32_t stream_kind, fly_session_inbox_v2_t* inbox)
         {
             auto* self = static_cast<Quic*>(context);
-            if (stream_kind != 1) return FLY_SESSION_V2_INVALID_ARGUMENT;
+            if (stream_kind != 1 && stream_kind != 3 && stream_kind != 5)
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->opened_bidi;
+            self->last_stream_kind = stream_kind;
+            if (stream_kind == 5)
+                ++self->rom_streams;
             self->capture(token, connection, inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -1328,8 +1404,12 @@ struct EngineFixture final
             std::uint32_t stream_kind, fly_session_inbox_v2_t* inbox)
         {
             auto* self = static_cast<Quic*>(context);
-            if (stream_kind != 1) return FLY_SESSION_V2_INVALID_ARGUMENT;
+            if (stream_kind != 1 && stream_kind != 3 && stream_kind != 5)
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->accepted_bidi;
+            self->last_stream_kind = stream_kind;
+            if (stream_kind == 5)
+                ++self->rom_streams;
             self->capture(token, connection, inbox);
             return FLY_SESSION_V2_ACCEPTED;
         }
@@ -1578,8 +1658,141 @@ struct EngineFixture final
         }
     } object_store;
 
+    /*
+     * Optional one-choice content catalog. Default off: engines then publish no
+     * SELECT_CONTENT, matching today's empty lobby. Index 0 is the one record;
+     * any other index is synchronous EMPTY (never an async result>OK event).
+     */
+    struct Content final
+    {
+        std::uint32_t item_count = 1;
+        struct Request final
+        {
+            fly_session_op_token_v2 token{};
+            std::uint32_t index = 0;
+        };
+        std::vector<Request> queries;
+        int cancels = 0;
+        fly_session_inbox_v2_t* inbox = nullptr;
+        ~Content() { fly_session_inbox_release_v2(inbox); }
+
+        static fly_session_result_v2 query(
+            void* context, const fly_session_op_token_v2* token,
+            std::uint32_t index, fly_session_inbox_v2_t* inbox)
+        {
+            if (!token || !inbox) return FLY_SESSION_V2_INVALID_ARGUMENT;
+            auto* self = static_cast<Content*>(context);
+            if (index >= self->item_count) return FLY_SESSION_V2_EMPTY;
+            Request request{};
+            request.token = *token;
+            request.index = index;
+            self->queries.push_back(request);
+            fly_session_inbox_retain_v2(inbox);
+            fly_session_inbox_release_v2(self->inbox);
+            self->inbox = inbox;
+            return FLY_SESSION_V2_ACCEPTED;
+        }
+
+        static fly_session_result_v2 cancel(
+            void* context, const fly_session_op_token_v2*)
+        {
+            ++static_cast<Content*>(context)->cancels;
+            return FLY_SESSION_V2_OK;
+        }
+    } content;
+
+    /*
+     * Deterministic fake DualRuntimePort. Load/step/export are synchronous so a
+     * 600-frame run does not need a ROM: each step mixes the canonical four-port
+     * masks into a 32-byte state that export_state returns verbatim.
+     */
+    struct DualRuntime final
+    {
+        std::uint64_t frame = 0;
+        std::array<std::uint8_t, 32> state{};
+        fly_session_dual_content_ref_v2 last_content{};
+        int loads = 0;
+        int steps = 0;
+        int exports = 0;
+
+        static fly_session_result_v2 load(
+            void* context, const fly_session_dual_content_ref_v2* content)
+        {
+            auto* self = static_cast<DualRuntime*>(context);
+            ++self->loads;
+            self->last_content = *content;
+            self->frame = 0;
+            std::memcpy(self->state.data(), content->content_hash, 32u);
+            return FLY_SESSION_V2_OK;
+        }
+
+        static fly_session_result_v2 step(
+            void* context, const fly_session_dual_input_bundle_v2* input,
+            fly_session_dual_frame_outcome_v2* out)
+        {
+            auto* self = static_cast<DualRuntime*>(context);
+            ++self->steps;
+            for (std::uint32_t port = 0; port < FLY_SESSION_DUAL_PORT_COUNT_V2;
+                 ++port)
+            {
+                const auto mix = static_cast<std::uint8_t>(
+                    input->ports[port].mask ^
+                    (input->ports[port].input_sequence & 0xffu) ^ port);
+                self->state[port % 32u] =
+                    static_cast<std::uint8_t>(self->state[port % 32u] + mix);
+                self->state[(port + 16u) % 32u] ^= mix;
+            }
+            self->state[31] = static_cast<std::uint8_t>(
+                self->state[31] + static_cast<std::uint8_t>(input->frame_index));
+            ++self->frame;
+            *out = {};
+            out->frame_index = input->frame_index;
+            out->honoured_port_mask = 0x3u;
+            out->applied_input_sequence[0] = input->ports[0].input_sequence;
+            out->applied_input_sequence[1] = input->ports[1].input_sequence;
+            return FLY_SESSION_V2_OK;
+        }
+
+        static fly_session_result_v2 export_state(
+            void* context, std::uint8_t* out, std::size_t capacity,
+            std::size_t* out_written, std::uint8_t hash_out[32])
+        {
+            auto* self = static_cast<DualRuntime*>(context);
+            ++self->exports;
+            if (capacity < self->state.size())
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
+            std::memcpy(out, self->state.data(), self->state.size());
+            *out_written = self->state.size();
+            std::memcpy(hash_out, self->state.data(), 32u);
+            return FLY_SESSION_V2_OK;
+        }
+
+        static fly_session_result_v2 import_state(
+            void* context, const std::uint8_t* bytes, std::size_t size)
+        {
+            auto* self = static_cast<DualRuntime*>(context);
+            if (size != self->state.size())
+                return FLY_SESSION_V2_INVALID_ARGUMENT;
+            std::memcpy(self->state.data(), bytes, size);
+            return FLY_SESSION_V2_OK;
+        }
+
+        static fly_session_result_v2 state_digest(
+            void* context, std::uint64_t frame_index,
+            fly_session_dual_state_digest_v2* out)
+        {
+            auto* self = static_cast<DualRuntime*>(context);
+            *out = {};
+            std::memcpy(out->state, self->state.data(), 32u);
+            out->frame[0] = static_cast<std::uint8_t>(frame_index);
+            return FLY_SESSION_V2_OK;
+        }
+    } dual_runtime;
+
     DeterministicExecutor executor;
     Platform platform;
+    /* W3 recovery matrix: this engine's own advanceable clock. */
+    ClockFixtureV1 clock_fixture{};
     fly_session_clock_port_v2 clock{};
     fly_session_executor_port_v2 executor_port{};
     fly_session_platform_state_port_v2 platform_port{};
@@ -1591,6 +1804,8 @@ struct EngineFixture final
     fly_session_object_store_port_v2 object_store_port{};
     fly_session_bearer_port_v2 bearer_port{};
     fly_session_quic_port_v2 quic_port{};
+    fly_session_content_port_v2 content_port{};
+    fly_session_dual_runtime_port_v2 dual_runtime_port{};
     fly_session_ports_v2 ports{};
     fly_session_v2_t* engine = nullptr;
     /*
@@ -1615,14 +1830,20 @@ struct EngineFixture final
      * and which on-curve point a purpose maps to.
      */
     EngineFixture(LoopbackWorld& shared_world, LoopbackSide shared_side,
-                  bool secure_pairing_ports = true)
-        : EngineFixture(&shared_world, shared_side, secure_pairing_ports)
+                  bool secure_pairing_ports = true,
+                  bool enable_content = false,
+                  bool enable_dual_runtime = false,
+                  std::uint32_t content_items = 1)
+        : EngineFixture(&shared_world, shared_side, secure_pairing_ports,
+                        enable_content, enable_dual_runtime, content_items)
     {
     }
 
 private:
     EngineFixture(LoopbackWorld* shared_world, LoopbackSide shared_side,
-                  bool secure_pairing_ports)
+                  bool secure_pairing_ports, bool enable_content = false,
+                  bool enable_dual_runtime = false,
+                  std::uint32_t content_items = 1)
     {
         key.world = shared_world;
         key.side = shared_side;
@@ -1632,7 +1853,8 @@ private:
         clock.abi_version = FLY_SESSION_ABI_VERSION_2;
         clock.retain = retain_noop;
         clock.release = release_noop;
-        clock.read_continuous = read_clock;
+        clock.read_continuous = ClockFixtureV1::read;
+        clock.context = &clock_fixture;
         executor_port = executor.port();
         platform_port = platform.port();
         discovery_port = discovery.port();
@@ -1739,6 +1961,32 @@ private:
             ports.quic = &quic_port;
             ports.object_store = &object_store_port;
         }
+        if (enable_content)
+        {
+            content.item_count = content_items;
+            content_port.struct_size = FLY_SESSION_CONTENT_PORT_V2_SIZE;
+            content_port.abi_version = FLY_SESSION_ABI_VERSION_2;
+            content_port.context = &content;
+            content_port.retain = retain_noop;
+            content_port.release = release_noop;
+            content_port.query = Content::query;
+            content_port.cancel = Content::cancel;
+            ports.content = &content_port;
+        }
+        if (enable_dual_runtime)
+        {
+            dual_runtime_port.struct_size = FLY_SESSION_DUAL_RUNTIME_PORT_V2_SIZE;
+            dual_runtime_port.abi_version = FLY_SESSION_ABI_VERSION_2;
+            dual_runtime_port.context = &dual_runtime;
+            dual_runtime_port.retain = retain_noop;
+            dual_runtime_port.release = release_noop;
+            dual_runtime_port.load = DualRuntime::load;
+            dual_runtime_port.step = DualRuntime::step;
+            dual_runtime_port.export_state = DualRuntime::export_state;
+            dual_runtime_port.import_state = DualRuntime::import_state;
+            dual_runtime_port.state_digest = DualRuntime::state_digest;
+            ports.dual_runtime = &dual_runtime_port;
+        }
         fly_session_config_v2 config{};
         config.struct_size = FLY_SESSION_CONFIG_V2_SIZE;
         config.abi_version = FLY_SESSION_ABI_VERSION_2;
@@ -1785,6 +2033,30 @@ public:
         return value;
     }
 
+    std::vector<fly_session_game_choice_v2> game_choices()
+    {
+        fly_session_view_v2_t* view = nullptr;
+        check(fly_session_acquire_view_v2(engine, &view) == FLY_SESSION_V2_OK,
+              "view acquired for game choices");
+        fly_session_snapshot_v2 value{};
+        value.struct_size = FLY_SESSION_SNAPSHOT_V2_SIZE;
+        value.abi_version = FLY_SESSION_ABI_VERSION_2;
+        check(fly_session_view_read_v2(view, &value) == FLY_SESSION_V2_OK,
+              "view read for game choices");
+        std::vector<fly_session_game_choice_v2> choices(value.game_choice_count);
+        if (value.game_choice_count != 0)
+        {
+            std::uint32_t written = 0;
+            check(fly_session_view_copy_game_choices_v2(
+                      view, 0, choices.data(), value.game_choice_count,
+                      &written) == FLY_SESSION_V2_OK &&
+                      written == value.game_choice_count,
+                  "complete game choice page copied");
+        }
+        fly_session_view_release_v2(view);
+        return choices;
+    }
+
     fly_session_pairing_v2 pairing()
     {
         fly_session_view_v2_t* view = nullptr;
@@ -1808,6 +2080,50 @@ inline const fly_session_action_descriptor_v2* find_action(
     for (const auto& action : actions)
         if (action.action_kind == kind) return &action;
     return nullptr;
+}
+
+inline constexpr char kLoopbackContentNameV1[] = "loopback";
+
+inline std::array<std::uint8_t, 16> loopback_source_choice_ref_v1() noexcept
+{
+    std::array<std::uint8_t, 16> value{};
+    value.fill(0xC1);
+    return value;
+}
+
+inline std::array<std::uint8_t, 32> loopback_content_id_v1() noexcept
+{
+    std::array<std::uint8_t, 32> value{};
+    value.fill(0xD1);
+    return value;
+}
+
+inline std::vector<std::uint8_t> loopback_content_choice_record_v1()
+{
+    const auto name_size = static_cast<std::uint32_t>(
+        sizeof(kLoopbackContentNameV1) - 1u);
+    std::vector<std::uint8_t> record(
+        FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE + name_size, 0);
+    record[0] = 0;
+    record[1] = 1;
+    const auto choice = loopback_source_choice_ref_v1();
+    const auto content = loopback_content_id_v1();
+    std::copy(choice.begin(), choice.end(), record.begin() + 4);
+    std::copy(content.begin(), content.end(), record.begin() + 20);
+    record[52] = static_cast<std::uint8_t>(name_size >> 24u);
+    record[53] = static_cast<std::uint8_t>(name_size >> 16u);
+    record[54] = static_cast<std::uint8_t>(name_size >> 8u);
+    record[55] = static_cast<std::uint8_t>(name_size);
+    std::copy_n(reinterpret_cast<const std::uint8_t*>(kLoopbackContentNameV1),
+                name_size, record.begin() + 56);
+    return record;
+}
+
+inline std::array<std::uint8_t, 32> loopback_content_choice_hash_v1()
+{
+    const auto record = loopback_content_choice_record_v1();
+    return flynes::session::wire::domain_hash(
+        "flynes-content-choice-v1", record.data(), record.size());
 }
 
 inline std::vector<std::uint8_t> logical_v1(
@@ -2280,6 +2596,29 @@ inline void submit_reference(EngineFixture& fixture,
     fixture.executor.run_all();
 }
 
+inline void submit_choice(EngineFixture& fixture,
+                          const fly_session_action_descriptor_v2& descriptor,
+                          std::uint64_t request_id,
+                          const std::uint8_t choice_id[16])
+{
+    fly_session_action_v2 action{};
+    action.struct_size = FLY_SESSION_ACTION_V2_SIZE;
+    action.abi_version = FLY_SESSION_ABI_VERSION_2;
+    action.request_id = request_id;
+    action.expected_view_revision = fixture.snapshot().view_revision;
+    action.approval_token = descriptor.approval_token;
+    action.choice_size = FLY_SESSION_ACTION_CHOICE_V2_SIZE;
+    action.choice.struct_size = FLY_SESSION_ACTION_CHOICE_V2_SIZE;
+    action.choice.abi_version = FLY_SESSION_ABI_VERSION_2;
+    action.choice.choice_kind = FLY_SESSION_CHOICE_REFERENCE_V2;
+    if (choice_id)
+        std::memcpy(action.choice.choice_id, choice_id, 16u);
+    check(fly_session_submit_action_v2(fixture.engine, &action) ==
+              FLY_SESSION_V2_ACCEPTED,
+          "public SELECT_CONTENT action accepted for worker validation");
+    fixture.executor.run_all();
+}
+
 inline void start_responder_probe(EngineFixture& fixture, std::uint64_t request_id)
 {
     fixture.platform.ready();
@@ -2602,9 +2941,22 @@ public:
             facts.pin_verifier_invoked = true;
             facts.peer_certificate_verified = true;
             facts.der_spki_hash = fixture.quic.last_policy_spki;
-            check(facts.der_spki_hash == pin_,
-                  "the connector's own QUIC pin is the listener's real SPKI hash, "
-                  "so the facts the link reports are not a fabricated peer claim");
+            if (has_pin_override_)
+            {
+                /* W3 tamper matrix: the transport presents a certificate whose
+                 * SPKI the connector did NOT pin, while still reporting that it
+                 * verified it. Both booleans stay true, so the engine's own
+                 * comparison of the reported hash against its connect policy is
+                 * the only gate left - which is exactly the case this exercises. */
+                facts.der_spki_hash = pin_override_;
+            }
+            else
+            {
+                check(facts.der_spki_hash == pin_,
+                      "the connector's own QUIC pin is the listener's real SPKI "
+                      "hash, so the facts the link reports are not a fabricated "
+                      "peer claim");
+            }
         }
         std::array<std::uint8_t, wire::kQuicHandshakeFactsWireSizeV2> encoded{};
         if (wire::encode_quic_handshake_facts_v2(facts, &encoded) !=
@@ -2637,6 +2989,315 @@ public:
     [[nodiscard]] QuicFilter withheld_direction() const noexcept
     {
         return withheld_;
+    }
+
+    /*
+     * --------------------------------------------------------------------- *
+     * W3 tamper matrix: the transport's two explicit, narrowly-scoped faults.
+     *
+     * (1) `present_unpinned_certificate` makes the TLS facts this link reports
+     *     carry an SPKI the connector never pinned, while still claiming it
+     *     verified the peer. It is the man-in-the-middle case, and only the
+     *     engine's own policy comparison can catch it.
+     *
+     * (2) `tamper_with` XORs exactly ONE byte of exactly ONE unit, named by
+     *     (direction, selector, 1-based occurrence) and latched off after the
+     *     single injection. It cannot reorder, drop, duplicate or fabricate a
+     *     unit, it never runs unless a test armed it, and it changes the
+     *     SENDER'S OWN encoded bytes - i.e. it models an on-path attacker, not a
+     *     second protocol implementation. It is deliberately not a general
+     *     escape hatch: the selector vocabulary is closed (an app frame of a
+     *     given object kind, or a ChannelBind record on the bind stream).
+     * --------------------------------------------------------------------- */
+    void present_unpinned_certificate(std::array<std::uint8_t, 32> spki) noexcept
+    {
+        pin_override_ = spki;
+        has_pin_override_ = true;
+    }
+    void clear_pin_override() noexcept { has_pin_override_ = false; }
+    [[nodiscard]] bool pin_overridden() const noexcept
+    {
+        return has_pin_override_;
+    }
+
+    enum class TamperSelector : std::uint8_t
+    {
+        /* The Nth unit in this direction whose app-frame tag (bytes 4..5) equals
+         * `object_kind`. */
+        AppFrameOfTag = 0,
+        /* The Nth unit in this direction on the QUIC bind stream. Those records
+         * are the ChannelBind proof/ACK, which are NOT app frames
+         * (`[preamble] || u32be(len) || object`), so they cannot be named by a
+         * tag. */
+        BindStreamRecord = 1
+    };
+
+    struct TamperRule final
+    {
+        QuicFilter direction = QuicFilter::None;
+        TamperSelector selector = TamperSelector::AppFrameOfTag;
+        std::uint16_t object_kind = 0;
+        std::uint32_t occurrence = 1;
+        std::uint32_t byte_index = 0;
+        std::uint8_t xor_mask = 0x01;
+    };
+
+    void tamper_with(TamperRule rule) noexcept
+    {
+        tamper_ = rule;
+        tamper_armed_ = true;
+        tamper_occurrences_ = 0;
+    }
+    void clear_tamper() noexcept { tamper_armed_ = false; }
+    [[nodiscard]] bool tamper_armed() const noexcept { return tamper_armed_; }
+    [[nodiscard]] std::uint32_t tampered_units() const noexcept
+    {
+        return tampered_units_;
+    }
+    [[nodiscard]] std::uint32_t tampered_index() const noexcept
+    {
+        return tampered_index_;
+    }
+    [[nodiscard]] std::uint8_t tampered_before() const noexcept
+    {
+        return tampered_before_;
+    }
+    [[nodiscard]] std::uint8_t tampered_after() const noexcept
+    {
+        return tampered_after_;
+    }
+
+    /* The bind stream is stream position 0 on this link, and both ends are told
+     * the same handle for it, so this is the exact identity of the bind stream. */
+    [[nodiscard]] fly_session_resource_handle_v2 bind_stream_handle() const noexcept
+    {
+        return streams_.empty() ? 0 : streams_[0].handle;
+    }
+
+    /*
+     * Called once per STAGED unit - i.e. once per write the sender issued, in
+     * order - and reports whether the armed rule targets this unit. Pure
+     * bookkeeping: nothing is rewritten here.
+     */
+    [[nodiscard]] bool targets_unit(QuicFilter direction,
+                                    fly_session_resource_handle_v2 stream,
+                                    const std::vector<std::uint8_t>& bytes)
+    {
+        if (!tamper_armed_ || tamper_.direction != direction) return false;
+        bool matches = false;
+        if (tamper_.selector == TamperSelector::BindStreamRecord)
+            matches = stream != 0 && stream == bind_stream_handle();
+        else
+        {
+            if (bytes.size() < 6u) return false;
+            const auto tag = static_cast<std::uint16_t>(
+                (static_cast<std::uint16_t>(bytes[4]) << 8u) |
+                static_cast<std::uint16_t>(bytes[5]));
+            matches = tag == tamper_.object_kind;
+        }
+        if (!matches) return false;
+        ++tamper_occurrences_;
+        return tamper_occurrences_ == tamper_.occurrence;
+    }
+
+    /*
+     * Applies the armed rule to `bytes` in place and latches it off, so the
+     * fault is injected exactly once. A rule naming a byte the unit does not have
+     * is a test error and is REPORTED, never silently skipped: a tamper that
+     * never happened would make a negative case pass for the wrong reason.
+     */
+    bool apply_tamper(std::vector<std::uint8_t>* bytes)
+    {
+        if (bytes == nullptr || tamper_.byte_index >= bytes->size())
+        {
+            check(false,
+                  "the armed tamper names a byte the sender's own unit really has");
+            return false;
+        }
+        tampered_index_ = tamper_.byte_index;
+        tampered_before_ = (*bytes)[tamper_.byte_index];
+        (*bytes)[tamper_.byte_index] = static_cast<std::uint8_t>(
+            tampered_before_ ^ tamper_.xor_mask);
+        tampered_after_ = (*bytes)[tamper_.byte_index];
+        ++tampered_units_;
+        tamper_armed_ = false;
+        return true;
+    }
+
+    /*
+     * (3) `tamper_logical_with` injects at the OTHER wire boundary: the pre-QUIC
+     *     GATT relay, which carries the pair records (commit, reveal, signature,
+     *     key-confirm, credential) before any QUIC connection exists. It rewrites
+     *     exactly ONE byte of the BODY of exactly ONE logical message, named by
+     *     (direction, logical type, 1-based occurrence), and then recomputes that
+     *     record's own trailing integrity hash so the record stays internally
+     *     consistent.
+     *
+     *     Recomputing the hash is deliberate, not a convenience: the trailing
+     *     hash is an UNKEYED domain hash, so an on-path attacker recomputes it.
+     *     Leaving it stale would make the transport layer eat the tamper for free
+     *     and the negative case would prove nothing about the pair layer, which
+     *     is the layer under test. Nothing is reframed: the fragment count, order
+     *     and sizes are unchanged, so the sender's own stream shape is preserved.
+     */
+    enum class GattTamperSelector : std::uint8_t
+    {
+        /* The Nth logical message in this direction whose logical type equals
+         * `logical_type` (see wire::GattLogicalType). */
+        LogicalType = 0
+    };
+
+    static constexpr std::uint32_t kLastBodyByte = 0xFFFFFFFFu;
+
+    struct GattTamperRule final
+    {
+        /* `None` means "either direction", i.e. every logical message of the
+         * named type on this link. A pair record is written by BOTH ends and may
+         * be retransmitted, and an on-path attacker does not get to pick which
+         * copy arrives first, so the strong form of the case is to tamper every
+         * copy rather than only one end's first attempt. */
+        QuicFilter direction = QuicFilter::None;
+        GattTamperSelector selector = GattTamperSelector::LogicalType;
+        std::uint8_t logical_type = 0;
+        /* 1-based index among the matching messages, or 0 for ALL of them. */
+        std::uint32_t occurrence = 1;
+        /* Offset inside the logical message BODY. `kLastBodyByte` names the last
+         * body byte, which is where the trailing cryptographic material lives
+         * (a 64-byte signature, a 16-byte AEAD tag). */
+        std::uint32_t body_index = 0;
+        std::uint8_t xor_mask = 0x01;
+    };
+
+    void tamper_logical_with(GattTamperRule rule) noexcept
+    {
+        gatt_tamper_ = rule;
+        gatt_tamper_armed_ = true;
+        gatt_tamper_occurrences_ = 0;
+    }
+    void clear_logical_tamper() noexcept { gatt_tamper_armed_ = false; }
+    [[nodiscard]] bool logical_tamper_armed() const noexcept
+    {
+        return gatt_tamper_armed_;
+    }
+    [[nodiscard]] std::uint32_t tampered_logical_messages() const noexcept
+    {
+        return tampered_logical_;
+    }
+    /* Times the tamper hook could not reassemble a logical message it was asked
+     * about. Non-zero means the GATT tamper cases for that run prove nothing. */
+    [[nodiscard]] std::uint32_t logical_tamper_reassembly_mismatches() const noexcept
+    {
+        return gatt_reassembly_mismatches_;
+    }
+
+    /*
+     * How many TAMPERED logical messages were actually accepted by the receiving
+     * engine's byte-event intake. This is the counter that separates "the harness
+     * rewrote a byte of a record that then crossed" from "the harness rewrote a
+     * byte that never left", and without it a negative case that still reaches
+     * the lobby cannot be attributed to the engine at all.
+     */
+    void note_tampered_group_delivered() noexcept
+    {
+        ++tampered_groups_delivered_;
+    }
+    [[nodiscard]] std::uint32_t tampered_logical_delivered() const noexcept
+    {
+        return tampered_groups_delivered_;
+    }
+    [[nodiscard]] std::uint32_t logical_tamper_body_index() const noexcept
+    {
+        return gatt_tamper_index_;
+    }
+    [[nodiscard]] std::uint8_t logical_tamper_before() const noexcept
+    {
+        return gatt_tamper_before_;
+    }
+
+    /*
+     * Called by the relay with the fragment group that makes up ONE logical
+     * message, in order. Returns true when the armed rule rewrote a byte of it.
+     * The group is edited in place.
+     */
+    bool tamper_logical_group(QuicFilter direction,
+                              std::vector<std::vector<std::uint8_t>>* group)
+    {
+        if (!gatt_tamper_armed_ || group == nullptr || group->empty()) return false;
+        if (gatt_tamper_.direction != QuicFilter::None &&
+            gatt_tamper_.direction != direction)
+            return false;
+        const std::size_t header = wire::kGattPhysicalHeaderSize;
+        std::vector<std::uint8_t> logical;
+        for (const auto& fragment : *group)
+        {
+            if (fragment.size() <= header) return false;
+            logical.insert(logical.end(),
+                           fragment.begin() + static_cast<std::ptrdiff_t>(header),
+                           fragment.end());
+        }
+        if (logical.size() < wire::kGattLogicalMinSize) return false;
+        if (logical[1] != gatt_tamper_.logical_type) return false;
+        ++gatt_tamper_occurrences_;
+        if (gatt_tamper_.occurrence != 0u &&
+            gatt_tamper_occurrences_ != gatt_tamper_.occurrence)
+            return false;
+        const std::size_t body_size =
+            (static_cast<std::size_t>(logical[4]) << 24u) |
+            (static_cast<std::size_t>(logical[5]) << 16u) |
+            (static_cast<std::size_t>(logical[6]) << 8u) |
+            static_cast<std::size_t>(logical[7]);
+        if (body_size == 0u || logical.size() < 8u + body_size + 32u)
+        {
+            /* The group the relay hands over starts at its own delivery
+             * watermark, which a BACKPRESSURE return can leave in the MIDDLE of a
+             * logical message; such a group is not this record's boundary and is
+             * not a harness error. It is COUNTED so a run where it happened is
+             * visible, and `logical_tamper_reassembly_mismatches()` lets a caller
+             * refuse to draw conclusions from one.
+             */
+            ++gatt_reassembly_mismatches_;
+            return false;
+        }
+        /* The record is the PREFIX of the reassembled bytes: anything past it
+         * belongs to the next logical message and must cross untouched. */
+        const std::size_t record_size = 8u + body_size + 32u;
+        std::size_t index = gatt_tamper_.body_index;
+        if (index == kLastBodyByte) index = body_size - 1u;
+        if (index >= body_size)
+        {
+            check(false,
+                  "the armed logical-message tamper names a byte the sender's own "
+                  "record really has");
+            return false;
+        }
+        const std::size_t absolute = 8u + index;
+        gatt_tamper_index_ = static_cast<std::uint32_t>(index);
+        gatt_tamper_before_ = logical[absolute];
+        logical[absolute] = static_cast<std::uint8_t>(
+            gatt_tamper_before_ ^ gatt_tamper_.xor_mask);
+        /* Recompute THIS record's own trailing integrity hash. */
+        const char* domain =
+            logical[0] == 2u ? "flynes-gatt-logical-v2" : "flynes-gatt-logical-v1";
+        const auto digest =
+            wire::domain_hash(domain, logical.data(), 8u + body_size);
+        std::copy(digest.begin(), digest.end(),
+                  logical.begin() + static_cast<std::ptrdiff_t>(8u + body_size));
+        /* Write the record back into the same fragment payloads, only as far as
+         * the record goes. */
+        std::size_t cursor = 0;
+        for (auto& fragment : *group)
+        {
+            const std::size_t payload = fragment.size() - header;
+            for (std::size_t offset = 0; offset < payload && cursor < record_size;
+                 ++offset, ++cursor)
+                fragment[header + offset] = logical[cursor];
+            if (cursor >= record_size) break;
+        }
+        ++tampered_logical_;
+        /* A single-occurrence rule is spent after one injection; an "every
+         * occurrence" rule stays armed for the whole drive, by definition. */
+        if (gatt_tamper_.occurrence != 0u) gatt_tamper_armed_ = false;
+        return true;
     }
 
     /* True when this unit is a link-control READY/ACK frame from the direction
@@ -2721,6 +3382,25 @@ private:
     std::array<std::uint8_t, 32> pin_{};
     bool link_facts_ready_ = false;
     QuicFilter withheld_ = QuicFilter::None;
+    /* W3 tamper matrix state. */
+    std::array<std::uint8_t, 32> pin_override_{};
+    bool has_pin_override_ = false;
+    TamperRule tamper_{};
+    bool tamper_armed_ = false;
+    std::uint32_t tamper_occurrences_ = 0;
+    std::uint32_t tampered_units_ = 0;
+    std::uint32_t tampered_index_ = 0;
+    std::uint8_t tampered_before_ = 0;
+    std::uint8_t tampered_after_ = 0;
+    /* W3 tamper matrix: the GATT logical-message fault. */
+    GattTamperRule gatt_tamper_{};
+    bool gatt_tamper_armed_ = false;
+    std::uint32_t gatt_tamper_occurrences_ = 0;
+    std::uint32_t tampered_logical_ = 0;
+    std::uint32_t gatt_tamper_index_ = 0;
+    std::uint8_t gatt_tamper_before_ = 0;
+    std::uint32_t gatt_reassembly_mismatches_ = 0;
+    std::uint32_t tampered_groups_delivered_ = 0;
 };
 
 /*
@@ -2869,6 +3549,7 @@ struct PumpState final
     int quic_writes = 0;
     int quic_reads = 0;
     int quic_cancels = 0;
+    int content_queries = 0;
     /* Deterministic, non-zero resource handles for provider-owned objects. */
     fly_session_resource_handle_v2 next_handle = 0x4000;
 };
@@ -2998,6 +3679,17 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
                   plan, kLoopbackCredentialValidForMs, credential, &join_params) ==
                   flynes::session::wire::Status::Ok,
               "the provider encodes canonical join parameters for its own plan");
+        /* W3 tamper: the credential this provider minted no longer matches the
+         * plan, so the receiving engine's own comparison must reject it. The
+         * hash below is the digest of exactly these tampered bytes, so the
+         * receiving engine's transport-level hash check cannot be what catches
+         * it - only its canonical join-parameter comparison can. */
+        if (fixture.bearer.tamper_join_params && join_params.size() > 4u)
+        {
+            join_params[4] = static_cast<std::uint8_t>(
+                join_params[4] ^ fixture.bearer.tamper_join_params_mask);
+            ++fixture.bearer.join_params_tampered;
+        }
         const auto hash = flynes::session::wire::sha256(join_params.data(),
                                                        join_params.size());
         const auto handle = state.next_handle++;
@@ -3222,7 +3914,7 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         check(point != nullptr,
               "the provider signs with a handle the shared world really holds");
         if (point == nullptr) return PumpOutcome::Idle;
-        const auto signature = fixture.key.world->sign(
+        auto signature = fixture.key.world->sign(
             *point, request.domain.data(), request.domain.size(),
             request.digest.data());
         deliver_provider_buffer(fixture.key.inbox, request.token,
@@ -3328,7 +4020,7 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         check(material != nullptr,
               "the provider seals under a secret the shared world really holds");
         if (material == nullptr) return PumpOutcome::Idle;
-        const auto sealed = fixture.crypto.world->seal(
+        auto sealed = fixture.crypto.world->seal(
             *material, request.nonce.data(), request.nonce.size(),
             request.aad.data(), request.aad.size(), request.input.data(),
             request.input.size());
@@ -3478,13 +4170,36 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
               "the engine asks the QUIC port for the link's own exporter label");
         check(fixture.quic.last_context.size() == 32,
               "the exporter is requested under a 32-byte channel context");
-        const auto& exporter = fixture.attached_link->exporter();
+        std::array<std::uint8_t, 32> exporter = fixture.attached_link->exporter();
+        /* W3 tamper: this end is told a different exporter than its peer. */
+        if (fixture.quic.use_exporter_override)
+        {
+            exporter = fixture.quic.exporter_override;
+            ++fixture.quic.exporter_overrides;
+        }
         fixture.quic.last_exporter = exporter;
         ++fixture.quic.exporter_results;
         deliver_provider_buffer(fixture.quic.inbox, fixture.quic.last_token,
                                 FLY_SESSION_PROVIDER_QUIC_EXPORTER_V2,
                                 exporter.data(), exporter.size());
         ++state.counts.quic_exporters;
+        ++state.counts.answers;
+        return PumpOutcome::Answered;
+    }
+
+    if (static_cast<std::size_t>(state.content_queries) <
+        fixture.content.queries.size())
+    {
+        const auto& request = fixture.content.queries[
+            static_cast<std::size_t>(state.content_queries)];
+        ++state.content_queries;
+        const auto record = loopback_content_choice_record_v1();
+        const auto hash = loopback_content_choice_hash_v1();
+        deliver_provider_hash_buffer(
+            fixture.content.inbox, request.token,
+            FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2,
+            static_cast<fly_session_resource_handle_v2>(request.index + 1u),
+            record.data(), record.size(), hash);
         ++state.counts.answers;
         return PumpOutcome::Answered;
     }
@@ -3620,6 +4335,40 @@ struct RelayDirectionState final
      */
     std::vector<std::vector<std::uint8_t>> delivered;
     std::vector<std::vector<std::uint8_t>> delivered_acks;
+    /*
+     * W3 tamper matrix: fragments that must be delivered INSTEAD of the source's
+     * own, stored per source-fragment index and PERSISTENTLY.
+     *
+     * This has to live in the direction's state rather than in a per-attempt
+     * local: a BACKPRESSURE return abandons the attempt and the fragment is
+     * offered again on a later round, so a tamper applied to a throw-away copy
+     * would simply be discarded and the ORIGINAL bytes would cross - which is
+     * exactly the bug that made three tamper cases look fail-open when nothing
+     * had in fact been tampered on the wire.
+     */
+    std::vector<std::size_t> replaced_index;
+    std::vector<std::vector<std::uint8_t>> replaced_bytes;
+    int replaced_delivered = 0;
+
+    void remember_replacement(std::size_t index, std::vector<std::uint8_t> bytes)
+    {
+        for (std::size_t slot = 0; slot < replaced_index.size(); ++slot)
+            if (replaced_index[slot] == index)
+            {
+                replaced_bytes[slot] = std::move(bytes);
+                return;
+            }
+        replaced_index.push_back(index);
+        replaced_bytes.push_back(std::move(bytes));
+    }
+
+    [[nodiscard]] const std::vector<std::uint8_t>* replacement_at(
+        std::size_t index) const
+    {
+        for (std::size_t slot = 0; slot < replaced_index.size(); ++slot)
+            if (replaced_index[slot] == index) return &replaced_bytes[slot];
+        return nullptr;
+    }
 };
 
 struct QuicDirectionState final
@@ -3628,6 +4377,7 @@ struct QuicDirectionState final
      * sink's own granted reads have been answered. */
     std::size_t writes_staged = 0;
     std::size_t reads_answered = 0;
+    std::vector<std::uint8_t> grants_consumed;
     /* Class-2 event sequence for the RECEIVING inbox; strictly increasing. */
     std::uint64_t next_sequence = 1;
     /*
@@ -3754,7 +4504,8 @@ inline bool relay_fragment_once(EngineFixture& sink, RelayDirectionState& state,
  * SOURCE wrote in; the bytes themselves are never touched.
  */
 inline void relay_one_direction(EngineFixture& source, RelayDirectionState& state,
-                                EngineFixture& sink, bool source_is_peripheral)
+                                EngineFixture& sink, bool source_is_peripheral,
+                                LoopbackTransport& transport)
 {
     /* The receiving end must be listening, or the bytes it would have accepted are
      * simply lost. */
@@ -3807,13 +4558,56 @@ inline void relay_one_direction(EngineFixture& source, RelayDirectionState& stat
                 return;
             }
         }
-        for (std::size_t index = state.fragments_relayed; index < stop; ++index)
+        /*
+         * W3 tamper matrix. The group of fragments that makes up ONE logical
+         * message is COPIED only while a logical-message tamper is armed, so the
+         * ordinary path still delivers the source's own fragment object without
+         * a copy and without a chance of being altered.
+         */
+        /*
+         * W3 tamper matrix. The armed rule is applied ONCE per logical message and
+         * the RESULT is remembered in the direction's state, so a retry after
+         * BACKPRESSURE re-offers the same tampered bytes instead of silently
+         * falling back to the sender's originals.
+         */
+        const std::size_t group_begin = state.fragments_relayed;
+        if (transport.logical_tamper_armed())
         {
-            if (!relay_fragment_once(sink, state,
-                                     source.discovery.written_fragments[index],
-                                     &state.delivered))
+            std::vector<std::vector<std::uint8_t>> group(
+                source.discovery.written_fragments.begin() +
+                    static_cast<std::ptrdiff_t>(group_begin),
+                source.discovery.written_fragments.begin() +
+                    static_cast<std::ptrdiff_t>(stop));
+            if (transport.tamper_logical_group(
+                    source_is_peripheral
+                        ? LoopbackTransport::QuicFilter::PeripheralToCentral
+                        : LoopbackTransport::QuicFilter::CentralToPeripheral,
+                    &group))
+                for (std::size_t slot = 0; slot < group.size(); ++slot)
+                    state.remember_replacement(group_begin + slot,
+                                               std::move(group[slot]));
+        }
+        int replacements_delivered = 0;
+        for (std::size_t index = group_begin; index < stop; ++index)
+        {
+            /* `group_begin`, not `state.fragments_relayed`: the watermark advances
+             * inside this loop, so subtracting it would re-deliver the first
+             * fragment of the group forever. */
+            const std::vector<std::uint8_t>* replacement =
+                state.replacement_at(index);
+            const std::vector<std::uint8_t>& fragment =
+                replacement != nullptr
+                    ? *replacement
+                    : source.discovery.written_fragments[index];
+            if (!relay_fragment_once(sink, state, fragment, &state.delivered))
                 return;
+            if (replacement != nullptr) ++replacements_delivered;
             ++state.fragments_relayed;
+        }
+        if (replacements_delivered > 0)
+        {
+            state.replaced_delivered += replacements_delivered;
+            transport.note_tampered_group_delivered();
         }
     }
 
@@ -3837,8 +4631,10 @@ inline void relay_gatt(LoopbackTransport& transport, RelayReport& report)
     EngineFixture* peripheral = transport.peripheral_fixture();
     EngineFixture* central = transport.central_fixture();
     if (peripheral == nullptr || central == nullptr) return;
-    relay_one_direction(*peripheral, report.peripheral_to_central, *central, true);
-    relay_one_direction(*central, report.central_to_peripheral, *peripheral, false);
+    relay_one_direction(*peripheral, report.peripheral_to_central, *central, true,
+                        transport);
+    relay_one_direction(*central, report.central_to_peripheral, *peripheral, false,
+                        transport);
 }
 
 /*
@@ -3979,6 +4775,17 @@ inline QuicRelayOutcome relay_quic_one_direction(
         unit.stream = write.stream;
         unit.bytes = write.bytes;
         unit.fin = write.finish != 0 && write.bytes.empty();
+        /*
+         * W3 tamper matrix. The unit holds the sender's OWN encoded bytes, still
+         * undelivered, so this is the one place a byte-level fault can be
+         * injected between "the sender encoded it" and "the receiver decodes it".
+         * The armed rule names at most one unit and rewrites exactly one byte of
+         * it; a read that is never granted leaves the unit tampered but unsent,
+         * which `tampered_units()` reports.
+         */
+        if (!unit.bytes.empty() &&
+            transport.targets_unit(direction, unit.stream, unit.bytes))
+            transport.apply_tamper(&unit.bytes);
         state.pending.push_back(std::move(unit));
         if (write.finish != 0 && !write.bytes.empty())
         {
@@ -3991,12 +4798,22 @@ inline QuicRelayOutcome relay_quic_one_direction(
     if (state.pending.empty()) return QuicRelayOutcome::Empty;
 
     QuicDirectionState::Unit& unit = state.pending.front();
-    /* The receiving engine's own next unconsumed read decides whether these bytes
-     * may be handed over at all, and under which token. */
-    if (state.reads_answered >= sink.quic.granted_reads.size())
+    /* Match a granted read for THIS stream. Control and State Commit can both
+     * have outstanding credit, so FIFO-by-grant-order would stall the second
+     * stream behind a leftover Control read. */
+    if (state.grants_consumed.size() < sink.quic.granted_reads.size())
+        state.grants_consumed.resize(sink.quic.granted_reads.size(), 0);
+    std::size_t found = sink.quic.granted_reads.size();
+    for (std::size_t index = 0; index < sink.quic.granted_reads.size(); ++index)
+    {
+        if (state.grants_consumed[index] != 0) continue;
+        if (sink.quic.granted_reads[index].stream != unit.stream) continue;
+        found = index;
+        break;
+    }
+    if (found == sink.quic.granted_reads.size())
         return QuicRelayOutcome::Waiting;
-    const auto& read = sink.quic.granted_reads[state.reads_answered];
-    if (read.stream != unit.stream) return QuicRelayOutcome::Waiting;
+    const auto& read = sink.quic.granted_reads[found];
     if (unit.bytes.size() > read.credit)
     {
         check(false,
@@ -4020,6 +4837,7 @@ inline QuicRelayOutcome relay_quic_one_direction(
     {
         ++state.next_sequence;
         ++state.reads_answered;
+        state.grants_consumed[found] = 1;
         state.delivered.push_back(unit.bytes);
         state.delivered_streams.push_back(unit.stream);
         state.delivered_fin.push_back(unit.fin ? 1u : 0u);

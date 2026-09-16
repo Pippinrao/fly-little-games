@@ -320,6 +320,22 @@ public:
             : FLY_SESSION_V2_UNAVAILABLE;
     }
 
+    fly_session_result_v2 query_content(
+        const fly_session_op_token_v2* token, std::uint32_t index,
+        fly_session_inbox_v2_t* inbox) const
+    {
+        return has_content_
+            ? content_.query(content_.context, token, index, inbox)
+            : FLY_SESSION_V2_UNAVAILABLE;
+    }
+
+    fly_session_result_v2 cancel_content(
+        const fly_session_op_token_v2* token) const
+    {
+        return has_content_ ? content_.cancel(content_.context, token)
+                            : FLY_SESSION_V2_UNAVAILABLE;
+    }
+
     /* R3 appended read primitive. An R2-sized table has no read; the durable
      * read-back gate then fails closed instead of assuming a previous write. */
     [[nodiscard]] bool has_object_store_read() const noexcept

@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <vector>
 
 namespace {
 
@@ -55,6 +56,34 @@ bool same_event(const fly_session_port_event_v2& left,
            left.payload_kind == right.payload_kind &&
            left.payload_size == right.payload_size &&
            std::memcmp(left.payload, right.payload, left.payload_size) == 0;
+}
+
+fly_session_result_v2 read_parsed_buffer(
+    const flynes::session::ParsedProviderEvent& parsed,
+    std::vector<std::uint8_t>* out)
+{
+    if (out == nullptr || parsed.buffer == nullptr)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    std::uint64_t size = 0;
+    if (fly_session_buffer_size_v2(parsed.buffer, &size) != FLY_SESSION_V2_OK)
+        return FLY_SESSION_V2_CONTRACT_VIOLATION;
+    try
+    {
+        out->assign(static_cast<std::size_t>(size), 0);
+    }
+    catch (const std::bad_alloc&)
+    {
+        return FLY_SESSION_V2_OUT_OF_MEMORY;
+    }
+    if (size == 0)
+        return FLY_SESSION_V2_OK;
+    fly_session_write_bytes_v2 destination{out->data(), size};
+    std::uint64_t written = 0;
+    if (fly_session_buffer_read_v2(parsed.buffer, 0, destination, &written) !=
+            FLY_SESSION_V2_OK ||
+        written != size)
+        return FLY_SESSION_V2_CONTRACT_VIOLATION;
+    return FLY_SESSION_V2_OK;
 }
 
 std::uint32_t pair_material_payload_kind(
@@ -315,11 +344,55 @@ void SessionEngine::publish_link_view_locked(std::uint32_t link_state)
             {18, FLY_SESSION_ACTION_REJECT_SAS_V2, true,
              "nearby.action.reject_sas", ""}};
     }
+    else if (link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2 && dual_)
+    {
+        if (dual_->catalog_complete() && !dual_->game_choices().empty() &&
+            !dual_->running() && !dual_->frozen())
+            actions.push_back({42, FLY_SESSION_ACTION_SELECT_CONTENT_V2, true,
+                               "nearby.action.select_content", ""});
+        if (dual_->catalog_complete() && !dual_->game_choices().empty() &&
+            !dual_->running() && !dual_->frozen())
+            actions.push_back({27, FLY_SESSION_ACTION_OFFER_CONTENT_V2, true,
+                               "nearby.action.offer_content", ""});
+        if (!dual_->running() && !dual_->frozen())
+        {
+            actions.push_back({28, FLY_SESSION_ACTION_APPROVE_SEND_V2, true,
+                               "nearby.action.approve_send", ""});
+            actions.push_back({29, FLY_SESSION_ACTION_APPROVE_RECEIVE_V2, true,
+                               "nearby.action.approve_receive", ""});
+        }
+        if (content_xfer_ &&
+            content_xfer_->scheduler().state() ==
+                content::ContentOfferStateV1::WaitingImport &&
+            !dual_->running() && !dual_->frozen())
+            actions.push_back({31, FLY_SESSION_ACTION_APPROVE_IMPORT_V2, true,
+                               "nearby.action.approve_import", ""});
+        if (content_xfer_ &&
+            content_xfer_->scheduler().state() !=
+                content::ContentOfferStateV1::Idle &&
+            content_xfer_->scheduler().state() !=
+                content::ContentOfferStateV1::Imported &&
+            !dual_->running())
+            actions.push_back({30, FLY_SESSION_ACTION_CANCEL_CONTENT_V2, true,
+                               "nearby.action.cancel_content", ""});
+        if (dual_->has_selection() && !dual_->running() && !dual_->frozen())
+            actions.push_back({43, FLY_SESSION_ACTION_START_DUAL_V2, true,
+                               "nearby.action.start_dual", ""});
+        if (dual_->running())
+        {
+            actions.push_back({32, FLY_SESSION_ACTION_PAUSE_GAME_V2, true,
+                               "nearby.action.pause_game", ""});
+            actions.push_back({20, FLY_SESSION_ACTION_DISCONNECT_LINK_V2, true,
+                               "nearby.action.disconnect_link", ""});
+        }
+    }
     authorization_->generation.fetch_add(1, std::memory_order_acq_rel);
+    std::uint32_t game_state = FLY_SESSION_GAME_NOT_STARTED_V2;
+    if (dual_)
+        game_state = dual_->game_state();
     auto* next = make_session_view(
         authorization_, current_view_->snapshot.view_revision + 1,
-        FLY_SESSION_ENGINE_READY_V2, link_state,
-        FLY_SESSION_GAME_NOT_STARTED_V2,
+        FLY_SESSION_ENGINE_READY_V2, link_state, game_state,
         link_state == FLY_SESSION_LINK_IDLE_V2 && !ports_.has_discovery()
             ? "nearby.reason.discovery.unavailable" : "",
         actions);
@@ -356,6 +429,7 @@ void SessionEngine::publish_link_view_locked(std::uint32_t link_state)
     next->candidates = candidates_;
     next->snapshot.candidate_count =
         static_cast<std::uint32_t>(next->candidates.size());
+    apply_dual_projection_locked(next);
     auto* old = current_view_;
     current_view_ = next;
     fly_session_view_release_v2(old);
@@ -460,6 +534,8 @@ fly_session_op_token_v2 SessionEngine::make_link_operation_token_locked()
 
 void SessionEngine::cancel_pair_material_locked() noexcept
 {
+    cancel_content_locked();
+    cancel_dual_locked();
     cancel_link_handshake_locked();
     cancel_session_signing_locked();
     cancel_initial_quic_bind_locked();
@@ -1988,6 +2064,86 @@ bool SessionEngine::start_link_handshake_locked() noexcept
     return true;
 }
 
+void SessionEngine::ensure_dual_controller_locked() noexcept
+{
+    if (dual_)
+        return;
+    try
+    {
+        dual_ = std::make_unique<dual::DualSessionController>();
+    }
+    catch (const std::bad_alloc&)
+    {
+        dual_.reset();
+    }
+}
+
+void SessionEngine::apply_dual_projection_locked(
+    fly_session_view_v2_t* view) noexcept
+{
+    if (!dual_ || view == nullptr)
+        return;
+    view->game_choices = dual_->game_choices();
+    view->snapshot.game_choice_count =
+        static_cast<std::uint32_t>(view->game_choices.size());
+    dual_->fill_snapshot(view->snapshot);
+    dual_->fill_scope(view->snapshot.scope);
+    dual_->clear_view_dirty();
+}
+
+void SessionEngine::cancel_dual_locked() noexcept
+{
+    if (dual_active_)
+    {
+        if (dual_effect_kind_ ==
+            dual::DualSessionController::EffectKind::QueryContent)
+            ports_.cancel_content(&dual_token_);
+        else
+            ports_.cancel_quic(&dual_token_);
+        dual_active_ = false;
+    }
+    dual_dispatch_pending_ = false;
+    if (dual_)
+        dual_->cancel();
+}
+
+void SessionEngine::ensure_content_controller_locked() noexcept
+{
+    if (content_xfer_)
+    {
+        if (initial_quic_bind_)
+            content_xfer_->attach_connection(
+                initial_quic_bind_->owned_resources().connection,
+                initial_quic_bind_->listener());
+        return;
+    }
+    try
+    {
+        content_xfer_ = std::make_unique<content::ContentTransferControllerV1>();
+    }
+    catch (const std::bad_alloc&)
+    {
+        content_xfer_.reset();
+        return;
+    }
+    if (initial_quic_bind_)
+        content_xfer_->attach_connection(
+            initial_quic_bind_->owned_resources().connection,
+            initial_quic_bind_->listener());
+}
+
+void SessionEngine::cancel_content_locked() noexcept
+{
+    if (content_active_)
+    {
+        ports_.cancel_quic(&content_token_);
+        content_active_ = false;
+    }
+    content_dispatch_pending_ = false;
+    if (content_xfer_)
+        content_xfer_->cancel();
+}
+
 bool SessionEngine::accept_completed_gatt_locked(
     const std::vector<std::uint8_t>& logical) noexcept
 {
@@ -2428,23 +2584,59 @@ fly_session_result_v2 SessionEngine::submit_action(
 fly_session_result_v2 SessionEngine::submit_input(
     const fly_session_input_v2& input)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (shutdown_requested_ || shutdown_complete_ || handle_detached_)
-        return FLY_SESSION_V2_CLOSED;
-    if (current_view_->snapshot.engine_state != FLY_SESSION_ENGINE_READY_V2 ||
-        current_view_->snapshot.link_state !=
-            FLY_SESSION_LINK_CONNECTED_LOBBY_V2 ||
-        current_view_->snapshot.game_state != FLY_SESSION_GAME_RUNNING_V2 ||
-        current_view_->snapshot.scope.kind != FLY_SESSION_SCOPE_GAME_V2 ||
-        std::memcmp(current_view_->snapshot.scope.link_id,
-                    input.scope.link_id, sizeof(input.scope.link_id)) != 0 ||
-        std::memcmp(current_view_->snapshot.scope.branch_id,
-                    input.scope.branch_id, sizeof(input.scope.branch_id)) != 0)
-        return FLY_SESSION_V2_INVALID_STATE;
+    std::unique_ptr<fly_session_task_v2_t> task;
+    try
+    {
+        task = std::make_unique<fly_session_task_v2_t>();
+        task->engine = shared_from_this();
+    }
+    catch (const std::bad_alloc&)
+    {
+        return FLY_SESSION_V2_OUT_OF_MEMORY;
+    }
 
-    // The public runtime/input scheduler is not yet installed. Fail closed rather
-    // than accepting and dropping an edge that the UI believes was committed.
-    return FLY_SESSION_V2_UNAVAILABLE;
+    bool schedule = false;
+    fly_session_result_v2 admitted = FLY_SESSION_V2_INVALID_STATE;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (shutdown_requested_ || shutdown_complete_ || handle_detached_)
+            return FLY_SESSION_V2_CLOSED;
+        if (current_view_->snapshot.engine_state != FLY_SESSION_ENGINE_READY_V2 ||
+            current_view_->snapshot.link_state !=
+                FLY_SESSION_LINK_CONNECTED_LOBBY_V2 ||
+            current_view_->snapshot.game_state != FLY_SESSION_GAME_RUNNING_V2 ||
+            current_view_->snapshot.scope.kind != FLY_SESSION_SCOPE_GAME_V2 ||
+            std::memcmp(current_view_->snapshot.scope.link_id,
+                        input.scope.link_id, sizeof(input.scope.link_id)) != 0 ||
+            std::memcmp(current_view_->snapshot.scope.branch_id,
+                        input.scope.branch_id, sizeof(input.scope.branch_id)) != 0)
+            return FLY_SESSION_V2_INVALID_STATE;
+        if (!dual_ || !dual_->running())
+            return FLY_SESSION_V2_UNAVAILABLE;
+        admitted = dual_->submit_local(input);
+        if (admitted != FLY_SESSION_V2_OK &&
+            admitted != FLY_SESSION_V2_ACCEPTED)
+            return admitted;
+        if (dual_->view_dirty())
+            publish_link_view_locked(FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+        dual_dispatch_pending_ = true;
+        if (!worker_scheduled_)
+        {
+            worker_scheduled_ = true;
+            schedule = true;
+        }
+    }
+    if (!schedule)
+        return FLY_SESSION_V2_OK;
+    const auto post_result = ports_.post(task.get());
+    if (post_result == FLY_SESSION_V2_ACCEPTED || post_result == FLY_SESSION_V2_OK)
+    {
+        task.release();
+        return FLY_SESSION_V2_OK;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    worker_scheduled_ = false;
+    return post_result;
 }
 
 fly_session_result_v2 SessionEngine::deliver(
@@ -2518,6 +2710,10 @@ fly_session_result_v2 SessionEngine::deliver(
             same_token(event.token, session_signing_token_);
         const bool link_handshake_event = link_handshake_active_ &&
             same_token(event.token, link_handshake_token_);
+        const bool dual_event = dual_active_ &&
+            same_token(event.token, dual_token_);
+        const bool content_event = content_active_ &&
+            same_token(event.token, content_token_);
         const bool gatt_write_event = gatt_write_active_ &&
             same_token(event.token, gatt_write_token_);
         if (!platform_event && !discovery_event && !gatt_event &&
@@ -2529,6 +2725,7 @@ fly_session_result_v2 SessionEngine::deliver(
             !initial_plan_event && !initial_bearer_event &&
             !endpoint_offer_event && !initial_quic_bind_event &&
             !session_signing_event && !link_handshake_event &&
+            !dual_event && !content_event &&
             !gatt_write_event)
         {
             return FLY_SESSION_V2_STALE;
@@ -2541,7 +2738,7 @@ fly_session_result_v2 SessionEngine::deliver(
             pair_capability_event || initial_plan_event ||
             initial_bearer_event || endpoint_offer_event ||
             initial_quic_bind_event || session_signing_event ||
-            link_handshake_event ||
+            link_handshake_event || dual_event || content_event ||
             gatt_write_event)
         {
             if (gatt_event &&
@@ -2570,6 +2767,8 @@ fly_session_result_v2 SessionEngine::deliver(
                 : initial_quic_bind_event ? initial_quic_bind_token_
                 : session_signing_event ? session_signing_token_
                 : link_handshake_event ? link_handshake_token_
+                : dual_event ? dual_token_
+                : content_event ? content_token_
                                        : gatt_write_token_;
             const auto expected_kind = pair_context_random_event
                 ? static_cast<std::uint32_t>(
@@ -2590,6 +2789,8 @@ fly_session_result_v2 SessionEngine::deliver(
                 : initial_quic_bind_event ? initial_quic_bind_expected_kind_
                 : session_signing_event ? session_signing_expected_kind_
                 : link_handshake_event ? link_handshake_expected_kind_
+                : dual_event ? dual_expected_kind_
+                : content_event ? content_expected_kind_
                 : gatt_write_event
                     ? static_cast<std::uint32_t>(
                           FLY_SESSION_PROVIDER_DISCOVERY_END_V2)
@@ -2660,6 +2861,21 @@ void SessionEngine::run_work() noexcept
 {
     for (;;)
     {
+        fly_session_clock_sample_v2 dual_clock{};
+        dual_clock.struct_size = FLY_SESSION_CLOCK_SAMPLE_V2_SIZE;
+        dual_clock.abi_version = FLY_SESSION_ABI_VERSION_2;
+        const bool clock_ok = ports_.read_clock(&dual_clock) == FLY_SESSION_V2_OK;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (clock_ok && dual_ && !shutdown_requested_)
+            {
+                dual_->on_clock(dual_clock.continuous_ns);
+                if (dual_->view_dirty())
+                    publish_link_view_locked(
+                        FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+            }
+        }
+
         bool dispatch_disconnect = false;
         fly_session_op_token_v2 deferred_disconnect_token{};
         fly_session_resource_handle_v2 deferred_disconnect_connection = 0;
@@ -4069,6 +4285,182 @@ void SessionEngine::run_work() noexcept
             continue;
         }
 
+        bool dispatch_dual = false;
+        dual::DualSessionController::Effect dual_effect{};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (dual_dispatch_pending_ && dual_ && !dual_active_ &&
+                !shutdown_requested_)
+            {
+                auto effect = dual_->poll_effect();
+                if (effect)
+                {
+                    dual_dispatch_pending_ = false;
+                    dual_effect = std::move(*effect);
+                    dual_effect_kind_ = dual_effect.kind;
+                    dual_expected_kind_ = dual_effect.expected_payload_kind;
+                    dual_token_ = make_link_operation_token_locked();
+                    dual_active_ = true;
+                    dispatch_dual = true;
+                }
+                else
+                {
+                    dual_dispatch_pending_ = false;
+                }
+            }
+        }
+        if (dispatch_dual)
+        {
+            fly_session_result_v2 result = FLY_SESSION_V2_INVALID_STATE;
+            switch (dual_effect.kind)
+            {
+            case dual::DualSessionController::EffectKind::QueryContent:
+                result = ports_.query_content(
+                    &dual_token_, dual_effect.content_index, inbox_);
+                if (result == FLY_SESSION_V2_EMPTY)
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    dual_active_ = false;
+                    if (dual_)
+                    {
+                        dual_->on_content_empty();
+                        dual_dispatch_pending_ = dual_->poll_effect().has_value();
+                        if (dual_->view_dirty())
+                            publish_link_view_locked(
+                                FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                    result = FLY_SESSION_V2_OK;
+                }
+                break;
+            case dual::DualSessionController::EffectKind::OpenStream:
+                result = ports_.open_quic_stream(
+                    true, dual_effect.accept, &dual_token_,
+                    dual_effect.connection, dual_effect.opener_role,
+                    static_cast<std::uint32_t>(wire::QuicChannel::StateCommit),
+                    inbox_);
+                break;
+            case dual::DualSessionController::EffectKind::GrantRead:
+                result = ports_.grant_quic_read(
+                    &dual_token_, dual_effect.stream, dual_effect.read_credit,
+                    inbox_);
+                break;
+            case dual::DualSessionController::EffectKind::Write:
+            {
+                fly_session_buffer_v2_t* buffer = nullptr;
+                const fly_session_bytes_v2 value{
+                    dual_effect.bytes.data(),
+                    static_cast<std::uint32_t>(dual_effect.bytes.size()), 0};
+                if (fly_session_buffer_create_copy_v2(value, &buffer) ==
+                    FLY_SESSION_V2_OK)
+                    result = ports_.write_quic(
+                        &dual_token_, dual_effect.stream, buffer, false,
+                        inbox_);
+                else
+                    result = FLY_SESSION_V2_OUT_OF_MEMORY;
+                fly_session_buffer_release_v2(buffer);
+                break;
+            }
+            }
+            if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                dual_active_ = false;
+                cancel_dual_locked();
+                discovery_disconnect_pending_ = discovery_connection_ != 0;
+                publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+            }
+            continue;
+        }
+
+        bool dispatch_content = false;
+        content::ContentTransferControllerV1::Effect content_effect{};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (content_dispatch_pending_ && content_xfer_ && !content_active_ &&
+                !shutdown_requested_)
+            {
+                if (initial_quic_bind_)
+                    content_xfer_->attach_connection(
+                        initial_quic_bind_->owned_resources().connection,
+                        initial_quic_bind_->listener());
+                auto effect = content_xfer_->poll_effect();
+                if (effect)
+                {
+                    if (initial_quic_bind_)
+                    {
+                        content_xfer_->attach_connection(
+                            initial_quic_bind_->owned_resources().connection,
+                            initial_quic_bind_->listener());
+                        if (effect->kind ==
+                            content::ContentTransferControllerV1::EffectKind::
+                                OpenStream)
+                        {
+                            effect->connection =
+                                initial_quic_bind_->owned_resources().connection;
+                            effect->accept = initial_quic_bind_->listener();
+                            effect->opener_role = static_cast<std::uint32_t>(
+                                initial_quic_bind_->listener()
+                                    ? wire::PairRoleV1::Responder
+                                    : wire::PairRoleV1::Initiator);
+                        }
+                    }
+                    content_dispatch_pending_ = false;
+                    content_effect = std::move(*effect);
+                    content_effect_kind_ = content_effect.kind;
+                    content_expected_kind_ = content_effect.expected_payload_kind;
+                    content_token_ = make_link_operation_token_locked();
+                    content_active_ = true;
+                    dispatch_content = true;
+                }
+                else
+                {
+                    content_dispatch_pending_ = false;
+                }
+            }
+        }
+        if (dispatch_content)
+        {
+            fly_session_result_v2 result = FLY_SESSION_V2_INVALID_STATE;
+            switch (content_effect.kind)
+            {
+            case content::ContentTransferControllerV1::EffectKind::OpenStream:
+                result = ports_.open_quic_stream(
+                    true, content_effect.accept, &content_token_,
+                    content_effect.connection, content_effect.opener_role,
+                    content_effect.stream_kind, inbox_);
+                break;
+            case content::ContentTransferControllerV1::EffectKind::GrantRead:
+                result = ports_.grant_quic_read(
+                    &content_token_, content_effect.stream,
+                    content_effect.read_credit, inbox_);
+                break;
+            case content::ContentTransferControllerV1::EffectKind::Write:
+            {
+                fly_session_buffer_v2_t* buffer = nullptr;
+                const fly_session_bytes_v2 value{
+                    content_effect.bytes.data(),
+                    static_cast<std::uint32_t>(content_effect.bytes.size()), 0};
+                if (fly_session_buffer_create_copy_v2(value, &buffer) ==
+                    FLY_SESSION_V2_OK)
+                    result = ports_.write_quic(
+                        &content_token_, content_effect.stream, buffer, false,
+                        inbox_);
+                else
+                    result = FLY_SESSION_V2_OUT_OF_MEMORY;
+                fly_session_buffer_release_v2(buffer);
+                break;
+            }
+            }
+            if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                content_active_ = false;
+                cancel_content_locked();
+                publish_link_view_locked(FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+            }
+            continue;
+        }
+
         bool dispatch_bearer_probe = false;
         fly_session_op_token_v2 local_bearer_probe_token{};
         {
@@ -4173,6 +4565,7 @@ void SessionEngine::run_work() noexcept
 
         PendingAction pending{};
         bool applied = false;
+        fly_session_result_v2 action_result = FLY_SESSION_V2_INVALID_STATE;
         bool dispatch_discovery = false;
         bool dispatch_discovery_connect = false;
         bool dispatch_discovery_stop = false;
@@ -5171,6 +5564,13 @@ void SessionEngine::run_work() noexcept
                         // and no other code path in this engine publishes it.
                         if (link_handshake_->connected())
                         {
+                            ensure_dual_controller_locked();
+                            ensure_content_controller_locked();
+                            if (ports_.has_content() && dual_)
+                            {
+                                dual_->begin_catalog();
+                                dual_dispatch_pending_ = true;
+                            }
                             publish_link_view_locked(
                                 FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
                         }
@@ -5209,6 +5609,108 @@ void SessionEngine::run_work() noexcept
                                 discovery_connection_ != 0;
                             publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
                         }
+                    }
+                }
+                else if (dual_active_ && dual_ &&
+                         same_token(event.token, dual_token_))
+                {
+                    dual_active_ = false;
+                    ParsedProviderEvent parsed;
+                    const auto parse_result = parse_provider_event_v2(
+                        event, dual_token_, dual_expected_kind_, parsed);
+                    fly_session_result_v2 result = parse_result;
+                    if (result == FLY_SESSION_V2_OK)
+                        result = dual_->complete(dual_effect_kind_, event,
+                                                 parsed);
+                    if (shutdown_requested_)
+                    {
+                        dual_dispatch_pending_ = false;
+                        cancel_dual_locked();
+                        complete_shutdown_locked();
+                        continue;
+                    }
+                    if (result != FLY_SESSION_V2_OK)
+                    {
+                        cancel_dual_locked();
+                        discovery_disconnect_pending_ =
+                            discovery_connection_ != 0;
+                        publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                    }
+                    else
+                    {
+                        dual_dispatch_pending_ = true;
+                        if (dual_->view_dirty())
+                            publish_link_view_locked(
+                                FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                }
+                else if (content_active_ && content_xfer_ &&
+                         same_token(event.token, content_token_))
+                {
+                    content_active_ = false;
+                    ParsedProviderEvent parsed;
+                    const auto parse_result = parse_provider_event_v2(
+                        event, content_token_, content_expected_kind_, parsed);
+                    fly_session_result_v2 result = parse_result;
+                    if (result == FLY_SESSION_V2_OK)
+                    {
+                        if (content_effect_kind_ ==
+                            content::ContentTransferControllerV1::EffectKind::
+                                OpenStream)
+                        {
+                            if (event.result != FLY_SESSION_V2_OK)
+                                result = event.result;
+                            else
+                                result = content_xfer_->on_stream_open(
+                                    parsed.resource,
+                                    static_cast<fly_session_resource_handle_v2>(
+                                        parsed.value0));
+                        }
+                        else if (content_effect_kind_ ==
+                                 content::ContentTransferControllerV1::
+                                     EffectKind::Write)
+                        {
+                            if (event.result != FLY_SESSION_V2_OK)
+                                result = event.result;
+                            else
+                                result = content_xfer_->on_write_complete();
+                        }
+                        else if (content_effect_kind_ ==
+                                 content::ContentTransferControllerV1::
+                                     EffectKind::GrantRead)
+                        {
+                            if (event.result != FLY_SESSION_V2_OK)
+                                result = event.result;
+                            else
+                            {
+                                std::vector<std::uint8_t> received;
+                                result = read_parsed_buffer(parsed, &received);
+                                if (result == FLY_SESSION_V2_OK)
+                                    result = content_xfer_->ingest_remote_bytes(
+                                        received.data(), received.size());
+                            }
+                        }
+                        else
+                            result = FLY_SESSION_V2_INVALID_STATE;
+                    }
+                    if (shutdown_requested_)
+                    {
+                        content_dispatch_pending_ = false;
+                        cancel_content_locked();
+                        complete_shutdown_locked();
+                        continue;
+                    }
+                    if (result != FLY_SESSION_V2_OK)
+                    {
+                        cancel_content_locked();
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                    else
+                    {
+                        content_dispatch_pending_ = true;
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
                     }
                 }
                 else if (pair_material_active_ && pair_material_ &&
@@ -5640,6 +6142,264 @@ void SessionEngine::run_work() noexcept
                 }
             }
             else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_SELECT_CONTENT_V2)
+            {
+                applied = pending.choice_size == FLY_SESSION_ACTION_CHOICE_V2_SIZE &&
+                          pending.choice.struct_size ==
+                              FLY_SESSION_ACTION_CHOICE_V2_SIZE &&
+                          pending.choice.abi_version == FLY_SESSION_ABI_VERSION_2 &&
+                          pending.choice.choice_kind ==
+                              FLY_SESSION_CHOICE_REFERENCE_V2 &&
+                          dual_ &&
+                          current_view_->snapshot.link_state ==
+                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
+                if (applied)
+                {
+                    const auto selected = dual_->select_content(
+                        pending.choice.choice_id);
+                    applied = selected == FLY_SESSION_V2_OK;
+                    action_result = selected;
+                    if (applied)
+                    {
+                        dual_dispatch_pending_ = true;
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_START_DUAL_V2)
+            {
+                applied = pending.choice_size == 0 && dual_ &&
+                          dual_->has_selection() &&
+                          current_view_->snapshot.link_state ==
+                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
+                if (!applied)
+                    action_result = FLY_SESSION_V2_INVALID_STATE;
+                else if (!ports_.has_dual_runtime() ||
+                         !initial_quic_bind_ || !session_signing_ ||
+                         !link_handshake_)
+                {
+                    applied = false;
+                    action_result = FLY_SESSION_V2_UNAVAILABLE;
+                }
+                else
+                {
+                    dual::DualStartInputsV1 inputs{};
+                    inputs.session_id = initial_quic_bind_->session_id();
+                    inputs.branch_id = initial_quic_bind_->channel_id();
+                    inputs.local_role = local_pair_role_;
+                    inputs.local_signing_public =
+                        session_signing_->material().public_key;
+                    if (link_handshake_->peer_binding_accepted())
+                        inputs.peer_signing_public =
+                            link_handshake_->peer_binding()
+                                .session_signing_public_key;
+                    inputs.quic_connection =
+                        initial_quic_bind_->owned_resources().connection;
+                    inputs.local_is_listener = initial_quic_bind_->listener();
+                    inputs.runtime = ports_.dual_runtime();
+                    const auto started = dual_->start_dual(inputs);
+                    applied = started == FLY_SESSION_V2_OK;
+                    action_result = started;
+                    if (applied)
+                    {
+                        dual_dispatch_pending_ = true;
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_OFFER_CONTENT_V2)
+            {
+                applied = pending.choice_size == 0 && dual_ &&
+                          dual_->catalog_complete() &&
+                          !dual_->game_choices().empty() &&
+                          current_view_->snapshot.link_state ==
+                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
+                if (applied)
+                {
+                    ensure_content_controller_locked();
+                    if (!content_xfer_ || !initial_quic_bind_)
+                    {
+                        applied = false;
+                        action_result = FLY_SESSION_V2_UNAVAILABLE;
+                    }
+                    else
+                    {
+                        const auto& choice = dual_->game_choices().front();
+                        content::ContentOfferDeclV1 decl{};
+                        std::memcpy(decl.offer_id.data(),
+                                    choice.source_choice_ref, 16u);
+                        std::memcpy(decl.content_id.data(), choice.content_id,
+                                    32u);
+                        std::vector<std::uint8_t> payload;
+                        payload.reserve(36u);
+                        payload.push_back(0x4E);
+                        payload.push_back(0x45);
+                        payload.push_back(0x53);
+                        payload.push_back(0x1A);
+                        payload.insert(payload.end(), choice.content_id,
+                                       choice.content_id + 32u);
+                        decl.declared_length =
+                            static_cast<std::uint32_t>(payload.size());
+                        decl.payload_sha256 =
+                            wire::sha256(payload.data(), payload.size());
+                        content_xfer_->reset(content::ContentOfferRoleV1::Offerer);
+                        ensure_content_controller_locked();
+                        const auto offered = content_xfer_->offer(
+                            decl, payload.data(), payload.size());
+                        applied = offered == FLY_SESSION_V2_OK;
+                        action_result = offered;
+                        if (applied)
+                        {
+                            content_dispatch_pending_ = true;
+                            publish_link_view_locked(
+                                FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                        }
+                    }
+                }
+            }
+            else if (applied &&
+                     (action_kind == FLY_SESSION_ACTION_APPROVE_SEND_V2 ||
+                      action_kind == FLY_SESSION_ACTION_APPROVE_RECEIVE_V2))
+            {
+                applied = pending.choice_size == 0 && dual_ &&
+                          current_view_->snapshot.link_state ==
+                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+                          !dual_->running();
+                if (applied)
+                {
+                    ensure_content_controller_locked();
+                    if (!content_xfer_)
+                    {
+                        applied = false;
+                        action_result = FLY_SESSION_V2_UNAVAILABLE;
+                    }
+                    else
+                    {
+                        if (content_xfer_->scheduler().state() ==
+                            content::ContentOfferStateV1::Idle)
+                        {
+                            if (!dual_->game_choices().empty())
+                            {
+                                applied = false;
+                                action_result = FLY_SESSION_V2_INVALID_STATE;
+                            }
+                            else if (!content_xfer_->scheduler().send_consented() &&
+                                     !content_xfer_->scheduler()
+                                          .receive_consented())
+                                content_xfer_->reset(
+                                    content::ContentOfferRoleV1::Receiver);
+                        }
+                    }
+                    if (applied && content_xfer_)
+                    {
+                        const auto approved =
+                            action_kind == FLY_SESSION_ACTION_APPROVE_SEND_V2
+                                ? content_xfer_->approve_send()
+                                : content_xfer_->approve_receive();
+                        applied = approved == FLY_SESSION_V2_OK;
+                        action_result = approved;
+                        if (applied)
+                        {
+                            content_dispatch_pending_ = true;
+                            publish_link_view_locked(
+                                FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                        }
+                    }
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_APPROVE_IMPORT_V2)
+            {
+                applied = pending.choice_size == 0 && dual_ && content_xfer_ &&
+                          current_view_->snapshot.link_state ==
+                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
+                if (applied)
+                {
+                    const auto imported = content_xfer_->approve_import();
+                    applied = imported == FLY_SESSION_V2_OK;
+                    action_result = imported;
+                    if (applied)
+                    {
+                        const auto& decl = content_xfer_->scheduler().decl();
+                        fly_session_game_choice_v2 choice{};
+                        choice.struct_size = FLY_SESSION_GAME_CHOICE_V2_SIZE;
+                        choice.abi_version = FLY_SESSION_ABI_VERSION_2;
+                        std::memcpy(choice.content_id, decl.content_id.data(),
+                                    32u);
+                        std::memcpy(choice.source_choice_ref,
+                                    decl.offer_id.data(), 16u);
+                        choice.catalog_revision = 1;
+                        choice.progress_revision = 1;
+                        choice.selectable = 1;
+                        static constexpr char kImportedName[] = "loopback";
+                        choice.display_name_size =
+                            static_cast<std::uint32_t>(sizeof(kImportedName) - 1u);
+                        std::memcpy(choice.display_name, kImportedName,
+                                    choice.display_name_size);
+                        const auto published =
+                            dual_->publish_imported_choice(choice);
+                        applied = published == FLY_SESSION_V2_OK;
+                        action_result = published;
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_CANCEL_CONTENT_V2)
+            {
+                applied = pending.choice_size == 0 && content_xfer_ &&
+                          current_view_->snapshot.link_state ==
+                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
+                if (applied)
+                {
+                    const auto cancelled = content_xfer_->cancel();
+                    applied = cancelled == FLY_SESSION_V2_OK;
+                    action_result = cancelled;
+                    content_dispatch_pending_ = false;
+                    if (applied)
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_PAUSE_GAME_V2)
+            {
+                applied = pending.choice_size == 0 && dual_ && dual_->running();
+                if (applied)
+                {
+                    const auto paused = dual_->pause();
+                    applied = paused == FLY_SESSION_V2_OK;
+                    action_result = paused;
+                    if (applied)
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_DISCONNECT_LINK_V2)
+            {
+                applied = pending.choice_size == 0 && dual_ &&
+                          (dual_->running() || dual_->frozen());
+                if (applied)
+                {
+                    const auto disconnected = dual_->disconnect();
+                    applied = disconnected == FLY_SESSION_V2_OK;
+                    action_result = disconnected;
+                    if (applied)
+                    {
+                        discovery_disconnect_pending_ =
+                            discovery_connection_ != 0;
+                        publish_link_view_locked(
+                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
+                }
+            }
+            else if (applied &&
                      action_kind != FLY_SESSION_ACTION_CANCEL_LOADING_V2)
             {
                 applied = false;
@@ -5716,8 +6476,7 @@ void SessionEngine::run_work() noexcept
             notice.kind = FLY_SESSION_NOTICE_ACTION_RESULT_V2;
             notice.outcome = applied ? FLY_SESSION_ACTION_APPLIED_V2
                                      : FLY_SESSION_ACTION_REJECTED_V2;
-            notice.result = applied ? FLY_SESSION_V2_OK
-                                    : FLY_SESSION_V2_INVALID_STATE;
+            notice.result = applied ? FLY_SESSION_V2_OK : action_result;
             notice.view_revision = current_view_->snapshot.view_revision;
             notices_.push_back(notice);
         }

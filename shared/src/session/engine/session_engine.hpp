@@ -16,6 +16,8 @@
 #include "../link/initial_quic_bind_scheduler.hpp"
 #include "../link/session_signing_scheduler.hpp"
 #include "../link/link_handshake_scheduler.hpp"
+#include "../dual/dual_session_controller.hpp"
+#include "../content/content_transfer_controller.hpp"
 #include "../view/session_view.hpp"
 #include "../wire/gatt_fragment.hpp"
 #include "../wire/pair_handshake.hpp"
@@ -120,6 +122,11 @@ private:
     bool start_initial_quic_bind_locked() noexcept;
     bool start_session_signing_locked() noexcept;
     bool start_link_handshake_locked() noexcept;
+    void ensure_dual_controller_locked() noexcept;
+    void ensure_content_controller_locked() noexcept;
+    void apply_dual_projection_locked(fly_session_view_v2_t* view) noexcept;
+    void cancel_dual_locked() noexcept;
+    void cancel_content_locked() noexcept;
 
     struct PendingAction final
     {
@@ -306,6 +313,18 @@ private:
     std::unique_ptr<InitialQuicBindScheduler> initial_quic_bind_{};
     std::unique_ptr<SessionSigningScheduler> session_signing_{};
     std::optional<LinkHandshakeScheduler> link_handshake_{};
+    std::unique_ptr<dual::DualSessionController> dual_{};
+    fly_session_op_token_v2 dual_token_{};
+    std::uint32_t dual_expected_kind_ = 0;
+    dual::DualSessionController::EffectKind dual_effect_kind_{};
+    bool dual_active_ = false;
+    bool dual_dispatch_pending_ = false;
+    std::unique_ptr<content::ContentTransferControllerV1> content_xfer_{};
+    fly_session_op_token_v2 content_token_{};
+    std::uint32_t content_expected_kind_ = 0;
+    content::ContentTransferControllerV1::EffectKind content_effect_kind_{};
+    bool content_active_ = false;
+    bool content_dispatch_pending_ = false;
     std::optional<CapabilitySummary> local_pair_capability_{};
     std::array<std::uint8_t, 32> pending_local_capability_hash_{};
     std::array<std::uint8_t, 32> pending_local_known_hash_{};
