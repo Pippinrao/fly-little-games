@@ -1246,6 +1246,44 @@ def build_schema():
             notes="pair_transcript_hash uses flynes-pair-transcript-v1 over the 752-byte preimage only. Object hash covers all 880 bytes. BLE/QR/Wi-Fi/friends not implemented in M1.",
         )
     )
+    # 0x0216 / 0x0217: the link control plane (W0 frozen contract,
+    # shared/src/session/link/link_control_contract.hpp). Sizes and offsets below
+    # are the corrected 2026-09-16 layout: channel_id is the real 16-byte
+    # wire::derive_channel_id_v1 value and there is no u64 channel_bind_id.
+    kinds.append(
+        kind(
+            "0x0216",
+            "LINK_HELLO_V1",
+            488,
+            "HARD",
+            "fixed",
+            "flynes-link-hello-object-v1",
+            [
+                field("pretag", "u8[424]"),
+                field("signature", "u8[64]"),
+            ],
+            [],
+            fixed_length=488,
+            notes="Sender signature digest uses flynes-link-hello-v1 over the 424-byte pretag only. Pretag layout: version u16be || reserved_zero[6] || sender_role u8 || receiver_role u8 || phase u8 || reserved_zero[5] || session_id[16] || link_id[16] || channel_id[16] || connection_generation u64be || link_generation u64be || wire_major u16be || wire_minor u16be || capability_bits u16be || critical_extension_mask u16be || determinism_profile u8 || core_state_format u8 || reserved_zero[2] || selected_plan_hash[32] || endpoint_offer_hash[32] || pair_transcript_object_hash[32] || session_signing_binding_hash[32] || identity_verifier_ref[112] || session_signing_public_key[65] || reserved_zero[27].",
+        )
+    )
+    kinds.append(
+        kind(
+            "0x0217",
+            "LINK_READY_V1",
+            432,
+            "HARD",
+            "fixed",
+            "flynes-link-ready-object-v1",
+            [
+                field("pretag", "u8[368]"),
+                field("signature", "u8[64]"),
+            ],
+            [],
+            fixed_length=432,
+            notes="Same bytes carry both READY (ready_phase=1) and the required ACK (ready_phase=2). Sender signature digest uses flynes-link-ready-v1 over the 368-byte pretag only. Pretag layout: version u16be || reserved_zero[6] || sender_role u8 || receiver_role u8 || phase u8 || ready_phase u8 || reserved_zero[4] || session_id[16] || link_id[16] || channel_id[16] || connection_generation u64be || reconnect_attempt u64be || link_generation u64be || channel_bind_hash[32] || local_hello_object_hash[32] || peer_hello_object_hash[32] || negotiated_result_hash[32] || local_summary_hash[32] || peer_summary_hash[32] || merge_result_hash[32] || reserved_zero[56].",
+        )
+    )
     kinds.append(
         kind(
             "0x0301",
@@ -1575,6 +1613,80 @@ def build_schema():
             "name": "ChannelResumeSummaryV1",
             "notes": "Not an ObjectKind. 176-byte exact-size wire message.",
         },
+        {
+            "endian": "network",
+            "fields": [
+                field("version", "u16be"),
+                field("reserved_zero", "u8[6]"),
+                field("sender_role", "u8", note="1 initiator, 2 responder"),
+                field("receiver_role", "u8", note="must be the mirrored role"),
+                field("phase", "u8", note="INITIAL=1"),
+                field("reserved_zero_2", "u8[5]"),
+                field("session_id", "u8[16]"),
+                field("link_id", "u8[16]"),
+                field("channel_id", "u8[16]"),
+                field("connection_generation", "u64be"),
+                field("link_generation", "u64be"),
+                field("wire_major", "u16be"),
+                field("wire_minor", "u16be"),
+                field("capability_bits", "u16be"),
+                field("critical_extension_mask", "u16be", note="MUST be 0"),
+                field("determinism_profile", "u8"),
+                field("core_state_format", "u8"),
+                field("reserved_zero_3", "u8[2]"),
+                field("selected_plan_hash", "bytes32"),
+                field("endpoint_offer_hash", "bytes32"),
+                field("pair_transcript_object_hash", "bytes32"),
+                field("session_signing_binding_hash", "bytes32"),
+                field("identity_verifier_ref", "u8[112]"),
+                field("session_signing_public_key", "u8[65]"),
+                field("reserved_zero_4", "u8[27]"),
+            ],
+            "fixed_length": 424,
+            "hash_domain": "flynes-link-hello-v1",
+            "name": "LinkHelloV1",
+            "enums": {
+                "sender_role": {"INITIATOR": 1, "RESPONDER": 2},
+                "phase": {"INITIAL": 1, "RECONCILE": 2},
+                "capability_bits": {"DUAL": 1, "STREAM_VIDEO": 2, "STREAM_AUDIO": 4},
+            },
+            "notes": "Control-channel message tag 0xFF06; the 64-byte canonical low-S signature is appended after this 424-byte pretag, so the persisted LINK_HELLO_V1 object (kind 0x0216) is exactly 488 bytes. Persist-before-send: the 0x0212 binding object must be durable first. STREAM bits are never advertised by this release and a STREAM-only offer is rejected as unsupported.",
+        },
+        {
+            "endian": "network",
+            "fields": [
+                field("version", "u16be"),
+                field("reserved_zero", "u8[6]"),
+                field("sender_role", "u8", note="1 initiator, 2 responder"),
+                field("receiver_role", "u8", note="must be the mirrored role"),
+                field("phase", "u8", note="RECONCILE=2"),
+                field("ready_phase", "u8", note="READY=1 ACK=2"),
+                field("reserved_zero_2", "u8[4]"),
+                field("session_id", "u8[16]"),
+                field("link_id", "u8[16]"),
+                field("channel_id", "u8[16]"),
+                field("connection_generation", "u64be"),
+                field("reconnect_attempt", "u64be"),
+                field("link_generation", "u64be"),
+                field("channel_bind_hash", "bytes32", note="domain flynes-channel-bind-binding-v1"),
+                field("local_hello_object_hash", "bytes32"),
+                field("peer_hello_object_hash", "bytes32"),
+                field("negotiated_result_hash", "bytes32"),
+                field("local_summary_hash", "bytes32"),
+                field("peer_summary_hash", "bytes32"),
+                field("merge_result_hash", "bytes32"),
+                field("reserved_zero_3", "u8[56]"),
+            ],
+            "fixed_length": 368,
+            "hash_domain": "flynes-link-ready-v1",
+            "name": "LinkReadyV1",
+            "enums": {
+                "sender_role": {"INITIATOR": 1, "RESPONDER": 2},
+                "phase": {"INITIAL": 1, "RECONCILE": 2},
+                "ready_phase": {"READY": 1, "ACK": 2},
+            },
+            "notes": "Control-channel message tag 0xFF07; the 64-byte canonical low-S signature is appended after this 368-byte pretag, so the persisted LINK_READY_V1 object (kind 0x0217) is exactly 432 bytes. The same bytes carry the required ACK with ready_phase=ACK. READY is legal only in phase RECONCILE.",
+        },
     ]
 
     end_package_tags = [
@@ -1637,6 +1749,14 @@ def build_schema():
             "flynes-pair-transcript-v1",
             "flynes-pair-transcript-object-v1",
             "flynes-channel-resume-summary-v1",
+            # Link control plane. The two object-hash domains arrive through the
+            # 0x0216/0x0217 kind entries; the two signature-digest domains and
+            # the canonical bind-binding domain are named here because they cover
+            # a pretag/summary rather than a complete object.
+            "flynes-link-hello-v1",
+            "flynes-link-ready-v1",
+            "flynes-link-negotiated-result-v1",
+            "flynes-channel-bind-binding-v1",
         }
     )
 
