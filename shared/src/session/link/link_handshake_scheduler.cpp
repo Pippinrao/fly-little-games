@@ -131,7 +131,7 @@ bool LinkHandshakeScheduler::begin(const LinkHandshakeStartV1& start)
      *      unstartable; demanding them at accept_peer_hello() puts the check
      *      exactly where the codec already rejects a zero or mismatched value.
      *   2. Inputs that this build has no producer for yet (the contract's u64
-     *      channel_id / channel_bind_id / channel_bind_hash, the negotiated
+     *      channel_id / channel_bind_hash, the negotiated
      *      result) are refused at their point of use instead of silently
      *      forwarded as zeros.
      *
@@ -335,11 +335,13 @@ fly_session_result_v2 LinkHandshakeScheduler::request_local_binding()
 fly_session_result_v2 LinkHandshakeScheduler::request_hello_signature()
 {
     /* HELLO binds the locked plan, the locked bearer path, the pair transcript
-     * object and the contract's u64 channel id, plus the session signing key.
-     * The channel id has no producer in this build yet, so an absent value stops
-     * the attempt as a not-wired seam instead of emitting a zero. */
+     * object and the 16-byte channel id, plus the session signing key. The
+     * channel id is owned by InitialQuicBindScheduler (channel_bound() is
+     * already true at this point), so an all-zero value here can only mean the
+     * caller forgot to hand it over: that is a not-wired seam, not a protocol
+     * failure, and no zero is ever emitted. */
     const auto inputs = require_inputs(
-        start_.channel_id != 0 &&
+        nonzero(start_.channel_id.data(), start_.channel_id.size()) &&
         nonzero(start_.selected_plan_hash.data(),
                 start_.selected_plan_hash.size()) &&
         nonzero(start_.endpoint_offer_hash.data(),
@@ -418,11 +420,11 @@ fly_session_result_v2 LinkHandshakeScheduler::request_negotiated_result()
 
 fly_session_result_v2 LinkHandshakeScheduler::request_ready_signature()
 {
-    /* READY binds the channel bind (id + proof hash), both verified resume
-     * summaries, the merge result, the negotiated result and both persisted
-     * HELLOs. None of those may be emitted as zeros. */
+    /* READY binds the channel bind (16-byte id + authenticated proof hash), both
+     * verified resume summaries, the merge result, the negotiated result and
+     * both persisted HELLOs. None of those may be emitted as zeros. */
     const auto inputs = require_inputs(
-        start_.channel_bind_id != 0 &&
+        nonzero(start_.channel_id.data(), start_.channel_id.size()) &&
         nonzero(start_.channel_bind_hash.data(), start_.channel_bind_hash.size()) &&
         nonzero(start_.local_summary_hash.data(),
                 start_.local_summary_hash.size()) &&
@@ -446,7 +448,6 @@ fly_session_result_v2 LinkHandshakeScheduler::request_ready_signature()
     value.session_id = start_.session_id;
     value.link_id = start_.link_id;
     value.channel_id = start_.channel_id;
-    value.channel_bind_id = start_.channel_bind_id;
     value.connection_generation = start_.generation;
     value.reconnect_attempt = start_.reconnect_attempt;
     value.link_generation = start_.link_generation;
@@ -665,7 +666,6 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_message(
     expected.session_id = start_.session_id;
     expected.link_id = start_.link_id;
     expected.channel_id = start_.channel_id;
-    expected.channel_bind_id = start_.channel_bind_id;
     expected.connection_generation = start_.generation;
     expected.reconnect_attempt = start_.reconnect_attempt;
     expected.link_generation = start_.link_generation;

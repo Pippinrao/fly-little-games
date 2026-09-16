@@ -101,7 +101,7 @@ Status fail(LinkControlDecodeReportV1* report, LinkControlIssueV1 issue,
     return status;
 }
 
-/* Fills every field of the value from a well-formed 416-byte pretag. Performs
+/* Fills every field of the value from a well-formed LINK_HELLO pretag. Performs
  * no legality checks: callers validate the bytes first. */
 void parse_pretag(const std::uint8_t* bytes, link::LinkHelloV1* out) noexcept
 {
@@ -111,24 +111,34 @@ void parse_pretag(const std::uint8_t* bytes, link::LinkHelloV1* out) noexcept
     out->phase = static_cast<link::LinkPhaseV1>(bytes[10]);
     copy_out(bytes + 16, 16, out->session_id.data());
     copy_out(bytes + 32, 16, out->link_id.data());
-    out->channel_id = be64(bytes + 48);
-    out->connection_generation = be64(bytes + 56);
-    out->link_generation = be64(bytes + 64);
-    out->wire_major = be16(bytes + 72);
-    out->wire_minor = be16(bytes + 74);
-    out->capability_bits = be16(bytes + 76);
-    out->critical_extension_mask = be16(bytes + 78);
-    out->determinism_profile = bytes[80];
-    out->core_state_format = bytes[81];
-    copy_out(bytes + 84, 32, out->selected_plan_hash.data());
-    copy_out(bytes + 116, 32, out->endpoint_offer_hash.data());
-    copy_out(bytes + 148, 32, out->pair_transcript_object_hash.data());
-    copy_out(bytes + 180, 32, out->session_signing_binding_hash.data());
-    copy_out(bytes + 212, 2, out->identity_verifier_ref.version.data());
-    copy_out(bytes + 220, 32, out->identity_verifier_ref.identity_key_id.data());
-    copy_out(bytes + 252, 65,
+    copy_out(bytes + link::kLinkHelloChannelIdOffsetV1, 16,
+             out->channel_id.data());
+    out->connection_generation =
+        be64(bytes + link::kLinkHelloConnectionGenerationOffsetV1);
+    out->link_generation = be64(bytes + link::kLinkHelloLinkGenerationOffsetV1);
+    out->wire_major = be16(bytes + link::kLinkHelloWireMajorOffsetV1);
+    out->wire_minor = be16(bytes + link::kLinkHelloWireMajorOffsetV1 + 2);
+    out->capability_bits = be16(bytes + link::kLinkHelloCapabilityOffsetV1);
+    out->critical_extension_mask =
+        be16(bytes + link::kLinkHelloCriticalExtensionOffsetV1);
+    out->determinism_profile = bytes[link::kLinkHelloDeterminismOffsetV1];
+    out->core_state_format = bytes[link::kLinkHelloCoreStateFormatOffsetV1];
+    copy_out(bytes + link::kLinkHelloSelectedPlanHashOffsetV1, 32,
+             out->selected_plan_hash.data());
+    copy_out(bytes + link::kLinkHelloEndpointOfferHashOffsetV1, 32,
+             out->endpoint_offer_hash.data());
+    copy_out(bytes + link::kLinkHelloPairTranscriptOffsetV1, 32,
+             out->pair_transcript_object_hash.data());
+    copy_out(bytes + link::kLinkHelloBindingHashOffsetV1, 32,
+             out->session_signing_binding_hash.data());
+    copy_out(bytes + link::kLinkHelloIdentityRefOffsetV1, 2,
+             out->identity_verifier_ref.version.data());
+    copy_out(bytes + link::kLinkHelloIdentityRefOffsetV1 + 8, 32,
+             out->identity_verifier_ref.identity_key_id.data());
+    copy_out(bytes + link::kLinkHelloIdentityRefOffsetV1 + 40, 65,
              out->identity_verifier_ref.identity_public_key.data());
-    copy_out(bytes + 324, 65, out->session_signing_public_key.data());
+    copy_out(bytes + link::kLinkHelloSessionSigningKeyOffsetV1, 65,
+             out->session_signing_public_key.data());
 }
 
 } // namespace
@@ -184,10 +194,10 @@ Status build_link_hello_pretag_v1(
         return Status::NonzeroReserved;
 
     if (!nonzero(value.session_id.data(), value.session_id.size()) ||
-        !nonzero(value.link_id.data(), value.link_id.size()))
+        !nonzero(value.link_id.data(), value.link_id.size()) ||
+        !nonzero(value.channel_id.data(), value.channel_id.size()))
         return Status::InvalidField;
-    if (value.channel_id == 0 || value.connection_generation == 0 ||
-        value.link_generation == 0)
+    if (value.connection_generation == 0 || value.link_generation == 0)
         return Status::InvalidField;
     if (!nonzero(value.selected_plan_hash.data(),
                  value.selected_plan_hash.size()) ||
@@ -224,24 +234,34 @@ Status build_link_hello_pretag_v1(
     out[10] = static_cast<std::uint8_t>(value.phase);
     copy_out(value.session_id.data(), 16, out + 16);
     copy_out(value.link_id.data(), 16, out + 32);
-    put_be64(out + 48, value.channel_id);
-    put_be64(out + 56, value.connection_generation);
-    put_be64(out + 64, value.link_generation);
-    put_be16(out + 72, value.wire_major);
-    put_be16(out + 74, value.wire_minor);
-    put_be16(out + 76, value.capability_bits);
-    put_be16(out + 78, value.critical_extension_mask);
-    out[80] = value.determinism_profile;
-    out[81] = value.core_state_format;
-    copy_out(value.selected_plan_hash.data(), 32, out + 84);
-    copy_out(value.endpoint_offer_hash.data(), 32, out + 116);
-    copy_out(value.pair_transcript_object_hash.data(), 32, out + 148);
-    copy_out(value.session_signing_binding_hash.data(), 32, out + 180);
-    out[212] = 0;
-    out[213] = 1;
-    copy_out(value.identity_verifier_ref.identity_key_id.data(), 32, out + 220);
-    copy_out(identity_key, 65, out + 252);
-    copy_out(value.session_signing_public_key.data(), 65, out + 324);
+    copy_out(value.channel_id.data(), 16,
+             out + link::kLinkHelloChannelIdOffsetV1);
+    put_be64(out + link::kLinkHelloConnectionGenerationOffsetV1,
+             value.connection_generation);
+    put_be64(out + link::kLinkHelloLinkGenerationOffsetV1,
+             value.link_generation);
+    put_be16(out + link::kLinkHelloWireMajorOffsetV1, value.wire_major);
+    put_be16(out + link::kLinkHelloWireMajorOffsetV1 + 2, value.wire_minor);
+    put_be16(out + link::kLinkHelloCapabilityOffsetV1, value.capability_bits);
+    put_be16(out + link::kLinkHelloCriticalExtensionOffsetV1,
+             value.critical_extension_mask);
+    out[link::kLinkHelloDeterminismOffsetV1] = value.determinism_profile;
+    out[link::kLinkHelloCoreStateFormatOffsetV1] = value.core_state_format;
+    copy_out(value.selected_plan_hash.data(), 32,
+             out + link::kLinkHelloSelectedPlanHashOffsetV1);
+    copy_out(value.endpoint_offer_hash.data(), 32,
+             out + link::kLinkHelloEndpointOfferHashOffsetV1);
+    copy_out(value.pair_transcript_object_hash.data(), 32,
+             out + link::kLinkHelloPairTranscriptOffsetV1);
+    copy_out(value.session_signing_binding_hash.data(), 32,
+             out + link::kLinkHelloBindingHashOffsetV1);
+    out[link::kLinkHelloIdentityRefOffsetV1] = 0;
+    out[link::kLinkHelloIdentityRefOffsetV1 + 1] = 1;
+    copy_out(value.identity_verifier_ref.identity_key_id.data(), 32,
+             out + link::kLinkHelloIdentityRefOffsetV1 + 8);
+    copy_out(identity_key, 65, out + link::kLinkHelloIdentityRefOffsetV1 + 40);
+    copy_out(value.session_signing_public_key.data(), 65,
+             out + link::kLinkHelloSessionSigningKeyOffsetV1);
     *out_digest = domain_hash(kLinkHelloDigestDomainV1, out, out_pretag->size());
     return Status::Ok;
 }
@@ -340,19 +360,25 @@ Status parse_link_hello_v1(
         !same(bytes + 32, expected.link_id.data(), 16))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (be64(bytes + 48) != expected.channel_id)
+    if (!same(bytes + link::kLinkHelloChannelIdOffsetV1,
+              expected.channel_id.data(), 16))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (be64(bytes + 56) != expected.connection_generation ||
-        be64(bytes + 64) != expected.link_generation)
+    if (be64(bytes + link::kLinkHelloConnectionGenerationOffsetV1) !=
+            expected.connection_generation ||
+        be64(bytes + link::kLinkHelloLinkGenerationOffsetV1) !=
+            expected.link_generation)
         return fail(out_report, LinkControlIssueV1::Generation,
                     Status::InvalidField);
 
-    if (be16(bytes + 72) != 2 || be16(bytes + 74) != 0)
+    if (be16(bytes + link::kLinkHelloWireMajorOffsetV1) != 2 ||
+        be16(bytes + link::kLinkHelloWireMajorOffsetV1 + 2) != 0)
         return fail(out_report, LinkControlIssueV1::Version,
                     Status::InvalidField);
 
-    const auto support = link::evaluate_link_proposal_v1(be16(bytes + 76));
+    const auto support =
+        link::evaluate_link_proposal_v1(
+            be16(bytes + link::kLinkHelloCapabilityOffsetV1));
     if (support != link::LinkProposalSupportV1::Supported) {
         if (out_report != nullptr) out_report->proposal = support;
         return fail(out_report,
@@ -361,66 +387,76 @@ Status parse_link_hello_v1(
                         ? Status::UnknownCriticalTag
                         : Status::InvalidField);
     }
-    const auto critical = link::check_critical_extension_mask_v1(be16(bytes + 78));
+    const auto critical = link::check_critical_extension_mask_v1(
+        be16(bytes + link::kLinkHelloCriticalExtensionOffsetV1));
     if (critical != Status::Ok)
         return fail(out_report, LinkControlIssueV1::Capability, critical);
-    if (!zeros(bytes + 82, 2))
+    if (!zeros(bytes + link::kLinkHelloReservedZero2OffsetV1, 2))
         return fail(out_report, LinkControlIssueV1::Reserved,
                     Status::NonzeroReserved);
 
-    if (!same(bytes + 84, expected.selected_plan_hash.data(), 32) ||
-        !same(bytes + 116, expected.endpoint_offer_hash.data(), 32))
+    if (!same(bytes + link::kLinkHelloSelectedPlanHashOffsetV1,
+              expected.selected_plan_hash.data(), 32) ||
+        !same(bytes + link::kLinkHelloEndpointOfferHashOffsetV1,
+              expected.endpoint_offer_hash.data(), 32))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (!same(bytes + 148, expected.pair_transcript_object_hash.data(), 32))
+    if (!same(bytes + link::kLinkHelloPairTranscriptOffsetV1,
+              expected.pair_transcript_object_hash.data(), 32))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (!same(bytes + 180, expected.peer_binding_hash.data(), 32))
+    if (!same(bytes + link::kLinkHelloBindingHashOffsetV1,
+              expected.peer_binding_hash.data(), 32))
         return fail(out_report, LinkControlIssueV1::BindingRef,
                     Status::InvalidField);
 
     /* identity_verifier_ref: the long-term identity key that must authenticate
      * the session signing key carried below. */
-    if (bytes[212] != 0 || bytes[213] != 1)
+    const auto* identity_ref = bytes + link::kLinkHelloIdentityRefOffsetV1;
+    if (identity_ref[0] != 0 || identity_ref[1] != 1)
         return fail(out_report, LinkControlIssueV1::IdentityRef,
                     Status::InvalidField);
-    if (!zeros(bytes + 214, 6) || !zeros(bytes + 317, 7))
+    if (!zeros(identity_ref + 2, 6) || !zeros(identity_ref + 105, 7))
         return fail(out_report, LinkControlIssueV1::Reserved,
                     Status::NonzeroReserved);
-    if (!same(bytes + 220, expected.peer_identity_key_id.data(), 32))
+    if (!same(identity_ref + 8, expected.peer_identity_key_id.data(), 32))
         return fail(out_report, LinkControlIssueV1::IdentityRef,
                     Status::InvalidField);
-    if (!validate_point(validator_context, bytes + 252))
+    const auto* identity_key = identity_ref + 40;
+    if (!validate_point(validator_context, identity_key))
         return fail(out_report, LinkControlIssueV1::IdentityRef,
                     Status::InvalidField);
     const auto derived_key_id =
-        domain_hash(kIdentityKeyIdDomainV1, bytes + 252, 65);
-    if (!same(bytes + 220, derived_key_id.data(), 32))
+        domain_hash(kIdentityKeyIdDomainV1, identity_key, 65);
+    if (!same(identity_ref + 8, derived_key_id.data(), 32))
         return fail(out_report, LinkControlIssueV1::IdentityRef,
                     Status::InvalidField);
-    if (!same(bytes + 252, expected.peer_identity_public_key.data(), 65))
+    if (!same(identity_key, expected.peer_identity_public_key.data(), 65))
         return fail(out_report, LinkControlIssueV1::IdentityRef,
                     Status::InvalidField);
 
     /* The session signing key may only be one the accepted binding already
      * authenticated, and it can never be the long-term identity key itself. */
-    if (!same(bytes + 324, expected.peer_session_signing_public_key.data(), 65) ||
-        !validate_point(validator_context, bytes + 324) ||
-        same(bytes + 324, bytes + 252, 65))
+    const auto* signing_key =
+        bytes + link::kLinkHelloSessionSigningKeyOffsetV1;
+    if (!same(signing_key, expected.peer_session_signing_public_key.data(), 65) ||
+        !validate_point(validator_context, signing_key) ||
+        same(signing_key, identity_key, 65))
         return fail(out_report, LinkControlIssueV1::BindingRef,
                     Status::InvalidField);
-    if (!zeros(bytes + 389, 27))
+    if (!zeros(bytes + link::kLinkHelloReservedTailOffsetV1, 27))
         return fail(out_report, LinkControlIssueV1::Reserved,
                     Status::NonzeroReserved);
 
-    if (!canonical_signature(bytes + 416))
+    if (!canonical_signature(bytes + link::kLinkHelloSignatureOffsetV1))
         return fail(out_report, LinkControlIssueV1::Signature,
                     Status::InvalidField);
 
-    copy_out(bytes + 324, 65, out_parsed->signer_public_key.data());
+    copy_out(signing_key, 65, out_parsed->signer_public_key.data());
     out_parsed->digest =
         domain_hash(kLinkHelloDigestDomainV1, bytes, kLinkHelloPretagSizeV1);
-    copy_out(bytes + 416, 64, out_parsed->signature.data());
+    copy_out(bytes + link::kLinkHelloSignatureOffsetV1, 64,
+             out_parsed->signature.data());
 
     link::LinkHelloV1 parsed{};
     parse_pretag(bytes, &parsed);

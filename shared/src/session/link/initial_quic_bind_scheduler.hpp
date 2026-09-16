@@ -91,6 +91,22 @@ public:
     { return next_operation_id_; }
     [[nodiscard]] const std::array<std::uint8_t, 16>& channel_id() const noexcept
     { return channel_id_; }
+    /*
+     * The two proof hashes the ACK binds, computed exactly as
+     * wire::encode_channel_bind_ack_body_v1 / decode_channel_bind_ack_v1 do.
+     * Both roles end up holding the same pair: the connector proof is the one
+     * this side built when it is the connector and the one it verified when it
+     * is the listener, and vice versa. The bind is therefore identified by
+     * (channel_id, connector_proof_hash, listener_proof_hash) and nothing else,
+     * which is what wire::channel_bind_binding_hash_v1 canonicalises for
+     * LINK_READY. Legal to read once channel_bound() is true.
+     */
+    [[nodiscard]] std::array<std::uint8_t, 32> connector_proof_hash()
+        const noexcept
+    { return wire::channel_bind_proof_hash_v1(connector_proof_); }
+    [[nodiscard]] std::array<std::uint8_t, 32> listener_proof_hash()
+        const noexcept
+    { return wire::channel_bind_proof_hash_v1(listener_proof_); }
     /* The session id this bind was locked under. Kept here because the owner of
      * pair_context_ releases it well before the LINK_HELLO mount point, while
      * the bind scheduler survives the whole link. */

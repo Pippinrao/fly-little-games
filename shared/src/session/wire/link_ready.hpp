@@ -29,8 +29,9 @@ struct LinkReadyExpectationsV1 final
 {
     std::array<std::uint8_t, 16> session_id{};
     std::array<std::uint8_t, 16> link_id{};
-    std::uint64_t channel_id = 0;
-    std::uint64_t channel_bind_id = 0;
+    /* The 16-byte channel identity, exactly as wire::derive_channel_id_v1
+     * produces it and as the bind codec consumes it. */
+    std::array<std::uint8_t, 16> channel_id{};
     std::uint64_t connection_generation = 0;
     std::uint64_t reconnect_attempt = 0;
     std::uint64_t link_generation = 0;
@@ -38,6 +39,9 @@ struct LinkReadyExpectationsV1 final
     PairRoleV1 local_role = PairRoleV1::Initiator;
     /* Ready for the peer's READY, Ack for the peer's ACK. */
     link::LinkReadyPhaseV1 expected_phase = link::LinkReadyPhaseV1::Ready;
+    /* wire::channel_bind_proof_hash_v1 of the authenticated bind proof. This is
+     * the only bind identity READY carries; the former u64 channel_bind_id was
+     * invented and has been deleted. */
     std::array<std::uint8_t, 32> channel_bind_hash{};
     /* Our own persisted HELLO object hash. */
     std::array<std::uint8_t, 32> local_hello_object_hash{};
@@ -51,15 +55,16 @@ struct LinkReadyExpectationsV1 final
     std::array<std::uint8_t, 65> peer_session_signing_public_key{};
 };
 
-/* Encodes bytes[0..320) and the digest it covers. */
+/* Encodes the complete signature-free LINK_READY bytes and the digest it
+ * covers. */
 Status build_link_ready_pretag_v1(
     const link::LinkReadyV1& value, P256PointValidatorV1 validate_point,
     void* validator_context,
     std::array<std::uint8_t, link::kLinkReadyPretagSizeV1>* out_pretag,
     std::array<std::uint8_t, 32>* out_digest) noexcept;
 
-/* Appends the canonical low-S signature, producing the exact 384 bytes and the
- * persisted object hash domain_hash(kLinkReadyObjectHashDomainV1, bytes, 384). */
+/* Appends the canonical low-S signature, producing the exact 432 bytes and the
+ * persisted object hash domain_hash(kLinkReadyObjectHashDomainV1, bytes, 432). */
 Status finish_link_ready_v1(
     const std::array<std::uint8_t, link::kLinkReadyPretagSizeV1>& pretag,
     const std::array<std::uint8_t, 64>& signature,
@@ -108,6 +113,22 @@ Status decode_link_ready_v1(
 Status hash_link_negotiated_result_v1(const std::uint8_t* bytes,
                                       std::size_t size,
                                       std::array<std::uint8_t, 32>* out_hash) noexcept;
+
+/*
+ * The canonical channel-bind binding hash LINK_READY carries in
+ * channel_bind_hash. It is domain_hash(kLinkChannelBindBindingHashDomainV1,
+ * channel_id[16] || connector_proof_hash[32] || listener_proof_hash[32], 80):
+ * exactly the three values the approved 2026-09-04 spec uses to identify a
+ * bind (spec:437 carries both proof hashes inside the CHANNEL_BIND_ACK body),
+ * so neither side can substitute a different bind and no invented u64 bind id
+ * is needed. Both proof hashes are
+ * wire::channel_bind_proof_hash_v1(<the exact 248-byte proof>).
+ */
+Status channel_bind_binding_hash_v1(
+    const std::array<std::uint8_t, 16>& channel_id,
+    const std::array<std::uint8_t, 32>& connector_proof_hash,
+    const std::array<std::uint8_t, 32>& listener_proof_hash,
+    std::array<std::uint8_t, 32>* out_hash) noexcept;
 
 } // namespace flynes::session::wire
 

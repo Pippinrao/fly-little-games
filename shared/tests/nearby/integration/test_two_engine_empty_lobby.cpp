@@ -321,7 +321,13 @@ struct EngineFixture final
             fly_session_inbox_v2_t* inbox)
         {
             auto* self = static_cast<Key*>(context);
-            if (resource == 0 || purpose != FLY_SESSION_KEY_DEVICE_IDENTITY_V2 ||
+            /* Two purposes legitimately reach this port in this fixture: the
+             * long-term device identity key (pair transcript) and the session
+             * signing key minted by SessionSigningScheduler, which is what
+             * LINK_HELLO/READY/ACK are signed with. Anything else is a bug. */
+            if (resource == 0 ||
+                (purpose != FLY_SESSION_KEY_DEVICE_IDENTITY_V2 &&
+                 purpose != FLY_SESSION_KEY_SESSION_SIGNING_V2) ||
                 !digest)
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             ++self->signs;
@@ -2892,11 +2898,21 @@ void drive_session_signing_persistence(
           "the link handshake really re-reads the durable 0x0212 binding "
           "through the R3 object-store read port");
 
-    // Deliver the exact stored bytes and hash. The scheduler verifies them and
-    // then stops at the first input this build has no producer for (the
-    // contract's u64 channel_id/channel_bind_id, the negotiated result and the
-    // peer's accepted 0x0212 binding), which is a not-wired seam: the link must
-    // stay CONNECTING, never FAILED and never CONNECTED_LOBBY.
+    // Deliver the exact stored bytes and hash. The scheduler verifies the
+    // re-read 312 bytes and their content hash, marks the local binding durable
+    // and then asks for the LINK_HELLO signature.
+    //
+    // As of the 2026-09-16 channel-identity correction the channel id and the
+    // canonical channel-bind binding hash DO have a producer
+    // (InitialQuicBindScheduler owns them and the engine hands them over), so the
+    // attempt now legitimately advances past the binding re-read and dispatches
+    // the session-signing key effect for HELLO. It still cannot reach
+    // CONNECTED_LOBBY, and the reason is unchanged and narrower: the negotiated
+    // result, the peer's accepted 0x0212 binding and the inbound Control stream
+    // have no producer. The link must therefore stay CONNECTING (never FAILED,
+    // never CONNECTED_LOBBY) and must persist no 0x0216/0x0217 control object
+    // yet, because persisting HELLO requires a signature this fixture's key port
+    // never answers.
     if (tail == SessionSigningTail::ReadObjectContentMismatch)
     {
         /*
@@ -2947,9 +2963,11 @@ void drive_session_signing_persistence(
                                           flynes::session::link::
                                               kLinkReadyObjectKindV1;
                            }),
-          "the verified local re-read keeps CONNECTING and persists no "
-          "0x0216/0x0217 object while channel_bind_id, the negotiated result and "
-          "the peer binding still have no producer");
+          "the verified local re-read keeps CONNECTING, persists no 0x0216/"
+          "0x0217 object, and advances to the HELLO signature request now that "
+          "the 16-byte channel id and the channel-bind binding hash have a real "
+          "producer; the negotiated result, the peer 0x0212 binding and the "
+          "inbound Control stream still have none");
 }
 
 void drive_initiator_pair_flow(EngineFixture& fixture, SessionSigningTail tail)

@@ -33,100 +33,106 @@ void check(bool value, const char* message)
 
 // kHelloInitiatorObjectHash (32 bytes)
 constexpr const char* kHelloInitiatorObjectHash =
-    "9f2479e6ce0e4b5b0cc9e89340c82aad5a390638942416e80c326d0c368f59ab"
+        "e68b03ee77136754df1445d6fc1a215b6b4b787fad8819eb1b04b9a805c872c3"
     ;
 
 
 // kHelloResponderObjectHash (32 bytes)
 constexpr const char* kHelloResponderObjectHash =
-    "9c6d9a08c9e7e7ff3c04caac0cf31279e10c6ccb1f85ef8e6d8b82f6fc8f44ca"
+        "aa10adeee6a6d6586e444206382b47e52bbfd3e3155fb45648fe452c81c51375"
     ;
 
 
-// kReadyInitiatorBytes (384 bytes)
+// kReadyInitiatorBytes (432 bytes)
 constexpr const char* kReadyInitiatorBytes =
-    "0001000000000000010202010000000011111111111111111111111111111111"
-    "2222222222222222222222222222222201020304050607080a0b0c0d0e0f1011"
+            "0001000000000000010202010000000011111111111111111111111111111111"
+    "2222222222222222222222222222222201020304050607080000000000000000"
     "0000000000000007000000000000000000000000000000098888888888888888"
-    "8888888888888888888888888888888888888888888888889f2479e6ce0e4b5b"
-    "0cc9e89340c82aad5a390638942416e80c326d0c368f59ab9999999999999999"
+    "888888888888888888888888888888888888888888888888e68b03ee77136754"
+    "df1445d6fc1a215b6b4b787fad8819eb1b04b9a805c872c39999999999999999"
     "999999999999999999999999999999999999999999999999aaaaaaaaaaaaaaaa"
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb"
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccc"
     "ccccccccccccccccccccccccccccccccccccccccccccccccdddddddddddddddd"
     "dddddddddddddddddddddddddddddddddddddddddddddddd0000000000000000"
-    "33faea187074fe07889541c4383e6bbfaa63fc3581be017edd837463c6308d1d"
-    "4392022a013747d7b24837c3794a3e781917c574662551f7865d709d039e1748"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000000000000395b397625edd6398134e18ec6ab655c"
+    "07121a9b6dfe68cf8eabe30a13c57f314c2b5bb6f2d941c2a12379aee71d8a61"
+    "16517bee2faa87f57ebb155143dd9565"
     ;
 
 
 // kReadyInitiatorDigest (32 bytes)
 constexpr const char* kReadyInitiatorDigest =
-    "e62416c75c3050e9db9a82d580eda0df3a2c183c9ab86f7fda86a28b0805587f"
+        "84af193a3ed10a2875f8df89e71c7613b1c864ee3078183806f0295acde983bb"
     ;
 
 
 // kReadyInitiatorObjectHash (32 bytes)
 constexpr const char* kReadyInitiatorObjectHash =
-    "55111b64eb2fd7b72f1a792c81e00c9aed9223a7989305c7cbf349f78969c812"
+        "862c6db2ec80d39d7a24c77387b1eceef4e1428a98b63f000d52e38cb53212cf"
     ;
 
 
-// kReadyResponderBytes (384 bytes)
+// kReadyResponderBytes (432 bytes)
 constexpr const char* kReadyResponderBytes =
-    "0001000000000000020102010000000011111111111111111111111111111111"
-    "2222222222222222222222222222222201020304050607080a0b0c0d0e0f1011"
+            "0001000000000000020102010000000011111111111111111111111111111111"
+    "2222222222222222222222222222222201020304050607080000000000000000"
     "0000000000000007000000000000000000000000000000098888888888888888"
-    "8888888888888888888888888888888888888888888888889c6d9a08c9e7e7ff"
-    "3c04caac0cf31279e10c6ccb1f85ef8e6d8b82f6fc8f44ca9999999999999999"
+    "888888888888888888888888888888888888888888888888aa10adeee6a6d658"
+    "6e444206382b47e52bbfd3e3155fb45648fe452c81c513759999999999999999"
     "999999999999999999999999999999999999999999999999aaaaaaaaaaaaaaaa"
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb"
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccc"
     "ccccccccccccccccccccccccccccccccccccccccccccccccdddddddddddddddd"
     "dddddddddddddddddddddddddddddddddddddddddddddddd0000000000000000"
-    "21f1150e406ddc781b045fb236e6d1d7457e53f17b17f16aeb07584cca67e4d7"
-    "427593b33967090e439e292a478067a3ffa7dbf4dbf715d0d375934634de13dc"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000000000002d82137345d0c8e907b6f2951545c6c6"
+    "8dd28e0239cfc8e6942be6fe27cf8a634625a475908a6b9b804b0f66d09fe609"
+    "9230198aac68244f2c663b59598538fb"
     ;
 
 
 // kReadyResponderDigest (32 bytes)
 constexpr const char* kReadyResponderDigest =
-    "070fedab255e51c30ea9ec265751c4a5bf2c9d23497526b69eba741a5564f91e"
+        "230aa59dd049fb78338b8a1b9451e7d5c329854656add2499ae19c5dfca3796f"
     ;
 
 
 // kReadyResponderObjectHash (32 bytes)
 constexpr const char* kReadyResponderObjectHash =
-    "652cb1d8cd7bf4b9c297b3f603b917e1d8422aaf899391718943544ff4e1a471"
+        "ced1b74ba80f57b34000d50542a7b454bc1b0f64a054f4f0730668af82236ebe"
     ;
 
 
-// kAckInitiatorBytes (384 bytes)
+// kAckInitiatorBytes (432 bytes)
 constexpr const char* kAckInitiatorBytes =
-    "0001000000000000010202020000000011111111111111111111111111111111"
-    "2222222222222222222222222222222201020304050607080a0b0c0d0e0f1011"
+            "0001000000000000010202020000000011111111111111111111111111111111"
+    "2222222222222222222222222222222201020304050607080000000000000000"
     "0000000000000007000000000000000000000000000000098888888888888888"
-    "8888888888888888888888888888888888888888888888889f2479e6ce0e4b5b"
-    "0cc9e89340c82aad5a390638942416e80c326d0c368f59ab9999999999999999"
+    "888888888888888888888888888888888888888888888888e68b03ee77136754"
+    "df1445d6fc1a215b6b4b787fad8819eb1b04b9a805c872c39999999999999999"
     "999999999999999999999999999999999999999999999999aaaaaaaaaaaaaaaa"
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb"
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccc"
     "ccccccccccccccccccccccccccccccccccccccccccccccccdddddddddddddddd"
     "dddddddddddddddddddddddddddddddddddddddddddddddd0000000000000000"
-    "439f15a2a5670dba1ccf7206d1e7d70d5ed5308f6cab5eb582c286c43bfaaf53"
-    "52fe77722cf3767cbcac9b65d1714d2bb0138f22c3316341464989b7dc4fab72"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000019ee9c72cd7c2b693e68cef78229f5e8"
+    "3641d49d4779f6578f346c3f27275909583b7bfa1908c2d7bf5928b9c77db9f1"
+    "f0ae030fffb561295201b73f3c8282bb"
     ;
 
 
 // kAckInitiatorDigest (32 bytes)
 constexpr const char* kAckInitiatorDigest =
-    "baa2429c2068848eed68e8546d54abb841656678b661d593f7d587384b15de6b"
+        "0fb3caf5c5f812935c6ac12a02802639efd0dd1f045778bb8998b7f7d4fd0b9a"
     ;
 
 
 // kAckInitiatorObjectHash (32 bytes)
 constexpr const char* kAckInitiatorObjectHash =
-    "fe9eb4f672c29879f236b7539a696a98c0a917599506b0cb0907844742941726"
+        "adc9c09a6be6d2d0b9c9885bf5a0c285dee61ff2b5202be9e346b6eaf5862d08"
     ;
 
 constexpr const char* kGenerator1 =
@@ -135,6 +141,15 @@ constexpr const char* kGenerator1 =
 constexpr const char* kGenerator2 =
     "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978"
     "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+
+/*
+ * The 16-byte channel identity used by every golden vector, zero-extended from
+ * the former u64 fixture value 0x0102030405060708 by the independent oracle
+ * (out/logs/gen_link_control_golden.py).
+ */
+constexpr std::array<std::uint8_t, 16> kGoldenChannelId = {{
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
 
 std::uint8_t nibble(char value)
 {
@@ -198,8 +213,7 @@ link::LinkReadyV1 golden_ready_value(link::LinkReadyPhaseV1 ready_phase)
     value.ready_phase = ready_phase;
     value.session_id.fill(0x11);
     value.link_id.fill(0x22);
-    value.channel_id = 0x0102030405060708ull;
-    value.channel_bind_id = 0x0a0b0c0d0e0f1011ull;
+    value.channel_id = kGoldenChannelId;
     value.connection_generation = 7;
     value.reconnect_attempt = 0;
     value.link_generation = 9;
@@ -219,8 +233,7 @@ wire::LinkReadyExpectationsV1 ready_expectations(
     wire::LinkReadyExpectationsV1 expected{};
     expected.session_id.fill(0x11);
     expected.link_id.fill(0x22);
-    expected.channel_id = 0x0102030405060708ull;
-    expected.channel_bind_id = 0x0a0b0c0d0e0f1011ull;
+    expected.channel_id = kGoldenChannelId;
     expected.connection_generation = 7;
     expected.reconnect_attempt = 0;
     expected.link_generation = 9;
@@ -274,7 +287,7 @@ std::vector<std::uint8_t> bytes_of(const std::uint8_t* data, std::size_t size)
 
 void golden_ready_vectors()
 {
-    const auto expected_bytes = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto expected_bytes = hex_bytes<432>(kReadyInitiatorBytes);
     const auto expected_digest = hex_bytes<32>(kReadyInitiatorDigest);
     const auto expected_object_hash = hex_bytes<32>(kReadyInitiatorObjectHash);
 
@@ -317,8 +330,7 @@ void golden_ready_vectors()
     responder.receiver_role = wire::PairRoleV1::Initiator;
     responder.session_id.fill(0x11);
     responder.link_id.fill(0x22);
-    responder.channel_id = 0x0102030405060708ull;
-    responder.channel_bind_id = 0x0a0b0c0d0e0f1011ull;
+    responder.channel_id = kGoldenChannelId;
     responder.connection_generation = 7;
     responder.reconnect_attempt = 0;
     responder.link_generation = 9;
@@ -345,7 +357,7 @@ void golden_ready_vectors()
                                      &responder_bytes,
                                      &responder_parsed) == wire::Status::Ok,
           "responder READY finishes");
-    check(responder_bytes == hex_bytes<384>(kReadyResponderBytes),
+    check(responder_bytes == hex_bytes<432>(kReadyResponderBytes),
           "responder READY is byte-exact against the independent golden vector");
     check(responder_parsed.object_hash ==
               hex_bytes<32>(kReadyResponderObjectHash),
@@ -354,7 +366,7 @@ void golden_ready_vectors()
 
 void golden_ack_vector()
 {
-    const auto expected_bytes = hex_bytes<384>(kAckInitiatorBytes);
+    const auto expected_bytes = hex_bytes<432>(kAckInitiatorBytes);
     const auto expected_digest = hex_bytes<32>(kAckInitiatorDigest);
     const auto expected_object_hash = hex_bytes<32>(kAckInitiatorObjectHash);
 
@@ -386,14 +398,14 @@ void golden_ack_vector()
           "ACK decodes when an ACK is expected");
 
     /* A READY must not be accepted where an ACK is required, and vice versa. */
-    const auto ready_bytes = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto ready_bytes = hex_bytes<432>(kReadyInitiatorBytes);
     const auto wrong_phase = decode_ready(
         bytes_of(ready_bytes.data(), ready_bytes.size()),
         ready_expectations(link::LinkReadyPhaseV1::Ack));
     check(wrong_phase.status == wire::Status::InvalidField &&
               wrong_phase.issue == wire::LinkControlIssueV1::Discriminant,
           "a READY is rejected where an ACK is required");
-    const auto ack_bytes = hex_bytes<384>(kAckInitiatorBytes);
+    const auto ack_bytes = hex_bytes<432>(kAckInitiatorBytes);
     const auto wrong_phase2 = decode_ready(
         bytes_of(ack_bytes.data(), ack_bytes.size()),
         ready_expectations(link::LinkReadyPhaseV1::Ready));
@@ -404,7 +416,7 @@ void golden_ack_vector()
 
 void exact_field_offsets()
 {
-    const auto bytes = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto bytes = hex_bytes<432>(kReadyInitiatorBytes);
     check(bytes[0] == 0x00 && bytes[1] == 0x01,
           "READY version is u16be 1 at offset 0");
     check(bytes[8] == 1 && bytes[9] == 2 && bytes[10] == 2 && bytes[11] == 1,
@@ -412,9 +424,9 @@ void exact_field_offsets()
     check(bytes[16] == 0x11 && bytes[32] == 0x22,
           "READY session and link ids sit at offsets 16/32");
     check(bytes[48] == 0x01 && bytes[55] == 0x08,
-          "READY channel_id is u64be at offset 48");
-    check(bytes[56] == 0x0a && bytes[63] == 0x11,
-          "READY channel_bind_id is u64be at offset 56");
+          "READY channel_id starts at offset 48 with the derive_channel_id_v1 bytes");
+    check(bytes[56] == 0x00 && bytes[63] == 0x00,
+          "READY channel_id is 16 bytes wide, zero-extended at offsets 56..64");
     check(bytes[64] == 0x00 && bytes[71] == 0x07,
           "READY connection_generation is u64be at offset 64");
     check(bytes[72] == 0 && bytes[79] == 0,
@@ -426,11 +438,11 @@ void exact_field_offsets()
           "READY hash block is contiguous at offset 88");
     check(bytes[216] == 0xbb && bytes[248] == 0xcc && bytes[280] == 0xdd,
           "READY summary and merge hashes sit at offsets 216/248/280");
-    check(std::all_of(bytes.begin() + 312, bytes.begin() + 320,
+    check(std::all_of(bytes.begin() + 312, bytes.begin() + 368,
                       [](std::uint8_t value) { return value == 0; }),
           "READY reserved block before the signature is zeroed");
-    check(bytes[320] != 0 && bytes[383] != 0,
-          "READY signature occupies offsets 320..384");
+    check(bytes[368] != 0 && bytes[431] != 0,
+          "READY signature occupies offsets 368..432");
 }
 
 void negotiated_result_domain()
@@ -459,7 +471,7 @@ void negotiated_result_domain()
 
 void structural_negatives()
 {
-    const auto golden = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto golden = hex_bytes<432>(kReadyInitiatorBytes);
     const auto expected = ready_expectations(link::LinkReadyPhaseV1::Ready);
 
     auto truncated = bytes_of(golden.data(), golden.size());
@@ -539,7 +551,7 @@ void structural_negatives()
 
 void binding_chain_negatives()
 {
-    const auto golden = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto golden = hex_bytes<432>(kReadyInitiatorBytes);
     const auto expected = ready_expectations(link::LinkReadyPhaseV1::Ready);
 
     struct Mutation
@@ -555,8 +567,8 @@ void binding_chain_negatives()
          "READY rejects a different link id"},
         {55, wire::LinkControlIssueV1::ExpectedField,
          "READY rejects a different channel id"},
-        {63, wire::LinkControlIssueV1::BindingRef,
-         "READY rejects a different channel bind id"},
+        {59, wire::LinkControlIssueV1::ExpectedField,
+         "READY rejects a different 16-byte channel id"},
         {71, wire::LinkControlIssueV1::Generation,
          "READY rejects a different connection generation"},
         {79, wire::LinkControlIssueV1::Generation,
@@ -600,12 +612,12 @@ void binding_chain_negatives()
 
 void signature_negatives()
 {
-    const auto golden = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto golden = hex_bytes<432>(kReadyInitiatorBytes);
     const auto expected = ready_expectations(link::LinkReadyPhaseV1::Ready);
     const auto digest = hex_bytes<32>(kReadyInitiatorDigest);
 
     auto zeroed = bytes_of(golden.data(), golden.size());
-    std::fill(zeroed.begin() + 320, zeroed.end(), std::uint8_t{0});
+    std::fill(zeroed.begin() + 368, zeroed.end(), std::uint8_t{0});
     verifier_calls = 0;
     auto decoded = decode_ready(zeroed, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -614,7 +626,7 @@ void signature_negatives()
           "READY rejects a zeroed signature without calling the verifier");
 
     auto high_s = bytes_of(golden.data(), golden.size());
-    high_s[352] = 0x80;
+    high_s[400] = 0x80;
     verifier_calls = 0;
     decoded = decode_ready(high_s, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -626,7 +638,7 @@ void signature_negatives()
     {
         const auto inner = wire::sha256(digest.data(), digest.size());
         const auto bad = test_sign(hex_bytes<65>(kGenerator1), inner);
-        std::copy(bad.begin(), bad.end(), double_hashed.begin() + 320);
+        std::copy(bad.begin(), bad.end(), double_hashed.begin() + 368);
     }
     decoded = decode_ready(double_hashed, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -639,7 +651,7 @@ void signature_negatives()
             link::kLinkHelloDigestDomainV1, golden.data(),
             link::kLinkReadyPretagSizeV1);
         const auto bad = test_sign(hex_bytes<65>(kGenerator1), hello_digest);
-        std::copy(bad.begin(), bad.end(), wrong_purpose.begin() + 320);
+        std::copy(bad.begin(), bad.end(), wrong_purpose.begin() + 368);
     }
     decoded = decode_ready(wrong_purpose, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -652,7 +664,7 @@ void signature_negatives()
     auto identity_signed = bytes_of(golden.data(), golden.size());
     {
         const auto bad = test_sign(hex_bytes<65>(kGenerator2), digest);
-        std::copy(bad.begin(), bad.end(), identity_signed.begin() + 320);
+        std::copy(bad.begin(), bad.end(), identity_signed.begin() + 368);
     }
     decoded = decode_ready(identity_signed, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -668,7 +680,7 @@ void signature_negatives()
             link::kLinkReadyDigestDomainV1, reflected.data(),
             link::kLinkReadyPretagSizeV1);
         const auto bad = test_sign(hex_bytes<65>(kGenerator1), reflected_digest);
-        std::copy(bad.begin(), bad.end(), reflected.begin() + 320);
+        std::copy(bad.begin(), bad.end(), reflected.begin() + 368);
     }
     verifier_calls = 0;
     decoded = decode_ready(reflected, expected);
@@ -688,7 +700,7 @@ void signature_negatives()
 
 void wrong_kind()
 {
-    const auto ready = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto ready = hex_bytes<432>(kReadyInitiatorBytes);
     wire::LinkControlDecodeReportV1 report{};
     link::LinkHelloV1 hello_value{};
     wire::LinkHelloExpectationsV1 hello_expected{};
@@ -715,7 +727,7 @@ void wrong_kind()
 void two_stage_parse_then_accept()
 {
     const auto expected = ready_expectations(link::LinkReadyPhaseV1::Ready);
-    const auto golden = hex_bytes<384>(kReadyInitiatorBytes);
+    const auto golden = hex_bytes<432>(kReadyInitiatorBytes);
 
     wire::LinkControlDecodeReportV1 report{};
     wire::LinkControlParsedV1 parsed{};
@@ -765,7 +777,7 @@ void two_stage_parse_then_accept()
     /* Structurally valid but wrong signature: accepted by stage 1, rejected only
      * by stage 2. This is the moved rejection point. */
     auto tampered = bytes_of(golden.data(), golden.size());
-    tampered[324] = static_cast<std::uint8_t>(tampered[324] ^ 0x01u);
+    tampered[372] = static_cast<std::uint8_t>(tampered[372] ^ 0x01u);
     wire::LinkControlDecodeReportV1 tampered_report{};
     wire::LinkControlParsedV1 tampered_parsed{};
     link::LinkReadyV1 tampered_value{};
@@ -801,7 +813,7 @@ void two_stage_parse_then_accept()
           "stage 1 still rejects a role-reflected READY before any crypto");
 
     auto zero_signature = bytes_of(golden.data(), golden.size());
-    std::fill(zero_signature.begin() + 320, zero_signature.end(), 0);
+    std::fill(zero_signature.begin() + 368, zero_signature.end(), 0);
     wire::LinkControlDecodeReportV1 zero_report{};
     wire::LinkControlParsedV1 zero_parsed{};
     link::LinkReadyV1 zero_value{};

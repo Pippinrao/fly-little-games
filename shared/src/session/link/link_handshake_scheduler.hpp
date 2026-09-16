@@ -107,8 +107,11 @@ struct LinkHandshakeStartV1 final
     /* Connection generation: the token scope and the stale-link discriminator. */
     std::uint64_t generation = 0;
     std::uint64_t link_generation = 0;
-    std::uint64_t channel_id = 0;
-    std::uint64_t channel_bind_id = 0;
+    /* The 16-byte channel identity owned by InitialQuicBindScheduler
+     * (wire::derive_channel_id_v1). The former u64 channel_id / channel_bind_id
+     * pair was invented by the first contract revision and is deleted: the bind
+     * is identified by channel_bind_hash alone. */
+    std::array<std::uint8_t, 16> channel_id{};
     std::uint64_t reconnect_attempt = 0;
     std::uint64_t first_operation_id = 0;
     wire::PairRoleV1 local_role = wire::PairRoleV1::Initiator;
@@ -118,6 +121,9 @@ struct LinkHandshakeStartV1 final
     std::array<std::uint8_t, 32> pair_transcript_object_hash{};
     std::array<std::uint8_t, 32> selected_plan_hash{};
     std::array<std::uint8_t, 32> endpoint_offer_hash{};
+    /* wire::channel_bind_proof_hash_v1 of the authenticated bind proof, owned by
+     * InitialQuicBindScheduler. This single value is the whole channel-bind
+     * binding READY carries. */
     std::array<std::uint8_t, 32> channel_bind_hash{};
     /* Locally persisted 0x0212 binding, referenced by hash only. */
     std::array<std::uint8_t, 32> local_binding_hash{};

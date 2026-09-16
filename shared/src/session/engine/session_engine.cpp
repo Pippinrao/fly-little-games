@@ -1673,15 +1673,22 @@ bool SessionEngine::start_session_signing_locked() noexcept
  *
  * Still absent, and deliberately left zero rather than fabricated:
  *
- *   3. The contract's u64 channel_id / channel_bind_id / channel_bind_hash.
- *      The bind scheduler owns a 16-byte channel id and the bind proofs, but the
- *      LINK_HELLO/LINK_READY contract uses u64 ids that nothing produces yet.
- *   4. The negotiated capability/runtime result and its hash.
- *   5. The peer's accepted 0x0212 binding (peer_binding_hash /
- *      peer_identity_key_id / peer_session_signing_public_key): the engine never
- *      receives the peer binding object, so those bytes have no owner here.
+ *   3. The negotiated capability/runtime result and its hash. Its byte layout is
+ *      not frozen by any approved document, so this engine cannot produce a
+ *      canonical value yet (flagged for owner arbitration; see the report).
+ *   4. The peer's accepted 0x0212 binding (peer_binding_hash /
+ *      peer_identity_key_id / peer_session_signing_public_key): the peer binding
+ *      is only carried inside the peer's LINK_HELLO, and this engine has no
+ *      inbound Control stream to receive it on.
  *
- * Because of 3..5 the scheduler stops as soon as one of them is needed and
+ * The 16-byte channel id and the canonical channel-bind binding hash used to be
+ * on this list. They are now produced by initial_quic_bind_ (channel_id() plus
+ * connector/listener proof hashes canonicalised by
+ * wire::channel_bind_binding_hash_v1), because the owner corrected the contract
+ * on 2026-09-16: the former u64 channel_id / channel_bind_id were invented and
+ * matched no implementation.
+ *
+ * Because of 3 and 4 the scheduler stops as soon as one of them is needed and
  * reports missing_inputs(). The engine then keeps the link at
  * FLY_SESSION_LINK_CONNECTING_V2 - the honest projection, since no peer
  * HELLO/READY exchange took place - instead of publishing a failure for a seam
@@ -1716,12 +1723,11 @@ bool SessionEngine::start_session_signing_locked() noexcept
  * outstanding operation and never releases a borrowed handle.
  *
  * Every field below is copied from exactly one owner that already produced it.
- * The contract's u64 channel_id / channel_bind_id / channel_bind_hash, the
- * negotiated result and the peer's accepted 0x0212 binding have no producer in
- * this build, so they stay zero: the handshake starts, reads the local binding
- * back through the R3 object-store read port, and then stops at the first
- * absent input by reporting missing_inputs() rather than inventing a value or
- * publishing a failed link.
+ * The negotiated result and the peer's accepted 0x0212 binding have no producer
+ * in this build, so they stay zero: the handshake starts, reads the local
+ * binding back through the R3 object-store read port, signs a real LINK_HELLO
+ * and then stops at the first absent input by reporting missing_inputs() rather
+ * than inventing a value or publishing a failed link.
  */
 bool SessionEngine::start_link_handshake_locked() noexcept
 {
@@ -1747,6 +1753,24 @@ bool SessionEngine::start_link_handshake_locked() noexcept
     start.first_operation_id = next_operation_id_;
     start.session_id = initial_quic_bind_->session_id();
     start.local_role = local_pair_role_;
+    /*
+     * Channel identity and bind binding, both owned by initial_quic_bind_ and
+     * both read only after channel_bound() is true (guarded above).
+     *
+     *   channel_id        the 16-byte wire::derive_channel_id_v1 value: the
+     *                     exact same value the bind codec and the ACK use.
+     *   channel_bind_hash the canonical hash of (channel_id, connector proof
+     *                     hash, listener proof hash) — the three values the
+     *                     approved design uses to identify a bind. The proofs
+     *                     here are the ones this side actually built or verified
+     *                     inside the bind, never assumed.
+     */
+    start.channel_id = initial_quic_bind_->channel_id();
+    if (wire::channel_bind_binding_hash_v1(
+            start.channel_id, initial_quic_bind_->connector_proof_hash(),
+            initial_quic_bind_->listener_proof_hash(),
+            &start.channel_bind_hash) != wire::Status::Ok)
+        return false;
     start.pair_transcript_hash = pair_signature_->transcript_hash();
     start.pair_transcript_object_hash = pair_signature_->transcript_object_hash();
     /* The locked bearer path and the offer derive from the same transcript. */

@@ -88,18 +88,27 @@ void parse_pretag(const std::uint8_t* bytes, link::LinkReadyV1* out) noexcept
     out->ready_phase = static_cast<link::LinkReadyPhaseV1>(bytes[11]);
     copy_out(bytes + 16, 16, out->session_id.data());
     copy_out(bytes + 32, 16, out->link_id.data());
-    out->channel_id = be64(bytes + 48);
-    out->channel_bind_id = be64(bytes + 56);
-    out->connection_generation = be64(bytes + 64);
-    out->reconnect_attempt = be64(bytes + 72);
-    out->link_generation = be64(bytes + 80);
-    copy_out(bytes + 88, 32, out->channel_bind_hash.data());
-    copy_out(bytes + 120, 32, out->local_hello_object_hash.data());
-    copy_out(bytes + 152, 32, out->peer_hello_object_hash.data());
-    copy_out(bytes + 184, 32, out->negotiated_result_hash.data());
-    copy_out(bytes + 216, 32, out->local_summary_hash.data());
-    copy_out(bytes + 248, 32, out->peer_summary_hash.data());
-    copy_out(bytes + 280, 32, out->merge_result_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelIdOffsetV1, 16,
+             out->channel_id.data());
+    out->connection_generation =
+        be64(bytes + link::kLinkReadyConnectionGenerationOffsetV1);
+    out->reconnect_attempt =
+        be64(bytes + link::kLinkReadyReconnectAttemptOffsetV1);
+    out->link_generation = be64(bytes + link::kLinkReadyLinkGenerationOffsetV1);
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1, 32,
+             out->channel_bind_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 32, 32,
+             out->local_hello_object_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 64, 32,
+             out->peer_hello_object_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 96, 32,
+             out->negotiated_result_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 128, 32,
+             out->local_summary_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 160, 32,
+             out->peer_summary_hash.data());
+    copy_out(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 192, 32,
+             out->merge_result_hash.data());
 }
 
 } // namespace
@@ -125,10 +134,10 @@ Status build_link_ready_pretag_v1(
     if (!valid_ready_phase(value.ready_phase)) return Status::UnknownEnum;
 
     if (!nonzero(value.session_id.data(), value.session_id.size()) ||
-        !nonzero(value.link_id.data(), value.link_id.size()))
+        !nonzero(value.link_id.data(), value.link_id.size()) ||
+        !nonzero(value.channel_id.data(), value.channel_id.size()))
         return Status::InvalidField;
-    if (value.channel_id == 0 || value.channel_bind_id == 0 ||
-        value.connection_generation == 0 || value.link_generation == 0)
+    if (value.connection_generation == 0 || value.link_generation == 0)
         return Status::InvalidField;
     /* Every bound hash must be a real persisted/verified value. */
     if (!nonzero(value.channel_bind_hash.data(), value.channel_bind_hash.size()) ||
@@ -158,18 +167,28 @@ Status build_link_ready_pretag_v1(
     out[11] = static_cast<std::uint8_t>(value.ready_phase);
     copy_out(value.session_id.data(), 16, out + 16);
     copy_out(value.link_id.data(), 16, out + 32);
-    put_be64(out + 48, value.channel_id);
-    put_be64(out + 56, value.channel_bind_id);
-    put_be64(out + 64, value.connection_generation);
-    put_be64(out + 72, value.reconnect_attempt);
-    put_be64(out + 80, value.link_generation);
-    copy_out(value.channel_bind_hash.data(), 32, out + 88);
-    copy_out(value.local_hello_object_hash.data(), 32, out + 120);
-    copy_out(value.peer_hello_object_hash.data(), 32, out + 152);
-    copy_out(value.negotiated_result_hash.data(), 32, out + 184);
-    copy_out(value.local_summary_hash.data(), 32, out + 216);
-    copy_out(value.peer_summary_hash.data(), 32, out + 248);
-    copy_out(value.merge_result_hash.data(), 32, out + 280);
+    copy_out(value.channel_id.data(), 16,
+             out + link::kLinkReadyChannelIdOffsetV1);
+    put_be64(out + link::kLinkReadyConnectionGenerationOffsetV1,
+             value.connection_generation);
+    put_be64(out + link::kLinkReadyReconnectAttemptOffsetV1,
+             value.reconnect_attempt);
+    put_be64(out + link::kLinkReadyLinkGenerationOffsetV1,
+             value.link_generation);
+    copy_out(value.channel_bind_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1);
+    copy_out(value.local_hello_object_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1 + 32);
+    copy_out(value.peer_hello_object_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1 + 64);
+    copy_out(value.negotiated_result_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1 + 96);
+    copy_out(value.local_summary_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1 + 128);
+    copy_out(value.peer_summary_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1 + 160);
+    copy_out(value.merge_result_hash.data(), 32,
+             out + link::kLinkReadyChannelBindHashOffsetV1 + 192);
     *out_digest = domain_hash(kLinkReadyDigestDomainV1, out, out_pretag->size());
     return Status::Ok;
 }
@@ -280,38 +299,48 @@ Status parse_link_ready_v1(
         !same(bytes + 32, expected.link_id.data(), 16))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (be64(bytes + 48) != expected.channel_id)
+    if (!same(bytes + link::kLinkReadyChannelIdOffsetV1,
+              expected.channel_id.data(), 16))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (be64(bytes + 56) != expected.channel_bind_id)
-        return fail(out_report, LinkControlIssueV1::BindingRef,
-                    Status::InvalidField);
-    if (be64(bytes + 64) != expected.connection_generation ||
-        be64(bytes + 72) != expected.reconnect_attempt ||
-        be64(bytes + 80) != expected.link_generation)
+    if (be64(bytes + link::kLinkReadyConnectionGenerationOffsetV1) !=
+            expected.connection_generation ||
+        be64(bytes + link::kLinkReadyReconnectAttemptOffsetV1) !=
+            expected.reconnect_attempt ||
+        be64(bytes + link::kLinkReadyLinkGenerationOffsetV1) !=
+            expected.link_generation)
         return fail(out_report, LinkControlIssueV1::Generation,
                     Status::InvalidField);
 
-    if (!same(bytes + 88, expected.channel_bind_hash.data(), 32))
+    if (!same(bytes + link::kLinkReadyChannelBindHashOffsetV1,
+              expected.channel_bind_hash.data(), 32))
         return fail(out_report, LinkControlIssueV1::BindingRef,
                     Status::InvalidField);
     /* Mirrored HELLO binding: the sender's own HELLO is the peer HELLO we
      * verified, and the sender's peer HELLO is our own persisted HELLO. */
-    if (!same(bytes + 120, expected.peer_hello_object_hash.data(), 32) ||
-        !same(bytes + 152, expected.local_hello_object_hash.data(), 32))
+    if (!same(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 32,
+              expected.peer_hello_object_hash.data(), 32) ||
+        !same(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 64,
+              expected.local_hello_object_hash.data(), 32))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (!same(bytes + 184, expected.negotiated_result_hash.data(), 32) ||
-        !same(bytes + 216, expected.peer_summary_hash.data(), 32) ||
-        !same(bytes + 248, expected.local_summary_hash.data(), 32) ||
-        !same(bytes + 280, expected.merge_result_hash.data(), 32))
+    if (!same(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 96,
+              expected.negotiated_result_hash.data(), 32) ||
+        !same(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 128,
+              expected.peer_summary_hash.data(), 32) ||
+        !same(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 160,
+              expected.local_summary_hash.data(), 32) ||
+        !same(bytes + link::kLinkReadyChannelBindHashOffsetV1 + 192,
+              expected.merge_result_hash.data(), 32))
         return fail(out_report, LinkControlIssueV1::ExpectedField,
                     Status::InvalidField);
-    if (!zeros(bytes + 312, 8))
+    if (!zeros(bytes + link::kLinkReadyReservedTailOffsetV1,
+               link::kLinkReadyReservedTailSizeV1))
         return fail(out_report, LinkControlIssueV1::Reserved,
                     Status::NonzeroReserved);
 
-    if (!link_control_signature_is_canonical_v1(bytes + 320) ||
+    if (!link_control_signature_is_canonical_v1(
+            bytes + link::kLinkReadySignatureOffsetV1) ||
         !validate_point(validator_context,
                         expected.peer_session_signing_public_key.data()))
         return fail(out_report, LinkControlIssueV1::Signature,
@@ -321,7 +350,8 @@ Status parse_link_ready_v1(
              out_parsed->signer_public_key.data());
     out_parsed->digest =
         domain_hash(kLinkReadyDigestDomainV1, bytes, kLinkReadyPretagSizeV1);
-    copy_out(bytes + 320, 64, out_parsed->signature.data());
+    copy_out(bytes + link::kLinkReadySignatureOffsetV1, 64,
+             out_parsed->signature.data());
 
     link::LinkReadyV1 parsed{};
     parse_pretag(bytes, &parsed);
@@ -385,6 +415,26 @@ Status hash_link_negotiated_result_v1(const std::uint8_t* bytes,
     if (bytes == nullptr || out_hash == nullptr || size == 0)
         return Status::InvalidField;
     *out_hash = domain_hash(link::kLinkNegotiatedResultHashDomainV1, bytes, size);
+    return Status::Ok;
+}
+
+Status channel_bind_binding_hash_v1(
+    const std::array<std::uint8_t, 16>& channel_id,
+    const std::array<std::uint8_t, 32>& connector_proof_hash,
+    const std::array<std::uint8_t, 32>& listener_proof_hash,
+    std::array<std::uint8_t, 32>* out_hash) noexcept
+{
+    if (out_hash == nullptr) return Status::InvalidField;
+    if (!nonzero(channel_id.data(), channel_id.size()) ||
+        !nonzero(connector_proof_hash.data(), connector_proof_hash.size()) ||
+        !nonzero(listener_proof_hash.data(), listener_proof_hash.size()))
+        return Status::InvalidField;
+    std::array<std::uint8_t, 80> preimage{};
+    copy_out(channel_id.data(), 16, preimage.data());
+    copy_out(connector_proof_hash.data(), 32, preimage.data() + 16);
+    copy_out(listener_proof_hash.data(), 32, preimage.data() + 48);
+    *out_hash = domain_hash(link::kLinkChannelBindBindingHashDomainV1,
+                            preimage.data(), preimage.size());
     return Status::Ok;
 }
 

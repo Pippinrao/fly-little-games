@@ -45,67 +45,69 @@ constexpr const char* kResponderIdentityKeyId =
     ;
 
 
-// kHelloInitiatorBytes (480 bytes)
+// kHelloInitiatorBytes (488 bytes)
 constexpr const char* kHelloInitiatorBytes =
-    "0001000000000000010201000000000011111111111111111111111111111111"
-    "2222222222222222222222222222222201020304050607080000000000000007"
-    "0000000000000009000200000001000001020000333333333333333333333333"
-    "3333333333333333333333333333333333333333444444444444444444444444"
-    "4444444444444444444444444444444444444444555555555555555555555555"
-    "5555555555555555555555555555555555555555666666666666666666666666"
-    "666666666666666666666666666666666666666600010000000000005c968ed1"
-    "97270b0b71d7bbb572356a25d6ea6e19967e325a02889c8f609750c2047cf27b"
-    "188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978077755"
-    "10db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1000000"
-    "00000000046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a139"
-    "45d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb640"
-    "6837bf51f5000000000000000000000000000000000000000000000000000000"
-    "332f36f7f888dfccb1a9a363f6e6e1b284632e690d9ebb1f04e3756a58d05f08"
-    "547a55af56926e0e6cede9bc721147d26355b2b151d9992a0843314b46475c89"
+            "0001000000000000010201000000000011111111111111111111111111111111"
+    "2222222222222222222222222222222201020304050607080000000000000000"
+    "0000000000000007000000000000000900020000000100000102000033333333"
+    "3333333333333333333333333333333333333333333333333333333344444444"
+    "4444444444444444444444444444444444444444444444444444444455555555"
+    "5555555555555555555555555555555555555555555555555555555566666666"
+    "6666666666666666666666666666666666666666666666666666666600010000"
+    "000000005c968ed197270b0b71d7bbb572356a25d6ea6e19967e325a02889c8f"
+    "609750c2047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48"
+    "fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b7"
+    "9d227873d100000000000000046b17d1f2e12c4247f8bce6e563a440f277037d"
+    "812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33"
+    "576b315ececbb6406837bf51f500000000000000000000000000000000000000"
+    "0000000000000000399cdb73903282eec25c005225ffb361001fb94ae8c31a99"
+    "373e20175ddc97274ad89fa691249b1ef923893ebeb9770b4e4e1677fa1db252"
+    "9b5d4a07cb16b5aa"
     ;
 
 
 // kHelloInitiatorDigest (32 bytes)
 constexpr const char* kHelloInitiatorDigest =
-    "6f550877bcd9d63f869d221769349e16b05c2386b2dbff4391cc63e9ba73d8de"
+        "c854806f5a9b60bb73c6e5bc977521174bf809a225eea3800655c306a92a67c1"
     ;
 
 
 // kHelloInitiatorObjectHash (32 bytes)
 constexpr const char* kHelloInitiatorObjectHash =
-    "9f2479e6ce0e4b5b0cc9e89340c82aad5a390638942416e80c326d0c368f59ab"
+        "e68b03ee77136754df1445d6fc1a215b6b4b787fad8819eb1b04b9a805c872c3"
     ;
 
 
-// kHelloResponderBytes (480 bytes)
+// kHelloResponderBytes (488 bytes)
 constexpr const char* kHelloResponderBytes =
-    "0001000000000000020101000000000011111111111111111111111111111111"
-    "2222222222222222222222222222222201020304050607080000000000000007"
-    "0000000000000009000200000001000001020000333333333333333333333333"
-    "3333333333333333333333333333333333333333444444444444444444444444"
-    "4444444444444444444444444444444444444444555555555555555555555555"
-    "5555555555555555555555555555555555555555666666666666666666666666"
-    "666666666666666666666666666666666666666600010000000000004f02b299"
-    "c7262eb350fd959f54d5811e433a0d5edb72c17e369f8adbec851afa046b17d1"
-    "f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342"
-    "e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5000000"
-    "00000000047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48"
-    "fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b7"
-    "9d227873d1000000000000000000000000000000000000000000000000000000"
-    "11e0cf0aa78f0565b2e3f96d877119a59df8a86dfb1116f93fc246b8ee4fc8ae"
-    "4ea8a842f1ae5aaf9bdd6a54a66b9c42cd7c6ee4d8cc5008b7a1adbc24698ff0"
+            "0001000000000000020101000000000011111111111111111111111111111111"
+    "2222222222222222222222222222222201020304050607080000000000000000"
+    "0000000000000007000000000000000900020000000100000102000033333333"
+    "3333333333333333333333333333333333333333333333333333333344444444"
+    "4444444444444444444444444444444444444444444444444444444455555555"
+    "5555555555555555555555555555555555555555555555555555555566666666"
+    "6666666666666666666666666666666666666666666666666666666600010000"
+    "000000004f02b299c7262eb350fd959f54d5811e433a0d5edb72c17e369f8adb"
+    "ec851afa046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a139"
+    "45d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb640"
+    "6837bf51f500000000000000047cf27b188d034f7e8a52380304b51ac3c08969"
+    "e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dad"
+    "e63ce982299e04b79d227873d100000000000000000000000000000000000000"
+    "00000000000000007191caa3c967f77109f6b7b0e3f9f5afb4f017171d2fda39"
+    "bc067633e4eaab82427f885553274d14ed8c3542020392f4df518367e496200a"
+    "d40f95b18c06eea7"
     ;
 
 
 // kHelloResponderDigest (32 bytes)
 constexpr const char* kHelloResponderDigest =
-    "9c6f969bc3d7458d510ce0966d5d22d1252049794489b6bfad57c53f2d6973b2"
+        "dc2a54e34caed276367908ef77a2241a703f05fa7bd952a5d26070523bc4aef1"
     ;
 
 
 // kHelloResponderObjectHash (32 bytes)
 constexpr const char* kHelloResponderObjectHash =
-    "9c6d9a08c9e7e7ff3c04caac0cf31279e10c6ccb1f85ef8e6d8b82f6fc8f44ca"
+        "aa10adeee6a6d6586e444206382b47e52bbfd3e3155fb45648fe452c81c51375"
     ;
 
 constexpr const char* kGenerator1 =
@@ -114,6 +116,16 @@ constexpr const char* kGenerator1 =
 constexpr const char* kGenerator2 =
     "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978"
     "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+
+/*
+ * The 16-byte channel identity used by every golden vector. The frozen contract
+ * carries wire::derive_channel_id_v1's 16 bytes; the golden oracle
+ * (out/logs/gen_link_control_golden.py) zero-extends the former u64 fixture
+ * value 0x0102030405060708 to that width.
+ */
+constexpr std::array<std::uint8_t, 16> kGoldenChannelId = {{
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
 
 std::uint8_t nibble(char value)
 {
@@ -184,7 +196,7 @@ link::LinkHelloV1 golden_hello_value()
     value.phase = link::LinkPhaseV1::Initial;
     value.session_id.fill(0x11);
     value.link_id.fill(0x22);
-    value.channel_id = 0x0102030405060708ull;
+    value.channel_id = kGoldenChannelId;
     value.connection_generation = 7;
     value.link_generation = 9;
     value.wire_major = 2;
@@ -210,7 +222,7 @@ wire::LinkHelloExpectationsV1 hello_expectations()
     wire::LinkHelloExpectationsV1 expected{};
     expected.session_id.fill(0x11);
     expected.link_id.fill(0x22);
-    expected.channel_id = 0x0102030405060708ull;
+    expected.channel_id = kGoldenChannelId;
     expected.connection_generation = 7;
     expected.link_generation = 9;
     expected.local_role = wire::PairRoleV1::Responder;
@@ -248,7 +260,7 @@ HelloDecode decode_hello(const std::vector<std::uint8_t>& bytes,
 
 std::vector<std::uint8_t> golden_initiator_hello_bytes()
 {
-    const auto golden = hex_bytes<480>(kHelloInitiatorBytes);
+    const auto golden = hex_bytes<488>(kHelloInitiatorBytes);
     return std::vector<std::uint8_t>(golden.begin(), golden.end());
 }
 
@@ -256,7 +268,7 @@ std::vector<std::uint8_t> golden_initiator_hello_bytes()
 
 void golden_initiator_hello()
 {
-    const auto expected_bytes = hex_bytes<480>(kHelloInitiatorBytes);
+    const auto expected_bytes = hex_bytes<488>(kHelloInitiatorBytes);
     const auto expected_digest = hex_bytes<32>(kHelloInitiatorDigest);
     const auto expected_object_hash = hex_bytes<32>(kHelloInitiatorObjectHash);
 
@@ -314,7 +326,7 @@ void golden_initiator_hello()
 
 void golden_responder_hello()
 {
-    const auto expected_bytes = hex_bytes<480>(kHelloResponderBytes);
+    const auto expected_bytes = hex_bytes<488>(kHelloResponderBytes);
     const auto expected_digest = hex_bytes<32>(kHelloResponderDigest);
     const auto expected_object_hash = hex_bytes<32>(kHelloResponderObjectHash);
 
@@ -323,7 +335,7 @@ void golden_responder_hello()
     value.receiver_role = wire::PairRoleV1::Initiator;
     value.session_id.fill(0x11);
     value.link_id.fill(0x22);
-    value.channel_id = 0x0102030405060708ull;
+    value.channel_id = kGoldenChannelId;
     value.connection_generation = 7;
     value.link_generation = 9;
     value.determinism_profile = 1;
@@ -380,30 +392,32 @@ void exact_field_offsets()
     check(bytes[16] == 0x11 && bytes[32] == 0x22,
           "HELLO session and link ids sit at offsets 16/32");
     check(bytes[48] == 0x01 && bytes[55] == 0x08,
-          "HELLO channel_id is u64be at offset 48");
-    check(bytes[56] == 0x00 && bytes[63] == 0x07,
-          "HELLO connection_generation is u64be at offset 56");
-    check(bytes[64] == 0x00 && bytes[71] == 0x09,
-          "HELLO link_generation is u64be at offset 64");
-    check(bytes[72] == 0x00 && bytes[73] == 0x02 && bytes[74] == 0x00 &&
-              bytes[75] == 0x00,
-          "HELLO wire version 2/0 sits at offsets 72..76");
-    check(bytes[76] == 0x00 && bytes[77] == 0x01,
-          "HELLO capability bits carry DUAL at offset 76");
-    check(bytes[78] == 0 && bytes[79] == 0,
-          "HELLO critical_extension_mask is zero at offset 78");
-    check(bytes[80] == 1 && bytes[81] == 2,
-          "HELLO determinism/core format sit at offsets 80/81");
-    check(bytes[84] == 0x33 && bytes[116] == 0x44 && bytes[148] == 0x55 &&
-              bytes[180] == 0x66,
-          "HELLO plan/offer/transcript/binding hashes are contiguous");
-    check(bytes[212] == 0x00 && bytes[213] == 0x01,
-          "HELLO identity verifier ref version is u16be 1 at offset 212");
-    check(bytes[324] == 0x04,
-          "HELLO session signing public key starts at offset 324");
-    check(bytes[416] != 0 && bytes[479] != 0,
-          "HELLO signature occupies offsets 416..480");
-    check(std::all_of(bytes.begin() + 389, bytes.begin() + 416,
+          "HELLO channel_id starts at offset 48 with the derive_channel_id_v1 bytes");
+    check(bytes[56] == 0x00 && bytes[63] == 0x00,
+          "HELLO channel_id is 16 bytes wide, zero-extended at offsets 56..64");
+    check(bytes[64] == 0x00 && bytes[71] == 0x07,
+          "HELLO connection_generation is u64be at offset 64");
+    check(bytes[72] == 0x00 && bytes[79] == 0x09,
+          "HELLO link_generation is u64be at offset 72");
+    check(bytes[80] == 0x00 && bytes[81] == 0x02 && bytes[82] == 0x00 &&
+              bytes[83] == 0x00,
+          "HELLO wire version 2/0 sits at offsets 80..84");
+    check(bytes[84] == 0x00 && bytes[85] == 0x01,
+          "HELLO capability bits carry DUAL at offset 84");
+    check(bytes[86] == 0 && bytes[87] == 0,
+          "HELLO critical_extension_mask is zero at offset 86");
+    check(bytes[88] == 1 && bytes[89] == 2,
+          "HELLO determinism/core format sit at offsets 88/89");
+    check(bytes[92] == 0x33 && bytes[124] == 0x44 && bytes[156] == 0x55 &&
+              bytes[188] == 0x66,
+          "HELLO plan/offer/transcript/binding hashes are contiguous from 92");
+    check(bytes[220] == 0x00 && bytes[221] == 0x01,
+          "HELLO identity verifier ref version is u16be 1 at offset 220");
+    check(bytes[332] == 0x04,
+          "HELLO session signing public key starts at offset 332");
+    check(bytes[424] != 0 && bytes[487] != 0,
+          "HELLO signature occupies offsets 424..488");
+    check(std::all_of(bytes.begin() + 397, bytes.begin() + 424,
                       [](std::uint8_t value) { return value == 0; }),
           "HELLO reserved tail before the signature is zeroed");
 }
@@ -453,8 +467,8 @@ void peer_capability_gate()
 
     /* DUAL plus a known STREAM bit is tolerable: the peer merely advertises more
      * than this release uses, so it is accepted as supported. */
-    peer_pretag[76] = 0x00;
-    peer_pretag[77] = 0x03;
+    peer_pretag[84] = 0x00;
+    peer_pretag[85] = 0x03;
     peer_digest = wire::domain_hash(link::kLinkHelloDigestDomainV1,
                                     peer_pretag.data(), peer_pretag.size());
     check(wire::finish_link_hello_v1(
@@ -473,8 +487,8 @@ void peer_capability_gate()
 
     /* A STREAM-only proposal is explicitly unsupported: it must never be
      * silently degraded to DUAL and must never half-connect. */
-    peer_pretag[76] = 0x00;
-    peer_pretag[77] = 0x06;
+    peer_pretag[84] = 0x00;
+    peer_pretag[85] = 0x06;
     peer_digest = wire::domain_hash(link::kLinkHelloDigestDomainV1,
                                     peer_pretag.data(), peer_pretag.size());
     check(wire::finish_link_hello_v1(
@@ -495,8 +509,8 @@ void peer_capability_gate()
           "unsupported capability is rejected before any signature check");
 
     /* An empty capability offer is likewise explicitly unsupported. */
-    peer_pretag[76] = 0x00;
-    peer_pretag[77] = 0x00;
+    peer_pretag[84] = 0x00;
+    peer_pretag[85] = 0x00;
     peer_digest = wire::domain_hash(link::kLinkHelloDigestDomainV1,
                                     peer_pretag.data(), peer_pretag.size());
     check(wire::finish_link_hello_v1(
@@ -513,8 +527,8 @@ void peer_capability_gate()
           "an empty capability offer is unsupported, not degraded");
 
     /* Unknown critical capability bits fail closed even with DUAL present. */
-    peer_pretag[76] = 0x01;
-    peer_pretag[77] = 0x01;
+    peer_pretag[84] = 0x01;
+    peer_pretag[85] = 0x01;
     peer_digest = wire::domain_hash(link::kLinkHelloDigestDomainV1,
                                     peer_pretag.data(), peer_pretag.size());
     check(wire::finish_link_hello_v1(
@@ -558,10 +572,10 @@ void structural_negatives()
     const Mutation reserved[] = {
         {3, 1, "HELLO rejects nonzero reserved byte 3"},
         {11, 1, "HELLO rejects nonzero reserved byte 11"},
-        {82, 1, "HELLO rejects nonzero reserved byte 82"},
-        {400, 1, "HELLO rejects nonzero reserved tail byte"},
-        {218, 1, "HELLO rejects nonzero identity ref reserved bytes"},
-        {390, 1, "HELLO rejects nonzero identity ref trailing reserved bytes"}};
+        {90, 1, "HELLO rejects nonzero reserved byte 90"},
+        {408, 1, "HELLO rejects nonzero reserved tail byte"},
+        {226, 1, "HELLO rejects nonzero identity ref reserved bytes"},
+        {398, 1, "HELLO rejects nonzero identity ref trailing reserved bytes"}};
     for (const auto& mutation : reserved) {
         auto bytes = golden;
         bytes[mutation.offset] = mutation.value;
@@ -607,7 +621,7 @@ void structural_negatives()
           "HELLO rejects an unknown phase");
 
     auto wire_version = golden;
-    wire_version[73] = 3;
+    wire_version[81] = 3;
     check(decode_hello(wire_version, expected).status == wire::Status::InvalidField,
           "HELLO rejects a different wire major version");
 }
@@ -630,19 +644,19 @@ void identity_and_binding_negatives()
          "HELLO rejects a different link id"},
         {55, 0x99, wire::LinkControlIssueV1::ExpectedField,
          "HELLO rejects a different channel id"},
-        {63, 0x08, wire::LinkControlIssueV1::Generation,
+        {71, 0x08, wire::LinkControlIssueV1::Generation,
          "HELLO rejects a different connection generation"},
-        {71, 0x0a, wire::LinkControlIssueV1::Generation,
+        {79, 0x0a, wire::LinkControlIssueV1::Generation,
          "HELLO rejects a different link generation"},
-        {148, 0x99, wire::LinkControlIssueV1::ExpectedField,
+        {156, 0x99, wire::LinkControlIssueV1::ExpectedField,
          "HELLO rejects a different pair transcript object hash"},
-        {180, 0x99, wire::LinkControlIssueV1::BindingRef,
+        {188, 0x99, wire::LinkControlIssueV1::BindingRef,
          "HELLO rejects a different session signing binding hash"},
-        {220, 0x99, wire::LinkControlIssueV1::IdentityRef,
+        {228, 0x99, wire::LinkControlIssueV1::IdentityRef,
          "HELLO rejects a different identity key id"},
-        {324, 0x99, wire::LinkControlIssueV1::BindingRef,
+        {332, 0x99, wire::LinkControlIssueV1::BindingRef,
          "HELLO rejects a session signing key the binding never authenticated"},
-        {84, 0x00, wire::LinkControlIssueV1::ExpectedField,
+        {92, 0x00, wire::LinkControlIssueV1::ExpectedField,
          "HELLO rejects a zeroed locked plan hash"}};
     const auto expected = hello_expectations();
     for (const auto& mutation : mismatches) {
@@ -660,7 +674,7 @@ void identity_and_binding_negatives()
     auto identity = golden;
     const auto other_identity = hex_bytes<65>(kGenerator1);
     std::copy(other_identity.begin(), other_identity.end(),
-              identity.begin() + 252);
+              identity.begin() + 260);
     const auto decoded_identity = decode_hello(identity, expected);
     check(decoded_identity.status == wire::Status::InvalidField &&
               decoded_identity.issue == wire::LinkControlIssueV1::IdentityRef,
@@ -670,7 +684,7 @@ void identity_and_binding_negatives()
      * key than the accepted one is still rejected. */
     auto swapped = golden;
     const auto other_key_id = hex_bytes<32>(kResponderIdentityKeyId);
-    std::copy(other_key_id.begin(), other_key_id.end(), swapped.begin() + 220);
+    std::copy(other_key_id.begin(), other_key_id.end(), swapped.begin() + 228);
     const auto decoded_swapped = decode_hello(swapped, expected);
     check(decoded_swapped.status == wire::Status::InvalidField &&
               decoded_swapped.issue == wire::LinkControlIssueV1::IdentityRef,
@@ -679,7 +693,7 @@ void identity_and_binding_negatives()
     /* Mutating the identity key id alone (inconsistent with the embedded long
      * term key) is also rejected. */
     auto inconsistent = golden;
-    inconsistent[220] = 0x77;
+    inconsistent[228] = 0x77;
     const auto decoded_inconsistent = decode_hello(inconsistent, expected);
     check(decoded_inconsistent.status == wire::Status::InvalidField &&
               decoded_inconsistent.issue == wire::LinkControlIssueV1::IdentityRef,
@@ -693,7 +707,7 @@ void signature_negatives()
     const auto digest = hex_bytes<32>(kHelloInitiatorDigest);
 
     auto zeroed = golden;
-    std::fill(zeroed.begin() + 416, zeroed.end(), std::uint8_t{0});
+    std::fill(zeroed.begin() + 424, zeroed.end(), std::uint8_t{0});
     verifier_calls = 0;
     auto decoded = decode_hello(zeroed, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -705,7 +719,7 @@ void signature_negatives()
      * s replaced by its complement. The codec must refuse it as a form error
      * before any verification happens. */
     auto high_s = golden;
-    high_s[448] = 0x80;
+    high_s[456] = 0x80;
     verifier_calls = 0;
     decoded = decode_hello(high_s, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -718,7 +732,7 @@ void signature_negatives()
     {
         const auto inner = wire::sha256(digest.data(), digest.size());
         const auto bad = test_sign(hex_bytes<65>(kGenerator1), inner);
-        std::copy(bad.begin(), bad.end(), double_hashed.begin() + 416);
+        std::copy(bad.begin(), bad.end(), double_hashed.begin() + 424);
     }
     verifier_calls = 0;
     decoded = decode_hello(double_hashed, expected);
@@ -735,7 +749,7 @@ void signature_negatives()
             link::kLinkHelloPretagSizeV1);
         const auto bad =
             test_sign(hex_bytes<65>(kGenerator1), ready_domain_digest);
-        std::copy(bad.begin(), bad.end(), wrong_purpose.begin() + 416);
+        std::copy(bad.begin(), bad.end(), wrong_purpose.begin() + 424);
     }
     decoded = decode_hello(wrong_purpose, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -746,7 +760,7 @@ void signature_negatives()
     auto wrong_key = golden;
     {
         const auto bad = test_sign(hex_bytes<65>(kGenerator2), digest);
-        std::copy(bad.begin(), bad.end(), wrong_key.begin() + 416);
+        std::copy(bad.begin(), bad.end(), wrong_key.begin() + 424);
     }
     decoded = decode_hello(wrong_key, expected);
     check(decoded.status == wire::Status::InvalidField &&
@@ -755,7 +769,7 @@ void signature_negatives()
 
     /* A flipped payload bit invalidates the signature. */
     auto flipped = golden;
-    flipped[90] ^= 0x01;
+    flipped[92] ^= 0x01;
     decoded = decode_hello(flipped, expected);
     check(decoded.status == wire::Status::InvalidField,
           "HELLO rejects a payload bit flipped after signing");
@@ -770,7 +784,7 @@ void signature_negatives()
             link::kLinkHelloDigestDomainV1, swapped_roles.data(),
             link::kLinkHelloPretagSizeV1);
         const auto bad = test_sign(hex_bytes<65>(kGenerator1), swapped_digest);
-        std::copy(bad.begin(), bad.end(), swapped_roles.begin() + 416);
+        std::copy(bad.begin(), bad.end(), swapped_roles.begin() + 424);
     }
     verifier_calls = 0;
     decoded = decode_hello(swapped_roles, expected);
@@ -880,7 +894,7 @@ void two_stage_parse_then_accept()
      * message is never persisted or answered.
      */
     auto tampered = golden;
-    tampered[420] = static_cast<std::uint8_t>(tampered[420] ^ 0x01u);
+    tampered[428] = static_cast<std::uint8_t>(tampered[428] ^ 0x01u);
     wire::LinkControlDecodeReportV1 tampered_report{};
     wire::LinkControlParsedV1 tampered_parsed{};
     link::LinkHelloV1 tampered_value{};
@@ -920,7 +934,7 @@ void two_stage_parse_then_accept()
 
     /* A non-canonical (zero) signature is still a stage-1 rejection. */
     auto zero_signature = golden;
-    std::fill(zero_signature.begin() + 416, zero_signature.end(), 0);
+    std::fill(zero_signature.begin() + 424, zero_signature.end(), 0);
     wire::LinkControlDecodeReportV1 zero_report{};
     wire::LinkControlParsedV1 zero_parsed{};
     link::LinkHelloV1 zero_value{};

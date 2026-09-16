@@ -88,7 +88,9 @@ struct LinkHelloExpectationsV1 final
 {
     std::array<std::uint8_t, 16> session_id{};
     std::array<std::uint8_t, 16> link_id{};
-    std::uint64_t channel_id = 0;
+    /* The 16-byte channel identity, exactly as wire::derive_channel_id_v1
+     * produces it and as the bind codec consumes it. */
+    std::array<std::uint8_t, 16> channel_id{};
     std::uint64_t connection_generation = 0;
     std::uint64_t link_generation = 0;
     /* The role of *this* receiver; the sender must be the mirror. */
@@ -162,8 +164,9 @@ Status link_control_verify_request_v1(
 
 
 /*
- * Encodes bytes[0..416) and the digest it covers. Reserved regions are written
- * zero; value.signature / value.digest / value.object_hash are ignored here.
+ * Encodes the complete signature-free LINK_HELLO bytes and the digest it
+ * covers. Reserved regions are written zero; value.signature / value.digest /
+ * value.object_hash are ignored here.
  * Fails closed when the value would advertise anything outside
  * kLinkSupportedCapabilityMaskV1 (this release never advertises STREAM) or when
  * critical_extension_mask is nonzero.
@@ -175,8 +178,8 @@ Status build_link_hello_pretag_v1(
     std::array<std::uint8_t, 32>* out_digest) noexcept;
 
 /*
- * Appends the canonical low-S signature, producing the exact 480 bytes and the
- * persisted object hash domain_hash(kLinkHelloObjectHashDomainV1, bytes, 480).
+ * Appends the canonical low-S signature, producing the exact 488 bytes and the
+ * persisted object hash domain_hash(kLinkHelloObjectHashDomainV1, bytes, 488).
  */
 Status finish_link_hello_v1(
     const std::array<std::uint8_t, link::kLinkHelloPretagSizeV1>& pretag,

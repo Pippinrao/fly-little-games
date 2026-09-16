@@ -231,9 +231,32 @@ fly_session_result_v2 validate_secure_store(
 fly_session_result_v2 validate_object_store(
     const fly_session_object_store_port_v2* port) noexcept
 {
-    /* R3 appended read; validate_prefix is the repository's tail-append gate, so
-     * an R2-sized table is rejected here rather than silently accepted with a
-     * null read (which the engine could only discover mid-handshake). */
+    /*
+     * DELIBERATE COMPATIBILITY TRADEOFF, decided by the owner on 2026-09-16 and
+     * re-affirmed for this change: `read` stays REQUIRED.
+     *
+     * R3 appended `read` to fly_session_object_store_port_v2. validate_prefix is
+     * this repository's tail-append gate (struct_size >= required), so a table
+     * that still reports the R2 size is rejected here as ABI_MISMATCH instead of
+     * being accepted with a null `read` that the engine would only discover
+     * mid-handshake, after the local 0x0212 binding had already been declared
+     * durable. The alternative — required = FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE
+     * plus an explicit null check at the point of use — was considered and
+     * rejected:
+     *
+     *   - no provider has ever shipped the R2 shape (the primitive is unreleased),
+     *     so there is no compatibility to preserve;
+     *   - "persist, then read back" is the whole point of the durable-binding
+     *     gate, and a port that cannot read cannot satisfy it;
+     *   - a provider that cannot read is better served by a clear, immediate
+     *     ABI_MISMATCH at table-validation time than by a late UNAVAILABLE that
+     *     looks like a protocol failure.
+     *
+     * If a released R2 provider ever appears, the correct fix is to relax the
+     * size gate to FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE and make the absence
+     * of `read` a fail-closed UNAVAILABLE at the point of use — not a silent
+     * success. That is a compatibility decision for the owner, not a code fix.
+     */
     const auto prefix = validate_provider_prefix(
         port, FLY_SESSION_OBJECT_STORE_PORT_V2_SIZE);
     if (prefix != FLY_SESSION_V2_OK || !port)

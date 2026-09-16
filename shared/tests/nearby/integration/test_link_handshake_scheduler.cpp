@@ -162,8 +162,9 @@ const std::array<std::uint8_t, 32>& summary_b()
     return value;
 }
 
-constexpr std::uint64_t kChannelId = 0x0102030405060708ull;
-constexpr std::uint64_t kChannelBindId = 0x0a0b0c0d0e0f1011ull;
+constexpr std::array<std::uint8_t, 16> kChannelId = {{
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
 constexpr std::uint64_t kGeneration = 7;
 constexpr std::uint64_t kLinkGeneration = 9;
 
@@ -349,7 +350,6 @@ Side make_side(wire::PairRoleV1 role,
     start.generation = generation;
     start.link_generation = kLinkGeneration;
     start.channel_id = kChannelId;
-    start.channel_bind_id = kChannelBindId;
     start.reconnect_attempt = 0;
     start.first_operation_id = first_operation_id;
     start.local_role = role;

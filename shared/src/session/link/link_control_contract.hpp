@@ -36,6 +36,21 @@
  * bits are defined so that the wire never has to change, but this release must
  * never advertise them and must reject a STREAM-only proposal with an explicit
  * unsupported result instead of silently degrading or half-connecting.
+ *
+ * ★ Channel identity correction (owner-authorized, 2026-09-16). The first
+ * revision of this header invented a u64 channel_id and a u64 channel_bind_id.
+ * That was wrong: every layer of the channel identity in this repository is
+ * std::array<std::uint8_t, 16> (wire::derive_channel_id_v1,
+ * wire::encode_initial_channel_bind_v1, wire::encode_channel_bind_ack_v1,
+ * InitialQuicBindScheduler::channel_id()). No u64 channel identity exists
+ * anywhere in the implementation or in the approved 2026-09-13 design
+ * documents, so the control messages could never be encoded. This header now
+ * carries the 16-byte channel id and binds the channel with the 32-byte
+ * channel_bind_hash alone; the redundant u64 channel_bind_id is deleted
+ * outright rather than kept as a second, parallel identity. The authenticating
+ * value is wire::channel_bind_proof_hash_v1(listener/connector proof) — the
+ * exact value both sides already verify inside the ACK — so READY does not
+ * need a second bind identifier to be unambiguous.
  */
 
 #include "wire/pair_handshake.hpp"
@@ -76,10 +91,24 @@ inline constexpr const char* kLinkReadyObjectHashDomainV1 =
 inline constexpr const char* kLinkNegotiatedResultHashDomainV1 =
     "flynes-link-negotiated-result-v1";
 
+/* Domain for the canonical channel-bind binding hash that LINK_READY carries.
+ *
+ * Provenance. The first contract revision invented both a u64 channel_id and a
+ * u64 channel_bind_id. Neither exists in the implementation, and the approved
+ * 2026-09-04 spec identifies a bind by exactly three authenticated values and
+ * nothing else: `channel_id[16]`, `connector_proof_hash[32]` and
+ * `listener_proof_hash[32]` (both are carried inside the 96-byte
+ * CHANNEL_BIND_ACK body, spec:437). READY therefore binds those three values
+ * through one canonical hash instead of a second, parallel identifier, and the
+ * value is available on both sides only after each has verified the ACK. */
+inline constexpr const char* kLinkChannelBindBindingHashDomainV1 =
+    "flynes-channel-bind-binding-v1";
+
 /* ------------------------------------------------------------------ sizes */
 
 /*
- * LINK_HELLO_V1, exactly 480 bytes, big-endian, zero-filled reserved fields.
+ * LINK_HELLO_V1, exactly 488 bytes, big-endian, zero-filled reserved fields.
+ * (Was 480 while channel_id was a u64; +16 then -8 for the corrected layout.)
  *
  *   off  size  field
  *     0     2  version u16be (= 1)
@@ -90,38 +119,41 @@ inline constexpr const char* kLinkNegotiatedResultHashDomainV1 =
  *    11     5  reserved_zero[5]
  *    16    16  session_id[16]
  *    32    16  link_id[16]
- *    48     8  channel_id u64be
- *    56     8  connection_generation u64be
- *    64     8  link_generation u64be
- *    72     2  wire_major u16be (= 2)
- *    74     2  wire_minor u16be (= 0)
- *    76     2  capability_bits u16be       (link_capability_v1_mask)
- *    78     2  critical_extension_mask u16be (MUST be 0)
- *    80     1  determinism_profile u8
- *    81     1  core_state_format u8
- *    82     2  reserved_zero[2]
- *    84    32  selected_plan_hash[32]         echo of the locked plan
- *   116    32  endpoint_offer_hash[32]        echo of the locked bearer path
- *   148    32  pair_transcript_object_hash[32] 0x0213 object hash
- *   180    32  session_signing_binding_hash[32] sender's own 0x0212 hash
- *   212   112  identity_verifier_ref[112]     sender long-term identity ref
- *   324    65  session_signing_public_key_x963[65]
- *   389    27  reserved_zero[27]
- *   416    64  sender_signature[64]           canonical low-S
+ *    48    16  channel_id[16]   wire::derive_channel_id_v1 result
+ *    64     8  connection_generation u64be
+ *    72     8  link_generation u64be
+ *    80     2  wire_major u16be (= 2)
+ *    82     2  wire_minor u16be (= 0)
+ *    84     2  capability_bits u16be       (link_capability_v1_mask)
+ *    86     2  critical_extension_mask u16be (MUST be 0)
+ *    88     1  determinism_profile u8
+ *    89     1  core_state_format u8
+ *    90     2  reserved_zero[2]
+ *    92    32  selected_plan_hash[32]         echo of the locked plan
+ *   124    32  endpoint_offer_hash[32]        echo of the locked bearer path
+ *   156    32  pair_transcript_object_hash[32] 0x0213 object hash
+ *   188    32  session_signing_binding_hash[32] sender's own 0x0212 hash
+ *   220   112  identity_verifier_ref[112]     sender long-term identity ref
+ *   332    65  session_signing_public_key_x963[65]
+ *   397    27  reserved_zero[27]
+ *   424    64  sender_signature[64]
  *
  * sender_signature covers digest = domain_hash(kLinkHelloDigestDomainV1,
- * bytes[0..416), 416). The persisted object hash is
- * domain_hash(kLinkHelloObjectHashDomainV1, bytes[0..480), 480).
+ * bytes[0..424), 424). The persisted object hash is
+ * domain_hash(kLinkHelloObjectHashDomainV1, bytes[0..488), 488).
  *
  * "Persist before send": the exact 312-byte 0x0212 binding and its object MUST
- * be durable before this message is emitted, and the exact 480 bytes MUST be
- * durable before READY may reference their object hash.
+ * be durable before this message is emitted, and the exact 488 bytes MUST be
+ * durable before READY may reference their object hash. The signature covers
+ * bytes[0..424) and is appended at 424..488.
  */
-inline constexpr std::size_t kLinkHelloPretagSizeV1 = 416;
-inline constexpr std::size_t kLinkHelloSizeV1 = 480;
+inline constexpr std::size_t kLinkHelloPretagSizeV1 = 424;
+inline constexpr std::size_t kLinkHelloSizeV1 = 488;
 
 /*
- * LINK_READY_V1, exactly 384 bytes, big-endian, zero-filled reserved fields.
+ * LINK_READY_V1, exactly 368 bytes, big-endian, zero-filled reserved fields.
+ * (Was 384: +8 for the 16-byte channel_id, -24 for the deleted u64
+ * channel_bind_id and the u64 that followed it.)
  *
  *   off  size  field
  *     0     2  version u16be (= 1)
@@ -133,36 +165,89 @@ inline constexpr std::size_t kLinkHelloSizeV1 = 480;
  *    12     4  reserved_zero[4]
  *    16    16  session_id[16]
  *    32    16  link_id[16]
- *    48     8  channel_id u64be
- *    56     8  channel_bind_id u64be
+ *    48    16  channel_id[16]   wire::derive_channel_id_v1 result
  *    64     8  connection_generation u64be
  *    72     8  reconnect_attempt u64be
  *    80     8  link_generation u64be
- *    88    32  channel_bind_hash[32]
+ *    88    32  channel_bind_hash[32]  wire::channel_bind_proof_hash_v1 of the
+ *                                     authenticated bind proof (both roles agree
+ *                                     on it; the u64 channel_bind_id is gone)
  *   120    32  local_hello_object_hash[32]   sender's own persisted HELLO
  *   152    32  peer_hello_object_hash[32]    verified peer HELLO
  *   184    32  negotiated_result_hash[32]    locally persisted result
  *   216    32  local_summary_hash[32]        locally persisted summary
  *   248    32  peer_summary_hash[32]         verified peer summary
  *   280    32  merge_result_hash[32]         persisted reconciliation result
- *   312     8  reserved_zero[8]
- *   320    64  sender_signature[64]
+ *   312    56  reserved_zero[56]
+ *   368    64  sender_signature[64]
  *
  * sender_signature covers digest = domain_hash(kLinkReadyDigestDomainV1,
- * bytes[0..320), 320). The persisted object hash is
- * domain_hash(kLinkReadyObjectHashDomainV1, bytes[0..384), 384).
+ * bytes[0..368), 368). The persisted object hash is
+ * domain_hash(kLinkReadyObjectHashDomainV1, bytes[0..432), 432).
  *
  * READY is only legal in phase RECONCILE. A ROUTE_ONLY exchange, or anything
  * before the tail-status prelude and root read, MUST NOT produce READY.
  * ACK binds both verified summary hashes plus the merge result hash.
  */
-inline constexpr std::size_t kLinkReadyPretagSizeV1 = 320;
-inline constexpr std::size_t kLinkReadySizeV1 = 384;
+inline constexpr std::size_t kLinkReadyPretagSizeV1 = 368;
+inline constexpr std::size_t kLinkReadySizeV1 = 432;
 
 static_assert(kLinkHelloPretagSizeV1 + 64u == kLinkHelloSizeV1,
               "LINK_HELLO pretag plus signature must equal the exact size");
 static_assert(kLinkReadyPretagSizeV1 + 64u == kLinkReadySizeV1,
               "LINK_READY pretag plus signature must equal the exact size");
+
+/*
+ * Pinned offsets. These exist so that a later edit to either field list cannot
+ * silently move a byte on the wire; the codecs, the golden vectors and the
+ * schema registration all read the wire at exactly these offsets.
+ */
+static_assert(kLinkHelloSizeV1 == 488, "LINK_HELLO_V1 is 488 bytes");
+static_assert(kLinkReadySizeV1 == 432, "LINK_READY_V1 is 432 bytes");
+inline constexpr std::size_t kLinkHelloChannelIdOffsetV1 = 48;
+inline constexpr std::size_t kLinkHelloConnectionGenerationOffsetV1 = 64;
+inline constexpr std::size_t kLinkHelloLinkGenerationOffsetV1 = 72;
+inline constexpr std::size_t kLinkHelloWireMajorOffsetV1 = 80;
+inline constexpr std::size_t kLinkHelloCapabilityOffsetV1 = 84;
+inline constexpr std::size_t kLinkHelloCriticalExtensionOffsetV1 = 86;
+inline constexpr std::size_t kLinkHelloDeterminismOffsetV1 = 88;
+inline constexpr std::size_t kLinkHelloCoreStateFormatOffsetV1 = 89;
+inline constexpr std::size_t kLinkHelloReservedZero2OffsetV1 = 90;
+inline constexpr std::size_t kLinkHelloSelectedPlanHashOffsetV1 = 92;
+inline constexpr std::size_t kLinkHelloEndpointOfferHashOffsetV1 = 124;
+inline constexpr std::size_t kLinkHelloPairTranscriptOffsetV1 = 156;
+inline constexpr std::size_t kLinkHelloBindingHashOffsetV1 = 188;
+inline constexpr std::size_t kLinkHelloIdentityRefOffsetV1 = 220;
+inline constexpr std::size_t kLinkHelloSessionSigningKeyOffsetV1 = 332;
+inline constexpr std::size_t kLinkHelloReservedTailOffsetV1 = 397;
+inline constexpr std::size_t kLinkHelloSignatureOffsetV1 = 424;
+
+static_assert(kLinkHelloIdentityRefOffsetV1 + 112u ==
+                  kLinkHelloSessionSigningKeyOffsetV1,
+              "identity ref is exactly 112 bytes");
+static_assert(kLinkHelloSessionSigningKeyOffsetV1 + 65u + 27u ==
+                  kLinkHelloSignatureOffsetV1,
+              "27 reserved bytes separate the session key from the signature");
+static_assert(kLinkHelloSignatureOffsetV1 == kLinkHelloPretagSizeV1,
+              "the signature starts exactly at the end of the pretag");
+
+inline constexpr std::size_t kLinkReadyChannelIdOffsetV1 = 48;
+inline constexpr std::size_t kLinkReadyConnectionGenerationOffsetV1 = 64;
+inline constexpr std::size_t kLinkReadyReconnectAttemptOffsetV1 = 72;
+inline constexpr std::size_t kLinkReadyLinkGenerationOffsetV1 = 80;
+inline constexpr std::size_t kLinkReadyChannelBindHashOffsetV1 = 88;
+inline constexpr std::size_t kLinkReadyReservedTailOffsetV1 = 312;
+inline constexpr std::size_t kLinkReadyReservedTailSizeV1 = 56;
+inline constexpr std::size_t kLinkReadySignatureOffsetV1 = 368;
+
+static_assert(kLinkReadyChannelBindHashOffsetV1 + 7u * 32u ==
+                  kLinkReadyReservedTailOffsetV1,
+              "seven bound hashes run from 88 to 312");
+static_assert(kLinkReadyReservedTailOffsetV1 + kLinkReadyReservedTailSizeV1 ==
+                  kLinkReadySignatureOffsetV1,
+              "the reserved tail ends exactly where the signature begins");
+static_assert(kLinkReadySignatureOffsetV1 == kLinkReadyPretagSizeV1,
+              "the signature starts exactly at the end of the pretag");
 
 /* ------------------------------------------------------------------ enums */
 
@@ -264,7 +349,10 @@ struct LinkHelloV1 final
     LinkPhaseV1 phase = LinkPhaseV1::Initial;
     std::array<std::uint8_t, 16> session_id{};
     std::array<std::uint8_t, 16> link_id{};
-    std::uint64_t channel_id = 0;
+    /* The 16-byte channel identity from wire::derive_channel_id_v1, exactly the
+     * value wire::encode_initial_channel_bind_v1 / decode_channel_bind_ack_v1
+     * take. There is no u64 channel identity anywhere in this protocol. */
+    std::array<std::uint8_t, 16> channel_id{};
     std::uint64_t connection_generation = 0;
     std::uint64_t link_generation = 0;
     std::uint16_t wire_major = 2;
@@ -293,11 +381,13 @@ struct LinkReadyV1 final
     LinkReadyPhaseV1 ready_phase = LinkReadyPhaseV1::Ready;
     std::array<std::uint8_t, 16> session_id{};
     std::array<std::uint8_t, 16> link_id{};
-    std::uint64_t channel_id = 0;
-    std::uint64_t channel_bind_id = 0;
+    std::array<std::uint8_t, 16> channel_id{};
     std::uint64_t connection_generation = 0;
     std::uint64_t reconnect_attempt = 0;
     std::uint64_t link_generation = 0;
+    /* wire::channel_bind_proof_hash_v1 of the authenticated bind proof. This is
+     * the single channel-bind binding, which is why the former u64
+     * channel_bind_id is gone. */
     std::array<std::uint8_t, 32> channel_bind_hash{};
     std::array<std::uint8_t, 32> local_hello_object_hash{};
     std::array<std::uint8_t, 32> peer_hello_object_hash{};

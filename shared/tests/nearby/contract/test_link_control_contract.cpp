@@ -38,11 +38,23 @@ static_assert(link::kLinkReadyMessageTagV1 == 0xFF07, "LINK_READY tag");
 static_assert(link::kLinkHelloMessageTagV1 >= 0xFF00, "tags are 0xFF00+");
 static_assert(link::kLinkReadyMessageTagV1 >= 0xFF00, "tags are 0xFF00+");
 
-/* Exact frozen sizes. */
-static_assert(link::kLinkHelloSizeV1 == 480, "LINK_HELLO exact size");
-static_assert(link::kLinkReadySizeV1 == 384, "LINK_READY exact size");
-static_assert(link::kLinkHelloPretagSizeV1 == 416, "LINK_HELLO pretag");
-static_assert(link::kLinkReadyPretagSizeV1 == 320, "LINK_READY pretag");
+/* Exact frozen sizes, after the owner-authorized 2026-09-16 channel-identity
+ * correction: the u64 channel_id became 16 bytes and the invented u64
+ * channel_bind_id was deleted, so LINK_HELLO grew by 8 and LINK_READY shrank by
+ * 16 relative to the first revision. The offsets themselves are pinned by
+ * static_assert in the contract header. */
+static_assert(link::kLinkHelloSizeV1 == 488, "LINK_HELLO exact size");
+static_assert(link::kLinkReadySizeV1 == 432, "LINK_READY exact size");
+static_assert(link::kLinkHelloPretagSizeV1 == 424, "LINK_HELLO pretag");
+static_assert(link::kLinkReadyPretagSizeV1 == 368, "LINK_READY pretag");
+static_assert(link::kLinkHelloChannelIdOffsetV1 == 48, "HELLO channel_id at 48");
+static_assert(link::kLinkHelloSignatureOffsetV1 == 424,
+              "HELLO signature at 424");
+static_assert(link::kLinkReadyChannelIdOffsetV1 == 48, "READY channel_id at 48");
+static_assert(link::kLinkReadyChannelBindHashOffsetV1 == 88,
+              "READY channel_bind_hash at 88");
+static_assert(link::kLinkReadySignatureOffsetV1 == 368,
+              "READY signature at 368");
 static_assert(sizeof(link::LinkIdentityVerifierRefV1) ==
                   wire::kIdentityVerifierRefSizeV1,
               "identity ref stays 112 bytes");
