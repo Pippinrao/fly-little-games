@@ -1633,6 +1633,32 @@ if(FLYNES_BUILD_TESTS)
              COMMAND flynes_nearby_dual_stream_closed_test)
     set_tests_properties(nearby_dual_stream_closed PROPERTIES
         LABELS "nearby_contract")
+
+    # Step 2 (first half): the canonical input unit on the wire (encoder and
+    # decoder for the frozen 154-byte CanonicalInputBundleV1 record) and the
+    # runtime port adapter that implements the frozen dual::DualRuntimePort over
+    # the public C provider table. Both are asserted against the release's own
+    # codec (flynes_session_codec supplies wire::check and the hash helpers).
+    add_executable(flynes_nearby_dual_runtime_seam_test
+        tests/nearby/integration/test_dual_runtime_seam.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/canonical_input.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/canonical_input_wire.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual/dual_runtime_adapter.cpp
+    )
+    target_include_directories(flynes_nearby_dual_runtime_seam_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+    )
+    target_compile_features(flynes_nearby_dual_runtime_seam_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_nearby_dual_runtime_seam_test PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(flynes_nearby_dual_runtime_seam_test PRIVATE
+        flynes_session_codec)
+    flynes_enable_strict_warnings(flynes_nearby_dual_runtime_seam_test)
+    add_test(NAME nearby_dual_runtime_seam
+             COMMAND flynes_nearby_dual_runtime_seam_test)
+    set_tests_properties(nearby_dual_runtime_seam PROPERTIES
+        LABELS "nearby_integration;nearby_protocol")
 endif()
 # =================== end Task 10 block ==============================
 

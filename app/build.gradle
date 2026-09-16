@@ -13,8 +13,8 @@ android {
         applicationId "com.flynes.emu"
         minSdk 24
         targetSdk 36
-        versionCode 1004031
-        versionName "1.4.31"
+        versionCode 1004032
+        versionName "1.4.32"
         testInstrumentationRunner "com.flynes.emu.test.SingleDeviceCertificationRunner"
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
