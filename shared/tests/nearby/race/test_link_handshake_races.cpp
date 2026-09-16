@@ -134,6 +134,10 @@ struct Side
      * object hashes, so a test-side copy would be a competing definition. */
     std::vector<LinkHandshakeEffectKind> answered{};
     int send_count = 0;
+    /* gap 4 loopback transport. */
+    std::vector<std::vector<std::uint8_t>> outbox{};
+    std::vector<std::vector<std::uint8_t>> inbox{};
+    fly_session_resource_handle_v2 next_stream_handle = 0x4000;
 };
 
 fly_session_port_event_v2 end_event(const fly_session_op_token_v2& token,
@@ -167,6 +171,25 @@ fly_session_port_event_v2 resource_event(const fly_session_op_token_v2& token,
     payload.generation = token.connection_generation;
     auto event = end_event(token, kind, FLY_SESSION_V2_OK);
     event.payload_kind = kind;
+    event.payload_size = sizeof(payload);
+    std::memcpy(event.payload, &payload, sizeof(payload));
+    return event;
+}
+
+/* gap 4: the two-handle terminal an open_bidi/accept_bidi answers with. */
+fly_session_port_event_v2 stream_event(const fly_session_op_token_v2& token,
+                                       fly_session_resource_handle_v2 send_stream,
+                                       fly_session_resource_handle_v2 receive_stream)
+{
+    fly_session_provider_resource_event_v2 payload{};
+    payload.struct_size = FLY_SESSION_PROVIDER_RESOURCE_EVENT_V2_SIZE;
+    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+    payload.resource = send_stream;
+    payload.generation = token.connection_generation;
+    payload.value0 = receive_stream;
+    auto event = end_event(token, FLY_SESSION_PROVIDER_QUIC_STREAM_V2,
+                           FLY_SESSION_V2_OK);
+    event.payload_kind = FLY_SESSION_PROVIDER_QUIC_STREAM_V2;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
     return event;
@@ -244,6 +267,25 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
 {
     side.answered.push_back(effect.kind);
     switch (effect.kind) {
+    case LinkHandshakeEffectKind::OpenControlStream: {
+        /* gap 4: the two-handle stream terminal, same shape the bind used. */
+        const auto send = side.next_stream_handle++;
+        const auto receive = side.next_stream_handle++;
+        return complete_event(side.scheduler,
+                              stream_event(effect.token, send, receive));
+    }
+    case LinkHandshakeEffectKind::ReadControlBytes: {
+        /* gap 4: deliver whatever the loopback buffered. pump() never calls this
+         * with an empty inbox, so a read can never be silently completed with no
+         * bytes. */
+        if (side.inbox.empty()) return FLY_SESSION_V2_INVALID_STATE;
+        auto bytes = std::move(side.inbox.front());
+        side.inbox.erase(side.inbox.begin());
+        return complete_event(
+            side.scheduler,
+            buffer_event(effect.token, FLY_SESSION_PROVIDER_QUIC_DATA_V2,
+                         bytes.data(), bytes.size()));
+    }
     case LinkHandshakeEffectKind::ReadLocalBindingObject:
         return complete_event(
             side.scheduler,
@@ -288,18 +330,28 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
     case LinkHandshakeEffectKind::SendReady:
     case LinkHandshakeEffectKind::SendAck:
         ++side.send_count;
+        /* gap 4: the exact framed record goes into the loopback outbox. */
+        side.outbox.push_back(effect.value);
         return complete_event(side.scheduler,
                               end_event(effect.token, effect.expected_payload_kind, FLY_SESSION_V2_OK));
     }
     return FLY_SESSION_V2_INVALID_STATE;
 }
 
-int pump(Side& side)
+int pump(Side& side, bool* blocked = nullptr)
 {
+    if (blocked != nullptr) *blocked = false;
     int answered = 0;
     while (true) {
         const auto effect = side.scheduler.poll_effect();
         if (!effect) break;
+        /* gap 4: a Control read needs peer bytes; report blocked and let the
+         * driver give the other side a turn instead of stalling here. */
+        if (effect->kind == LinkHandshakeEffectKind::ReadControlBytes &&
+            side.inbox.empty()) {
+            if (blocked != nullptr) *blocked = true;
+            break;
+        }
         const auto result = answer(side, *effect);
         ++answered;
         if (result != FLY_SESSION_V2_OK) break;
@@ -357,7 +409,8 @@ Side make_side(wire::PairRoleV1 role,
     start.peer_summary_hash = filled<32>(0xcc);
     start.merge_result_hash = filled<32>(0xdd);
     start.session_signing_key = 0x1000;
-    start.control_stream = 0x2000;
+    start.quic_connection = 0x3000;
+    start.local_is_listener = role == wire::PairRoleV1::Responder;
     side.start = start;
     check(side.scheduler.begin(side.start), "scheduler begins a link attempt");
     return side;
@@ -441,8 +494,10 @@ void ready_before_hello_is_inert()
           "a READY that arrives before HELLO is rejected as out of order");
     check(pair.a.scheduler.stage() == stage,
           "an out-of-order READY does not change the stage");
-    check(!pair.a.scheduler.poll_effect().has_value(),
-          "an out-of-order READY schedules no effect");
+    check(!pair.a.scheduler.poll_effect().has_value() ||
+              pair.a.scheduler.poll_effect()->kind ==
+                  LinkHandshakeEffectKind::ReadControlBytes,
+          "an out-of-order READY does not displace the pending Control read");
     check(pair.a.scheduler.progress().peer_ready_verified ==
               progress.peer_ready_verified,
           "an out-of-order READY does not record a verified peer");
@@ -454,7 +509,7 @@ void ready_before_hello_is_inert()
               FLY_SESSION_V2_OK,
           "the legal HELLO still succeeds after an out-of-order READY");
     pump(pair.a);
-    check(pair.a.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerReady,
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerReady,
           "the link advances normally after the rejected READY");
 }
 
@@ -475,8 +530,10 @@ void stale_generation_is_dropped()
           "a stale HELLO does not fail or advance the live link");
     check(!pair.a.scheduler.progress().peer_hello_verified,
           "a stale HELLO never marks the peer verified");
-    check(!pair.a.scheduler.poll_effect().has_value(),
-          "a stale HELLO schedules no effect");
+    check(!pair.a.scheduler.poll_effect().has_value() ||
+              pair.a.scheduler.poll_effect()->kind ==
+                  LinkHandshakeEffectKind::ReadControlBytes,
+          "a stale HELLO does not displace the pending Control read");
 
     const auto& hello = pair.b.scheduler.local_hello_bytes();
     check(pair.a.scheduler.accept_peer_hello(hello.data(), hello.size()) ==
@@ -557,11 +614,12 @@ void operation_token_and_payload_kind_are_enforced()
 
 void cancel_and_late_completion()
 {
-    /* Cancel with no pending operation is a no-op error. */
+    /* Cancel with no pending operation is a no-op error. A begun attempt always
+     * has the Control read outstanding at an await stage, so the only state with
+     * truly nothing pending is a scheduler that never began. */
     {
-        auto pair = make_pair(kGeneration, 41);
-        pump(pair.a);
-        check(pair.a.scheduler.cancel_pending() == FLY_SESSION_V2_INVALID_STATE,
+        LinkHandshakeScheduler idle;
+        check(idle.cancel_pending() == FLY_SESSION_V2_INVALID_STATE,
               "cancelling with nothing pending is rejected");
     }
 
@@ -613,7 +671,7 @@ void cancel_and_late_completion()
               "a late completion from the replaced attempt is stale");
         check(fresh.has_value() &&
                   pair.a.scheduler.stage() ==
-                      LinkHandshakeStageV1::ReadLocalBinding,
+                      LinkHandshakeStageV1::OpenControl,
               "the new attempt is unaffected by the old completion");
         check(pair.a.scheduler.stage_trace_size() <
                   flynes::session::kLinkHandshakeTraceCapacityV1,
@@ -703,12 +761,17 @@ void repeated_attempts_do_not_leak()
         check(pair.a.scheduler.has_pending_operation(),
               "every attempt registers exactly one live operation");
         pump(pair.a);
-        check(!pair.a.scheduler.has_pending_operation(),
-              "completing an attempt releases its operation");
+        check(!pair.a.scheduler.has_pending_journal_operation(),
+              "completing an attempt releases its journalled operation");
+        check(pair.a.scheduler.has_pending_operation() &&
+                  pair.a.scheduler.poll_effect().has_value() &&
+                  pair.a.scheduler.poll_effect()->kind ==
+                      LinkHandshakeEffectKind::ReadControlBytes,
+              "the only effect left outstanding is the Control read");
         check(!pair.a.scheduler.failed(),
               "a completed attempt is not marked failed");
     }
-    check(pair.a.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerHello,
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello,
           "the final attempt reached the peer-wait stage");
     check(pair.a.send_count == 8,
           "each attempt sent exactly one HELLO and nothing else");

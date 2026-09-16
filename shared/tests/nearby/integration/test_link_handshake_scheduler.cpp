@@ -1,5 +1,6 @@
 #include "link/link_handshake_scheduler.hpp"
 #include "buffer_handle.hpp"
+#include "wire/app_frame.hpp"
 #include "wire/p256_point.hpp"
 #include "wire/session_signing_binding.hpp"
 #include "wire/sha256.hpp"
@@ -191,6 +192,11 @@ struct Side
     std::vector<std::uint64_t> operation_ids{};
     int send_count = 0;
     fly_session_result_v2 last_result = FLY_SESSION_V2_OK;
+    /* gap 4 loopback. outbox holds the exact framed records this side wrote on
+     * its Control stream; inbox holds peer bytes not yet delivered to a read. */
+    std::vector<std::vector<std::uint8_t>> outbox{};
+    std::vector<std::vector<std::uint8_t>> inbox{};
+    fly_session_resource_handle_v2 next_stream_handle = 0x4000;
 };
 
 fly_session_port_event_v2 end_event(const fly_session_op_token_v2& token,
@@ -225,6 +231,63 @@ fly_session_port_event_v2 resource_event(const fly_session_op_token_v2& token,
     payload.generation = token.connection_generation;
     auto event = end_event(token, kind, FLY_SESSION_V2_OK);
     event.payload_kind = kind;
+    event.payload_size = sizeof(payload);
+    std::memcpy(event.payload, &payload, sizeof(payload));
+    return event;
+}
+
+/*
+ * The two-handle terminal an open_bidi/accept_bidi answers with: the send stream
+ * in `resource`, the receive stream in `value0` (same shape the bind stream used).
+ */
+fly_session_port_event_v2 stream_event(const fly_session_op_token_v2& token,
+                                       std::uint32_t kind,
+                                       fly_session_resource_handle_v2 send_stream,
+                                       fly_session_resource_handle_v2 receive_stream)
+{
+    fly_session_provider_resource_event_v2 payload{};
+    payload.struct_size = FLY_SESSION_PROVIDER_RESOURCE_EVENT_V2_SIZE;
+    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+    payload.resource = send_stream;
+    payload.generation = token.connection_generation;
+    payload.value0 = receive_stream;
+    auto event = end_event(token, kind, FLY_SESSION_V2_OK);
+    event.payload_kind = kind;
+    event.payload_size = sizeof(payload);
+    std::memcpy(event.payload, &payload, sizeof(payload));
+    return event;
+}
+
+/*
+ * A QUIC data delivery is NON-terminal by port contract (terminal = 0): one
+ * granted read credit may be answered with several data events. Building it as a
+ * terminal event would be a contract violation before it ever reached the
+ * scheduler, so this constructor is deliberately separate from end_event().
+ */
+fly_session_port_event_v2 data_event(const fly_session_op_token_v2& token,
+                                     const std::uint8_t* bytes,
+                                     std::size_t size)
+{
+    fly_session_buffer_v2_t* buffer = nullptr;
+    const fly_session_bytes_v2 source{bytes,
+                                      static_cast<std::uint32_t>(size), 0};
+    check(fly_session_buffer_create_copy_v2(source, &buffer) ==
+              FLY_SESSION_V2_OK,
+          "fixture creates a provider buffer");
+    fly_session_provider_buffer_event_v2 payload{};
+    payload.struct_size = FLY_SESSION_PROVIDER_BUFFER_EVENT_V2_SIZE;
+    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+    payload.buffer = buffer;
+    payload.logical_size = size;
+    fly_session_port_event_v2 event{};
+    event.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+    event.abi_version = FLY_SESSION_ABI_VERSION_2;
+    event.token = token;
+    event.event_sequence = token.operation_id;
+    event.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+    event.terminal = 0;
+    event.result = FLY_SESSION_V2_OK;
+    event.payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
     return event;
@@ -292,6 +355,10 @@ fly_session_result_v2 complete_event(LinkHandshakeScheduler& scheduler,
             fly_session_provider_buffer_event_v2 payload{};
             std::memcpy(&payload, event.payload, sizeof(payload));
             buffer = payload.buffer;
+        } else if (event.payload_kind == FLY_SESSION_PROVIDER_QUIC_DATA_V2) {
+            fly_session_provider_buffer_event_v2 payload{};
+            std::memcpy(&payload, event.payload, sizeof(payload));
+            buffer = payload.buffer;
         }
     }
     const auto result = scheduler.complete(event);
@@ -313,6 +380,9 @@ Side make_side(wire::PairRoleV1 role,
     side.identity_public = identity;
     side.session_public = session;
     side.identity_key_id = wire::link_identity_key_id_v1(identity.data());
+    /* Distinct per-role handle values, so the loopback test can prove each side
+     * uses the handle its own open/accept answered with. */
+    side.next_stream_handle = role == wire::PairRoleV1::Initiator ? 0x4000 : 0x4100;
     side.local_summary = local_summary;
     side.peer_summary = peer_summary;
 
@@ -359,7 +429,8 @@ Side make_side(wire::PairRoleV1 role,
     start.peer_summary_hash = peer_summary;
     start.merge_result_hash = merge_hash();
     start.session_signing_key = 0x1000;
-    start.control_stream = 0x2000;
+    start.quic_connection = 0x3000;
+    start.local_is_listener = role == wire::PairRoleV1::Responder;
     check(side.scheduler.begin(start), "scheduler begins a link attempt");
     return side;
 }
@@ -381,6 +452,41 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
         side.fail_always ||
         (side.fail_kind.has_value() && *side.fail_kind == effect.kind);
     switch (effect.kind) {
+    case LinkHandshakeEffectKind::OpenControlStream: {
+        /*
+         * gap 4. The Control stream open/accept terminal: the send handle in
+         * `resource`, the receive handle in `value0`, exactly the shape the bind
+         * stream used. Distinct handles per side so a test cannot confuse them.
+         */
+        if (inject_failure)
+            return complete_event(side.scheduler,
+                                  end_event(token, effect.expected_payload_kind,
+                                            FLY_SESSION_V2_IO_FAILED));
+        const auto send = side.next_stream_handle++;
+        const auto receive = side.next_stream_handle++;
+        return complete_event(
+            side.scheduler,
+            stream_event(token, FLY_SESSION_PROVIDER_QUIC_STREAM_V2, send,
+                         receive));
+    }
+    case LinkHandshakeEffectKind::ReadControlBytes: {
+        /*
+         * gap 4. Deliver whatever the loopback has buffered for this side. A read
+         * with nothing to deliver must never reach here: pump() blocks instead,
+         * so a test cannot silently complete a read with no bytes.
+         */
+        if (inject_failure)
+            return complete_event(side.scheduler,
+                                  end_event(token, effect.expected_payload_kind,
+                                            FLY_SESSION_V2_IO_FAILED));
+        if (side.inbox.empty())
+            return FLY_SESSION_V2_INVALID_STATE;
+        auto bytes = std::move(side.inbox.front());
+        side.inbox.erase(side.inbox.begin());
+        return complete_event(
+            side.scheduler,
+            data_event(token, bytes.data(), bytes.size()));
+    }
     case LinkHandshakeEffectKind::ReadLocalBindingObject:
         if (inject_failure)
             return complete_event(side.scheduler,
@@ -451,19 +557,34 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
         if (inject_failure)
             return complete_event(side.scheduler,
                                   end_event(token, effect.expected_payload_kind, FLY_SESSION_V2_IO_FAILED));
+        /* gap 4: the write really happened, so the exact framed record goes into
+         * the loopback outbox and will be delivered to the peer's next read. */
+        side.outbox.push_back(effect.value);
         return complete_event(side.scheduler,
                               end_event(token, effect.expected_payload_kind, FLY_SESSION_V2_OK));
     }
     return FLY_SESSION_V2_INVALID_STATE;
 }
 
-/* Answers effects until the scheduler has nothing pending. */
-int pump(Side& side)
+/* Answers effects until the scheduler has nothing pending, or until it is
+ * waiting for Control bytes the loopback has not delivered yet. */
+int pump(Side& side, bool* blocked = nullptr)
 {
+    if (blocked != nullptr) *blocked = false;
     int answered = 0;
     while (true) {
         const auto effect = side.scheduler.poll_effect();
         if (!effect) break;
+        /*
+         * gap 4. A Control read cannot be completed by this side alone: it needs
+         * bytes the PEER wrote. Leave it pending and report blocked, so the
+         * loopback driver can give the other side a turn.
+         */
+        if (effect->kind == LinkHandshakeEffectKind::ReadControlBytes &&
+            side.inbox.empty()) {
+            if (blocked != nullptr) *blocked = true;
+            break;
+        }
         const auto result = answer(side, *effect);
         side.last_result = result;
         ++answered;
@@ -538,6 +659,44 @@ Pair make_pair(std::uint64_t generation, std::uint64_t first_operation_id)
     return pair;
 }
 
+/*
+ * gap 4 loopback: a strict in-order, in-memory Control stream between the two
+ * sides. Every framed record one side writes on its Control stream is handed,
+ * byte for byte, to the other side's next Control read — the same thing a QUIC
+ * bidirectional stream does. Nothing is fabricated: the bytes are exactly what
+ * the sender's encoder produced, and the receiver deframes them through
+ * app_frame before the handshake sees them.
+ */
+struct LoopbackResult
+{
+    int rounds = 0;
+    bool stalled = false;
+};
+
+LoopbackResult run_control_loopback(Pair& pair, int maximum_rounds)
+{
+    LoopbackResult out{};
+    for (int round = 0; round < maximum_rounds; ++round) {
+        out.rounds = round + 1;
+        bool a_blocked = false;
+        bool b_blocked = false;
+        pump(pair.a, &a_blocked);
+        pump(pair.b, &b_blocked);
+        if (pair.a.scheduler.failed() || pair.b.scheduler.failed()) return out;
+
+        for (auto& frame : pair.a.outbox) pair.b.inbox.push_back(frame);
+        pair.a.outbox.clear();
+        for (auto& frame : pair.b.outbox) pair.a.inbox.push_back(frame);
+        pair.b.outbox.clear();
+
+        /* Neither side is waiting for bytes and neither has any left to deliver,
+         * so the exchange is finished. */
+        if (!a_blocked && !b_blocked) return out;
+    }
+    out.stalled = true;
+    return out;
+}
+
 /* Runs both sides up to AwaitPeerHello. */
 void exchange_hellos(Pair& pair)
 {
@@ -545,14 +704,22 @@ void exchange_hellos(Pair& pair)
     pump(pair.b);
 }
 
-const std::array<LinkHandshakeStageV1, 21>& expected_sequence()
+/*
+ * The frozen legal stage order, now including gap 4. The Control stream is opened
+ * first, and each "awaiting the peer message" milestone is followed by the
+ * Control read that actually fetches it — which is exactly the wiring that was
+ * missing when the handshake could never receive a peer byte.
+ */
+const std::array<LinkHandshakeStageV1, 25>& expected_sequence()
 {
-    static const std::array<LinkHandshakeStageV1, 21> value{{
+    static const std::array<LinkHandshakeStageV1, 25> value{{
+        LinkHandshakeStageV1::OpenControl,
         LinkHandshakeStageV1::ReadLocalBinding,
         LinkHandshakeStageV1::SignHello,
         LinkHandshakeStageV1::PersistHello,
         LinkHandshakeStageV1::SendHello,
         LinkHandshakeStageV1::AwaitPeerHello,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
         LinkHandshakeStageV1::AwaitPeerHelloSignature,
         LinkHandshakeStageV1::PersistPeerHello,
         LinkHandshakeStageV1::PersistNegotiatedResult,
@@ -560,12 +727,14 @@ const std::array<LinkHandshakeStageV1, 21>& expected_sequence()
         LinkHandshakeStageV1::PersistReady,
         LinkHandshakeStageV1::SendReady,
         LinkHandshakeStageV1::AwaitPeerReady,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
         LinkHandshakeStageV1::AwaitPeerReadySignature,
         LinkHandshakeStageV1::PersistPeerReady,
         LinkHandshakeStageV1::SignAck,
         LinkHandshakeStageV1::PersistAck,
         LinkHandshakeStageV1::SendAck,
         LinkHandshakeStageV1::AwaitPeerAck,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
         LinkHandshakeStageV1::AwaitPeerAckSignature,
         LinkHandshakeStageV1::PersistPeerAck,
         LinkHandshakeStageV1::Connected}};
@@ -573,6 +742,165 @@ const std::array<LinkHandshakeStageV1, 21>& expected_sequence()
 }
 
 /* ---------------------------------------------------------------- tests -- */
+
+/*
+ * gap 4, the headline test: the two public schedulers close the link over a real
+ * bidirectional Control stream, with NO manual accept_peer_* injection anywhere.
+ * Every HELLO/READY/ACK the peer sees is an exact framed record this code
+ * produced, deframed through wire::next_app_frame() on the receiving side.
+ */
+void control_stream_loopback_closes_the_lobby()
+{
+    auto pair = make_pair(kGeneration, 41);
+
+    const auto loop = run_control_loopback(pair, 12);
+    check(!loop.stalled,
+          "the Control stream loopback finished instead of stalling");
+
+    check(pair.a.scheduler.connected() && pair.b.scheduler.connected(),
+          "both sides reach CONNECTED_LOBBY over the Control stream alone");
+    check(pair.a.scheduler.projected_state() ==
+                  link::LinkControlStateV1::ConnectedLobby &&
+              pair.b.scheduler.projected_state() ==
+                  link::LinkControlStateV1::ConnectedLobby,
+          "the contract projection is CONNECTED_LOBBY on both sides");
+
+    /* Each side really opened its own stream and wrote exactly three messages. */
+    check(pair.a.scheduler.control_stream() != 0 &&
+              pair.b.scheduler.control_stream() != 0,
+          "each side owns a Control stream handle");
+    /* The two sides run on separate providers, so their handle values are
+     * provider-scoped and may coincide; the handle each side uses must however be
+     * the one ITS OWN open/accept answered with. */
+    check(pair.a.scheduler.control_stream() == 0x4000 &&
+              pair.b.scheduler.control_stream() == 0x4100,
+          "each side uses exactly the handle its own OpenControlStream returned");
+    check(pair.a.send_count == 3 && pair.b.send_count == 3,
+          "each side wrote exactly HELLO, READY and ACK on the Control stream");
+    check(count_kind(pair.a, LinkHandshakeEffectKind::OpenControlStream) == 1 &&
+              count_kind(pair.b, LinkHandshakeEffectKind::OpenControlStream) == 1,
+          "each side opened the Control stream exactly once");
+    check(count_kind(pair.a, LinkHandshakeEffectKind::ReadControlBytes) == 3 &&
+              count_kind(pair.b, LinkHandshakeEffectKind::ReadControlBytes) == 3,
+          "each side granted Control read credit exactly once per awaited message");
+
+    /* Every frame was handed over and fully consumed: nothing is left buffered,
+     * which only happens when the deframer consumed whole records. */
+    check(pair.a.inbox.empty() && pair.b.inbox.empty() &&
+              pair.a.outbox.empty() && pair.b.outbox.empty() &&
+              pair.a.scheduler.control_read_buffer().empty() &&
+              pair.b.scheduler.control_read_buffer().empty(),
+          "no undelivered or half-parsed Control bytes remain");
+
+    /* The inbound path really ran the codec, not a shortcut. */
+    check(pair.a.scheduler.peer_hello().object_hash ==
+              pair.b.scheduler.local_hello().object_hash &&
+              pair.b.scheduler.peer_hello().object_hash ==
+                  pair.a.scheduler.local_hello().object_hash,
+          "each side verified the peer HELLO it received over the Control stream");
+    check(pair.a.scheduler.peer_ready().object_hash ==
+              pair.b.scheduler.local_ready().object_hash &&
+              pair.a.scheduler.peer_ack().object_hash ==
+                  pair.b.scheduler.local_ack().object_hash,
+          "each side verified the peer READY and ACK it received");
+
+    const auto& expected = expected_sequence();
+    check(pair.a.scheduler.stage_trace_size() == expected.size(),
+          "the loopback initiator trace has exactly the frozen number of stages");
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        check(pair.a.scheduler.stage_trace_at(index) == expected[index],
+              "the loopback initiator stage trace follows the frozen legal order");
+}
+
+/*
+ * A Control frame is deframed incrementally: a record split across two reads must
+ * be buffered and completed, never mis-parsed or dropped.
+ */
+void control_frames_deframe_incrementally()
+{
+    auto pair = make_pair(kGeneration, 41);
+    bool blocked = false;
+    pump(pair.a, &blocked);
+    check(blocked && pair.a.scheduler.awaiting() ==
+                         LinkHandshakeStageV1::AwaitPeerHello,
+          "the initiator is waiting for Control bytes after sending its HELLO");
+
+    /* The responder's real HELLO frame, delivered one byte short. */
+    pump(pair.b, &blocked);
+    check(pair.b.outbox.size() == 1,
+          "the responder produced exactly one Control frame");
+    const auto frame = pair.b.outbox.front();
+    pair.b.outbox.clear();
+    const std::vector<std::uint8_t> first(frame.begin(), frame.end() - 1);
+    pair.a.inbox.push_back(first);
+    pump(pair.a, &blocked);
+    check(blocked && !pair.a.scheduler.failed(),
+          "a half-delivered frame is buffered, not rejected");
+    check(pair.a.scheduler.control_read_buffer().size() == frame.size() - 1,
+          "the partial record is retained byte for byte");
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello,
+          "the attempt is still awaiting the peer HELLO");
+
+    /* The last byte completes the record and the handshake advances. */
+    pair.a.inbox.push_back(std::vector<std::uint8_t>{frame.back()});
+    pump(pair.a, &blocked);
+    check(!pair.a.scheduler.failed() &&
+              pair.a.scheduler.control_read_buffer().empty(),
+          "the final byte completes the record and clears the buffer");
+    check(pair.a.scheduler.peer_hello().object_hash ==
+              pair.b.scheduler.local_hello().object_hash,
+          "the reassembled frame is the peer's real HELLO");
+}
+
+/*
+ * The Control read pipeline is a gate, not a bypass: bytes that are not a
+ * well-formed link control record fail the attempt closed. Nothing here reaches
+ * accept_peer_hello, because app_frame refuses the frame first.
+ */
+void control_stream_refuses_malformed_frames()
+{
+    /* A registered link tag with a body that is not the object it claims. */
+    auto pair = make_pair(kGeneration, 41);
+    bool blocked = false;
+    pump(pair.a, &blocked);
+
+    std::vector<std::uint8_t> short_body(64, 0x5a);
+    std::vector<std::uint8_t> framed(6u + short_body.size(), 0);
+    std::size_t written = 0;
+    check(wire::encode_app_frame(link::kLinkHelloObjectKindV1,
+                                 short_body.data(), short_body.size(),
+                                 framed.data(), framed.size(),
+                                 &written) == wire::Status::Ok,
+          "a short 0x0216 frame still encodes");
+    pair.a.inbox.push_back(framed);
+    pump(pair.a, &blocked);
+    check(pair.a.scheduler.failed(),
+          "a 0x0216 frame whose body is not a LINK_HELLO fails the link closed");
+    check(!pair.a.scheduler.connected(),
+          "a malformed Control frame never reaches CONNECTED_LOBBY");
+
+    /*
+     * A tag outside the link control plane is refused even though the tag itself
+     * is registered: 0x0212 (SessionSigningKeyBindingV1) IS legal on the Control
+     * CHANNEL, so it is the routing gate rather than the allow-list that must
+     * reject it here.
+     */
+    auto other = make_pair(kGeneration, 41);
+    pump(other.a, &blocked);
+    std::vector<std::uint8_t> binding_body(wire::kSessionSigningBindingSizeV1,
+                                           0x11);
+    std::vector<std::uint8_t> binding_frame(6u + binding_body.size(), 0);
+    check(wire::encode_app_frame(wire::kSessionSigningBindingObjectKindV1,
+                                 binding_body.data(), binding_body.size(),
+                                 binding_frame.data(), binding_frame.size(),
+                                 &written) == wire::Status::Ok,
+          "a 0x0212 frame encodes");
+    other.a.inbox.push_back(binding_frame);
+    pump(other.a, &blocked);
+    check(other.a.scheduler.failed(),
+          "a registered but non-link object on the link Control stream fails the "
+          "link closed");
+}
 
 /* Both sides send their HELLO, verify the peer HELLO and produce their READY,
  * leaving both at AwaitPeerReady. */
@@ -600,8 +928,8 @@ void two_sided_legal_sequence()
 
     pump(pair.a);
     pump(pair.b);
-    check(pair.a.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerHello &&
-              pair.b.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerHello,
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello &&
+              pair.b.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello,
           "both sides reach AwaitPeerHello after sending their HELLO");
     check(pair.a.send_count == 1 && pair.b.send_count == 1,
           "each side sent exactly one HELLO");
@@ -616,8 +944,8 @@ void two_sided_legal_sequence()
           "responder accepts the initiator HELLO");
     pump(pair.a);
     pump(pair.b);
-    check(pair.a.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerReady &&
-              pair.b.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerReady,
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerReady &&
+              pair.b.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerReady,
           "both sides reach AwaitPeerReady after sending their READY");
     check(pair.a.scheduler.projected_state() ==
               link::LinkControlStateV1::Connecting,
@@ -635,8 +963,8 @@ void two_sided_legal_sequence()
           "responder accepts the initiator READY");
     pump(pair.a);
     pump(pair.b);
-    check(pair.a.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerAck &&
-              pair.b.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerAck,
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerAck &&
+              pair.b.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerAck,
           "both sides reach AwaitPeerAck after sending their ACK");
     check(pair.a.scheduler.projected_state() ==
               link::LinkControlStateV1::Connecting,
@@ -842,8 +1170,11 @@ void persist_before_send_is_enforced()
         check(!pair.a.scheduler.progress().local_binding_durable,
               "an unreadable binding is never marked durable");
         check(index_of(pair.a,
-                       LinkHandshakeEffectKind::ReadLocalBindingObject) == 0,
-              "the very first effect reads the durable binding");
+                       LinkHandshakeEffectKind::ReadLocalBindingObject) ==
+                  index_of(pair.a,
+                           LinkHandshakeEffectKind::OpenControlStream) + 1,
+              "the durable binding is read immediately after the Control stream "
+              "is opened, and before anything else");
     }
 }
 
@@ -896,7 +1227,7 @@ void no_peer_ack_means_no_lobby()
         pair.b.scheduler.local_ready_bytes().data(),
         pair.b.scheduler.local_ready_bytes().size());
     pump(pair.a);
-    check(pair.a.scheduler.stage() == LinkHandshakeStageV1::AwaitPeerAck,
+    check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerAck,
           "the initiator is waiting for the peer ACK");
     check(!pair.a.scheduler.connected() &&
               pair.a.scheduler.projected_state() ==
@@ -1016,6 +1347,9 @@ void peer_binding_has_a_real_owner()
 
 int main()
 {
+    control_stream_loopback_closes_the_lobby();
+    control_frames_deframe_incrementally();
+    control_stream_refuses_malformed_frames();
     two_sided_legal_sequence();
     persist_before_send_is_enforced();
     peer_messages_are_durable_before_ack();

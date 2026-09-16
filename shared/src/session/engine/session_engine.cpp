@@ -252,6 +252,12 @@ std::uint32_t link_handshake_payload_kind(
     case Kind::SendReady:
     case Kind::SendAck:
         return FLY_SESSION_PROVIDER_QUIC_END_V2;
+    /* gap 4: opening the Control stream answers with a stream handle pair, and a
+     * Control read answers with the bytes the peer wrote. */
+    case Kind::OpenControlStream:
+        return FLY_SESSION_PROVIDER_QUIC_STREAM_V2;
+    case Kind::ReadControlBytes:
+        return FLY_SESSION_PROVIDER_QUIC_DATA_V2;
     }
     return 0;
 }
@@ -482,6 +488,10 @@ void SessionEngine::cancel_link_handshake_locked() noexcept
         case LinkHandshakeEffectKind::SendHello:
         case LinkHandshakeEffectKind::SendReady:
         case LinkHandshakeEffectKind::SendAck:
+        /* gap 4: opening and reading the Control stream are both QUIC
+         * operations on the same port, so they cancel through it too. */
+        case LinkHandshakeEffectKind::OpenControlStream:
+        case LinkHandshakeEffectKind::ReadControlBytes:
             result = ports_.cancel_quic(&effect->token);
             break;
         }
@@ -493,10 +503,11 @@ void SessionEngine::cancel_link_handshake_locked() noexcept
     {
         link_handshake_->cancel_pending();
     }
-    /* The scheduler owns no provider resource: the session signing key belongs
-     * to session_signing_ and the control stream to initial_quic_bind_, and both
-     * of those release their own handles. Only the outstanding operation is
-     * cancelled here, so the engine never double-releases a handle. */
+    /* The scheduler owns the Control stream it opened, but the QUIC provider
+     * releases stream handles with the connection, so nothing is released here:
+     * initial_quic_bind_ owns the connection and releases everything under it.
+     * Only the outstanding operation is cancelled, so the engine never
+     * double-releases a handle. */
     link_handshake_active_ = false;
     link_handshake_dispatch_pending_ = false;
     link_handshake_.reset();
@@ -1783,7 +1794,15 @@ bool SessionEngine::start_link_handshake_locked() noexcept
     start.peer_summary_hash = pair_capability_->peer_logical_hash();
     start.merge_result_hash = initial_plan_->verified_plan().final_logical_hash;
     start.session_signing_key = signing.key;
-    start.control_stream = initial_quic_bind_->owned_resources().send_stream;
+    /*
+     * gap 4: the Control stream is NOT the bind stream. The bind stream's send
+     * side is already FINed, so handing it over here is exactly the defect this
+     * fixes. The scheduler opens or accepts its own Control stream on the bound
+     * connection, which is why it takes the connection handle and this side's
+     * physical TLS role instead.
+     */
+    start.quic_connection = initial_quic_bind_->owned_resources().connection;
+    start.local_is_listener = initial_quic_bind_->listener();
     if (pair_reveal_) {
         const auto peer = pair_reveal_->peer_contribution();
         if (peer) start.peer_identity_public_key = peer->identity_public_key;
@@ -3717,6 +3736,33 @@ void SessionEngine::run_work() noexcept
             fly_session_result_v2 result = FLY_SESSION_V2_INVALID_STATE;
             switch (link_handshake_effect.kind)
             {
+            case LinkHandshakeEffectKind::OpenControlStream:
+                /*
+                 * gap 4. The link control plane runs on its own bidirectional
+                 * Control stream: the connector opens it, the listener accepts
+                 * it. The bind stream's send side is FINed and is never reused,
+                 * and the stream kind is wire::QuicChannel::Control, the channel
+                 * wire/app_frame.cpp registers 0x0216/0x0217 on.
+                 */
+                result = ports_.open_quic_stream(
+                    true, link_handshake_effect.accept,
+                    &link_handshake_effect.token,
+                    link_handshake_effect.resource,
+                    link_handshake_effect.opener_role,
+                    static_cast<std::uint32_t>(wire::QuicChannel::Control),
+                    inbox_);
+                break;
+            case LinkHandshakeEffectKind::ReadControlBytes:
+                /*
+                 * gap 4. Credit, not a read call: the provider answers with the
+                 * peer's bytes as a data event, which the scheduler deframes
+                 * through app_frame before anything reaches the handshake.
+                 */
+                result = ports_.grant_quic_read(
+                    &link_handshake_effect.token,
+                    link_handshake_effect.resource,
+                    link_handshake_effect.read_credit, inbox_);
+                break;
             case LinkHandshakeEffectKind::ReadLocalBindingObject:
                 /*
                  * The durable re-read gate. The engine reads the exact 0x0212

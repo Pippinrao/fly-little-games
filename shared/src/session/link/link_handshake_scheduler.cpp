@@ -1,5 +1,6 @@
 #include "link_handshake_scheduler.hpp"
 
+#include "../wire/app_frame.hpp"
 #include "../wire/p256_point.hpp"
 #include "../wire/sha256.hpp"
 
@@ -115,6 +116,11 @@ void LinkHandshakeScheduler::reset_attempt(
     pending_peer_value_ = 0;
     pending_peer_preimage_.clear();
     pending_peer_hash_.fill(0);
+    /* gap 4: the previous attempt's Control stream handle and any half-received
+     * frame belong to the old link and must never leak into the new one. */
+    control_stream_ = 0;
+    control_read_accumulator_.clear();
+    awaiting_stage_ = LinkHandshakeStageV1::Empty;
     missing_inputs_ = false;
 }
 
@@ -174,7 +180,9 @@ bool LinkHandshakeScheduler::begin(const LinkHandshakeStartV1& start)
     if (next_operation_id_ < start_.first_operation_id)
         next_operation_id_ = start_.first_operation_id;
     begun_ = true;
-    return request_local_binding() == FLY_SESSION_V2_OK;
+    /* gap 4: the Control stream comes first, because every later step either
+     * writes to it or reads from it. */
+    return request_control_stream() == FLY_SESSION_V2_OK;
 }
 
 std::optional<LinkHandshakeEffect> LinkHandshakeScheduler::poll_effect() const
@@ -215,6 +223,15 @@ fly_session_result_v2 LinkHandshakeScheduler::issue(LinkHandshakeEffect effect,
     const auto registered = operations_.expect(effect.token,
                                                effect.expected_payload_kind);
     if (registered != FLY_SESSION_V2_OK) return fail(registered);
+    stage_ = stage;
+    record(stage);
+    pending_ = std::move(effect);
+    return FLY_SESSION_V2_OK;
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::issue_unjournaled(
+    LinkHandshakeEffect effect, LinkHandshakeStageV1 stage)
+{
     stage_ = stage;
     record(stage);
     pending_ = std::move(effect);
@@ -272,15 +289,58 @@ fly_session_result_v2 LinkHandshakeScheduler::persist_object(
     }
 }
 
-fly_session_result_v2 LinkHandshakeScheduler::send_bytes(
-    const std::uint8_t* bytes, std::size_t size, LinkHandshakeStageV1 stage)
+fly_session_result_v2 LinkHandshakeScheduler::request_control_stream()
 {
-    /* The control stream is a real owned resource; without it nothing may be
+    /*
+     * gap 4. The link control plane gets its own bidirectional stream on the
+     * already-bound QUIC connection: the connector opens it, the listener
+     * accepts it. The bind stream's send side is FINed, so reusing it would be a
+     * protocol error, and this stream may only exist after CHANNEL_BOUND (the
+     * caller guarantees that by starting this handshake only then).
+     *
+     * The channel is wire::QuicChannel::Control (1) — wire/app_frame.cpp already
+     * registers 0x0216/0x0217 on exactly that channel, which is what lets the
+     * per-channel allow-list reject a link control object arriving on any other
+     * channel.
+     */
+    const auto inputs = require_inputs(start_.quic_connection != 0);
+    if (inputs != FLY_SESSION_V2_OK) return inputs;
+    LinkHandshakeEffect effect{};
+    effect.kind = LinkHandshakeEffectKind::OpenControlStream;
+    effect.token = token(next_operation_id_++);
+    effect.expected_payload_kind = FLY_SESSION_PROVIDER_QUIC_STREAM_V2;
+    effect.resource = start_.quic_connection;
+    effect.accept = start_.local_is_listener;
+    effect.opener_role =
+        static_cast<std::uint32_t>(start_.local_is_listener
+                                       ? mirror_role(start_.local_role)
+                                       : start_.local_role);
+    return issue(std::move(effect), LinkHandshakeStageV1::OpenControl);
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::send_control_message(
+    std::uint16_t frame_type_tag, const std::uint8_t* bytes, std::size_t size,
+    LinkHandshakeStageV1 stage)
+{
+    /* The Control stream is a real owned resource; without it nothing may be
      * sent, and an absent handle is a not-wired seam rather than a protocol
      * violation. */
-    const auto inputs = require_inputs(start_.control_stream != 0 && size != 0);
+    const auto inputs = require_inputs(control_stream_ != 0 && size != 0);
     if (inputs != FLY_SESSION_V2_OK) return inputs;
     try {
+        /*
+         * Outbound framing is the exact inverse of the inbound deframing: the
+         * same wire::encode_app_frame that the receiver undoes, on the same
+         * Control channel, so neither direction can drift from the other. The tag
+         * is the object kind, matching the receiver's routing key.
+         */
+        std::vector<std::uint8_t> framed(6u + size, 0);
+        std::size_t written = 0;
+        if (wire::encode_app_frame(frame_type_tag, bytes, size, framed.data(),
+                                   framed.size(), &written) != wire::Status::Ok ||
+            written != framed.size())
+            return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+
         LinkHandshakeEffect effect{};
         effect.kind = stage == LinkHandshakeStageV1::SendHello
                           ? LinkHandshakeEffectKind::SendHello
@@ -289,14 +349,146 @@ fly_session_result_v2 LinkHandshakeScheduler::send_bytes(
                           : LinkHandshakeEffectKind::SendAck;
         effect.token = token(next_operation_id_++);
         effect.expected_payload_kind = FLY_SESSION_PROVIDER_QUIC_END_V2;
-        effect.resource = start_.control_stream;
-        effect.value.assign(bytes, bytes + size);
+        effect.resource = control_stream_;
+        effect.value = std::move(framed);
         return issue(std::move(effect), stage);
     } catch (const std::bad_alloc&) {
         return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
     }
 }
 
+fly_session_result_v2 LinkHandshakeScheduler::route_buffered_control_frame(
+    bool* routed)
+{
+    if (routed == nullptr) return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+    *routed = false;
+    if (control_read_accumulator_.empty()) return FLY_SESSION_V2_OK;
+
+    /*
+     * Read the framing length BEFORE handing the record to the codec. The frame
+     * length is this layer's own field, and it is what separates two cases the
+     * codec alone cannot: an INCOMPLETE record (wait for more bytes) from a
+     * COMPLETE record whose body is invalid (fail closed now). app_frame reports
+     * a body that is shorter than the tag's fixed length as Status::Truncated,
+     * so without this pre-check a hostile 6-byte header claiming a short 0x0216
+     * object would look like "need more bytes" and the attempt would wait for
+     * bytes that can never complete a legal object.
+     */
+    if (control_read_accumulator_.size() < 4u) return FLY_SESSION_V2_OK;
+    const std::uint32_t declared =
+        (static_cast<std::uint32_t>(control_read_accumulator_[0]) << 24u) |
+        (static_cast<std::uint32_t>(control_read_accumulator_[1]) << 16u) |
+        (static_cast<std::uint32_t>(control_read_accumulator_[2]) << 8u) |
+        static_cast<std::uint32_t>(control_read_accumulator_[3]);
+    if (declared < 2u) return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+    const std::size_t declared_body = declared - 2u;
+    if (declared_body > wire::absolute_max_object_bytes())
+        return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+    const std::size_t record_size = 4u + static_cast<std::size_t>(declared);
+    if (control_read_accumulator_.size() < record_size)
+        return FLY_SESSION_V2_OK; /* incomplete: wait for more bytes */
+
+    /*
+     * wire::next_app_frame() is the gate, not a convenience: it enforces the
+     * Control-channel allow-list AND runs session_codec::check() over the exact
+     * object bytes, so an object that is not a well-formed
+     * LINK_HELLO_V1/LINK_READY_V1 never reaches the handshake. Reading the stream
+     * without it would delete the type-crossing defence the allow-list exists
+     * for.
+     */
+    wire::AppFrameCursor cursor = wire::app_frame_cursor(
+        wire::QuicChannel::Control, control_read_accumulator_.data(),
+        control_read_accumulator_.size());
+    wire::AppFrame frame{};
+    bool has_frame = false;
+    const auto status = wire::next_app_frame(&cursor, &frame, &has_frame);
+    if (status != wire::Status::Ok || !has_frame)
+        return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+
+    const std::size_t consumed = cursor.offset;
+    fly_session_result_v2 routed_result = FLY_SESSION_V2_OK;
+    if (frame.frame_type_tag == link::kLinkHelloObjectKindV1) {
+        routed_result = accept_peer_hello(frame.object_bytes, frame.object_size);
+    } else if (frame.frame_type_tag == link::kLinkReadyObjectKindV1) {
+        /* READY and ACK share one object layout; ready_phase sits at offset 11
+         * and the codec has already refused any other value. */
+        const auto phase =
+            static_cast<link::LinkReadyPhaseV1>(frame.object_bytes[11]);
+        routed_result = phase == link::LinkReadyPhaseV1::Ready
+                            ? accept_peer_ready(frame.object_bytes,
+                                                frame.object_size)
+                        : phase == link::LinkReadyPhaseV1::Ack
+                            ? accept_peer_ack(frame.object_bytes,
+                                              frame.object_size)
+                            : FLY_SESSION_V2_PROTOCOL_VIOLATION;
+    } else {
+        /* The allow-list admits 0x0210/0x0212 on Control for other features, but
+         * neither belongs on the link control plane: only HELLO and READY. */
+        return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+    }
+
+    control_read_accumulator_.erase(
+        control_read_accumulator_.begin(),
+        control_read_accumulator_.begin() +
+            static_cast<std::ptrdiff_t>(consumed));
+
+    /*
+     * A message from a dead link generation, or an exact re-delivery of one this
+     * side already accepted, is dropped without failing the live attempt — that
+     * is precisely why the codec classifies them apart from a bad signature.
+     * Anything else is already a fail()ed state.
+     */
+    if (routed_result == FLY_SESSION_V2_STALE ||
+        routed_result == FLY_SESSION_V2_DUPLICATE)
+        return FLY_SESSION_V2_OK;
+    if (routed_result != FLY_SESSION_V2_OK) return routed_result;
+    *routed = true;
+    return FLY_SESSION_V2_OK;
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::request_control_read()
+{
+    bool routed = false;
+    const auto drained = route_buffered_control_frame(&routed);
+    if (drained != FLY_SESSION_V2_OK) return drained;
+    /* A buffered frame already advanced the attempt; the stage it moved to will
+     * ask for bytes again when it is that stage's turn. */
+    if (routed) return FLY_SESSION_V2_OK;
+
+    const auto inputs = require_inputs(control_stream_ != 0);
+    if (inputs != FLY_SESSION_V2_OK) return inputs;
+    LinkHandshakeEffect effect{};
+    effect.kind = LinkHandshakeEffectKind::ReadControlBytes;
+    effect.token = token(next_operation_id_++);
+    effect.expected_payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
+    effect.resource = control_stream_;
+    effect.read_credit = kLinkControlReadCreditV1;
+    /*
+     * Deliberately NOT journaled. The port contract marks
+     * FLY_SESSION_PROVIDER_QUIC_DATA_V2 terminal = 0, because one granted credit
+     * may be answered with several data events, while
+     * ProviderOperationJournal::accept() requires a terminal event. Journaling a
+     * read would therefore either be rejected on its first completion or leak a
+     * Pending record into the single-slot journal and block every later effect
+     * with BACKPRESSURE. InitialQuicBindScheduler resolves its own reads the same
+     * way, through parse_provider_event_v2. The effect is still tracked by
+     * pending_, so has_pending_operation() and the engine's busy check see it,
+     * and it is still cancelled through the QUIC port.
+     */
+    return issue_unjournaled(std::move(effect),
+                             LinkHandshakeStageV1::ReadPeerControlBytes);
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::send_bytes(
+    const std::uint8_t* bytes, std::size_t size, LinkHandshakeStageV1 stage)
+{
+    /* Single framing entry point for the three control messages: the tag is the
+     * object kind that the Control allow-list and the receiver's routing key on. */
+    const std::uint16_t tag = stage == LinkHandshakeStageV1::SendHello
+                                  ? link::kLinkHelloObjectKindV1
+                                  : link::kLinkReadyObjectKindV1;
+    return send_control_message(tag, bytes, size, stage);
+}
 fly_session_result_v2 LinkHandshakeScheduler::sign(
     std::uint32_t purpose, const std::array<std::uint8_t, 32>& digest,
     const char* domain, LinkHandshakeStageV1 stage)
@@ -645,7 +837,14 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_message(
             return FLY_SESSION_V2_DUPLICATE;
         return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
     }
-    if (stage_ != awaiting) return FLY_SESSION_V2_INVALID_STATE;
+    /*
+     * The attempt must be waiting for exactly this message. awaiting_stage_ holds
+     * the peer message this attempt is awaiting, while stage_ additionally tracks
+     * the Control read effects that are issued while waiting — so this check is
+     * unaffected by gap 4's read pipeline and still rejects a READY that arrives
+     * where a HELLO belongs.
+     */
+    if (awaiting_stage_ != awaiting) return FLY_SESSION_V2_INVALID_STATE;
     if (bytes == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
 
     wire::LinkControlDecodeReportV1 report{};
@@ -831,12 +1030,62 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
     if (!pending_ || !begun_ || progress_.failed)
         return FLY_SESSION_V2_INVALID_STATE;
     const auto kind = pending_->kind;
+
+    /*
+     * gap 4. A Control read is resolved through parse_provider_event_v2 rather
+     * than the journal, because the port contract marks
+     * FLY_SESSION_PROVIDER_QUIC_DATA_V2 terminal = 0 (one granted credit may be
+     * answered with several data events) while the journal accepts only terminal
+     * events. The read is not journaled either, so there is no record to
+     * complete.
+     */
+    if (kind == LinkHandshakeEffectKind::ReadControlBytes) {
+        ParsedProviderEvent parsed;
+        const auto parse = parse_provider_event_v2(
+            event, pending_->token, pending_->expected_payload_kind, parsed);
+        if (parse != FLY_SESSION_V2_OK) return parse;
+        if (event.result != FLY_SESSION_V2_OK) return fail(event.result);
+        std::vector<std::uint8_t> received;
+        if (read_buffer(parsed, received) != FLY_SESSION_V2_OK)
+            return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+        try {
+            control_read_accumulator_.insert(control_read_accumulator_.end(),
+                                             received.begin(),
+                                             received.end());
+        } catch (const std::bad_alloc&) {
+            return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+        }
+        /* Bound the buffer at two maximum-size objects plus a frame header, so a
+         * peer cannot make this side accumulate without limit: a legal frame is
+         * consumed as soon as it is complete, so only a partial one is ever
+         * retained. */
+        if (control_read_accumulator_.size() >
+            2u * (wire::absolute_max_object_bytes() + 6u))
+            return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+        pending_.reset();
+        return request_control_read();
+    }
+
     ProviderOperationCompletion completion{};
     const auto accepted = operations_.accept(event, completion);
     if (accepted != FLY_SESSION_V2_OK) return accepted;
     if (completion.result != FLY_SESSION_V2_OK) return fail(completion.result);
 
     std::vector<std::uint8_t> bytes;
+    if (kind == LinkHandshakeEffectKind::OpenControlStream) {
+        /*
+         * gap 4. open_bidi answers with the send handle in `resource` and the
+         * receive handle in `value0` (same shape the bind stream used). Both must
+         * be real: a zero handle would mean the Control stream does not exist,
+         * and every later send/read would be a silent no-op.
+         */
+        if (completion.payload.resource == 0 ||
+            completion.payload.value0 == 0)
+            return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+        control_stream_ = completion.payload.resource;
+        pending_.reset();
+        return request_local_binding();
+    }
     if (kind == LinkHandshakeEffectKind::ReadLocalBindingObject) {
         if (completion.payload.resource == 0 ||
             read_buffer(completion.payload, bytes) != FLY_SESSION_V2_OK ||
@@ -894,9 +1143,13 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
     }
     if (kind == LinkHandshakeEffectKind::SendHello) {
         pending_.reset();
-        stage_ = LinkHandshakeStageV1::AwaitPeerHello;
-        record(stage_);
-        return FLY_SESSION_V2_OK;
+        /* gap 4: reaching "awaiting the peer HELLO" means the Control stream must
+         * now actually be read; without this the bytes never arrive and the
+         * attempt stalls forever at CONNECTING. The await milestone is recorded,
+         * then the read effect gets its own stage. */
+        awaiting_stage_ = LinkHandshakeStageV1::AwaitPeerHello;
+        record(awaiting_stage_);
+        return request_control_read();
     }
     if (kind == LinkHandshakeEffectKind::PersistPeerHelloObject) {
         if (completion.payload.resource == 0 ||
@@ -953,9 +1206,9 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
     }
     if (kind == LinkHandshakeEffectKind::SendReady) {
         pending_.reset();
-        stage_ = LinkHandshakeStageV1::AwaitPeerReady;
-        record(stage_);
-        return FLY_SESSION_V2_OK;
+        awaiting_stage_ = LinkHandshakeStageV1::AwaitPeerReady;
+        record(awaiting_stage_);
+        return request_control_read();
     }
     if (kind == LinkHandshakeEffectKind::PersistPeerReadyObject) {
         if (completion.payload.resource == 0 ||
@@ -990,9 +1243,9 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
     }
     if (kind == LinkHandshakeEffectKind::SendAck) {
         pending_.reset();
-        stage_ = LinkHandshakeStageV1::AwaitPeerAck;
-        record(stage_);
-        return FLY_SESSION_V2_OK;
+        awaiting_stage_ = LinkHandshakeStageV1::AwaitPeerAck;
+        record(awaiting_stage_);
+        return request_control_read();
     }
     if (kind == LinkHandshakeEffectKind::PersistPeerAckObject) {
         if (completion.payload.resource == 0 ||

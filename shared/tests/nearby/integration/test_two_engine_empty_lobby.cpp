@@ -2829,13 +2829,15 @@ void drive_session_signing_persistence(
         FLY_SESSION_PROVIDER_OBJECT_IMMUTABLE_V2, 320, expected_hash);
     fixture.executor.run_all();
     const auto durable = fixture.snapshot();
-    // When the store lost the object, the durable re-read already ran inside the
-    // same drain and failed the link closed; otherwise both gates are satisfied
-    // and the link stays CONNECTING until the peer HELLO/READY exchange.
-    const auto state_after_second_gate =
-        tail == SessionSigningTail::ReadObjectMissing
-            ? FLY_SESSION_LINK_FAILED_V2
-            : FLY_SESSION_LINK_CONNECTING_V2;
+    /*
+     * Both persistence gates are satisfied here, so the link is CONNECTING for
+     * every tail. The missing-object failure is no longer visible at this point
+     * because gap 4 puts the Control stream open BEFORE the durable re-read, and
+     * that open is answered further down: the re-read (and therefore the
+     * UNAVAILABLE failure) happens after it, which is where the negative branch
+     * below asserts FAILED.
+     */
+    const auto state_after_second_gate = FLY_SESSION_LINK_CONNECTING_V2;
     check(durable.link_state == state_after_second_gate &&
               durable.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
               fixture.object_store.puts == object_puts + 1 &&
@@ -2848,6 +2850,21 @@ void drive_session_signing_persistence(
               fixture.key.cancels == 0,
           "both persistence gates satisfied still leaves CONNECTING until the "
           "peer HELLO/READY exchange");
+
+    /*
+     * gap 4: the handshake opens (connector) or accepts (listener) its own
+     * Control stream before it re-reads the binding, because the bind stream's
+     * send side is FINed. This fixture is the listener, so the bind accept has
+     * already happened and this second stream operation is the Control stream.
+     * Answer it with the two-handle terminal a real transport produces; without
+     * it the handshake has no stream and nothing further is dispatched.
+     */
+    check(fixture.quic.accepted_bidi + fixture.quic.opened_bidi == 2,
+          "the link handshake opens exactly one Control stream after CHANNEL_BIND");
+    deliver_provider_resource_pair(
+        fixture.quic.inbox, fixture.quic.last_token,
+        FLY_SESSION_PROVIDER_QUIC_STREAM_V2, 601, 602);
+    fixture.executor.run_all();
 
     /*
      * Decision 1 negative A: the object is absent. The port answers UNAVAILABLE

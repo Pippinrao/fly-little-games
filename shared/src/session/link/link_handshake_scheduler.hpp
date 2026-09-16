@@ -42,10 +42,16 @@ namespace flynes::session {
 
 enum class LinkHandshakeEffectKind : std::uint8_t
 {
+    /* Opens (connector) or accepts (listener) the dedicated Control stream on the
+     * bound QUIC connection. The bind stream's send side is FINed, so it can
+     * never carry the link control plane (owner decision 2026-09-16). */
+    OpenControlStream,
     ReadLocalBindingObject,
     SignHello,
     PersistHelloObject,
     SendHello,
+    /* Grants read credit on the Control stream and waits for peer bytes. */
+    ReadControlBytes,
     VerifyPeerSignature,
     PersistPeerHelloObject,
     PersistNegotiatedResult,
@@ -73,11 +79,14 @@ enum class LinkHandshakeEffectKind : std::uint8_t
 enum class LinkHandshakeStageV1 : std::uint8_t
 {
     Empty = 0,
+    OpenControl,
     ReadLocalBinding,
     SignHello,
     PersistHello,
     SendHello,
     AwaitPeerHello,
+    /* Credit granted on the Control stream; peer bytes not yet complete. */
+    ReadPeerControlBytes,
     AwaitPeerHelloSignature,
     PersistPeerHello,
     PersistNegotiatedResult,
@@ -96,6 +105,15 @@ enum class LinkHandshakeStageV1 : std::uint8_t
     Connected,
     Failed
 };
+
+/*
+ * Read credit granted on the Control stream. One complete link control frame is
+ * 6 + 488 = 494 bytes at most (488-byte LINK_HELLO plus the u32be length and
+ * u16be tag), and the Control channel's own per-object bound is 64 KiB, so this
+ * single bound covers a whole legal frame plus the largest object the channel
+ * admits, and nothing larger can ever be delivered because app_frame refuses it.
+ */
+inline constexpr std::uint64_t kLinkControlReadCreditV1 = 6u + 65536u;
 
 inline constexpr std::size_t kLinkHandshakeTraceCapacityV1 = 48;
 
@@ -148,7 +166,19 @@ struct LinkHandshakeStartV1 final
     std::array<std::uint8_t, 32> peer_summary_hash{};
     std::array<std::uint8_t, 32> merge_result_hash{};
     fly_session_resource_handle_v2 session_signing_key = 0;
-    fly_session_resource_handle_v2 control_stream = 0;
+    /*
+     * gap 4 (owner decision 2026-09-16). The link control plane runs on its OWN
+     * bidirectional Control stream, opened by the connector or accepted by the
+     * listener after the bind completed; the bind stream's send side is FINed and
+     * must never be reused. The scheduler therefore takes the bound QUIC
+     * connection and this side's physical TLS role, opens the stream itself, and
+     * owns the handle for the rest of the link.
+     *
+     * There is deliberately no caller-supplied control_stream input any more:
+     * handing in the bind stream is exactly the defect this fixes.
+     */
+    fly_session_resource_handle_v2 quic_connection = 0;
+    bool local_is_listener = false;
 };
 
 struct LinkHandshakeEffect final
@@ -172,6 +202,13 @@ struct LinkHandshakeEffect final
     std::vector<std::uint8_t> record_key{};
     std::vector<std::uint8_t> value{};
     std::uint64_t expected_revision = 0;
+    /* gap 4, OpenControlStream: accept the stream instead of opening it, and the
+     * physical role to record as the opener. */
+    bool accept = false;
+    std::uint32_t opener_role = 0;
+    /* gap 4, ReadControlBytes: the read credit to grant. Zero is illegal, so the
+     * effect is never issued without real credit. */
+    std::uint64_t read_credit = 0;
 };
 
 class LinkHandshakeScheduler final
@@ -244,7 +281,22 @@ public:
      * The channel id and the channel-bind binding hash used to be on this list;
      * InitialQuicBindScheduler produces both now. */
     [[nodiscard]] bool missing_inputs() const noexcept { return missing_inputs_; }
+    /*
+     * True while an effect is outstanding. This reports the EFFECT, not the
+     * operation journal, because a Control read is deliberately not journaled
+     * (see request_control_read): the port contract marks
+     * FLY_SESSION_PROVIDER_QUIC_DATA_V2 terminal = 0 while the journal accepts
+     * only terminal events, so journaling a read would either be rejected on
+     * completion or leak a Pending record into the single-slot journal.
+     */
     [[nodiscard]] bool has_pending_operation() const noexcept
+    { return pending_.has_value(); }
+    /*
+     * True while a JOURNALED provider operation is outstanding. Distinct from
+     * has_pending_operation() because a Control read is not journaled, so this is
+     * the accessor that detects a leaked journal record.
+     */
+    [[nodiscard]] bool has_pending_journal_operation() const noexcept
     { return operations_.has_pending(); }
     [[nodiscard]] bool connected() const noexcept
     { return link::project_link_control_state_v1(progress_) ==
@@ -254,12 +306,26 @@ public:
     [[nodiscard]] const link::LinkControlProgressV1& progress() const noexcept
     { return progress_; }
     [[nodiscard]] LinkHandshakeStageV1 stage() const noexcept { return stage_; }
+    /* The peer message this attempt is awaiting. stage() additionally tracks the
+     * Control read effects that run while waiting, so an assertion about protocol
+     * progress must use this, not stage(). */
+    [[nodiscard]] LinkHandshakeStageV1 awaiting() const noexcept
+    { return awaiting_stage_; }
     [[nodiscard]] std::size_t stage_trace_size() const noexcept
     { return trace_size_; }
     [[nodiscard]] LinkHandshakeStageV1 stage_trace_at(std::size_t index) const
         noexcept;
     [[nodiscard]] std::uint64_t next_operation_id() const noexcept
     { return next_operation_id_; }
+    /* The Control stream handle this scheduler opened/accepted, or 0 before the
+     * OpenControlStream effect completed. */
+    [[nodiscard]] fly_session_resource_handle_v2 control_stream() const noexcept
+    { return control_stream_; }
+    /* Bytes received on the Control stream that do not yet form a complete
+     * frame. Zero-length at every record boundary. */
+    [[nodiscard]] const std::vector<std::uint8_t>& control_read_buffer()
+        const noexcept
+    { return control_read_accumulator_; }
     [[nodiscard]] const link::LinkHelloV1& local_hello() const noexcept
     { return local_hello_; }
     [[nodiscard]] const link::LinkReadyV1& local_ready() const noexcept
@@ -308,6 +374,11 @@ private:
     fly_session_result_v2 require_inputs(bool present) noexcept;
     fly_session_result_v2 issue(LinkHandshakeEffect effect,
                                 LinkHandshakeStageV1 stage);
+    /* Issues an effect WITHOUT registering it in the operation journal. Only the
+     * Control read uses this, and only because its port contract is
+     * non-terminal; see request_control_read(). */
+    fly_session_result_v2 issue_unjournaled(LinkHandshakeEffect effect,
+                                            LinkHandshakeStageV1 stage);
     fly_session_result_v2 read_buffer(const ParsedProviderEvent& event,
                                       std::vector<std::uint8_t>& out) const;
     fly_session_result_v2 persist_object(std::uint32_t object_kind,
@@ -315,7 +386,34 @@ private:
                                          const std::uint8_t* bytes,
                                          std::size_t size,
                                          LinkHandshakeStageV1 stage);
-    fly_session_result_v2 send_bytes(const std::uint8_t* bytes, std::size_t size,
+    /* gap 4. Opens or accepts the dedicated Control stream on the bound
+     * connection. Uses start_.quic_connection and start_.local_is_listener. */
+    fly_session_result_v2 request_control_stream();
+    /* gap 4. Drains one complete Control frame if one is already buffered,
+     * otherwise grants read credit on the Control stream. Never issues a
+     * zero-credit grant. */
+    fly_session_result_v2 request_control_read();
+    /* gap 4. Deframes at most one complete record from the Control read buffer
+     * through wire::next_app_frame(), which is what enforces the Control-channel
+     * allow-list and the object codec, and routes it by ObjectKind:
+     *   0x0216 LINK_HELLO_V1 -> accept_peer_hello
+     *   0x0217 LINK_READY_V1 -> accept_peer_ready / accept_peer_ack by ready_phase
+     * Anything else, on any other channel, fails closed. A frame from a stale
+     * generation (FLY_SESSION_V2_STALE) or an exact duplicate
+     * (FLY_SESSION_V2_DUPLICATE) is consumed and dropped without failing the
+     * live attempt. *routed reports whether a frame advanced the state machine.
+     */
+    fly_session_result_v2 route_buffered_control_frame(bool* routed);
+    /* gap 4. Frames one link control object for the Control channel exactly as
+     * wire::encode_app_frame does (u32be(2 + len) || tag u16be || object) and
+     * issues the write on the Control stream. */
+    fly_session_result_v2 send_control_message(
+        std::uint16_t frame_type_tag, const std::uint8_t* bytes,
+        std::size_t size, LinkHandshakeStageV1 stage);
+    /* Picks the object-kind tag for HELLO/READY/ACK and delegates to
+     * send_control_message, so all three messages are framed by one code path. */
+    fly_session_result_v2 send_bytes(const std::uint8_t* bytes,
+                                     std::size_t size,
                                      LinkHandshakeStageV1 stage);
     fly_session_result_v2 sign(std::uint32_t purpose,
                                const std::array<std::uint8_t, 32>& digest,
@@ -350,6 +448,10 @@ private:
     LinkHandshakeStartV1 start_{};
     std::optional<LinkHandshakeEffect> pending_{};
     fly_session_result_v2 cancel_result_ = FLY_SESSION_V2_CANCELLED;
+    /* gap 4: the Control stream handle this scheduler opened/accepted, and the
+     * Control bytes not yet forming a complete frame. */
+    fly_session_resource_handle_v2 control_stream_ = 0;
+    std::vector<std::uint8_t> control_read_accumulator_{};
     link::LinkControlProgressV1 progress_{};
     link::LinkHelloV1 local_hello_{};
     link::LinkReadyV1 local_ready_{};
@@ -375,6 +477,10 @@ private:
     std::size_t trace_size_ = 0;
     std::uint64_t next_operation_id_ = 0;
     LinkHandshakeStageV1 stage_ = LinkHandshakeStageV1::Empty;
+    /* The peer message this attempt is currently waiting for. Kept separate from
+     * stage_ because stage_ also tracks the Control read effects, which happen
+     * while the attempt is still awaiting that same peer message. */
+    LinkHandshakeStageV1 awaiting_stage_ = LinkHandshakeStageV1::Empty;
     LinkHandshakeStageV1 persist_stage_ = LinkHandshakeStageV1::Empty;
     /* The outstanding asynchronous verification of a received control message,
      * plus everything needed to resume the sequence once it returns. */
