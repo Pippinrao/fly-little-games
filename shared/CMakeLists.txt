@@ -1611,6 +1611,31 @@ if(FLYNES_BUILD_TESTS)
 endif()
 # =================== end W2 append-only block =======================
 
+# =====================================================================
+# Task 10 (DUAL integration) append-only block.
+# =====================================================================
+if(FLYNES_BUILD_TESTS)
+    # Step 3: the DUAL gate's own record that STREAM is closed explicitly.
+    # Header-only assertions over the public ABI, the frozen link capability
+    # contract and the frozen DUAL seam, so the target needs no library.
+    add_executable(flynes_nearby_dual_stream_closed_test
+        tests/nearby/contract/test_dual_stream_closed.cpp
+    )
+    target_include_directories(flynes_nearby_dual_stream_closed_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+    )
+    target_compile_features(flynes_nearby_dual_stream_closed_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_nearby_dual_stream_closed_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_nearby_dual_stream_closed_test)
+    add_test(NAME nearby_dual_stream_closed
+             COMMAND flynes_nearby_dual_stream_closed_test)
+    set_tests_properties(nearby_dual_stream_closed PROPERTIES
+        LABELS "nearby_contract")
+endif()
+# =================== end Task 10 block ==============================
+
 # Android (and other consumers that add core first) get the runtime library
 # without pulling nestopia into catalog-only host tests.
 flynes_add_runtime_library()
