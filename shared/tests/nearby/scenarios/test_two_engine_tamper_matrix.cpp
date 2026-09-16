@@ -448,43 +448,84 @@ void the_control_reaches_the_connected_lobby()
           "stream tamper cases have bytes to target");
 }
 
+bool is_previously_fail_open_pair_layer(TamperLayer layer)
+{
+    return layer == TamperLayer::CommitReveal ||
+           layer == TamperLayer::PairSignature ||
+           layer == TamperLayer::KeyConfirm;
+}
+
+bool connecting_or_failed(unsigned state)
+{
+    return state == FLY_SESSION_LINK_CONNECTING_V2 ||
+           state == FLY_SESSION_LINK_FAILED_V2;
+}
+
 /*
  * Asserts the fail-closed invariant for one tampered layer.
+ *
+ * For the three pair-secure layers that round 1 reported fail-open, the
+ * assertion is stronger than "did not reach the lobby": the tampered copy must
+ * have CROSSED, and the RECEIVER's own provider must have rejected it with
+ * aead-open-fail or verify-fail. Those extra clauses are what made the
+ * round-1 harness bug visible (landed=yes, crossed=0, aead-open-fail=0/0).
  */
 void a_tampered_layer_cannot_reach_the_lobby(TamperLayer layer)
 {
     const auto outcome = run_case(layer);
     char message[512];
+    const bool pair_layer = is_previously_fail_open_pair_layer(layer);
 
-    if (!outcome.injection_landed)
+    std::snprintf(message, sizeof(message),
+                  "the %s tamper really landed on the sender's own bytes; "
+                  "without that the case would be a second control",
+                  layer_name(layer));
+    check(outcome.injection_landed, message);
+
+    if (pair_layer)
     {
         std::snprintf(message, sizeof(message),
-                      "the %s tamper really landed on the sender's own bytes; "
-                      "without that the case would be a second control",
-                      layer_name(layer));
-        check(false, message);
-        return;
-    }
-    if (outcome.reached_lobby)
-    {
+                      "a tampered %s actually CROSSED (tampered_logical_delivered "
+                      ">= 1, observed %u); landed-without-crossed is the round-1 "
+                      "harness fail-open",
+                      layer_name(layer), outcome.tampered_groups_delivered);
+        check(outcome.tampered_groups_delivered >= 1u, message);
+
+        const bool receiver_crypto =
+            outcome.inviter_aead_open_failures > 0 ||
+            outcome.joiner_aead_open_failures > 0 ||
+            outcome.inviter_verify_failures > 0 ||
+            outcome.joiner_verify_failures > 0;
         std::snprintf(message, sizeof(message),
-                      "a tampered %s NEVER reaches "
-                      "FLY_SESSION_LINK_CONNECTED_LOBBY_V2",
-                      layer_name(layer));
-        check(false, message);
-        return;
+                      "a tampered %s is rejected by the RECEIVER's own provider "
+                      "(aead-open-fail=%d/%d verify-fail=%d/%d)",
+                      layer_name(layer), outcome.inviter_aead_open_failures,
+                      outcome.joiner_aead_open_failures,
+                      outcome.inviter_verify_failures,
+                      outcome.joiner_verify_failures);
+        check(receiver_crypto, message);
     }
+
+    std::snprintf(message, sizeof(message),
+                  "a tampered %s NEVER reaches "
+                  "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 (inviter=%u joiner=%u)",
+                  layer_name(layer), outcome.inviter_link_state,
+                  outcome.joiner_link_state);
+    check(!outcome.reached_lobby &&
+              outcome.inviter_link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+              outcome.joiner_link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          message);
+
     /*
      * A tamper case is asymmetric BY DESIGN: the end that receives the tampered
      * record detects it and fails, while the end that sent it never learns and
      * stays where it was. So the invariant is not "the two states agree" - it is:
      *   * neither end is in the lobby (asserted above),
      *   * every end is in one of the link states the ABI documents, and
-     *   * AT LEAST ONE end explicitly REFUSED - it reached
-     *     FLY_SESSION_LINK_FAILED_V2 rather than merely stalling.
-     * That last clause is what separates a real fail-closed result from a rig
-     * that simply stopped making progress: a mutual CONNECTING stall would prove
-     * nothing about the layer under test.
+     *   * AT LEAST ONE end is in the named refuse/wait states CONNECTING or
+     *     FAILED rather than an unspecified one. Pair-secure tampers leave the
+     *     sender in AUTHENTICATING because it never observes the peer's AEAD
+     *     rejection; the RECEIVER is FAILED.
      */
     const auto documented = [](unsigned state) {
         return state == FLY_SESSION_LINK_UNAVAILABLE_V2 ||
@@ -504,6 +545,16 @@ void a_tampered_layer_cannot_reach_the_lobby(TamperLayer layer)
                   outcome.joiner_link_state);
     check(documented(outcome.inviter_link_state) &&
               documented(outcome.joiner_link_state),
+          message);
+    std::snprintf(message, sizeof(message),
+                  "a tampered %s leaves a NAMED state CONNECTING (%u) or "
+                  "FAILED (%u) on at least one end (inviter=%u joiner=%u)",
+                  layer_name(layer),
+                  static_cast<unsigned>(FLY_SESSION_LINK_CONNECTING_V2),
+                  static_cast<unsigned>(FLY_SESSION_LINK_FAILED_V2),
+                  outcome.inviter_link_state, outcome.joiner_link_state);
+    check(connecting_or_failed(outcome.inviter_link_state) ||
+              connecting_or_failed(outcome.joiner_link_state),
           message);
     std::snprintf(message, sizeof(message),
                   "a tampered %s is explicitly REFUSED, not merely stalled: at "
@@ -579,23 +630,26 @@ void a_tampered_layer_cannot_reach_the_lobby(TamperLayer layer)
  * the engine grows an app-supplied SAS the assertions below start failing and
  * the case has to be implemented for real.
  *
- * DIAGNOSIS (round 2), with the whole chain read end to end:
- *   1. The engine's confirm branch (`session_engine.cpp:5583-5621`) requires
- *      `pending.choice_size == 0` IN THE GUARD ITSELF, so a CONFIRM_SAS action
- *      that carries any choice payload is REJECTED before it can be applied. The
- *      app has no byte with which to assert a SAS.
- *   2. It then calls `pair_signature_->approve_local(FLY_SESSION_APPROVAL_BLE_SAS_MATCH_V2)`
- *      - the ONE-argument overload - and never the two-argument
- *      `PairPipeline::approve_local(kind, displayed_sas)` whose
- *      `displayed_sas != *expected` check lives at `pair_pipeline.cpp:164`.
- *   3. `PairPipeline` is not merely unused on this path: it is NEVER
- *      INSTANTIATED anywhere in the engine. `grep -n PairPipeline shared/src/session`
- *      matches only its own declaration/definition
- *      (`link/pair_pipeline.{hpp,cpp}`) and a `friend class PairPipeline;` in
- *      `pair_auth_reducer.hpp:65`. The live path is
- *      `PairSignatureScheduler::approve_local` -> `PairVerificationScheduler::approve_local`
- *      -> `PairAuthenticationReducer::approve_local` (`pair_sas_scheduler.hpp:47`,
- *      created at `session_engine.cpp:1093`).
+ * DIAGNOSIS (W3 round 2), with the whole chain read end to end:
+ *   1. The live engine calls `PairSignatureScheduler::approve_local(kind)` at
+ *      `session_engine.cpp:5598`. That overload does NOT compare SAS bytes; it
+ *      only forwards the approval kind to verification.
+ *   2. Two-arg `PairPipeline::approve_local(kind, displayed_sas)` (the only
+ *      path that compares `displayed_sas != *expected` at
+ *      `pair_pipeline.cpp:164`) is unused by the engine. `PairPipeline` is
+ *      never instantiated in `session_engine.cpp`.
+ *   3. Single-arg `PairPipeline::approve_local(kind)` reject-path is
+ *      `entry_mode==1 && !known_path` (`pair_pipeline.cpp:174`). That is the
+ *      BLE-SAS anonymous path, and even that overload is not on the live
+ *      confirm branch.
+ *   4. The public action has no SAS field (IF05). `fly_session_action_choice_v2`
+ *      is boolean / invite-code / reference only; `CONFIRM_SAS` is submitted
+ *      with `choice_size == 0`. The confirm guard requires
+ *      `pending.choice_size == 0`, so a choice payload is REJECTED before
+ *      apply. Do not "fix" this by adding SAS bytes to the public action.
+ *   5. The live path is `PairSignatureScheduler::approve_local` ->
+ *      `PairVerificationScheduler::approve_local` ->
+ *      `PairAuthenticationReducer::approve_local`.
  *
  * CONCLUSION: NOT EXPLOITABLE through the public ABI, and NOT a "confirms a SAS
  * it was never shown" defect. The engine derives the SAS itself from the
