@@ -182,7 +182,10 @@ inline constexpr std::size_t kLinkHelloPretagSizeV1 = 424;
 inline constexpr std::size_t kLinkHelloSizeV1 = 488;
 
 /*
- * LINK_READY_V1, exactly 368 bytes, big-endian, zero-filled reserved fields.
+ * LINK_READY_V1, exactly 432 bytes (a 368-byte pretag plus the 64-byte signature
+ * at 368..432), big-endian, zero-filled reserved fields. The 368 figure that used
+ * to stand here was the pretag alone, which contradicted this table and
+ * kLinkReadySizeV1.
  * (Was 384: +8 for the 16-byte channel_id, -24 for the deleted u64
  * channel_bind_id and the u64 that followed it.)
  *
