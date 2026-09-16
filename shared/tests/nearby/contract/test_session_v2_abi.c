@@ -54,6 +54,15 @@ _Static_assert(offsetof(fly_session_snapshot_v2, dual_mode) ==
 _Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE >
                    FLY_SESSION_SNAPSHOT_V2_R0_SIZE,
                "the DUAL snapshot block is appended");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R1_SIZE ==
+                   offsetof(fly_session_snapshot_v2, dual_state_digest),
+               "the snapshot R1 prefix stops before the DUAL digest block");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96,
+               "the DUAL digest block is a pure tail append");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R0_SIZE <=
+                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE,
+               "the prefixes stay ordered");
 _Static_assert(FLY_SESSION_PORTS_V2_R1_SIZE ==
                    offsetof(fly_session_ports_v2, dual_runtime),
                "the pre-DUAL provider table stops before the runtime slot");

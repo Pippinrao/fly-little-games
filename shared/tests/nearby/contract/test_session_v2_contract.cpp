@@ -662,6 +662,23 @@ void test_dual_prefix_appends_keep_older_callers_legal()
               full.dual_freeze_reason == FLY_SESSION_DUAL_FREEZE_NONE_V2,
           "a non-DUAL engine reports the neutral DUAL run state");
 
+    /*
+     * A reader from before the DUAL digest block: it declares exactly the R1
+     * prefix, so it must be served the run state and none of the digest bytes
+     * may be written into its buffer.
+     */
+    Guarded pre_digest{};
+    pre_digest.canary = 0x5A5A5A5A5A5A5A5Aull;
+    pre_digest.snapshot.struct_size = FLY_SESSION_SNAPSHOT_V2_R1_SIZE;
+    pre_digest.snapshot.abi_version = FLY_SESSION_ABI_VERSION_2;
+    check(fly_session_view_read_v2(view, &pre_digest.snapshot) ==
+              FLY_SESSION_V2_OK,
+          "a pre-digest snapshot prefix reads successfully");
+    check(pre_digest.canary == 0x5A5A5A5A5A5A5A5Aull &&
+              pre_digest.snapshot.dual_state_digest[0] == 0 &&
+              pre_digest.snapshot.dual_pcm_digest[31] == 0,
+          "the digest block is not written past the size the caller declared");
+
     fly_session_view_release_v2(view);
     check(fly_session_begin_shutdown_v2(engine, 1301) == FLY_SESSION_V2_ACCEPTED &&
               fly_session_destroy_v2(engine) == FLY_SESSION_V2_OK,
