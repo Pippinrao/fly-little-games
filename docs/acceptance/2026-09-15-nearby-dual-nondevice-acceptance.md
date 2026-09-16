@@ -14,6 +14,61 @@
 提取方式：各 ID 均按原文逐字摘出（B 取方案表第二列，IF 取章节标题，用例取表格的场景列；REC 取「事务族 + 决策前期望」）。
 若后续设计与本文不一致，以已获批设计文档为准并回改本表。
 
+## DUAL MVP 门禁状态（2026-09-16 实测）
+
+以下每条状态都对应**本次可复核的命令输出**；`nearby_*` 全部在 WSL(Ubuntu-24.04) 构建并运行（Windows 上只编译不运行，原因见后文测试运行环境）。
+
+| 门禁 | 状态 | 证据 |
+|---|---|---|
+| `BASE-0212` | PASS | public engine 测试断言两个 `0x0212` 持久化门禁（SecureStore KeyRef + exact 312 字节 ObjectStore 对象）缺一不可；全量回归 0 failure |
+| `BASE-PARALLEL` | PASS | 三份获批文档 SHA-256 与源一致；共同基线提交 `e8703e4`；两份合同冻结 |
+| `LINK-WIRE` | PASS | `flynes_link_hello_wire` / `flynes_link_ready_wire` PASS；golden 由**独立 oracle**（`gen_link_control_golden.py`，不调用被测 encoder）重算 |
+| `LINK-SCHED` | PASS | `flynes_link_handshake_scheduler` / `flynes_link_handshake_races` PASS；`control_stream_loopback_closes_the_lobby()` 让两个公开 scheduler 在**零手工 `accept_peer_*` 注入**下闭合 |
+| `DUAL-INPUT` | PASS | `nearby_canonical_input` / `nearby_input_window` PASS（毫秒级）；规范化解 dpad 冲突、拒绝错 owner / 旧 revision / 跨 branch / sequence 回退 / 溢出 |
+| `DUAL-RUN` | PASS | `nearby_dual_run_scheduler` / `nearby_dual_run_races` PASS；600 帧确定性 trace 实测 18–42 ms |
+| `E2E-HARNESS` | PASS | 真实 loopback QUIC：产品 crate 探针 `PASS=37 FAIL=0`（TLS1.3 + ALPN `flynes-nearby/2` + pin + exporter 一致 + stream/datagram 往返）；`flynes_quic_provider_linkage` 证明静态库真的被链接并调用 |
+| `E2E-SCENARIOS` | **NOT_RUN** | W3 的 `scenarios/test_two_engine_*` 尚未收编（其 carve 早于当前 ABI，需先补 `object_store.read` 等）；篡改负例矩阵未在两个真 engine 上跑 |
+| `MVP-LOBBY` | **PASS** | 见下方 §MVP-LOBBY 证据 |
+| `MVP-DUAL` | **NOT_RUN** | 未开始（依赖 W2 的 DUAL 数据面接入公开 action/snapshot 边界） |
+| shared 全量 0 failure | **FAIL（2 项，均与本轮 Nearby 工作无关）** | Linux 全量 `94/96`：`flynes_runtime_pcm_contention`（既有 `-Werror=subobject-linkage`，未触碰）与 `flynes_zip_payload_fixture_corpus_check`（既有 fixture 字节在 Linux 检出下不一致）。**`nearby_*` 子集 39/39 全绿** |
+| Android unit/build 0 failure | **NOT_RUN（需复跑）** | 2026-09-15 基线为 97 类 / 468 tests / 0 failures；此后 ABI 与 schema 均有改动，**必须复跑** `:app:testDebugUnitTest` 与 `SessionSchemaRegistryTest` |
+| STREAM provider/codec/media 调用次数为 0 | **NOT_RUN** | 需执行后文「资源泄漏与负向审计」的全仓搜索 |
+| 所有真机条目明确 NOT_RUN | PASS（记录形式） | 真机与物理性能项一律 `DEFERRED`/`NOT_RUN`，未做任何设备认证声明 |
+
+### MVP-LOBBY 证据
+
+命令：`./out/nearby-host-linux/shared/build/flynes_two_engine_connected_lobby_e2e_test`（跑前删除目标二进制，排除陈旧产物造成的假 PASS）
+
+```
+link states: inviter=8 joiner=8                 # 8 = FLY_SESSION_LINK_CONNECTED_LOBBY_V2，两个 engine 分别断言
+object kinds persisted: 两侧均含 0x0212 / 0x0213 / 0x0216 / 0x0217
+exporter (link): 9e8fd3cd…（两侧交付值与之完全一致）
+双向真实单位：0x0001/252B(bind 流) → 0x0212/318B → 0x0216/494B → 0x0217/438B ×2 (Control 流)
+  # 318 = 6 字节 app-frame 头 + 312；494 = 6 + 488；438 = 6 + 432，与冻结尺寸逐一对上
+QUIC 端口两侧都被真实驱动：
+  inviter listen=1 connect=0 inspect=1 exporter=1 open=0 accept=2 write=6 read=7
+  joiner  listen=0 connect=1 inspect=1 exporter=1 open=2 accept=0 write=6 read=6
+单边 READY 负例：扣留一个方向的 0x0217 → 双方停在 7(CONNECTING)；释放 → 双方到 8
+```
+
+- **零 injected verified evidence**：跨端每个字节都 `std::equal` 于写入方自己的 `written_fragments`；测试**不自造** `DISCOVERY_CONNECTION`/`DISCOVERY_BYTES`/`QUIC_DATA`（这些「第 2 类」事件只由 `LoopbackTransport` 产生）；pump 只应答「第 1 类」操作终端，且逐 port 计数 1:1 恒等式成立。
+- `nearby_*` 39/39 PASSED。
+
+**如实标注的一项**：`CONNECTED_LOBBY` 处 `pairing()` 子视图实测为 **EMPTY**（引擎只在 `AUTHENTICATING`/`PROVISIONING` 暴露该子视图，`session_engine.cpp:326-331`）。测试按**实测**钉住 EMPTY，**未伪造 CONFIRMED**。若平台 UI 需要在已连接状态展示配对信息，属后续平台波次的产品改动，本轮不改引擎。
+
+### 这次 E2E 挖出的 4 个「只有两个真 engine 一起跑才暴露」的引擎缺陷
+
+组件级测试永远测不到，因为每个组件单独测都是对的：
+
+| 提交 | 缺陷 |
+|---|---|
+| `6ab2c7a` | 对端**早到的** `PairKnownStatus`/`Branch` 在本地 `pair_known_` 尚未建立时被判非法 → 改为有界 hold + 就绪后按序 replay（replay 走同一个 `accept_peer_envelope`，stage/counter/generation/HMAC 校验一条未绕过） |
+| `970e484` | 非发起方 `mark_local_signature_sent()` 造出的 transcript persist effect **从不被派发**（写完成分支只处理失败路径）→ 引擎带 pending effect 空转、无任何 port 计数增长 |
+| `dbb817b` | 调度器 operation id 未整块预留，同一 id 同时发给 `crypto.open` 与 GATT 写，随后被自己的去重判 `-15` |
+| 顺带修复 | `wire/app_frame` 把「body 短于该 tag 的 fixed length」误报成 `Truncated`，与「记录没收到」不可区分 → 一个 6 字节头声称短 `0x0216` 的**敌意帧会让 attempt 永久挂起**而不是 fail-closed |
+
+另有一处经查证**不是**缺陷：`kKnownBranchBodySizeV1 = 112`（112 字节 body + 64 字节 ECDSA `branch_proof`），与设计文档逐字节一致，维持现状。
+
 ## 证据分级约定
 
 本套验收文档只使用下列五种状态，语义互不混用：
