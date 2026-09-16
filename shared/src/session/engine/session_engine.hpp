@@ -54,9 +54,25 @@ public:
     void run_work() noexcept;
 
 private:
+    /*
+     * Every scheduler receives a contiguous block of operation ids that is at
+     * least as large as the number of provider operations it can issue, and the
+     * engine mark moves one past the END of the block before the scheduler
+     * mints anything. A block is reserved, never shared: see the invariant
+     * comment on reserve_operation_ids_locked() in session_engine.cpp.
+     */
+    static constexpr std::uint64_t kSchedulerOperationBlockV1 = 16;
+
     void complete_shutdown_locked() noexcept;
     void publish_link_view_locked(std::uint32_t link_state);
     fly_session_op_token_v2 make_link_operation_token_locked();
+    /*
+     * Reserves `block` consecutive ids for one scheduler and returns the first
+     * of them, or 0 when the id space is exhausted. This is the only way a
+     * scheduler is given its first_operation_id, so the engine mark is always
+     * past every block a live scheduler can still draw from.
+     */
+    std::uint64_t reserve_operation_ids_locked(std::uint64_t block) noexcept;
     bool accept_completed_gatt_locked(
         const std::vector<std::uint8_t>& logical) noexcept;
     bool queue_gatt_ack_locked(
@@ -202,7 +218,13 @@ private:
     fly_session_op_token_v2 session_signing_token_{};
     fly_session_op_token_v2 link_handshake_token_{};
     fly_session_op_token_v2 gatt_write_token_{};
-    std::uint64_t next_operation_id_ = 2;
+    /*
+     * The engine-wide operation-id high-water mark. It is only ever advanced:
+     * any id below it has already been handed to a consumer, either directly
+     * by make_link_operation_token_locked() or inside a scheduler block reserved
+     * by reserve_operation_ids_locked().
+     */
+    std::uint64_t available_operation_id_ = 2;
     std::uint64_t link_generation_ = 1;
     bool discovery_active_ = false;
     bool gatt_subscribe_pending_ = false;

@@ -83,6 +83,14 @@ public:
     {
         return secrets_;
     }
+    /*
+     * The next operation id this scheduler would mint, i.e. one past the last
+     * id it has already handed to the provider. The engine reads this to keep
+     * its own allocator above every live scheduler cursor (see
+     * SessionEngine::make_link_operation_token_locked).
+     */
+    [[nodiscard]] std::uint64_t next_operation_id() const noexcept
+    { return next_operation_id_; }
 
 private:
     enum class Stage : std::uint8_t

@@ -56,23 +56,6 @@ struct PairLocalMaterialV1 final
 // public-key, TLS, or random completion cannot populate another field.
 class PairMaterialScheduler final
 {
-public:
-    PairMaterialScheduler();
-
-    bool begin(const PairMaterialStartV1& start);
-    [[nodiscard]] std::optional<PairMaterialEffect> poll_effect() const;
-    fly_session_result_v2 complete(const fly_session_port_event_v2& event);
-    fly_session_result_v2 cancel_pending() noexcept;
-
-    [[nodiscard]] bool ready() const noexcept { return ready_; }
-    [[nodiscard]] bool failed() const noexcept { return failed_; }
-    [[nodiscard]] std::optional<PairLocalMaterialV1> material() const;
-    [[nodiscard]] PairLocalMaterialV1 owned_resources() const noexcept
-    {
-        return material_;
-    }
-
-private:
     enum class Stage : std::uint8_t
     {
         Empty,
@@ -88,6 +71,37 @@ private:
         Failed
     };
 
+public:
+    PairMaterialScheduler();
+
+    bool begin(const PairMaterialStartV1& start);
+    [[nodiscard]] std::optional<PairMaterialEffect> poll_effect() const;
+    fly_session_result_v2 complete(const fly_session_port_event_v2& event);
+    fly_session_result_v2 cancel_pending() noexcept;
+
+    [[nodiscard]] bool ready() const noexcept { return ready_; }
+    [[nodiscard]] bool failed() const noexcept { return failed_; }
+    [[nodiscard]] std::optional<PairLocalMaterialV1> material() const;
+    /*
+     * The next operation id this scheduler would mint, i.e. one past the last
+     * id it has already handed to the provider. prepare() mints
+     * first_operation_id + (stage - GenerateIdentity), so the cursor is that
+     * value plus one while the stage is in flight. The engine reads this to
+     * keep its own allocator above every live scheduler cursor (see
+     * SessionEngine::make_link_operation_token_locked).
+     */
+    [[nodiscard]] std::uint64_t next_operation_id() const noexcept
+    {
+        return start_.first_operation_id +
+               (static_cast<std::uint64_t>(stage_) -
+                static_cast<std::uint64_t>(Stage::GenerateIdentity)) + 1;
+    }
+    [[nodiscard]] PairLocalMaterialV1 owned_resources() const noexcept
+    {
+        return material_;
+    }
+
+private:
     fly_session_op_token_v2 token(std::uint64_t operation_id) const noexcept;
     fly_session_result_v2 prepare(Stage stage);
     fly_session_result_v2 reject(fly_session_result_v2 result) noexcept;

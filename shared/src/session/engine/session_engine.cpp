@@ -361,8 +361,86 @@ void SessionEngine::publish_link_view_locked(std::uint32_t link_state)
     fly_session_view_release_v2(old);
 }
 
+/*
+ * The engine hands operation ids to two kinds of consumers:
+ *
+ *   * itself, through make_link_operation_token_locked() (GATT write and ack
+ *     tokens); and
+ *   * each scheduler, which owns a contiguous BLOCK of ids and mints its own
+ *     tokens by walking that block with a private cursor that it advances one
+ *     step per provider operation it issues.
+ *
+ * A scheduler never reports its cursor back to the engine: the engine only
+ * learns it when it processes one of that scheduler's completions and folds
+ * available_operation_id_ up to it. The engine counter is therefore stale for as
+ * long as a scheduler is in flight, and `available_operation_id_++` minted there
+ * can hand out an id that belongs to a block the scheduler has already been
+ * given — including ids the scheduler has not reached yet. That is what makes
+ * one operation id carry two different provider requests, after which neither
+ * can be answered under a token of its own: the first completion is recorded,
+ * the second is a different event under the same (operation_id,
+ * event_sequence) key and is refused with FLY_SESSION_V2_CONTRACT_VIOLATION.
+ *
+ * `available_operation_id_` is the single monotonic high-water mark for the whole
+ * engine, so the invariant every mint must preserve is:
+ *
+ *   an id is never issued to a second consumer, and after allocating a block
+ *   the mark is one past the END of that block rather than one past its first
+ *   id.
+ *
+ * It is preserved by two rules that together cover both directions:
+ *
+ *   1. reserve_operation_ids_locked() is the ONLY way a scheduler receives its
+ *      first_operation_id, and it advances the mark past the whole block. A
+ *      scheduler can therefore never mint an id that the engine already handed
+ *      to somebody else, not even in the window before its first completion.
+ *   2. make_link_operation_token_locked() skips any id a live scheduler cursor
+ *      has already reached. This keeps rule 1 honest even if a scheduler were
+ *      to mint more of its block than it reserved.
+ *
+ * Every block is oversized relative to the ids its scheduler can actually
+ * consume, because an unused id costs nothing while a shared one is a defect.
+ */
+std::uint64_t SessionEngine::reserve_operation_ids_locked(
+    std::uint64_t block) noexcept
+{
+    if (block == 0 || available_operation_id_ >
+            (std::numeric_limits<std::uint64_t>::max)() - block)
+        return 0;
+    const auto base = available_operation_id_;
+    available_operation_id_ = base + block;
+    return base;
+}
+
 fly_session_op_token_v2 SessionEngine::make_link_operation_token_locked()
 {
+    if (pair_material_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_material_->next_operation_id());
+    if (pair_reveal_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_reveal_->next_operation_id());
+    if (pair_signature_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_signature_->next_operation_id());
+    if (pair_known_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_known_->next_operation_id());
+    if (pair_sas_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_sas_->next_operation_id());
+    if (pair_key_confirm_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_key_confirm_->next_operation_id());
+    if (pair_capability_) available_operation_id_ = (std::max)(
+        available_operation_id_, pair_capability_->next_operation_id());
+    if (initial_plan_) available_operation_id_ = (std::max)(
+        available_operation_id_, initial_plan_->next_operation_id());
+    if (initial_bearer_) available_operation_id_ = (std::max)(
+        available_operation_id_, initial_bearer_->next_operation_id());
+    if (endpoint_offer_) available_operation_id_ = (std::max)(
+        available_operation_id_, endpoint_offer_->next_operation_id());
+    if (initial_quic_bind_) available_operation_id_ = (std::max)(
+        available_operation_id_, initial_quic_bind_->next_operation_id());
+    if (session_signing_) available_operation_id_ = (std::max)(
+        available_operation_id_, session_signing_->next_operation_id());
+    if (link_handshake_) available_operation_id_ = (std::max)(
+        available_operation_id_, link_handshake_->next_operation_id());
+
     fly_session_op_token_v2 value{};
     value.struct_size = FLY_SESSION_OP_TOKEN_V2_SIZE;
     value.abi_version = FLY_SESSION_ABI_VERSION_2;
@@ -374,7 +452,9 @@ fly_session_op_token_v2 SessionEngine::make_link_operation_token_locked()
     value.scope.kind = FLY_SESSION_SCOPE_LINK_V2;
     value.scope.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     value.connection_generation = link_generation_;
-    value.operation_id = next_operation_id_++;
+    value.operation_id = available_operation_id_;
+    if (available_operation_id_ != (std::numeric_limits<std::uint64_t>::max)())
+        ++available_operation_id_;
     return value;
 }
 
@@ -908,9 +988,7 @@ bool SessionEngine::start_pair_reveal_locked() noexcept
     if (!pair_material_ || !pair_material_->ready() || !pair_exchange_ ||
         !pair_context_ || pair_exchange_->failed() || pair_reveal_ ||
         (local_pair_role_ != wire::PairRoleV1::Initiator &&
-         local_pair_role_ != wire::PairRoleV1::Responder) ||
-        next_operation_id_ >
-            (std::numeric_limits<std::uint64_t>::max)() - 8)
+         local_pair_role_ != wire::PairRoleV1::Responder))
         return false;
     const auto material = pair_material_->material();
     if (!material)
@@ -921,7 +999,8 @@ bool SessionEngine::start_pair_reveal_locked() noexcept
               reveal_start.engine_instance_id.begin());
     reveal_start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     reveal_start.generation = link_generation_;
-    reveal_start.first_operation_id = next_operation_id_;
+    reveal_start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     reveal_start.local_role = local_pair_role_;
     reveal_start.context = *pair_context_;
     reveal_start.initiator_commit = pair_exchange_->initiator_commit();
@@ -938,7 +1017,6 @@ bool SessionEngine::start_pair_reveal_locked() noexcept
     {
         return false;
     }
-    next_operation_id_ += 8;
     pair_reveal_dispatch_pending_ = true;
     return true;
 }
@@ -950,9 +1028,7 @@ bool SessionEngine::start_pair_signature_locked() noexcept
         !pair_reveal_->ready() || !pair_exchange_->ready() ||
         !ports_.has_object_store() ||
         (local_pair_role_ != wire::PairRoleV1::Initiator &&
-         local_pair_role_ != wire::PairRoleV1::Responder) ||
-        next_operation_id_ >
-            (std::numeric_limits<std::uint64_t>::max)() - 10)
+         local_pair_role_ != wire::PairRoleV1::Responder))
         return false;
     const auto material = pair_material_->material();
     const auto reveal_secrets = pair_reveal_->owned_secrets();
@@ -965,7 +1041,8 @@ bool SessionEngine::start_pair_signature_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.local_identity_key = material->identity_key;
     start.ecdh_secret = reveal_secrets.ecdh_secret;
@@ -989,7 +1066,6 @@ bool SessionEngine::start_pair_signature_locked() noexcept
     {
         return false;
     }
-    next_operation_id_ += 10;
     pair_signature_dispatch_pending_ = true;
     return true;
 }
@@ -1008,7 +1084,8 @@ bool SessionEngine::start_pair_sas_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.ecdh_secret = reveal_secrets.ecdh_secret;
     start.transcript_hash = pair_signature_->transcript_hash();
     try
@@ -1030,8 +1107,7 @@ bool SessionEngine::start_pair_known_locked() noexcept
 {
     if (!pair_signature_ || !pair_sas_ || !pair_exchange_ || !pair_material_ ||
         pair_known_ ||
-        !pair_signature_->ready() || !pair_sas_->ready() ||
-        next_operation_id_ > (std::numeric_limits<std::uint64_t>::max)() - 12)
+        !pair_signature_->ready() || !pair_sas_->ready())
         return false;
     const auto signature = pair_signature_->owned_secrets();
     const auto sas = pair_sas_->owned_secrets();
@@ -1046,7 +1122,8 @@ bool SessionEngine::start_pair_known_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = pair_signature_->transcript_hash();
     start.initiator_public_key =
@@ -1069,7 +1146,6 @@ bool SessionEngine::start_pair_known_locked() noexcept
         pair_known_ = std::move(known);
     }
     catch (const std::bad_alloc&) { return false; }
-    next_operation_id_ += 12;
     pair_known_dispatch_pending_ = pair_known_->poll_effect().has_value();
     return drain_pair_known_envelopes_locked();
 }
@@ -1158,7 +1234,8 @@ bool SessionEngine::start_pair_key_confirm_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = pair_signature_->transcript_hash();
     start.initiator_contribution = pair_exchange_->initiator_contribution();
@@ -1209,7 +1286,8 @@ bool SessionEngine::start_pair_capability_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = pair_signature_->transcript_hash();
     start.local_summary = *local_pair_capability_;
@@ -1493,7 +1571,8 @@ bool SessionEngine::start_initial_plan_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.evidence = *verified_pair_evidence_;
     start.selected_plan = *selected_pair_plan_;
@@ -1557,7 +1636,8 @@ bool SessionEngine::start_initial_bearer_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = initial_plan_->verified_plan().transcript;
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
@@ -1626,7 +1706,8 @@ bool SessionEngine::start_endpoint_offer_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = initial_plan_->verified_plan().transcript;
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
@@ -1688,7 +1769,8 @@ bool SessionEngine::start_initial_quic_bind_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.local_role = local_pair_role_;
     start.transcript_hash = initial_plan_->verified_plan().transcript;
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
@@ -1731,7 +1813,8 @@ bool SessionEngine::start_session_signing_locked() noexcept
               start.engine_instance_id.begin());
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.pair_transcript_hash = pair_signature_->transcript_hash();
     std::copy_n(pair_context_->bytes.begin() + 32, start.session_id.size(),
                 start.session_id.begin());
@@ -1795,7 +1878,7 @@ bool SessionEngine::start_session_signing_locked() noexcept
  *
  *   engine_instance_id            authorization_->engine_instance_id
  *   link_id / generation          link_generation_
- *   first_operation_id            next_operation_id_
+ *   first_operation_id            available_operation_id_
  *   local_role                    local_pair_role_
  *   session_id                    pair_context_->bytes[32..48)
  *   control_stream                initial_quic_bind_->owned_resources().send_stream
@@ -1846,7 +1929,8 @@ bool SessionEngine::start_link_handshake_locked() noexcept
     start.link_id[0] = static_cast<std::uint8_t>(link_generation_);
     start.generation = link_generation_;
     start.link_generation = link_generation_;
-    start.first_operation_id = next_operation_id_;
+    start.first_operation_id =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
     start.session_id = initial_quic_bind_->session_id();
     start.local_role = local_pair_role_;
     /*
@@ -4274,9 +4358,12 @@ void SessionEngine::run_work() noexcept
                                 capability.data(), capability.size()) ==
                                 wire::Status::Ok;
                     }
-                    if (accepted && pair_context_ &&
-                        next_operation_id_ <=
-                            (std::numeric_limits<std::uint64_t>::max)() - 8)
+                    const auto pair_material_base =
+                        accepted && pair_context_
+                        ? reserve_operation_ids_locked(
+                              kSchedulerOperationBlockV1)
+                        : 0;
+                    if (pair_material_base != 0)
                     {
                         local_pair_capability_ = capability;
                         PairMaterialStartV1 start{};
@@ -4286,8 +4373,7 @@ void SessionEngine::run_work() noexcept
                         start.link_id[0] =
                             static_cast<std::uint8_t>(link_generation_);
                         start.generation = link_generation_;
-                        start.first_operation_id = next_operation_id_;
-                        next_operation_id_ += 8;
+                        start.first_operation_id = pair_material_base;
                         start.context = *pair_context_;
                         start.role = local_pair_role_;
                         start.capability_summary_hash = wire::domain_hash(
@@ -4458,8 +4544,8 @@ void SessionEngine::run_work() noexcept
                                         FLY_SESSION_V2_OK;
                                 if (accepted)
                                 {
-                                    next_operation_id_ = (std::max)(
-                                        next_operation_id_,
+                                    available_operation_id_ = (std::max)(
+                                        available_operation_id_,
                                         initial_plan_->next_operation_id());
                                     initial_plan_dispatch_pending_ =
                                         initial_plan_->poll_effect().has_value();
@@ -4485,8 +4571,8 @@ void SessionEngine::run_work() noexcept
                                         FLY_SESSION_V2_OK;
                                 if (accepted)
                                 {
-                                    next_operation_id_ = (std::max)(
-                                        next_operation_id_,
+                                    available_operation_id_ = (std::max)(
+                                        available_operation_id_,
                                         initial_bearer_->next_operation_id());
                                     publish_link_view_locked(
                                         FLY_SESSION_LINK_CONNECTING_V2);
@@ -4518,8 +4604,8 @@ void SessionEngine::run_work() noexcept
                                         FLY_SESSION_V2_OK;
                                 if (accepted)
                                 {
-                                    next_operation_id_ = (std::max)(
-                                        next_operation_id_,
+                                    available_operation_id_ = (std::max)(
+                                        available_operation_id_,
                                         endpoint_offer_->next_operation_id());
                                     accepted = start_initial_quic_bind_locked();
                                 }
@@ -4538,8 +4624,8 @@ void SessionEngine::run_work() noexcept
                                      pair_key_confirm_ &&
                                      pair_key_confirm_->ready())
                             {
-                                next_operation_id_ = (std::max)(
-                                    next_operation_id_,
+                                available_operation_id_ = (std::max)(
+                                    available_operation_id_,
                                     pair_key_confirm_->next_operation_id());
                                 if (start_pair_capability_locked())
                                     publish_link_view_locked(
@@ -4702,8 +4788,8 @@ void SessionEngine::run_work() noexcept
                     }
                     else if (result == FLY_SESSION_V2_OK)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_, pair_sas_->next_operation_id());
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_, pair_sas_->next_operation_id());
                         if (!start_pair_known_locked())
                         {
                             release_pair_sas_locked();
@@ -4739,8 +4825,8 @@ void SessionEngine::run_work() noexcept
                     }
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_, pair_known_->next_operation_id());
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_, pair_known_->next_operation_id());
                     if (accepted && pair_known_->poll_effect())
                         pair_known_dispatch_pending_ = true;
                     if (accepted && pair_known_->local_envelope_ready() &&
@@ -4774,8 +4860,8 @@ void SessionEngine::run_work() noexcept
                     }
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             pair_key_confirm_->next_operation_id());
                     if (accepted && pair_key_confirm_->poll_effect())
                         pair_key_confirm_dispatch_pending_ = true;
@@ -4786,8 +4872,8 @@ void SessionEngine::run_work() noexcept
                         accepted = queue_local_pair_key_confirm_locked();
                     if (accepted && pair_key_confirm_->ready())
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             pair_key_confirm_->next_operation_id());
                         accepted = start_pair_capability_locked();
                         if (accepted)
@@ -4819,8 +4905,8 @@ void SessionEngine::run_work() noexcept
                     }
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             pair_capability_->next_operation_id());
                     if (accepted && pair_capability_->poll_effect())
                         pair_capability_dispatch_pending_ = true;
@@ -4856,8 +4942,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             initial_plan_->next_operation_id());
                         initial_plan_dispatch_pending_ =
                             initial_plan_->poll_effect().has_value();
@@ -4894,8 +4980,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             initial_bearer_->next_operation_id());
                         initial_bearer_dispatch_pending_ =
                             initial_bearer_->poll_effect().has_value();
@@ -4934,8 +5020,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             endpoint_offer_->next_operation_id());
                         endpoint_offer_dispatch_pending_ =
                             endpoint_offer_->poll_effect().has_value();
@@ -4971,8 +5057,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             initial_quic_bind_->next_operation_id());
                         initial_quic_bind_dispatch_pending_ =
                             initial_quic_bind_->poll_effect().has_value();
@@ -5013,8 +5099,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             session_signing_->next_operation_id());
                         session_signing_dispatch_pending_ =
                             session_signing_->poll_effect().has_value();
@@ -5068,8 +5154,8 @@ void SessionEngine::run_work() noexcept
                     bool accepted = result == FLY_SESSION_V2_OK;
                     if (accepted)
                     {
-                        next_operation_id_ = (std::max)(
-                            next_operation_id_,
+                        available_operation_id_ = (std::max)(
+                            available_operation_id_,
                             link_handshake_->next_operation_id());
                         link_handshake_dispatch_pending_ =
                             link_handshake_->poll_effect().has_value();
