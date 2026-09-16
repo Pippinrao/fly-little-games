@@ -553,6 +553,7 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
     case LinkHandshakeEffectKind::SendHello:
     case LinkHandshakeEffectKind::SendReady:
     case LinkHandshakeEffectKind::SendAck:
+    case LinkHandshakeEffectKind::SendLocalBinding:
         ++side.send_count;
         if (inject_failure)
             return complete_event(side.scheduler,
@@ -710,11 +711,52 @@ void exchange_hellos(Pair& pair)
  * Control read that actually fetches it — which is exactly the wiring that was
  * missing when the handshake could never receive a peer byte.
  */
-const std::array<LinkHandshakeStageV1, 25>& expected_sequence()
+const std::array<LinkHandshakeStageV1, 27>& expected_sequence()
 {
-    static const std::array<LinkHandshakeStageV1, 25> value{{
+    static const std::array<LinkHandshakeStageV1, 27> value{{
         LinkHandshakeStageV1::OpenControl,
         LinkHandshakeStageV1::ReadLocalBinding,
+        LinkHandshakeStageV1::SendLocalBinding,
+        LinkHandshakeStageV1::SignHello,
+        LinkHandshakeStageV1::PersistHello,
+        LinkHandshakeStageV1::SendHello,
+        LinkHandshakeStageV1::AwaitPeerHello,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
+        LinkHandshakeStageV1::AwaitPeerHelloSignature,
+        LinkHandshakeStageV1::PersistPeerHello,
+        LinkHandshakeStageV1::PersistNegotiatedResult,
+        LinkHandshakeStageV1::SignReady,
+        LinkHandshakeStageV1::PersistReady,
+        LinkHandshakeStageV1::SendReady,
+        LinkHandshakeStageV1::AwaitPeerReady,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
+        LinkHandshakeStageV1::AwaitPeerReadySignature,
+        LinkHandshakeStageV1::PersistPeerReady,
+        LinkHandshakeStageV1::SignAck,
+        LinkHandshakeStageV1::PersistAck,
+        LinkHandshakeStageV1::SendAck,
+        LinkHandshakeStageV1::AwaitPeerAck,
+        LinkHandshakeStageV1::ReadPeerControlBytes,
+        LinkHandshakeStageV1::AwaitPeerAckSignature,
+        LinkHandshakeStageV1::PersistPeerAck,
+        LinkHandshakeStageV1::Connected}};
+    return value;
+}
+
+/*
+ * The same legal order when the peer message is injected directly through
+ * accept_peer_* instead of arriving as Control bytes. One stage differs and it is
+ * not a shortcut: the accepting read is displaced by the direct call, so the
+ * extra ReadPeerControlBytes that the loopback needs for the peer's 0x0212
+ * object never happens.
+ */
+const std::array<LinkHandshakeStageV1, 26>& manual_sequence()
+{
+    static const std::array<LinkHandshakeStageV1, 26> value{{
+        LinkHandshakeStageV1::OpenControl,
+        LinkHandshakeStageV1::ReadLocalBinding,
+        LinkHandshakeStageV1::SendLocalBinding,
         LinkHandshakeStageV1::SignHello,
         LinkHandshakeStageV1::PersistHello,
         LinkHandshakeStageV1::SendHello,
@@ -775,14 +817,37 @@ void control_stream_loopback_closes_the_lobby()
     check(pair.a.scheduler.control_stream() == 0x4000 &&
               pair.b.scheduler.control_stream() == 0x4100,
           "each side uses exactly the handle its own OpenControlStream returned");
-    check(pair.a.send_count == 3 && pair.b.send_count == 3,
-          "each side wrote exactly HELLO, READY and ACK on the Control stream");
+    check(pair.a.send_count == 4 && pair.b.send_count == 4 &&
+              count_kind(pair.a, LinkHandshakeEffectKind::SendLocalBinding) == 1 &&
+              count_kind(pair.b, LinkHandshakeEffectKind::SendLocalBinding) == 1,
+          "each side published its 0x0212 binding and then HELLO, READY and ACK");
+    check(count_kind(pair.a, LinkHandshakeEffectKind::SendHello) == 1 &&
+              count_kind(pair.a, LinkHandshakeEffectKind::SendReady) == 1 &&
+              count_kind(pair.a, LinkHandshakeEffectKind::SendAck) == 1,
+          "exactly one HELLO, one READY and one ACK per side");
+    /*
+     * The peer binding was NOT pre-installed: it arrived as a real 0x0212 frame
+     * on the Control stream, was deframed and codec-checked, and only then
+     * installed. This is gap 3's inbound half actually running.
+     */
+    check(pair.a.scheduler.peer_binding_accepted() &&
+              pair.b.scheduler.peer_binding_accepted(),
+          "each side accepted the peer 0x0212 binding it received on Control");
+    check(pair.a.scheduler.peer_binding().hash == pair.b.binding_hash &&
+              pair.b.scheduler.peer_binding().hash == pair.a.binding_hash,
+          "each side installed the peer's real binding hash, decoded not supplied");
+    check(pair.a.scheduler.peer_binding().session_signing_public_key ==
+              pair.b.session_public &&
+              pair.b.scheduler.peer_binding().session_signing_public_key ==
+                  pair.a.session_public,
+          "each side installed the peer session key that binding authenticated");
     check(count_kind(pair.a, LinkHandshakeEffectKind::OpenControlStream) == 1 &&
               count_kind(pair.b, LinkHandshakeEffectKind::OpenControlStream) == 1,
           "each side opened the Control stream exactly once");
-    check(count_kind(pair.a, LinkHandshakeEffectKind::ReadControlBytes) == 3 &&
-              count_kind(pair.b, LinkHandshakeEffectKind::ReadControlBytes) == 3,
-          "each side granted Control read credit exactly once per awaited message");
+    check(count_kind(pair.a, LinkHandshakeEffectKind::ReadControlBytes) == 4 &&
+              count_kind(pair.b, LinkHandshakeEffectKind::ReadControlBytes) == 4,
+          "each side granted Control read credit once per awaited object: the "
+          "peer binding, HELLO, READY and ACK");
 
     /* Every frame was handed over and fully consumed: nothing is left buffered,
      * which only happens when the deframer consumed whole records. */
@@ -827,9 +892,11 @@ void control_frames_deframe_incrementally()
 
     /* The responder's real HELLO frame, delivered one byte short. */
     pump(pair.b, &blocked);
-    check(pair.b.outbox.size() == 1,
-          "the responder produced exactly one Control frame");
-    const auto frame = pair.b.outbox.front();
+    check(pair.b.outbox.size() == 2 &&
+              pair.b.outbox.front().size() == 6u + 312u,
+          "the responder published its 0x0212 binding and then one HELLO frame");
+    /* The HELLO is the second record: the binding is published first. */
+    const auto frame = pair.b.outbox[1];
     pair.b.outbox.clear();
     const std::vector<std::uint8_t> first(frame.begin(), frame.end() - 1);
     pair.a.inbox.push_back(first);
@@ -931,8 +998,10 @@ void two_sided_legal_sequence()
     check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello &&
               pair.b.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello,
           "both sides reach AwaitPeerHello after sending their HELLO");
-    check(pair.a.send_count == 1 && pair.b.send_count == 1,
-          "each side sent exactly one HELLO");
+    check(count_kind(pair.a, LinkHandshakeEffectKind::SendHello) == 1 &&
+              count_kind(pair.b, LinkHandshakeEffectKind::SendHello) == 1 &&
+              pair.a.send_count == 2 && pair.b.send_count == 2,
+          "each side published its 0x0212 binding and exactly one HELLO");
 
     check(pair.a.scheduler.accept_peer_hello(
               pair.b.scheduler.local_hello_bytes().data(),
@@ -989,9 +1058,10 @@ void two_sided_legal_sequence()
                   link::LinkControlStateV1::ConnectedLobby,
           "the projection is the contract's CONNECTED_LOBBY on both sides");
 
-    const auto& expected = expected_sequence();
+    const auto& expected = manual_sequence();
     check(pair.a.scheduler.stage_trace_size() == expected.size(),
-          "the initiator trace has exactly the frozen number of stages");
+          "the manual-injection initiator trace has exactly the frozen number of "
+          "stages");
     for (std::size_t index = 0; index < expected.size(); ++index)
         check(pair.a.scheduler.stage_trace_at(index) == expected[index],
               "the initiator stage trace follows the frozen legal order");
@@ -1121,7 +1191,12 @@ void persist_before_send_is_enforced()
               "a failed HELLO object write fails the attempt");
         check(count_kind(pair.a, LinkHandshakeEffectKind::SendHello) == 0,
               "no HELLO is sent when its durable write failed");
-        check(pair.a.send_count == 0, "no control message left the device");
+        /* The 0x0212 publication is not a "control message" in this sense: it
+         * carries the binding the HELLO depends on and is sent before it, so the
+         * assertion is about HELLO/READY/ACK only. */
+        check(pair.a.send_count == 1 &&
+                  count_kind(pair.a, LinkHandshakeEffectKind::SendLocalBinding) == 1,
+              "only the 0x0212 binding left the device, never a HELLO");
         check(!pair.a.scheduler.poll_effect().has_value(),
               "a failed attempt leaves no pending effect");
     }
@@ -1139,8 +1214,10 @@ void persist_before_send_is_enforced()
               "a failed negotiated result write fails the attempt");
         check(count_kind(pair.a, LinkHandshakeEffectKind::SendReady) == 0,
               "no READY is sent when the negotiated result is not durable");
-        check(pair.a.send_count == 1,
-              "only the earlier HELLO had been sent");
+        check(pair.a.send_count == 2 &&
+                  count_kind(pair.a, LinkHandshakeEffectKind::SendHello) == 1 &&
+                  count_kind(pair.a, LinkHandshakeEffectKind::SendLocalBinding) == 1,
+              "only the 0x0212 binding and the earlier HELLO had been sent");
     }
 
     /* ObjectStore failure on the READY object: no READY may be sent. */

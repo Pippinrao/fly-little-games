@@ -329,6 +329,7 @@ fly_session_result_v2 answer(Side& side, const LinkHandshakeEffect& effect)
     case LinkHandshakeEffectKind::SendHello:
     case LinkHandshakeEffectKind::SendReady:
     case LinkHandshakeEffectKind::SendAck:
+    case LinkHandshakeEffectKind::SendLocalBinding:
         ++side.send_count;
         /* gap 4: the exact framed record goes into the loopback outbox. */
         side.outbox.push_back(effect.value);
@@ -773,8 +774,13 @@ void repeated_attempts_do_not_leak()
     }
     check(pair.a.scheduler.awaiting() == LinkHandshakeStageV1::AwaitPeerHello,
           "the final attempt reached the peer-wait stage");
-    check(pair.a.send_count == 8,
-          "each attempt sent exactly one HELLO and nothing else");
+    check(pair.a.send_count == 16 &&
+              std::count(pair.a.answered.begin(), pair.a.answered.end(),
+                       LinkHandshakeEffectKind::SendLocalBinding) == 8 &&
+              std::count(pair.a.answered.begin(), pair.a.answered.end(),
+                         LinkHandshakeEffectKind::SendHello) == 8,
+          "each attempt published its 0x0212 binding and exactly one HELLO, "
+          "nothing else");
 }
 
 } // namespace

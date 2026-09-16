@@ -47,6 +47,12 @@ enum class LinkHandshakeEffectKind : std::uint8_t
      * never carry the link control plane (owner decision 2026-09-16). */
     OpenControlStream,
     ReadLocalBindingObject,
+    /* Publishes this side's own verified 0x0212 object on the Control stream.
+     * The peer MUST accept it before it can check our HELLO, because LINK_HELLO
+     * carries only the binding's hash and its codec refuses a zero expectation,
+     * so the binding has to arrive first (spec:468 makes it the first mandatory
+     * reliable Control object). */
+    SendLocalBinding,
     SignHello,
     PersistHelloObject,
     SendHello,
@@ -81,6 +87,7 @@ enum class LinkHandshakeStageV1 : std::uint8_t
     Empty = 0,
     OpenControl,
     ReadLocalBinding,
+    SendLocalBinding,
     SignHello,
     PersistHello,
     SendHello,
@@ -463,7 +470,9 @@ private:
     std::array<std::uint8_t, link::kLinkReadySizeV1> local_ready_bytes_{};
     std::array<std::uint8_t, link::kLinkReadySizeV1> local_ack_bytes_{};
     std::array<std::uint8_t, 32> local_hello_object_hash_{};
-    std::array<std::uint8_t, 32> peer_hello_object_hash_{};
+    /* The exact 312 bytes re-read from the ObjectStore and then published on the
+     * Control stream as this side's 0x0212 object. */
+    std::vector<std::uint8_t> local_binding_bytes_{};    std::array<std::uint8_t, 32> peer_hello_object_hash_{};
     std::array<std::uint8_t, 32> negotiated_result_hash_{};
     std::array<std::uint8_t, link::kLinkNegotiatedResultPreimageSizeV1>
         negotiated_result_preimage_{};

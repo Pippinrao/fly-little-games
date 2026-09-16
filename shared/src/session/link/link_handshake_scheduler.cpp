@@ -120,6 +120,7 @@ void LinkHandshakeScheduler::reset_attempt(
      * frame belong to the old link and must never leak into the new one. */
     control_stream_ = 0;
     control_read_accumulator_.clear();
+    local_binding_bytes_.clear();
     awaiting_stage_ = LinkHandshakeStageV1::Empty;
     missing_inputs_ = false;
 }
@@ -346,6 +347,8 @@ fly_session_result_v2 LinkHandshakeScheduler::send_control_message(
                           ? LinkHandshakeEffectKind::SendHello
                       : stage == LinkHandshakeStageV1::SendReady
                           ? LinkHandshakeEffectKind::SendReady
+                      : stage == LinkHandshakeStageV1::SendLocalBinding
+                          ? LinkHandshakeEffectKind::SendLocalBinding
                           : LinkHandshakeEffectKind::SendAck;
         effect.token = token(next_operation_id_++);
         effect.expected_payload_kind = FLY_SESSION_PROVIDER_QUIC_END_V2;
@@ -407,8 +410,24 @@ fly_session_result_v2 LinkHandshakeScheduler::route_buffered_control_frame(
 
     const std::size_t consumed = cursor.offset;
     fly_session_result_v2 routed_result = FLY_SESSION_V2_OK;
-    if (frame.frame_type_tag == link::kLinkHelloObjectKindV1) {
+    bool advanced = false;
+    if (frame.frame_type_tag ==
+        wire::kSessionSigningBindingObjectKindV1) {
+        /*
+         * gap 3 inbound path. The peer's own 0x0212 binding is the first
+         * mandatory reliable Control object (spec:468) and it MUST be accepted
+         * before the peer HELLO can be parsed, because LINK_HELLO carries only
+         * the binding's hash and its codec refuses a zero expectation. The
+         * expected hash is unknown here by construction, so it is left zero and
+         * the HELLO that follows is forced to name exactly the hash this decode
+         * produced. This does not advance the attempt: the HELLO is still owed,
+         * so the caller issues another read.
+         */
+        routed_result =
+            accept_peer_binding(frame.object_bytes, frame.object_size, {});
+    } else if (frame.frame_type_tag == link::kLinkHelloObjectKindV1) {
         routed_result = accept_peer_hello(frame.object_bytes, frame.object_size);
+        advanced = true;
     } else if (frame.frame_type_tag == link::kLinkReadyObjectKindV1) {
         /* READY and ACK share one object layout; ready_phase sits at offset 11
          * and the codec has already refused any other value. */
@@ -421,9 +440,12 @@ fly_session_result_v2 LinkHandshakeScheduler::route_buffered_control_frame(
                             ? accept_peer_ack(frame.object_bytes,
                                               frame.object_size)
                             : FLY_SESSION_V2_PROTOCOL_VIOLATION;
+        advanced = phase == link::LinkReadyPhaseV1::Ready ||
+                   phase == link::LinkReadyPhaseV1::Ack;
     } else {
-        /* The allow-list admits 0x0210/0x0212 on Control for other features, but
-         * neither belongs on the link control plane: only HELLO and READY. */
+        /* The allow-list admits 0x0210 on Control for another feature, but it
+         * does not belong on the link control plane: only the peer binding,
+         * HELLO and READY may travel here. */
         return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
     }
 
@@ -442,7 +464,7 @@ fly_session_result_v2 LinkHandshakeScheduler::route_buffered_control_frame(
         routed_result == FLY_SESSION_V2_DUPLICATE)
         return FLY_SESSION_V2_OK;
     if (routed_result != FLY_SESSION_V2_OK) return routed_result;
-    *routed = true;
+    *routed = advanced;
     return FLY_SESSION_V2_OK;
 }
 
@@ -990,15 +1012,22 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_binding(
 {
     if (!begun_ || progress_.failed) return FLY_SESSION_V2_INVALID_STATE;
     if (bytes == nullptr) return FLY_SESSION_V2_INVALID_ARGUMENT;
-    if (size != wire::kSessionSigningBindingSizeV1 ||
-        !nonzero(expected_binding_hash.data(), expected_binding_hash.size()))
+    if (size != wire::kSessionSigningBindingSizeV1)
         return FLY_SESSION_V2_INVALID_ARGUMENT;
     if (!nonzero(start_.peer_identity_public_key.data(),
                  start_.peer_identity_public_key.size()))
         return FLY_SESSION_V2_INVALID_STATE;
 
-    /* The peer's binding is signed under the mirrored pair role: what the peer
-     * called itself. */
+    /*
+     * The peer's binding is signed under the mirrored pair role: what the peer
+     * called itself.
+     *
+     * The decoder itself is the security boundary: it validates the embedded
+     * long-term identity key against the peer identity the accepted pair
+     * transcript pinned, and the embedded pair transcript hash, session id and
+     * pair role against this exact attempt. A binding that fails any of those is
+     * refused no matter what expected_binding_hash says.
+     */
     wire::SessionSigningBindingV1 decoded{};
     if (wire::decode_session_signing_binding_v1(
             bytes, size, start_.pair_transcript_hash, start_.session_id,
@@ -1006,7 +1035,22 @@ fly_session_result_v2 LinkHandshakeScheduler::accept_peer_binding(
             wire::validate_p256_uncompressed_point_callback, nullptr,
             &decoded) != wire::Status::Ok)
         return FLY_SESSION_V2_AUTH_FAILED;
-    if (decoded.hash != expected_binding_hash)
+
+    /*
+     * expected_binding_hash may be all-zero, meaning "the caller does not know it
+     * yet". That is the normal inbound case: the peer's 0x0212 object arrives on
+     * the Control stream BEFORE its HELLO, because LINK_HELLO only carries the
+     * binding's hash and the HELLO codec refuses a zero expectation — so the
+     * binding has to be accepted first, and only then can the HELLO be checked.
+     *
+     * This is not a weakening. Installing the decoded hash makes the HELLO's own
+     * session_signing_binding_hash expectation exactly that value, so a peer that
+     * presents one binding and then signs a HELLO naming another is still
+     * refused, and an injected binding can only be one the pinned peer long-term
+     * identity actually signed for this transcript, session and role.
+     */
+    if (nonzero(expected_binding_hash.data(), expected_binding_hash.size()) &&
+        decoded.hash != expected_binding_hash)
         return FLY_SESSION_V2_AUTH_FAILED;
     if (!nonzero(decoded.identity_key_id.data(),
                  decoded.identity_key_id.size()) ||
@@ -1104,6 +1148,25 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
                 start_.local_session_signing_public_key)
             return fail(FLY_SESSION_V2_AUTH_FAILED);
         progress_.local_binding_durable = true;
+        /*
+         * Persist-before-send is satisfied: the exact bytes just came back from
+         * the ObjectStore under the expected content hash. They are now published
+         * on the Control stream so the peer can accept them before it is asked to
+         * check the HELLO that names them. The bytes sent are the re-read bytes,
+         * never the in-memory copy the scheduler started from.
+         */
+        try {
+            local_binding_bytes_.assign(bytes.begin(), bytes.end());
+        } catch (const std::bad_alloc&) {
+            return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+        }
+        pending_.reset();
+        return send_control_message(
+            wire::kSessionSigningBindingObjectKindV1, local_binding_bytes_.data(),
+            local_binding_bytes_.size(),
+            LinkHandshakeStageV1::SendLocalBinding);
+    }
+    if (kind == LinkHandshakeEffectKind::SendLocalBinding) {
         pending_.reset();
         return request_hello_signature();
     }

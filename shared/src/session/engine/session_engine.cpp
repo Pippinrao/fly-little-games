@@ -251,6 +251,9 @@ std::uint32_t link_handshake_payload_kind(
     case Kind::SendHello:
     case Kind::SendReady:
     case Kind::SendAck:
+    /* Publishing this side's own 0x0212 object on the Control stream is a plain
+     * QUIC write, exactly like the control messages. */
+    case Kind::SendLocalBinding:
         return FLY_SESSION_PROVIDER_QUIC_END_V2;
     /* gap 4: opening the Control stream answers with a stream handle pair, and a
      * Control read answers with the bytes the peer wrote. */
@@ -488,6 +491,8 @@ void SessionEngine::cancel_link_handshake_locked() noexcept
         case LinkHandshakeEffectKind::SendHello:
         case LinkHandshakeEffectKind::SendReady:
         case LinkHandshakeEffectKind::SendAck:
+        /* The local 0x0212 publication is a write on the Control stream too. */
+        case LinkHandshakeEffectKind::SendLocalBinding:
         /* gap 4: opening and reading the Control stream are both QUIC
          * operations on the same port, so they cancel through it too. */
         case LinkHandshakeEffectKind::OpenControlStream:
@@ -3849,6 +3854,7 @@ void SessionEngine::run_work() noexcept
             case LinkHandshakeEffectKind::SendHello:
             case LinkHandshakeEffectKind::SendReady:
             case LinkHandshakeEffectKind::SendAck:
+            case LinkHandshakeEffectKind::SendLocalBinding:
             {
                 fly_session_buffer_v2_t* buffer = nullptr;
                 if (fly_session_buffer_create_copy_v2(value, &buffer) ==
