@@ -725,6 +725,9 @@ void SessionEngine::cancel_initial_quic_bind_locked() noexcept
             effect->kind == InitialQuicBindEffectKind::Hmac;
         if (crypto_effect)
             result = ports_.cancel_crypto(&effect->token);
+        else if (initial_quic_bind_submit_inflight_)
+            retired_initial_quic_ = RetiredQuicOperation{
+                effect->token, initial_quic_bind_expected_kind_};
         else
             result = ports_.cancel_quic(&effect->token);
         if (!crypto_effect && result == FLY_SESSION_V2_ACCEPTED)
@@ -3984,6 +3987,7 @@ void SessionEngine::run_work() noexcept
                     initial_quic_bind_expected_kind_ =
                         initial_quic_bind_payload_kind(*effect);
                     initial_quic_bind_active_ = true;
+                    initial_quic_bind_submit_inflight_ = true;
                     dispatch_initial_quic_bind = true;
                 }
             }
@@ -4068,15 +4072,42 @@ void SessionEngine::run_work() noexcept
                     initial_quic_bind_effect.read_credit, inbox_);
                 break;
             }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                initial_quic_bind_submit_inflight_ = false;
+                if (retired_initial_quic_ && same_token(
+                        retired_initial_quic_->token,
+                        initial_quic_bind_effect.token))
+                {
+                    if (result == FLY_SESSION_V2_ACCEPTED)
+                    {
+                        const auto cancelled = ports_.cancel_quic(
+                            &initial_quic_bind_effect.token);
+                        if (cancelled == FLY_SESSION_V2_OK ||
+                            cancelled == FLY_SESSION_V2_CANCELLED ||
+                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            retired_initial_quic_.reset();
+                    }
+                    else
+                        retired_initial_quic_.reset();
+                    if (shutdown_requested_) complete_shutdown_locked();
+                }
+            }
             if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                initial_quic_bind_active_ = false;
-                initial_quic_bind_->cancel_pending();
-                cancel_pair_material_locked();
-                release_pair_material_locked();
-                discovery_disconnect_pending_ = discovery_connection_ != 0;
-                publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                if (!shutdown_requested_ && initial_quic_bind_ &&
+                    initial_quic_bind_active_ && same_token(
+                        initial_quic_bind_token_,
+                        initial_quic_bind_effect.token))
+                {
+                    initial_quic_bind_active_ = false;
+                    initial_quic_bind_->cancel_pending();
+                    cancel_pair_material_locked();
+                    release_pair_material_locked();
+                    discovery_disconnect_pending_ = discovery_connection_ != 0;
+                    publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                }
             }
             continue;
         }

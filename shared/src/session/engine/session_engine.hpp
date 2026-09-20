@@ -223,6 +223,7 @@ private:
     fly_session_op_token_v2 initial_bearer_token_{};
     fly_session_op_token_v2 endpoint_offer_token_{};
     fly_session_op_token_v2 initial_quic_bind_token_{};
+    bool initial_quic_bind_submit_inflight_ = false;
     struct QuicCloseDebt final
     {
         fly_session_op_token_v2 token{};

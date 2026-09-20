@@ -1261,6 +1261,8 @@ struct EngineFixture final
         std::vector<std::uint8_t> last_label;
         std::vector<std::uint8_t> last_context;
         std::vector<std::uint8_t> last_write;
+        void (*before_start_accept)(void*, const fly_session_op_token_v2*) = nullptr;
+        void* before_start_accept_context = nullptr;
         /*
          * The exact SPKI pin this engine's own QUIC connect policy asked the
          * provider to enforce, captured at listen/connect time. The link reports
@@ -1353,6 +1355,9 @@ struct EngineFixture final
                 policy->forbid_resumption != 1 ||
                 policy->forbid_zero_rtt != 1)
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
+            if (self->before_start_accept)
+                self->before_start_accept(self->before_start_accept_context,
+                                          token);
             if (tls_material == 0) ++self->connects;
             else ++self->listens;
             self->last_endpoint.assign(endpoint.data,

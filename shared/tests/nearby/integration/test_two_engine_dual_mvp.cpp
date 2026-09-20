@@ -884,10 +884,34 @@ void shutdown_retains_cancelled_quic_read_until_terminal(
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
-void shutdown_closes_connection_created_after_cancel()
+void shutdown_closes_connection_created_after_cancel(bool during_submit = false)
 {
-    std::puts("dual mvp: late QUIC connection is still closed");
+    std::puts(during_submit
+        ? "dual mvp: shutdown while QUIC creator is submitting"
+        : "dual mvp: late QUIC connection is still closed");
     LobbyPair pair(false, false);
+    struct Probe final
+    {
+        EngineFixture* fixture = nullptr;
+        bool fired = false;
+        fly_session_result_v2 shutdown_result = FLY_SESSION_V2_INVALID_STATE;
+    } probe{&pair.inviter};
+    if (during_submit)
+    {
+        pair.inviter.quic.before_start_accept_context = &probe;
+        pair.inviter.quic.before_start_accept = [](
+            void* context, const fly_session_op_token_v2*) {
+            auto& value = *static_cast<Probe*>(context);
+            value.fired = true;
+            auto& fixture = *value.fixture;
+            fixture.quic.before_start_accept = nullptr;
+            fixture.quic.cancel_result = FLY_SESSION_V2_OK;
+            fixture.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+            value.shutdown_result = fly_session_begin_shutdown_v2(
+                fixture.engine, 9913);
+            fixture.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+        };
+    }
     pair.inviter.platform.ready();
     pair.joiner.platform.ready();
     pair.inviter.executor.run_all();
@@ -936,6 +960,9 @@ void shutdown_closes_connection_created_after_cancel()
             break;
     }
     const auto connection_token = pair.inviter.quic.last_token;
+    if (during_submit)
+        check(probe.fired && probe.shutdown_result == FLY_SESSION_V2_ACCEPTED,
+              "shutdown crossed QUIC creator submit before admission returned");
     check(pair.inviter.quic.connects + pair.inviter.quic.listens >
               pair.inviter_pump.quic_connects + pair.inviter_pump.quic_listens &&
               connection_token.operation_id != 0,
@@ -945,10 +972,14 @@ void shutdown_closes_connection_created_after_cancel()
         shutdown_pair(pair);
         return;
     }
-    pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
-    pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
-    check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9913) ==
-              FLY_SESSION_V2_ACCEPTED, "shutdown accepted before connection callback");
+    if (!during_submit)
+    {
+        pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+        pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+        check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9913) ==
+                  FLY_SESSION_V2_ACCEPTED,
+              "shutdown accepted before connection callback");
+    }
     pair.inviter.executor.run_all();
     check(pair.inviter.quic.closes == 0,
           "no close can dispatch before connection handle exists");
@@ -1325,6 +1356,7 @@ int main()
     shutdown_retains_cancelled_quic_read_until_terminal(1);
     shutdown_retains_cancelled_quic_read_until_terminal(2, true);
     shutdown_closes_connection_created_after_cancel();
+    shutdown_closes_connection_created_after_cancel(true);
     shutdown_retains_cancelled_dual_read_until_terminal();
     shutdown_retains_cancelled_content_read_until_terminal();
     shutdown_during_dual_read_submission_waits_for_admission();
