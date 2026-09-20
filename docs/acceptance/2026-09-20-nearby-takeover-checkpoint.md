@@ -2,7 +2,7 @@
 
 日期：2026-09-20。工作区：`.worktrees/nearby-ui-acceptance-fixes`。QUIC provider 阶段提交 `f5649ce`，本检查点记录时版本为 `1.4.38`；接手前大量未提交改动仍保留，未清理其他 worktree。
 
-**当前滚动状态（本次续作，UTC+8）：主线仅按附近双人联机计算。A2 provider、Android adapter C 的两个回调交接切片、engine B 已接受的 Control/初始绑定/DUAL/Content QUIC 退休与关闭切片均已分别提交；这只覆盖生命周期的一部分，双 App 联机尚不可用。端口派发竞态、失败/断链统一退休、三端生产 owner/ports/UI/唯一运行器和双 App 试玩仍未完成。10:14 及更早的单机/页面回归仅为历史证据，不能计入联机可用进度。下文各旧时刻均按历史快照阅读，以末尾本次续作节为最新状态。**
+**当前滚动状态（2026-09-21，UTC+8）：主线仅按附近双人联机计算。A2 provider、Android adapter C 的早期回调切片和 engine B 的四类 QUIC 派发/shutdown 竞态及模糊取消结果已分别提交至 `09b0c01`（`1.4.54`）。双 App 联机尚不可用：Android 生产 discovery 的 connect/write/subscribe 仍显式 UNAVAILABLE，QUIC 监听/连接仍限 loopback；Harmony/iOS 的生产 V2 owner/ports 及两 App 试玩也未完成。单机/页面回归只作历史证据。旧时刻按历史快照阅读，以文末 2026-09-21 续作节为最新状态。**
 
 ## 边界与执行方式
 
@@ -421,3 +421,10 @@
 - DUAL 读取的旧 token 原先会被判 STALE，RED 测试出现连接不能按序关闭且 destroy 无法完成；修复后旧 DUAL 与并发 Control 读终止均到齐才关连接。内容 ROM 读取也验证了旧 token 终止、连接单次关闭及销毁。`flynes_two_engine_dual_mvp` 重建运行通过；双引擎定点 CTest 中前四项（空房间、连接大厅、DUAL MVP、NES 联动）通过。Android `:app:testDebugUnitTest` BUILD SUCCESSFUL，但测试任务为 UP-TO-DATE。
 - 同一次较宽的双引擎 CTest 在真实 QUIC 目标运行约三分钟没有结束，已主动停止；**不得**将该次七项套件或真实 QUIC 记为通过。没有重复三端模拟器或两 App 联机试玩。
 - 下一小阶段只处理 B 的端口调用返回与 shutdown 交叉竞态，再覆盖失败/断链入口和拒绝关闭债务；完成每项即提交。之后需要真实 Rust/Android 适配器与三端生产接线、两 App 实际双人输入和第二局/十分钟试玩。当前不能报双人首版可用。
+
+### 2026-09-21 续作：派发竞态与模糊取消（UTC+8，最新）
+
+- 按 RED→GREEN 逐项提交 `e1e76c5`、`7012390`、`84ba7a4`、`9a2ecd6`：shutdown 与 DUAL、ROM Content、初始 QUIC creator、Control 端口调用交叉时，保留原 token 和在途提交债务；调用返回后才依据真实接纳/取消结果退休，旧操作未终止前不关闭连接。
+- `09b0c01`：取消返回 DUPLICATE 或其他非确定释放结果时，不再将四类 QUIC 操作误判已释放；须等原操作的准确终止事件。定点双 engine MVP 目标重建运行通过；Android `:app:testDebugUnitTest` BUILD SUCCESSFUL，测试任务为 UP-TO-DATE。均未跑三端模拟器。
+- 曾探查 Control 读拒绝/失败是否遗漏连接退休。同步拒绝路径已正确关连接；异步试验中的额外失败来自测试转发器在故障后继续发送陈旧包，未形成可信产品负例；试验改动已撤回，未提交。不能据此宣称失败/断链矩阵完成。
+- 工作树原有约 625 项修改/未跟踪证据保留；本阶段只选择性提交所属代码、测试和版本元数据，暂存区为空。不得把工作树当作 clean，也不清理其他 worktree。下一关键路径优先解决 Android 生产 discovery/远端 QUIC 接线及 adapter BACKPRESSURE 交接，再完善 B 失败债务和两 App 双人输入验收；目前任何 host 假端口通过都不能等同双 App 可用。
