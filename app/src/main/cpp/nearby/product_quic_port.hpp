@@ -479,12 +479,14 @@ private:
         fly_session_op_token_v2 token{};
         fly_session_inbox_v2_t* inbox = nullptr;
         bool cancel_requested = false;
+        std::uint64_t parent_connection = 0;
     };
 
     struct StreamMap final
     {
         std::uint64_t send = 0;
         std::uint64_t recv = 0;
+        std::uint64_t parent_connection = 0;
     };
 
     template <typename Pred>
@@ -520,13 +522,15 @@ private:
 
     bool remember(std::uint64_t operation, OpKind kind,
                   const fly_session_op_token_v2* token = nullptr,
-                  fly_session_inbox_v2_t* inbox = nullptr)
+                  fly_session_inbox_v2_t* inbox = nullptr,
+                  std::uint64_t parent_connection = 0)
     {
         Pending pending{};
         pending.kind = kind;
         if (token != nullptr)
             pending.token = *token;
         pending.inbox = inbox;
+        pending.parent_connection = parent_connection;
         std::lock_guard<std::mutex> lock(mutex_);
         const auto inserted = pending_.emplace(operation, pending).second;
         if (inserted && inbox != nullptr)
@@ -682,7 +686,8 @@ private:
         auto* port = self(context);
         if (port == nullptr || token == nullptr || connection == 0)
             return FLY_SESSION_V2_INVALID_ARGUMENT;
-        if (!port->remember(token->operation_id, OpKind::Close, token, inbox))
+        if (!port->remember(token->operation_id, OpKind::Close, token, inbox,
+                            connection))
             return FLY_SESSION_V2_DUPLICATE;
         if (flynes_quic_provider_close(port->provider_, token->operation_id, connection, reason)
                 != FLYNES_QUIC_ACCEPTED)
@@ -703,7 +708,7 @@ private:
         if (port == nullptr || token == nullptr)
             return FLY_SESSION_V2_UNAVAILABLE;
         const std::uint64_t op = token->operation_id;
-        if (!port->remember(op, OpKind::OpenBidi, token, inbox))
+        if (!port->remember(op, OpKind::OpenBidi, token, inbox, connection))
             return FLY_SESSION_V2_DUPLICATE;
         if (flynes_quic_provider_open_bidi(port->provider_, op, connection) !=
             FLYNES_QUIC_ACCEPTED)
@@ -723,7 +728,7 @@ private:
         if (port == nullptr || token == nullptr)
             return FLY_SESSION_V2_UNAVAILABLE;
         const std::uint64_t op = token->operation_id;
-        if (!port->remember(op, OpKind::AcceptBidi, token, inbox))
+        if (!port->remember(op, OpKind::AcceptBidi, token, inbox, connection))
             return FLY_SESSION_V2_DUPLICATE;
         if (flynes_quic_provider_accept_bidi(port->provider_, op, connection) !=
             FLYNES_QUIC_ACCEPTED)
@@ -901,6 +906,7 @@ private:
             connection_ = item.resource;
             if (pending.kind == OpKind::Connect) ++connects_;
         }
+        std::uint64_t delivered_stream = 0;
         if (pending.kind == OpKind::OpenBidi || pending.kind == OpKind::AcceptBidi)
         {
             last_stream_result_ = item.result;
@@ -911,9 +917,25 @@ private:
                     ? quic_load_u64be(item.bytes.data())
                     : 0;
                 const auto handle = next_stream_++;
-                streams_[handle] = StreamMap{item.resource, recv};
+                streams_[handle] = StreamMap{item.resource, recv,
+                                             pending.parent_connection};
                 control_stream_ = handle;
+                delivered_stream = handle;
             }
+        }
+        if (pending.kind == OpKind::Close && item.result == FLYNES_QUIC_OK)
+        {
+            for (auto it = streams_.begin(); it != streams_.end();)
+            {
+                if (it->second.parent_connection == pending.parent_connection)
+                {
+                    if (control_stream_ == it->first) control_stream_ = 0;
+                    it = streams_.erase(it);
+                }
+                else ++it;
+            }
+            if (connection_ == pending.parent_connection)
+                connection_ = 0;
         }
         if (pending.kind == OpKind::Read && item.result == FLYNES_QUIC_OK)
             bytes_read_ += item.bytes.size();
@@ -961,7 +983,7 @@ private:
                 if (item.result == FLYNES_QUIC_OK && item.bytes.size() == 8)
                     quic_deliver_resource(pending.inbox, pending.token,
                                           FLY_SESSION_PROVIDER_QUIC_STREAM_V2,
-                                          control_stream_, control_stream_);
+                                          delivered_stream, delivered_stream);
                 else
                     quic_deliver_end(pending.inbox, pending.token,
                                      FLY_SESSION_PROVIDER_QUIC_STREAM_V2,

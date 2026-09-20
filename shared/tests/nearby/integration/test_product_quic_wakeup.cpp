@@ -100,9 +100,54 @@ int main() {
     check(cp.grant_read_credit(cp.context, &rejected, 0, 0, nullptr)
               != FLY_SESSION_V2_ACCEPTED, "zero read credit rejected synchronously");
     check(connector.pending_count() == 0, "rejected read retains no pending inbox");
+
+    const auto first_server_connection = listener.connection();
+    Notification second_connector_notice;
+    flynes::android::nearby::ProductQuicPort second_connector;
+    check(second_connector.ready(), "second real Quinn connector ready");
+    second_connector.set_wakeup([&] { second_connector_notice.signal(); });
+    auto second_port = second_connector.port();
+    auto second_accept = token(107), second_connect = token(108);
+    const auto before_second_accept = listener_notice.snapshot();
+    check(lp.listen(lp.context, &second_accept, 0, {}, 0, nullptr, nullptr)
+              == FLY_SESSION_V2_ACCEPTED, "second accept accepted");
+    check(second_port.connect(second_port.context, &second_connect, 0,
+                              endpoint_bytes, 0, &policy, nullptr)
+              == FLY_SESSION_V2_ACCEPTED, "second connect accepted");
+    check(listener_notice.wait_after(before_second_accept), "second accept wakes owner");
+    check(second_connector_notice.wait(), "second connect wakes owner");
+    listener.drain(); second_connector.drain();
+    const auto second_server_connection = listener.connection();
+    check(first_server_connection != 0 && second_server_connection != 0 &&
+              first_server_connection != second_server_connection,
+          "two server connections have distinct handles");
+
+    auto first_stream = token(109), second_stream = token(110);
+    auto before_stream = listener_notice.snapshot();
+    check(lp.open_bidi(lp.context, &first_stream, first_server_connection, 0, 1, nullptr)
+              == FLY_SESSION_V2_ACCEPTED, "first server stream accepted");
+    check(listener_notice.wait_after(before_stream), "first stream wakes owner");
+    listener.drain();
+    before_stream = listener_notice.snapshot();
+    check(lp.open_bidi(lp.context, &second_stream, second_server_connection, 0, 1, nullptr)
+              == FLY_SESSION_V2_ACCEPTED, "second server stream accepted");
+    check(listener_notice.wait_after(before_stream), "second stream wakes owner");
+    listener.drain();
+    check(listener.streams_opened() == 2, "two connections own separate stream mappings");
+    const auto remaining_stream = listener.control_stream();
+
+    auto close_first = token(111);
+    const auto before_close_first = listener_notice.snapshot();
+    check(lp.close(lp.context, &close_first, first_server_connection, 0, nullptr)
+              == FLY_SESSION_V2_ACCEPTED, "first server connection close accepted");
+    check(listener_notice.wait_after(before_close_first), "first close wakes owner");
+    listener.drain();
+    check(listener.streams_opened() == 1 && listener.control_stream() == remaining_stream,
+          "closing first connection retains only second connection stream");
+
     auto closing = token(104);
     check(cp.close(cp.context, &closing, connector.connection(), 0, nullptr) == FLY_SESSION_V2_ACCEPTED,
           "production close is connected to the real provider");
-    listener.set_wakeup({}); connector.set_wakeup({});
+    listener.set_wakeup({}); connector.set_wakeup({}); second_connector.set_wakeup({});
     return failures == 0 ? 0 : 1;
 }
