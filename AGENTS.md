@@ -41,6 +41,15 @@ never move their inputs into `content/`.
 
 ## Change and verification policy
 
+### Current nearby milestone (2026-09-21 user direction)
+
+- Work from the consolidated `main`; do not reopen retired worktrees or start parallel branches without a new user request.
+- Read `docs/nearby/README.md` first. It is the only current nearby design/plan entry; `docs/archive/nearby-2026-09-21/` and old task prompts are historical references, not instructions.
+- Deliver Android host/P1 to HarmonyOS guest/P2, one pairing path, and one real two-player game. iOS, reverse hosting, STREAM, ROM transfer, persistent friends, automatic network setup and recovery are later milestones.
+- First consolidate repository state, then design from that baseline. Repository/document cleanup does not require full product test runs.
+- During implementation fix the current playable-path blocker and run the affected checks. Expand testing only for a concrete regression risk; do not start unrelated full-platform sweeps or exhaustive edge-case projects.
+- Report progress by two real apps connecting, loading the same ROM, accepting both players' input, and playing. A mock/loopback test, ABI declaration, build or merged branch is not that outcome.
+
 - Use test-driven development for product behavior and bug fixes: demonstrate the failing assertion, implement the smallest fix, then run the relevant regression suite.
 - Android shared/native changes require host tests and Android unit tests; UI changes require the emulator instrumentation suite.
 - Harmony changes require host CTest, Hypium, and a signed-device install when a compatible device is connected. Emulator results never certify physical refresh rate, power, temperature, or latency.

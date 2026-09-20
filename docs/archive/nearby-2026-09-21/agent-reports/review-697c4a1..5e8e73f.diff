@@ -1,0 +1,930 @@
+﻿# Review package: 697c4a1..5e8e73f (W3 tamper round 2 only)
+# Excludes merge of W0 08f2afd. W3 commits: e8375c0, 5e8e73f.
+
+## Commits
+e8375c0 test(nearby): close the three pair-layer tamper cases and record the SAS diagnosis
+5e8e73f test(nearby): assert pair-layer tampers crossed and the receiver rejected AEAD
+
+## Files changed
+ .../nearby/harness/two_engine_loopback_fixture.hpp | 117 ++++++++++++---
+ .../nearby/scenarios/test_two_engine_dual_run.cpp  |   8 +-
+ .../scenarios/test_two_engine_tamper_matrix.cpp    | 159 ++++++++++++++-------
+ 3 files changed, 211 insertions(+), 73 deletions(-)
+ .superpowers/sdd/w3-tamper-report.md               |  86 ++++++++++++++
+ .../scenarios/test_two_engine_tamper_matrix.cpp    | 126 +++++++++++++++------
+ 2 files changed, 176 insertions(+), 36 deletions(-)
+
+## Diff e8375c0 vs 697c4a1 (shared/)
+
+diff --git a/shared/tests/nearby/harness/two_engine_loopback_fixture.hpp b/shared/tests/nearby/harness/two_engine_loopback_fixture.hpp
+index 6741fc1..f63966a 100644
+--- a/shared/tests/nearby/harness/two_engine_loopback_fixture.hpp
++++ b/shared/tests/nearby/harness/two_engine_loopback_fixture.hpp
+@@ -2904,20 +2904,36 @@ public:
+     [[nodiscard]] std::uint32_t tampered_logical_messages() const noexcept
+     {
+         return tampered_logical_;
+     }
+     /* Times the tamper hook could not reassemble a logical message it was asked
+      * about. Non-zero means the GATT tamper cases for that run prove nothing. */
+     [[nodiscard]] std::uint32_t logical_tamper_reassembly_mismatches() const noexcept
+     {
+         return gatt_reassembly_mismatches_;
+     }
++
++    /*
++     * How many TAMPERED logical messages were actually accepted by the receiving
++     * engine's byte-event intake. This is the counter that separates "the harness
++     * rewrote a byte of a record that then crossed" from "the harness rewrote a
++     * byte that never left", and without it a negative case that still reaches
++     * the lobby cannot be attributed to the engine at all.
++     */
++    void note_tampered_group_delivered() noexcept
++    {
++        ++tampered_groups_delivered_;
++    }
++    [[nodiscard]] std::uint32_t tampered_logical_delivered() const noexcept
++    {
++        return tampered_groups_delivered_;
++    }
+     [[nodiscard]] std::uint32_t logical_tamper_body_index() const noexcept
+     {
+         return gatt_tamper_index_;
+     }
+     [[nodiscard]] std::uint8_t logical_tamper_before() const noexcept
+     {
+         return gatt_tamper_before_;
+     }
+ 
+     /*
+@@ -2945,61 +2961,66 @@ public:
+         if (logical[1] != gatt_tamper_.logical_type) return false;
+         ++gatt_tamper_occurrences_;
+         if (gatt_tamper_.occurrence != 0u &&
+             gatt_tamper_occurrences_ != gatt_tamper_.occurrence)
+             return false;
+         const std::size_t body_size =
+             (static_cast<std::size_t>(logical[4]) << 24u) |
+             (static_cast<std::size_t>(logical[5]) << 16u) |
+             (static_cast<std::size_t>(logical[6]) << 8u) |
+             static_cast<std::size_t>(logical[7]);
+-        if (body_size == 0u || logical.size() != 8u + body_size + 32u)
++        if (body_size == 0u || logical.size() < 8u + body_size + 32u)
+         {
+-            /* Counted, not asserted: this is a limitation of the tamper HOOK's
+-             * own fragment-to-logical reassembly, not a product failure, and a
+-             * test that asserted it would be asserting a harness bug. It is
+-             * reported through `logical_tamper_reassembly_mismatches()` so a
+-             * caller can refuse to draw conclusions from a run where it happened.
++            /* The group the relay hands over starts at its own delivery
++             * watermark, which a BACKPRESSURE return can leave in the MIDDLE of a
++             * logical message; such a group is not this record's boundary and is
++             * not a harness error. It is COUNTED so a run where it happened is
++             * visible, and `logical_tamper_reassembly_mismatches()` lets a caller
++             * refuse to draw conclusions from one.
+              */
+             ++gatt_reassembly_mismatches_;
+             return false;
+         }
++        /* The record is the PREFIX of the reassembled bytes: anything past it
++         * belongs to the next logical message and must cross untouched. */
++        const std::size_t record_size = 8u + body_size + 32u;
+         std::size_t index = gatt_tamper_.body_index;
+         if (index == kLastBodyByte) index = body_size - 1u;
+         if (index >= body_size)
+         {
+             check(false,
+                   "the armed logical-message tamper names a byte the sender's own "
+                   "record really has");
+             return false;
+         }
+         const std::size_t absolute = 8u + index;
+         gatt_tamper_index_ = static_cast<std::uint32_t>(index);
+         gatt_tamper_before_ = logical[absolute];
+         logical[absolute] = static_cast<std::uint8_t>(
+             gatt_tamper_before_ ^ gatt_tamper_.xor_mask);
+-        /* Recompute the record's own trailing integrity hash. */
++        /* Recompute THIS record's own trailing integrity hash. */
+         const char* domain =
+             logical[0] == 2u ? "flynes-gatt-logical-v2" : "flynes-gatt-logical-v1";
+         const auto digest =
+             wire::domain_hash(domain, logical.data(), 8u + body_size);
+         std::copy(digest.begin(), digest.end(),
+                   logical.begin() + static_cast<std::ptrdiff_t>(8u + body_size));
+-        /* Write the whole logical message back into the same fragment payloads. */
++        /* Write the record back into the same fragment payloads, only as far as
++         * the record goes. */
+         std::size_t cursor = 0;
+         for (auto& fragment : *group)
+         {
+             const std::size_t payload = fragment.size() - header;
+-            std::copy(logical.begin() + static_cast<std::ptrdiff_t>(cursor),
+-                      logical.begin() + static_cast<std::ptrdiff_t>(cursor + payload),
+-                      fragment.begin() + static_cast<std::ptrdiff_t>(header));
+-            cursor += payload;
++            for (std::size_t offset = 0; offset < payload && cursor < record_size;
++                 ++offset, ++cursor)
++                fragment[header + offset] = logical[cursor];
++            if (cursor >= record_size) break;
+         }
+         ++tampered_logical_;
+         /* A single-occurrence rule is spent after one injection; an "every
+          * occurrence" rule stays armed for the whole drive, by definition. */
+         if (gatt_tamper_.occurrence != 0u) gatt_tamper_armed_ = false;
+         return true;
+     }
+ 
+     /* True when this unit is a link-control READY/ACK frame from the direction
+      * the filter holds. The cell layout is the repository's own app frame:
+@@ -3094,20 +3115,21 @@ private:
+     std::uint8_t tampered_before_ = 0;
+     std::uint8_t tampered_after_ = 0;
+     /* W3 tamper matrix: the GATT logical-message fault. */
+     GattTamperRule gatt_tamper_{};
+     bool gatt_tamper_armed_ = false;
+     std::uint32_t gatt_tamper_occurrences_ = 0;
+     std::uint32_t tampered_logical_ = 0;
+     std::uint32_t gatt_tamper_index_ = 0;
+     std::uint8_t gatt_tamper_before_ = 0;
+     std::uint32_t gatt_reassembly_mismatches_ = 0;
++    std::uint32_t tampered_groups_delivered_ = 0;
+ };
+ 
+ /*
+  * ------------------------------------------------------------------------- *
+  * Increment 2 of the two-engine driver: the counted, bounded provider pump.
+  *
+  * WHAT THE PUMP IS ALLOWED TO DO
+  *   Answer CLASS-1 operation terminals, and nothing else. It never delivers a
+  *   connection, never delivers bytes, never advances a stage and never decides an
+  *   outcome: those are the transport's and the engine's jobs. Every answer below
+@@ -4010,20 +4032,54 @@ struct RelayDirectionState final
+     std::size_t fragments_relayed = 0;
+     std::size_t acks_relayed = 0;
+     /* Class-2 event sequence for the RECEIVING inbox; strictly increasing. */
+     std::uint64_t next_sequence = 1;
+     /*
+      * Exactly what crossed, in order, kept so a test can compare it with the writing
+      * engine's own `written_fragments` instead of taking this harness's word for it.
+      */
+     std::vector<std::vector<std::uint8_t>> delivered;
+     std::vector<std::vector<std::uint8_t>> delivered_acks;
++    /*
++     * W3 tamper matrix: fragments that must be delivered INSTEAD of the source's
++     * own, stored per source-fragment index and PERSISTENTLY.
++     *
++     * This has to live in the direction's state rather than in a per-attempt
++     * local: a BACKPRESSURE return abandons the attempt and the fragment is
++     * offered again on a later round, so a tamper applied to a throw-away copy
++     * would simply be discarded and the ORIGINAL bytes would cross - which is
++     * exactly the bug that made three tamper cases look fail-open when nothing
++     * had in fact been tampered on the wire.
++     */
++    std::vector<std::size_t> replaced_index;
++    std::vector<std::vector<std::uint8_t>> replaced_bytes;
++    int replaced_delivered = 0;
++
++    void remember_replacement(std::size_t index, std::vector<std::uint8_t> bytes)
++    {
++        for (std::size_t slot = 0; slot < replaced_index.size(); ++slot)
++            if (replaced_index[slot] == index)
++            {
++                replaced_bytes[slot] = std::move(bytes);
++                return;
++            }
++        replaced_index.push_back(index);
++        replaced_bytes.push_back(std::move(bytes));
++    }
++
++    [[nodiscard]] const std::vector<std::uint8_t>* replacement_at(
++        std::size_t index) const
++    {
++        for (std::size_t slot = 0; slot < replaced_index.size(); ++slot)
++            if (replaced_index[slot] == index) return &replaced_bytes[slot];
++        return nullptr;
++    }
+ };
+ 
+ struct QuicDirectionState final
+ {
+     /* How much of the source's write log is already staged, and how many of the
+      * sink's own granted reads have been answered. */
+     std::size_t writes_staged = 0;
+     std::size_t reads_answered = 0;
+     /* Class-2 event sequence for the RECEIVING inbox; strictly increasing. */
+     std::uint64_t next_sequence = 1;
+@@ -4204,48 +4260,65 @@ inline void relay_one_direction(EngineFixture& source, RelayDirectionState& stat
+                       "logical message inside its own written fragments");
+                 return;
+             }
+         }
+         /*
+          * W3 tamper matrix. The group of fragments that makes up ONE logical
+          * message is COPIED only while a logical-message tamper is armed, so the
+          * ordinary path still delivers the source's own fragment object without
+          * a copy and without a chance of being altered.
+          */
+-        std::vector<std::vector<std::uint8_t>> tampered_group;
++        /*
++         * W3 tamper matrix. The armed rule is applied ONCE per logical message and
++         * the RESULT is remembered in the direction's state, so a retry after
++         * BACKPRESSURE re-offers the same tampered bytes instead of silently
++         * falling back to the sender's originals.
++         */
+         const std::size_t group_begin = state.fragments_relayed;
+         if (transport.logical_tamper_armed())
+         {
+-            tampered_group.assign(
++            std::vector<std::vector<std::uint8_t>> group(
+                 source.discovery.written_fragments.begin() +
+                     static_cast<std::ptrdiff_t>(group_begin),
+                 source.discovery.written_fragments.begin() +
+                     static_cast<std::ptrdiff_t>(stop));
+-            transport.tamper_logical_group(
+-                source_is_peripheral
+-                    ? LoopbackTransport::QuicFilter::PeripheralToCentral
+-                    : LoopbackTransport::QuicFilter::CentralToPeripheral,
+-                &tampered_group);
++            if (transport.tamper_logical_group(
++                    source_is_peripheral
++                        ? LoopbackTransport::QuicFilter::PeripheralToCentral
++                        : LoopbackTransport::QuicFilter::CentralToPeripheral,
++                    &group))
++                for (std::size_t slot = 0; slot < group.size(); ++slot)
++                    state.remember_replacement(group_begin + slot,
++                                               std::move(group[slot]));
+         }
++        int replacements_delivered = 0;
+         for (std::size_t index = group_begin; index < stop; ++index)
+         {
+             /* `group_begin`, not `state.fragments_relayed`: the watermark advances
+              * inside this loop, so subtracting it would re-deliver the first
+              * fragment of the group forever. */
++            const std::vector<std::uint8_t>* replacement =
++                state.replacement_at(index);
+             const std::vector<std::uint8_t>& fragment =
+-                tampered_group.empty()
+-                    ? source.discovery.written_fragments[index]
+-                    : tampered_group[index - group_begin];
++                replacement != nullptr
++                    ? *replacement
++                    : source.discovery.written_fragments[index];
+             if (!relay_fragment_once(sink, state, fragment, &state.delivered))
+                 return;
++            if (replacement != nullptr) ++replacements_delivered;
+             ++state.fragments_relayed;
+         }
++        if (replacements_delivered > 0)
++        {
++            state.replaced_delivered += replacements_delivered;
++            transport.note_tampered_group_delivered();
++        }
+     }
+ 
+     if (state.acks_relayed < source.discovery.ack_fragments.size())
+     {
+         /* An engine's own acknowledgements go back to the peer whose fragments they
+          * acknowledge, one fragment per call. Without them the writer of a logical
+          * message stops half-way through it while its acknowledgement is
+          * outstanding. */
+         if (!relay_fragment_once(sink, state,
+                                  source.discovery.ack_fragments[state.acks_relayed],
+diff --git a/shared/tests/nearby/scenarios/test_two_engine_dual_run.cpp b/shared/tests/nearby/scenarios/test_two_engine_dual_run.cpp
+index 45ec4d8..bb6a386 100644
+--- a/shared/tests/nearby/scenarios/test_two_engine_dual_run.cpp
++++ b/shared/tests/nearby/scenarios/test_two_engine_dual_run.cpp
+@@ -289,21 +289,27 @@ void the_two_public_engines_agree_on_their_semantic_state()
+                 run.joiner_game_state);
+     std::printf("  crossed: %d GATT fragments, %d QUIC units\n",
+                 run.gatt_fragments_crossed, run.quic_units_crossed);
+     std::printf("  object kinds persisted: inviter=%zu joiner=%zu\n",
+                 run.inviter_objects.size(), run.joiner_objects.size());
+ 
+     /* The positive path completes, on BOTH ends, independently asserted. */
+     check(run.inviter_link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
+               run.joiner_link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+           "BOTH public engines complete the positive path to "
+-          "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 over the real loopback QUIC link");
++          "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 with the engines really driving "
++          "every QUIC port primitive (listen/connect, handshake inspection, "
++          "exporter, bidi streams, write, granted read) over the fixture's "
++          "in-process loopback transport. This is NOT a real-Quinn claim: the "
++          "Rust provider is exercised separately by `flynes_loopback_quic_probe` "
++          "and `flynes_quic_provider_linkage`, and `LoopbackTransport` is a "
++          "test-side transport, not the product one");
+ 
+     /* The semantic state SEQUENCE: both ends really walked the same ordered path
+      * through AUTHENTICATING before the lobby, measured mid-run rather than
+      * inferred from the terminal value. */
+     check(run.inviter_authenticating_seen == 1u &&
+               run.joiner_authenticating_seen == 1u,
+           "both engines were really measured in FLY_SESSION_LINK_AUTHENTICATING_V2 "
+           "before the app confirmed the SAS, so the two link-state sequences are "
+           "the same ordered path and not just the same terminal value");
+ 
+diff --git a/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp b/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
+index b9cb147..445d75a 100644
+--- a/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
++++ b/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
+@@ -1,22 +1,30 @@
+ /*
+  * W3 / Task 8 step 2: the tamper negative matrix.
+  *
+  * The plan requires that, for EACH protocol layer, a tampered variant is
+  * fail-closed: the two real engines must NEVER reach CONNECTED_LOBBY. This file
+  * is that matrix, built on W0's `two_engine_loopback_fixture` and on the real
+  * public C ABI (`fly_session_create_v2` -> `fly_session_submit_action_v2` ->
+- * `fly_session_deliver_v2`), with real wire serialization and a real loopback
+- * QUIC connection. Nothing here authors a class-2 provider event
+- * (DISCOVERY_CONNECTION / DISCOVERY_BYTES / QUIC_DATA): those are produced only
+- * by `LoopbackTransport`. Nothing here calls a peer reducer directly, and nothing
+- * here injects already-"verified" evidence.
++ * `fly_session_deliver_v2`), with real wire serialization and the engines really
++ * driving every QUIC port primitive.
++ *
++ * SCOPE OF THE TRANSPORT CLAIM, stated precisely. `LoopbackTransport` is the
++ * fixture's IN-PROCESS transport, not the Rust Quinn provider: it supplies the
++ * class-2 events (DISCOVERY_CONNECTION / DISCOVERY_BYTES / QUIC_DATA) that the
++ * engines consume, so what this file proves is that the engine really exercised
++ * its QUIC port surface and rejected tampered bytes, NOT that the bytes went
++ * through Quinn. Real-Quinn evidence lives only in `flynes_loopback_quic_probe`
++ * (a real loopback handshake against the product crate) and
++ * `flynes_quic_provider_linkage` (the staticlib is really linked and called).
++ * Nothing here authors a class-2 provider event. Nothing here calls a peer
++ * reducer directly, and nothing here injects already-"verified" evidence.
+  *
+  * NECESSITY. Every negative case is run by the SAME driver function as the
+  * control, with exactly one injection added, and the control - identical setup,
+  * no tamper - must reach CONNECTED_LOBBY on BOTH ends in the same run. A
+  * negative case that failed for an unrelated reason would take the control down
+  * with it, so a green matrix cannot be produced by breaking the rig.
+  *
+  * WHERE THE TAMPER IS INJECTED, AND WHY THERE
+  *   * Wire layers (HELLO, READY, role, generation, capability, binding,
+  *     ChannelBind) are tampered at the lowest boundary that exists for them:
+@@ -164,20 +172,32 @@ struct TamperOutcome final
+     bool injection_landed = false;
+     /* Harness-level assertion failures this case added. */
+     int new_failures = 0;
+     int app_action_kinds = 0;
+     bool reached_lobby = false;
+     /* Observed QUIC counts, so a case that never got to the Control stream is
+        distinguishable from one that got there and was rejected. */
+     int inviter_quic_writes = 0;
+     int joiner_quic_writes = 0;
+     std::uint32_t reassembly_mismatches = 0;
++    std::uint32_t tampered_groups_delivered = 0;
++    /*
++     * The provider's own verdicts, which is how a pair-secure record's tamper is
++     * OBSERVED to arrive: a tampered AEAD tag makes the receiving engine's own
++     * `crypto.aead_open` fail, and a tampered signature makes its `crypto.verify`
++     * fail. Without these counters "the tamper landed" only says the harness
++     * rewrote a byte - it says nothing about whether the receiver ever looked.
++     */
++    int inviter_aead_open_failures = 0;
++    int joiner_aead_open_failures = 0;
++    int inviter_verify_failures = 0;
++    int joiner_verify_failures = 0;
+ };
+ 
+ /*
+  * The one driver. Every case - control included - runs exactly this, so the only
+  * difference between a case and the control is the single injection in the
+  * switch below.
+  */
+ TamperOutcome run_case(TamperLayer layer)
+ {
+     const int failures_before = failures;
+@@ -363,33 +383,42 @@ TamperOutcome run_case(TamperLayer layer)
+         case TamperLayer::PairSignature:
+         case TamperLayer::KeyConfirm:
+             injection_landed = transport.tampered_logical_messages() > 0;
+             break;
+         default:
+             injection_landed = transport.tampered_units() > 0;
+             break;
+     }
+     outcome.reassembly_mismatches =
+         transport.logical_tamper_reassembly_mismatches();
++    outcome.tampered_groups_delivered =
++        transport.tampered_logical_delivered();
++    outcome.inviter_aead_open_failures =
++        inviter_pump.counts.crypto_aead_open_failures;
++    outcome.joiner_aead_open_failures =
++        joiner_pump.counts.crypto_aead_open_failures;
++    outcome.inviter_verify_failures = inviter_pump.counts.crypto_verify_failures;
++    outcome.joiner_verify_failures = joiner_pump.counts.crypto_verify_failures;
+     outcome.injection_landed = injection_landed;
+     outcome.new_failures = failures - failures_before;
+ 
+     std::printf(
+-        "  %-22s landed=%s inviter=%u(%s) joiner=%u(%s) quic-writes=%d/%d "
+-        "app-actions=%d\n",
++        "  %-22s landed=%s crossed=%u inviter=%u(%s) joiner=%u(%s) quic=%d/%d "
++        "aead-open-fail=%d/%d verify-fail=%d/%d\n",
+         layer_name(layer), injection_landed ? "yes" : "NO",
+-        outcome.inviter_link_state,
++        outcome.tampered_groups_delivered, outcome.inviter_link_state,
+         outcome.inviter_reason[0] != '\0' ? outcome.inviter_reason : "-",
+         outcome.joiner_link_state,
+         outcome.joiner_reason[0] != '\0' ? outcome.joiner_reason : "-",
+         outcome.inviter_quic_writes, outcome.joiner_quic_writes,
+-        outcome.app_action_kinds);
++        outcome.inviter_aead_open_failures, outcome.joiner_aead_open_failures,
++        outcome.inviter_verify_failures, outcome.joiner_verify_failures);
+ 
+     /* Every case tears down through the pump and must destroy both engines. */
+     shutdown_engine_with_the_pump(inviter, inviter_pump, limits);
+     shutdown_engine_with_the_pump(joiner, joiner_pump, limits);
+ 
+     for (auto& action : inviter_actions)
+         fly_session_approval_token_release_v2(action.approval_token);
+     for (auto& action : joiner_actions)
+         fly_session_approval_token_release_v2(action.approval_token);
+     return outcome;
+@@ -482,84 +511,113 @@ void a_tampered_layer_cannot_reach_the_lobby(TamperLayer layer)
+                   "(inviter=%u joiner=%u)",
+                   layer_name(layer),
+                   static_cast<unsigned>(FLY_SESSION_LINK_FAILED_V2),
+                   outcome.inviter_link_state, outcome.joiner_link_state);
+     check(outcome.inviter_link_state == FLY_SESSION_LINK_FAILED_V2 ||
+               outcome.joiner_link_state == FLY_SESSION_LINK_FAILED_V2,
+           message);
+ }
+ 
+ /*
+- * ---------------------------------------------------------------------------
+- * OPEN FINDING: three layers where the injection LANDS but the run still
+- * completes. Reported, deliberately NOT asserted as fail-closed.
++ * RESOLVED FINDING (was an OPEN FINDING in round 1): commit/reveal, pair
++ * signature and key-confirm were reported as fail-open. They are fail-closed,
++ * and the round-1 result was a HARNESS bug, not an engine defect.
++ *
++ * The record layout is what made it look like an engine problem. A pair-secure
++ * record (GATT logical types 6, 7, 17, 21, 23-26) is an ENVELOPE, not a bare
++ * inner structure (`wire/pair_secure.cpp:804-839`):
+  *
+- * commit/reveal, pair signature and key-confirm are tampered on the pre-QUIC
+- * GATT relay, on the reassembled logical message's body, with the record's own
+- * trailing integrity hash recomputed. The injection is confirmed to have landed
+- * (`tampered_logical_messages() > 0`), and yet BOTH engines still reach
+- * CONNECTED_LOBBY in every one of the three cases.
++ *   body[0]      = version, must be 1
++ *   body[1..3]   = reserved, must be zero
++ *   body[4..11]  = message_counter, u64be, must be non-zero
++ *   body[12..]   = ciphertext || 16-byte AEAD tag
++ *   body_size    = pair_secure_inner_size_v1(type) + 28
+  *
+- * That is an honest negative result and it has two possible causes, neither of
+- * which this worktree could settle inside its budget:
+- *   (a) the chosen byte offsets are wrong - `PairCommit` body 48 is read from the
+- *       record's own decoder as the commitment, but `PairSignature` and
+- *       `KeyConfirm` are tampered at their LAST body byte, which is a guess at
+- *       where the 64-byte signature / 16-byte AEAD tag ends; or
+- *   (b) the receiving engine does not in fact reject these on the live path -
+- *       which would be a real security defect and must not be reported as a
+- *       passing negative case.
+- * The relay also reported once, for the signature case, that a reassembled
+- * logical message's own record length did not read back, so part (a) is likely:
+- * the fragment-to-logical reassembly used for the tamper is not right for every
+- * group.
++ * so the AEAD tag is the LAST 16 BYTES of the body and the tamper does land on
++ * it. The real bug was WHERE THE TAMPER WAS APPLIED: it was written into a
++ * per-attempt local copy of the fragment group, and `relay_fragment_once` can
++ * return BACKPRESSURE, which abandons the attempt and re-offers the fragment on
++ * a later round - from the sender originals. The tampered copy was therefore
++ * thrown away and the untouched bytes crossed, which is why the provider
++ * counters showed `aead-open-failures = 0` on BOTH ends while the harness still
++ * reported the injection as landed.
+  *
+- * Until that is settled these three layers are NOT covered by the matrix, and
+- * the acceptance gate `E2E-SCENARIOS` is therefore NOT fully green for them.
+- * The diagnostic below asserts only what was really observed.
++ * The relay now records the replacement PERSISTENTLY in the direction's state
++ * (`RelayDirectionState::remember_replacement`), so a retry re-offers the same
++ * tampered bytes. Measured after the fix, for each of the three layers:
++ *
++ *   tampered records that CROSSED = 1
++ *   aead-open-failures joiner    = 1   <- the receiving engine's OWN provider
++ *                                         rejected the record's AEAD tag
++ *   verify-failures             = 0
++ *   inviter link state          = 5 (AUTHENTICATING)
++ *   joiner  link state          = 9 (FAILED)   <- explicit refusal
++ *   reached_lobby               = no
++ *
++ * All three are therefore enforced by `a_tampered_layer_cannot_reach_the_lobby`
++ * together with the other layers. The diagnostic counters that established this
++ * are printed for EVERY case by `run_case`, so the evidence is in the output
++ * rather than in a comment.
+  */
+-void report_the_three_unsettled_pair_layers()
+-{
+-    const TamperLayer layers[] = {TamperLayer::CommitReveal,
+-                                  TamperLayer::PairSignature,
+-                                  TamperLayer::KeyConfirm};
+-    for (const auto layer : layers)
+-    {
+-        const auto outcome = run_case(layer);
+-        std::printf("  UNSETTLED %-16s landed=%s reached_lobby=%s "
+-                    "(inviter=%u joiner=%u) reassembly-mismatches=%u\n",
+-                    layer_name(layer), outcome.injection_landed ? "yes" : "NO",
+-                    outcome.reached_lobby ? "YES - FAIL-OPEN" : "no",
+-                    outcome.inviter_link_state, outcome.joiner_link_state,
+-                    outcome.reassembly_mismatches);
+-    }
+-}
+ 
+ /*
+  * The SAS layer, reported as NOT IMPLEMENTABLE rather than faked.
+  *
+  * The plan asks for a tampered SAS. The tamper surface for SAS is
+  * `PairPipeline::approve_local(approval_kind, displayed_sas)`
+  * (pair_pipeline.cpp:159-169), which rejects when the code the APP presented is
+  * not the code the transcript derives. The live engine never reaches it:
+  * `session_engine.cpp:5598` calls the ONE-argument
+  * `approve_local(approval_kind)`, and no public action or choice kind carries
+  * SAS bytes - the descriptor has no choice payload at all
+  * (`fly_session_action_descriptor_v2`) and `confirm_pairing_sas_when_the_abi_asks`
+  * submits the confirmation with `choice_size == 0`. There is therefore no way for
+  * a test to present a wrong SAS without either calling the peer's reducer
+  * directly or synthesizing a record the real sender never produces - both
+  * forbidden by this harness's contract.
+  *
+  * This function asserts the OBSERVED shape instead of pretending, so the moment
+  * the engine grows an app-supplied SAS the assertions below start failing and
+  * the case has to be implemented for real.
++ *
++ * DIAGNOSIS (round 2), with the whole chain read end to end:
++ *   1. The engine's confirm branch (`session_engine.cpp:5583-5621`) requires
++ *      `pending.choice_size == 0` IN THE GUARD ITSELF, so a CONFIRM_SAS action
++ *      that carries any choice payload is REJECTED before it can be applied. The
++ *      app has no byte with which to assert a SAS.
++ *   2. It then calls `pair_signature_->approve_local(FLY_SESSION_APPROVAL_BLE_SAS_MATCH_V2)`
++ *      - the ONE-argument overload - and never the two-argument
++ *      `PairPipeline::approve_local(kind, displayed_sas)` whose
++ *      `displayed_sas != *expected` check lives at `pair_pipeline.cpp:164`.
++ *   3. `PairPipeline` is not merely unused on this path: it is NEVER
++ *      INSTANTIATED anywhere in the engine. `grep -n PairPipeline shared/src/session`
++ *      matches only its own declaration/definition
++ *      (`link/pair_pipeline.{hpp,cpp}`) and a `friend class PairPipeline;` in
++ *      `pair_auth_reducer.hpp:65`. The live path is
++ *      `PairSignatureScheduler::approve_local` -> `PairVerificationScheduler::approve_local`
++ *      -> `PairAuthenticationReducer::approve_local` (`pair_sas_scheduler.hpp:47`,
++ *      created at `session_engine.cpp:1093`).
++ *
++ * CONCLUSION: NOT EXPLOITABLE through the public ABI, and NOT a "confirms a SAS
++ * it was never shown" defect. The engine derives the SAS itself from the
++ * pair-signature-bound transcript and publishes it for display
++ * (`session_engine.cpp:330` reads `pair_sas_->sas()`); the confirmation is the
++ * human's assertion that the two displayed codes match, which is what SAS-based
++ * pairing is. There is no input that can make an end confirm a value of the
++ * attacker's choosing.
++ *
++ * RESIDUAL OBSERVATION for the designers, not a harness limitation:
++ * `PairPipeline` is entirely dead code, so if the design INTENDS the app's
++ * confirmation to be cryptographically bound to the displayed SAS, that binding
++ * does not exist in the shipped engine - the binding is the human comparison
++ * alone. Whether that is a defect is a design question, and it is recorded here
++ * rather than resolved by a test.
+  */
+ void sas_has_no_injection_surface_in_the_live_engine()
+ {
+     std::printf("tamper matrix: SAS layer (no injection surface - asserted, not faked)\n");
+     LoopbackWorld world;
+     EngineFixture inviter(world, LoopbackSide::Initiator);
+     EngineFixture joiner(world, LoopbackSide::Responder);
+     inviter.platform.ready();
+     joiner.platform.ready();
+     inviter.executor.run_all();
+@@ -647,24 +705,25 @@ int main()
+ {
+     std::setvbuf(stdout, nullptr, _IONBF, 0);
+     the_control_reaches_the_connected_lobby();
+ 
+     const TamperLayer layers[] = {
+         TamperLayer::Role,       TamperLayer::Generation,
+         TamperLayer::Capability, TamperLayer::Binding,
+         TamperLayer::Hello,      TamperLayer::Ready,
+         TamperLayer::ChannelBind, TamperLayer::Credential,
+         TamperLayer::TlsPin,     TamperLayer::Exporter,
++        TamperLayer::CommitReveal, TamperLayer::PairSignature,
++        TamperLayer::KeyConfirm,
+     };
+     for (const auto layer : layers) a_tampered_layer_cannot_reach_the_lobby(layer);
+ 
+-    report_the_three_unsettled_pair_layers();
+     sas_has_no_injection_surface_in_the_live_engine();
+ 
+     if (flynes::session::loopback::failures != 0)
+     {
+         std::fprintf(stderr, "%d failure(s)\n", flynes::session::loopback::failures);
+         return 1;
+     }
+     std::puts("flynes_two_engine_tamper_matrix passed");
+     return 0;
+ }
+
+## Diff 5e8e73f vs e0c8bf4 (shared/ + report)
+
+diff --git a/.superpowers/sdd/w3-tamper-report.md b/.superpowers/sdd/w3-tamper-report.md
+new file mode 100644
+index 0000000..adcd556
+--- /dev/null
++++ b/.superpowers/sdd/w3-tamper-report.md
+@@ -0,0 +1,86 @@
++# W3 round 2 — tamper matrix fail-open + SAS diagnosis
++
++Worktree: `nearby-dual-e2e-harness`
++Branch: `codex/nearby-dual-e2e-harness`
++
++## Status
++
++GREEN. Round-1 "fail-open" on commit/reveal, pair signature, and key-confirm was a harness bug (tampered GATT copies discarded on BACKPRESSURE). Persist + prefix-only rewrite already lived on this branch; this round added the assertions that would have caught that bug, watched them fail with persist disabled, restored persist, and re-ran green.
++
++W0-owned files were not touched. `flynes_runtime_pcm_contention` and zip corpus were not fixed.
++
++## What this round added
++
++- Fail-closed assertions for the three previously fail-open pair-secure layers:
++  injection landed, `tampered_logical_delivered >= 1`, neither engine
++  `CONNECTED_LOBBY`, documented named states with CONNECTING or FAILED on at
++  least one end, and `aead-open-fail` or `verify-fail` on the receiver.
++- SAS diagnosis recorded in the test comment (and below): live engine does not
++  compare SAS bytes; two-arg `PairPipeline::approve_local` is unused; public
++  action has no SAS field (IF05). Not "fixed" by adding SAS bytes to the action.
++- GATT persist (`RelayDirectionState::remember_replacement`) and prefix-only
++  rewrite already present; reassembly mismatch is counted, not treated as a
++  product failure.
++
++## TDD evidence
++
++### RED
++
++Persist (`remember_replacement`) temporarily disabled. WSL:
++
++```
++export PATH="$HOME/.cargo/bin:$PATH"
++cmake --build out/w3-linux/shared/build --target flynes_two_engine_tamper_matrix_test -j 24
++ctest --test-dir out/w3-linux/shared/build --output-on-failure --tests-regex flynes_two_engine_tamper_matrix
++```
++
++Observed (exit 8):
++
++```
++  commit/reveal          landed=yes crossed=0 inviter=8(-) joiner=8(-) aead-open-fail=0/0
++FAIL: a tampered commit/reveal actually CROSSED (observed 0)
++FAIL: a tampered commit/reveal is rejected by the RECEIVER's own provider (aead-open-fail=0/0 verify-fail=0/0)
++FAIL: a tampered commit/reveal NEVER reaches FLY_SESSION_LINK_CONNECTED_LOBBY_V2 (inviter=8 joiner=8)
++  pair signature         landed=yes crossed=0 inviter=8(-) joiner=8(-) aead-open-fail=0/0
++  key-confirm            landed=yes crossed=0 inviter=8(-) joiner=8(-) aead-open-fail=0/0
++18 failure(s)
++```
++
++Landed-without-crossed plus both ends in lobby (8) is the round-1 harness bug.
++
++### GREEN
++
++Persist restored. Same ctest: `1/1 Test #91: flynes_two_engine_tamper_matrix ... Passed`. Direct binary:
++
++```
++  CONTROL (no tamper)    landed=yes crossed=0 inviter=8 joiner=8 aead-open-fail=0/0
++  ... 10 other layers fail-closed, at least one end FAILED ...
++  commit/reveal          landed=yes crossed=1 inviter=5 joiner=9 aead-open-fail=0/1
++  pair signature         landed=yes crossed=1 inviter=5 joiner=9 aead-open-fail=0/1
++  key-confirm            landed=yes crossed=1 inviter=5 joiner=9 aead-open-fail=0/1
++  SAS layer: confirm offered=yes, inviter stage=1 joiner stage=1, SAS agrees=yes
++flynes_two_engine_tamper_matrix passed
++```
++
++`flynes_two_engine_dual_run` also Passed (0.07 s). LoopbackTransport is the fixture's in-process transport, not Quinn.
++
++## Pair-secure body layout (verbatim)
++
++```
++body[0]=version 1, [1..3]=reserved 0, [4..11]=message_counter u64be nonzero,
++body[12..]=ciphertext || 16-byte AEAD tag
++body_size = pair_secure_inner_size_v1(type) + 28
++```
++
++AEAD tag is the last 16 body bytes. `kLastBodyByte` xor therefore hits the tag; the GATT trailing domain hash is recomputed so the transport cannot eat the tamper.
++
++## SAS diagnosis
++
++The live engine at `session_engine.cpp:5598` calls `PairSignatureScheduler::approve_local(kind)`, which does not compare SAS bytes — it only forwards the approval kind. Two-arg `PairPipeline::approve_local(kind, displayed_sas)` (the only compare of `displayed_sas != *expected`) is unused; `PairPipeline` is never instantiated by the engine. Single-arg `PairPipeline::approve_local(kind)` reject-path is `entry_mode==1 && !known_path` (`pair_pipeline.cpp:174`), and even that overload is not on the live confirm branch. The public action has no SAS field (IF05): `fly_session_action_choice_v2` is boolean / invite-code / reference only, and `CONFIRM_SAS` is submitted with `choice_size == 0`; the confirm guard rejects any choice payload before apply. This is not exploitable through the public ABI and is not a "confirms a SAS it was never shown" defect: the engine derives SAS from the transcript and the human compares the two displayed codes. Do not "fix" by adding SAS bytes to the public action. Residual design observation: if confirmation was intended to be cryptographically bound to the displayed SAS, that binding is dead code (`PairPipeline`), not the shipped engine.
++
++## Concerns
++
++- Pair-layer sender stays `AUTHENTICATING` (5) because it never observes the peer's AEAD rejection; the receiver is `FAILED` (9). The named-state check is CONNECTING or FAILED on at least one end, not both. Tightening to "both CONNECTING or FAILED" would fail this honest asymmetry.
++- GATT reassembly groups may start mid-message after BACKPRESSURE; mismatches are counted (`logical_tamper_reassembly_mismatches`) and are not treated as product failure. Only a complete record prefix is tampered.
++- Full `ctest` in `out/w3-linux` still reports `flynes_runtime_pcm_contention` (Not Run / subobject-linkage `-Werror`) and `flynes_zip_payload_fixture_corpus_check` (Failed). Out of scope per brief.
++- These tests prove engines drove every QUIC port primitive over in-process LoopbackTransport and rejected tampered bytes. They do not prove bytes went through Quinn (`flynes_loopback_quic_probe` / `flynes_quic_provider_linkage` own that).
+diff --git a/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp b/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
+index 445d75a..28cda51 100644
+--- a/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
++++ b/shared/tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
+@@ -441,77 +441,128 @@ void the_control_reaches_the_connected_lobby()
+     check(control.reached_lobby,
+           "the control's lobby result is the POSITIVE result: both engines really "
+           "entered the lobby rather than merely avoiding it");
+     /* The control must reach the QUIC Control stream, or the HELLO/READY/
+      * ChannelBind cases would have nothing to tamper. */
+     check(control.inviter_quic_writes > 0 && control.joiner_quic_writes > 0,
+           "the control's engines really wrote to the QUIC link, so the Control-"
+           "stream tamper cases have bytes to target");
+ }
+ 
++bool is_previously_fail_open_pair_layer(TamperLayer layer)
++{
++    return layer == TamperLayer::CommitReveal ||
++           layer == TamperLayer::PairSignature ||
++           layer == TamperLayer::KeyConfirm;
++}
++
++bool connecting_or_failed(unsigned state)
++{
++    return state == FLY_SESSION_LINK_CONNECTING_V2 ||
++           state == FLY_SESSION_LINK_FAILED_V2;
++}
++
+ /*
+  * Asserts the fail-closed invariant for one tampered layer.
++ *
++ * For the three pair-secure layers that round 1 reported fail-open, the
++ * assertion is stronger than "did not reach the lobby": the tampered copy must
++ * have CROSSED, and the RECEIVER's own provider must have rejected it with
++ * aead-open-fail or verify-fail. Those extra clauses are what made the
++ * round-1 harness bug visible (landed=yes, crossed=0, aead-open-fail=0/0).
+  */
+ void a_tampered_layer_cannot_reach_the_lobby(TamperLayer layer)
+ {
+     const auto outcome = run_case(layer);
+     char message[512];
++    const bool pair_layer = is_previously_fail_open_pair_layer(layer);
++
++    std::snprintf(message, sizeof(message),
++                  "the %s tamper really landed on the sender's own bytes; "
++                  "without that the case would be a second control",
++                  layer_name(layer));
++    check(outcome.injection_landed, message);
+ 
+-    if (!outcome.injection_landed)
++    if (pair_layer)
+     {
+         std::snprintf(message, sizeof(message),
+-                      "the %s tamper really landed on the sender's own bytes; "
+-                      "without that the case would be a second control",
+-                      layer_name(layer));
+-        check(false, message);
+-        return;
+-    }
+-    if (outcome.reached_lobby)
+-    {
++                      "a tampered %s actually CROSSED (tampered_logical_delivered "
++                      ">= 1, observed %u); landed-without-crossed is the round-1 "
++                      "harness fail-open",
++                      layer_name(layer), outcome.tampered_groups_delivered);
++        check(outcome.tampered_groups_delivered >= 1u, message);
++
++        const bool receiver_crypto =
++            outcome.inviter_aead_open_failures > 0 ||
++            outcome.joiner_aead_open_failures > 0 ||
++            outcome.inviter_verify_failures > 0 ||
++            outcome.joiner_verify_failures > 0;
+         std::snprintf(message, sizeof(message),
+-                      "a tampered %s NEVER reaches "
+-                      "FLY_SESSION_LINK_CONNECTED_LOBBY_V2",
+-                      layer_name(layer));
+-        check(false, message);
+-        return;
++                      "a tampered %s is rejected by the RECEIVER's own provider "
++                      "(aead-open-fail=%d/%d verify-fail=%d/%d)",
++                      layer_name(layer), outcome.inviter_aead_open_failures,
++                      outcome.joiner_aead_open_failures,
++                      outcome.inviter_verify_failures,
++                      outcome.joiner_verify_failures);
++        check(receiver_crypto, message);
+     }
++
++    std::snprintf(message, sizeof(message),
++                  "a tampered %s NEVER reaches "
++                  "FLY_SESSION_LINK_CONNECTED_LOBBY_V2 (inviter=%u joiner=%u)",
++                  layer_name(layer), outcome.inviter_link_state,
++                  outcome.joiner_link_state);
++    check(!outcome.reached_lobby &&
++              outcome.inviter_link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2 &&
++              outcome.joiner_link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
++          message);
++
+     /*
+      * A tamper case is asymmetric BY DESIGN: the end that receives the tampered
+      * record detects it and fails, while the end that sent it never learns and
+      * stays where it was. So the invariant is not "the two states agree" - it is:
+      *   * neither end is in the lobby (asserted above),
+      *   * every end is in one of the link states the ABI documents, and
+-     *   * AT LEAST ONE end explicitly REFUSED - it reached
+-     *     FLY_SESSION_LINK_FAILED_V2 rather than merely stalling.
+-     * That last clause is what separates a real fail-closed result from a rig
+-     * that simply stopped making progress: a mutual CONNECTING stall would prove
+-     * nothing about the layer under test.
++     *   * AT LEAST ONE end is in the named refuse/wait states CONNECTING or
++     *     FAILED rather than an unspecified one. Pair-secure tampers leave the
++     *     sender in AUTHENTICATING because it never observes the peer's AEAD
++     *     rejection; the RECEIVER is FAILED.
+      */
+     const auto documented = [](unsigned state) {
+         return state == FLY_SESSION_LINK_UNAVAILABLE_V2 ||
+                state == FLY_SESSION_LINK_IDLE_V2 ||
+                state == FLY_SESSION_LINK_DISCOVERING_V2 ||
+                state == FLY_SESSION_LINK_INVITING_V2 ||
+                state == FLY_SESSION_LINK_JOINING_V2 ||
+                state == FLY_SESSION_LINK_AUTHENTICATING_V2 ||
+                state == FLY_SESSION_LINK_PROVISIONING_V2 ||
+                state == FLY_SESSION_LINK_CONNECTING_V2 ||
+                state == FLY_SESSION_LINK_FAILED_V2;
+     };
+     std::snprintf(message, sizeof(message),
+                   "a tampered %s leaves BOTH engines in a link state the ABI "
+                   "documents (inviter=%u joiner=%u)",
+                   layer_name(layer), outcome.inviter_link_state,
+                   outcome.joiner_link_state);
+     check(documented(outcome.inviter_link_state) &&
+               documented(outcome.joiner_link_state),
+           message);
++    std::snprintf(message, sizeof(message),
++                  "a tampered %s leaves a NAMED state CONNECTING (%u) or "
++                  "FAILED (%u) on at least one end (inviter=%u joiner=%u)",
++                  layer_name(layer),
++                  static_cast<unsigned>(FLY_SESSION_LINK_CONNECTING_V2),
++                  static_cast<unsigned>(FLY_SESSION_LINK_FAILED_V2),
++                  outcome.inviter_link_state, outcome.joiner_link_state);
++    check(connecting_or_failed(outcome.inviter_link_state) ||
++              connecting_or_failed(outcome.joiner_link_state),
++          message);
+     std::snprintf(message, sizeof(message),
+                   "a tampered %s is explicitly REFUSED, not merely stalled: at "
+                   "least one end reaches FLY_SESSION_LINK_FAILED_V2 (%u) "
+                   "(inviter=%u joiner=%u)",
+                   layer_name(layer),
+                   static_cast<unsigned>(FLY_SESSION_LINK_FAILED_V2),
+                   outcome.inviter_link_state, outcome.joiner_link_state);
+     check(outcome.inviter_link_state == FLY_SESSION_LINK_FAILED_V2 ||
+               outcome.joiner_link_state == FLY_SESSION_LINK_FAILED_V2,
+           message);
+@@ -572,37 +623,40 @@ void a_tampered_layer_cannot_reach_the_lobby(TamperLayer layer)
+  * (`fly_session_action_descriptor_v2`) and `confirm_pairing_sas_when_the_abi_asks`
+  * submits the confirmation with `choice_size == 0`. There is therefore no way for
+  * a test to present a wrong SAS without either calling the peer's reducer
+  * directly or synthesizing a record the real sender never produces - both
+  * forbidden by this harness's contract.
+  *
+  * This function asserts the OBSERVED shape instead of pretending, so the moment
+  * the engine grows an app-supplied SAS the assertions below start failing and
+  * the case has to be implemented for real.
+  *
+- * DIAGNOSIS (round 2), with the whole chain read end to end:
+- *   1. The engine's confirm branch (`session_engine.cpp:5583-5621`) requires
+- *      `pending.choice_size == 0` IN THE GUARD ITSELF, so a CONFIRM_SAS action
+- *      that carries any choice payload is REJECTED before it can be applied. The
+- *      app has no byte with which to assert a SAS.
+- *   2. It then calls `pair_signature_->approve_local(FLY_SESSION_APPROVAL_BLE_SAS_MATCH_V2)`
+- *      - the ONE-argument overload - and never the two-argument
+- *      `PairPipeline::approve_local(kind, displayed_sas)` whose
+- *      `displayed_sas != *expected` check lives at `pair_pipeline.cpp:164`.
+- *   3. `PairPipeline` is not merely unused on this path: it is NEVER
+- *      INSTANTIATED anywhere in the engine. `grep -n PairPipeline shared/src/session`
+- *      matches only its own declaration/definition
+- *      (`link/pair_pipeline.{hpp,cpp}`) and a `friend class PairPipeline;` in
+- *      `pair_auth_reducer.hpp:65`. The live path is
+- *      `PairSignatureScheduler::approve_local` -> `PairVerificationScheduler::approve_local`
+- *      -> `PairAuthenticationReducer::approve_local` (`pair_sas_scheduler.hpp:47`,
+- *      created at `session_engine.cpp:1093`).
++ * DIAGNOSIS (W3 round 2), with the whole chain read end to end:
++ *   1. The live engine calls `PairSignatureScheduler::approve_local(kind)` at
++ *      `session_engine.cpp:5598`. That overload does NOT compare SAS bytes; it
++ *      only forwards the approval kind to verification.
++ *   2. Two-arg `PairPipeline::approve_local(kind, displayed_sas)` (the only
++ *      path that compares `displayed_sas != *expected` at
++ *      `pair_pipeline.cpp:164`) is unused by the engine. `PairPipeline` is
++ *      never instantiated in `session_engine.cpp`.
++ *   3. Single-arg `PairPipeline::approve_local(kind)` reject-path is
++ *      `entry_mode==1 && !known_path` (`pair_pipeline.cpp:174`). That is the
++ *      BLE-SAS anonymous path, and even that overload is not on the live
++ *      confirm branch.
++ *   4. The public action has no SAS field (IF05). `fly_session_action_choice_v2`
++ *      is boolean / invite-code / reference only; `CONFIRM_SAS` is submitted
++ *      with `choice_size == 0`. The confirm guard requires
++ *      `pending.choice_size == 0`, so a choice payload is REJECTED before
++ *      apply. Do not "fix" this by adding SAS bytes to the public action.
++ *   5. The live path is `PairSignatureScheduler::approve_local` ->
++ *      `PairVerificationScheduler::approve_local` ->
++ *      `PairAuthenticationReducer::approve_local`.
+  *
+  * CONCLUSION: NOT EXPLOITABLE through the public ABI, and NOT a "confirms a SAS
+  * it was never shown" defect. The engine derives the SAS itself from the
+  * pair-signature-bound transcript and publishes it for display
+  * (`session_engine.cpp:330` reads `pair_sas_->sas()`); the confirmation is the
+  * human's assertion that the two displayed codes match, which is what SAS-based
+  * pairing is. There is no input that can make an end confirm a value of the
+  * attacker's choosing.
+  *
+  * RESIDUAL OBSERVATION for the designers, not a harness limitation:

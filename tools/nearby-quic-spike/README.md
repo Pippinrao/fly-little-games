@@ -7,7 +7,7 @@ the shared ABI/schema, or implement multiplayer, BLE/QR pairing, ChannelBind,
 Wi-Fi creation/join, or a certified platform support entry.
 
 Source requirements: approved design
-[`§26 M0a, §27 release blockers, §28 security review`](../../docs/superpowers/specs/2026-09-04-cross-platform-nearby-multiplayer-design.md).
+[`§26 M0a, §27 release blockers, §28 security review`](../../docs/archive/nearby-2026-09-21/docs/superpowers/specs/2026-09-04-cross-platform-nearby-multiplayer-design.md).
 The `flynes-m0a-quic-v1` ALPN and probe messages are deliberately separate
 from production wire messages.
 

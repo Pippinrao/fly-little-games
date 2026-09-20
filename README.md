@@ -4,6 +4,8 @@ FlyNES 是面向 Android、HarmonyOS NEXT 和 iOS 的离线 NES/Famicom 模拟�
 
 当前稳定范围包括中文游戏目录、来源扫描、收藏与最近游戏、独立存档、可编辑虚拟手柄，以及 Nearest、Sharp Bilinear、MMPX、ScaleFX、CRT 等显示路径。高刷新率和运动补偿只在设备能力与实测证据满足门禁时开放。
 
+附近联机正在收束到 **Android ↔ HarmonyOS 的最小可玩闭环**。设计、执行计划与进度统一从 [docs/nearby](docs/nearby/README.md) 进入；历史方案已归档，不能把组件测试通过当作产品可玩。
+
 ## 仓库结构
 
 - `app/`：Android 应用与 instrumentation 测试

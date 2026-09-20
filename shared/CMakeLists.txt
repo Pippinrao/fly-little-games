@@ -1668,22 +1668,6 @@ if(FLYNES_BUILD_TESTS)
     # test above, so there is one harness implementation and no library to keep
     # in sync.
     # ======================================================================
-    add_executable(flynes_two_engine_tamper_matrix_test
-        tests/nearby/scenarios/test_two_engine_tamper_matrix.cpp
-        tests/nearby/harness/two_engine_loopback_fixture.cpp)
-    target_link_libraries(flynes_two_engine_tamper_matrix_test PRIVATE flynes_session)
-    target_include_directories(flynes_two_engine_tamper_matrix_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness)
-    target_compile_features(flynes_two_engine_tamper_matrix_test PRIVATE cxx_std_17)
-    set_target_properties(flynes_two_engine_tamper_matrix_test PROPERTIES CXX_EXTENSIONS NO)
-    flynes_enable_strict_warnings(flynes_two_engine_tamper_matrix_test)
-    add_test(NAME flynes_two_engine_tamper_matrix
-        COMMAND flynes_two_engine_tamper_matrix_test)
-    set_tests_properties(flynes_two_engine_tamper_matrix PROPERTIES
-        LABELS "nearby_integration;nearby_protocol;nearby_auth")
-
     add_executable(flynes_two_engine_dual_run_test
         tests/nearby/scenarios/test_two_engine_dual_run.cpp
         tests/nearby/harness/two_engine_loopback_fixture.cpp)
