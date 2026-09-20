@@ -238,6 +238,8 @@ private:
     };
     std::optional<RetiredQuicOperation> retired_control_quic_{};
     std::optional<RetiredQuicOperation> retired_initial_quic_{};
+    std::optional<RetiredQuicOperation> retired_dual_quic_{};
+    std::optional<RetiredQuicOperation> retired_content_quic_{};
     fly_session_op_token_v2 session_signing_token_{};
     fly_session_op_token_v2 link_handshake_token_{};
     fly_session_op_token_v2 gatt_write_token_{};

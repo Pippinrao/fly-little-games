@@ -1248,6 +1248,7 @@ struct EngineFixture final
         int cancels = 0;
         fly_session_result_v2 cancel_result = FLY_SESSION_V2_OK;
         fly_session_op_token_v2 cancelled_token{};
+        std::vector<fly_session_op_token_v2> cancelled_tokens;
         int closes = 0;
         fly_session_op_token_v2 close_token{};
         fly_session_resource_handle_v2 close_connection = 0;
@@ -1483,6 +1484,7 @@ struct EngineFixture final
             auto* self = static_cast<Quic*>(context);
             ++self->cancels;
             self->cancelled_token = *token;
+            self->cancelled_tokens.push_back(*token);
             return self->cancel_result;
         }
 

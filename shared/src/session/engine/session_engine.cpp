@@ -2122,7 +2122,12 @@ void SessionEngine::cancel_dual_locked() noexcept
             dual::DualSessionController::EffectKind::QueryContent)
             ports_.cancel_content(&dual_token_);
         else
-            ports_.cancel_quic(&dual_token_);
+        {
+            const auto result = ports_.cancel_quic(&dual_token_);
+            if (result == FLY_SESSION_V2_ACCEPTED)
+                retired_dual_quic_ = RetiredQuicOperation{
+                    dual_token_, dual_expected_kind_};
+        }
         dual_active_ = false;
     }
     dual_dispatch_pending_ = false;
@@ -2159,7 +2164,10 @@ void SessionEngine::cancel_content_locked() noexcept
 {
     if (content_active_)
     {
-        ports_.cancel_quic(&content_token_);
+        const auto result = ports_.cancel_quic(&content_token_);
+        if (result == FLY_SESSION_V2_ACCEPTED)
+            retired_content_quic_ = RetiredQuicOperation{
+                content_token_, content_expected_kind_};
         content_active_ = false;
     }
     content_dispatch_pending_ = false;
@@ -2736,6 +2744,10 @@ fly_session_result_v2 SessionEngine::deliver(
             same_token(event.token, retired_control_quic_->token);
         const bool retired_initial_quic_event = retired_initial_quic_ &&
             same_token(event.token, retired_initial_quic_->token);
+        const bool retired_dual_quic_event = retired_dual_quic_ &&
+            same_token(event.token, retired_dual_quic_->token);
+        const bool retired_content_quic_event = retired_content_quic_ &&
+            same_token(event.token, retired_content_quic_->token);
         const bool session_signing_event = session_signing_active_ &&
             same_token(event.token, session_signing_token_);
         const bool link_handshake_event = link_handshake_active_ &&
@@ -2755,7 +2767,8 @@ fly_session_result_v2 SessionEngine::deliver(
             !initial_plan_event && !initial_bearer_event &&
             !endpoint_offer_event && !initial_quic_bind_event &&
             !quic_close_event && !retired_control_quic_event &&
-            !retired_initial_quic_event &&
+            !retired_initial_quic_event && !retired_dual_quic_event &&
+            !retired_content_quic_event &&
             !session_signing_event && !link_handshake_event &&
             !dual_event && !content_event &&
             !gatt_write_event)
@@ -2771,6 +2784,7 @@ fly_session_result_v2 SessionEngine::deliver(
             initial_bearer_event || endpoint_offer_event ||
             initial_quic_bind_event || quic_close_event ||
             retired_control_quic_event || retired_initial_quic_event ||
+            retired_dual_quic_event || retired_content_quic_event ||
             session_signing_event ||
             link_handshake_event || dual_event || content_event ||
             gatt_write_event)
@@ -2802,6 +2816,8 @@ fly_session_result_v2 SessionEngine::deliver(
                 : quic_close_event ? quic_close_debt_->token
                 : retired_control_quic_event ? retired_control_quic_->token
                 : retired_initial_quic_event ? retired_initial_quic_->token
+                : retired_dual_quic_event ? retired_dual_quic_->token
+                : retired_content_quic_event ? retired_content_quic_->token
                 : session_signing_event ? session_signing_token_
                 : link_handshake_event ? link_handshake_token_
                 : dual_event ? dual_token_
@@ -2830,6 +2846,10 @@ fly_session_result_v2 SessionEngine::deliver(
                     ? retired_control_quic_->expected_kind
                 : retired_initial_quic_event
                     ? retired_initial_quic_->expected_kind
+                : retired_dual_quic_event
+                    ? retired_dual_quic_->expected_kind
+                : retired_content_quic_event
+                    ? retired_content_quic_->expected_kind
                 : session_signing_event ? session_signing_expected_kind_
                 : link_handshake_event ? link_handshake_expected_kind_
                 : dual_event ? dual_expected_kind_
@@ -4706,6 +4726,28 @@ void SessionEngine::run_work() noexcept
                             }
                         }
                         retired_initial_quic_.reset();
+                        if (shutdown_requested_) complete_shutdown_locked();
+                    }
+                }
+                else if (retired_dual_quic_ &&
+                         same_token(event.token, retired_dual_quic_->token))
+                {
+                    if (event.terminal != 0 ||
+                        (event.payload_kind == FLY_SESSION_PROVIDER_QUIC_DATA_V2 &&
+                         event.result == FLY_SESSION_V2_OK))
+                    {
+                        retired_dual_quic_.reset();
+                        if (shutdown_requested_) complete_shutdown_locked();
+                    }
+                }
+                else if (retired_content_quic_ &&
+                         same_token(event.token, retired_content_quic_->token))
+                {
+                    if (event.terminal != 0 ||
+                        (event.payload_kind == FLY_SESSION_PROVIDER_QUIC_DATA_V2 &&
+                         event.result == FLY_SESSION_V2_OK))
+                    {
+                        retired_content_quic_.reset();
                         if (shutdown_requested_) complete_shutdown_locked();
                     }
                 }
@@ -6747,7 +6789,8 @@ void SessionEngine::dispatch_retiring_quic_close() noexcept
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!quic_close_debt_ || !quic_close_debt_->dispatch_pending ||
-            retired_control_quic_ || retired_initial_quic_)
+            retired_control_quic_ || retired_initial_quic_ ||
+            retired_dual_quic_ || retired_content_quic_)
             return;
         quic_close_debt_->dispatch_pending = false;
         quic_close_debt_->active = true;
@@ -6775,6 +6818,7 @@ void SessionEngine::complete_shutdown_locked() noexcept
 {
     if (shutdown_complete_ || !shutdown_complete_view_ ||
         quic_close_debt_ || retired_control_quic_ || retired_initial_quic_ ||
+        retired_dual_quic_ || retired_content_quic_ ||
         !platform_watch_terminal_ || discovery_active_ ||
         gatt_subscribe_pending_ || gatt_subscription_active_ ||
         discovery_disconnect_pending_ || discovery_disconnect_active_ ||
