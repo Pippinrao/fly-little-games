@@ -4687,6 +4687,24 @@ void SessionEngine::run_work() noexcept
                         (event.payload_kind == FLY_SESSION_PROVIDER_QUIC_DATA_V2 &&
                          event.result == FLY_SESSION_V2_OK))
                     {
+                        if (event.payload_kind ==
+                                FLY_SESSION_PROVIDER_QUIC_CONNECTION_V2 &&
+                            event.result == FLY_SESSION_V2_OK)
+                        {
+                            ParsedProviderEvent parsed;
+                            if (parse_provider_event_v2(
+                                    event, retired_initial_quic_->token,
+                                    retired_initial_quic_->expected_kind,
+                                    parsed) == FLY_SESSION_V2_OK &&
+                                parsed.resource != 0 && !quic_close_debt_)
+                            {
+                                auto close_token = event.token;
+                                close_token.operation_id =
+                                    make_link_operation_token_locked().operation_id;
+                                quic_close_debt_ = QuicCloseDebt{
+                                    close_token, parsed.resource, true, false};
+                            }
+                        }
                         retired_initial_quic_.reset();
                         if (shutdown_requested_) complete_shutdown_locked();
                     }

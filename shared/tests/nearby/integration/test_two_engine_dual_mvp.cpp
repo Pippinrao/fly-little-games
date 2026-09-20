@@ -884,6 +884,101 @@ void shutdown_retains_cancelled_quic_read_until_terminal(
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
+void shutdown_closes_connection_created_after_cancel()
+{
+    std::puts("dual mvp: late QUIC connection is still closed");
+    LobbyPair pair(false, false);
+    pair.inviter.platform.ready();
+    pair.joiner.platform.ready();
+    pair.inviter.executor.run_all();
+    pair.joiner.executor.run_all();
+    std::vector<fly_session_action_descriptor_v2> inviter_actions;
+    std::vector<fly_session_action_descriptor_v2> joiner_actions;
+    pair.inviter.snapshot(&inviter_actions);
+    pair.joiner.snapshot(&joiner_actions);
+    const auto* create = find_action(
+        inviter_actions, FLY_SESSION_ACTION_CREATE_INVITE_V2);
+    const auto* join = find_action(
+        joiner_actions, FLY_SESSION_ACTION_JOIN_CODE_V2);
+    check(create != nullptr && join != nullptr,
+          "both link actions exist before late connection test");
+    if (create && join)
+    {
+        submit(pair.inviter, *create, 9911, false);
+        submit(pair.joiner, *join, 9912, true);
+    }
+    for (auto& action : inviter_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    for (auto& action : joiner_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    if (!create || !join) return;
+    pair.transport.attach(LoopbackRole::AdvertiserPeripheral, pair.inviter);
+    pair.transport.attach(LoopbackRole::ScannerCentral, pair.joiner);
+    check(pair.transport.connect_ends() == 2, "both ends have one link");
+    for (int round = 0; round < 4000; ++round)
+    {
+        flynes::session::loopback::relay_gatt(pair.transport, pair.relayed);
+        flynes::session::loopback::relay_quic(pair.transport, pair.relayed);
+        flynes::session::loopback::pump_once(pair.inviter, pair.inviter_pump);
+        flynes::session::loopback::pump_once(pair.joiner, pair.joiner_pump);
+        pair.inviter.executor.run_all();
+        pair.joiner.executor.run_all();
+        if (flynes::session::loopback::pairing_sas_is_offered(pair.inviter) &&
+            flynes::session::loopback::pairing_sas_is_offered(pair.joiner))
+        {
+            flynes::session::loopback::confirm_pairing_sas_when_the_abi_asks(
+                pair.inviter, 10000 + round);
+            flynes::session::loopback::confirm_pairing_sas_when_the_abi_asks(
+                pair.joiner, 11000 + round);
+        }
+        if (pair.inviter.quic.connects + pair.inviter.quic.listens >
+            pair.inviter_pump.quic_connects + pair.inviter_pump.quic_listens)
+            break;
+    }
+    const auto connection_token = pair.inviter.quic.last_token;
+    check(pair.inviter.quic.connects + pair.inviter.quic.listens >
+              pair.inviter_pump.quic_connects + pair.inviter_pump.quic_listens &&
+              connection_token.operation_id != 0,
+          "QUIC connection creator was accepted but not answered");
+    if (connection_token.operation_id == 0)
+    {
+        shutdown_pair(pair);
+        return;
+    }
+    pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+    pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+    check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9913) ==
+              FLY_SESSION_V2_ACCEPTED, "shutdown accepted before connection callback");
+    pair.inviter.executor.run_all();
+    check(pair.inviter.quic.closes == 0,
+          "no close can dispatch before connection handle exists");
+    const auto connection = pair.inviter.attached_link->allocate_quic_handle();
+    flynes::session::loopback::deliver_provider_resource(
+        pair.inviter.quic.inbox, connection_token,
+        FLY_SESSION_PROVIDER_QUIC_CONNECTION_V2, connection);
+    pair.inviter.executor.run_all();
+    check(pair.inviter.quic.closes == 1 &&
+              pair.inviter.quic.close_connection == connection,
+          "late-created connection is closed under its original handle");
+    if (pair.inviter.quic.closes == 1)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+    }
+    const auto destroy_result = fly_session_destroy_v2(pair.inviter.engine);
+    check(destroy_result == FLY_SESSION_V2_OK,
+          "late-created connection closes before shutdown completes");
+    if (destroy_result == FLY_SESSION_V2_OK) pair.inviter.engine = nullptr;
+    check(fly_session_begin_shutdown_v2(pair.joiner.engine, 9914) ==
+              FLY_SESSION_V2_ACCEPTED, "peer shutdown accepted");
+    pair.joiner.executor.run_all();
+    const auto peer_destroy = fly_session_destroy_v2(pair.joiner.engine);
+    check(peer_destroy == FLY_SESSION_V2_OK, "peer shutdown destroys");
+    if (peer_destroy == FLY_SESSION_V2_OK) pair.joiner.engine = nullptr;
+}
+
 } // namespace
 
 int main()
@@ -902,6 +997,7 @@ int main()
     shutdown_retains_cancelled_quic_read_until_terminal(2);
     shutdown_retains_cancelled_quic_read_until_terminal(1);
     shutdown_retains_cancelled_quic_read_until_terminal(2, true);
+    shutdown_closes_connection_created_after_cancel();
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",
