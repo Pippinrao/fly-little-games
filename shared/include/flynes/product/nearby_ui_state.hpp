@@ -1,7 +1,7 @@
 #pragma once
 
 // Pure product projection for the approved nearby multiplayer UX
-// (design docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md).
+// (design docs/archive/nearby-2026-09-21/docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md).
 //
 // This layer owns no platform API, no I/O, and no network result of its own:
 // it only projects shared session facts into the connection status, screen
@@ -36,7 +36,7 @@ struct NearbyLayout
 [[nodiscard]] NearbyLayout project_layout(double available_width) noexcept;
 
 // N00 chrome frozen to the approved HTML mockup `nearby()`
-// (docs/superpowers/specs/assets/nearby-ui-parity-review.html) and U06/U07:
+// (docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html) and U06/U07:
 // left column is kicker/headline/subtitle then 创建联机/输入配对码/扫码加入;
 // 附近设备/好友 tabs and 寻找设备 live on the right; pairing stages are N07/N10.
 [[nodiscard]] std::array<std::string_view, 6> n00_left_column_keys() noexcept;

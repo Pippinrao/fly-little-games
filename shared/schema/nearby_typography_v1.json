@@ -1,10 +1,10 @@
 {
   "contractId": "flynes-nearby-typography-v1",
-  "description": "Frozen nearby text roles from the approved HTML mockup docs/superpowers/specs/assets/nearby-ui-parity-review.html (SHA-256 C69FF8F5CC3A346071DBF2BC6E0F2291232ECB6732A8F38970FFCE1126577C16) and UX spec docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md. Numeric values are CSS target line boxes at default scale. This is not a native measurement record and does not claim screenshots exist.",
+  "description": "Frozen nearby text roles from the approved HTML mockup docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html (SHA-256 C69FF8F5CC3A346071DBF2BC6E0F2291232ECB6732A8F38970FFCE1126577C16) and UX spec docs/archive/nearby-2026-09-21/docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md. Numeric values are CSS target line boxes at default scale. This is not a native measurement record and does not claim screenshots exist.",
   "authority": {
-    "html": "docs/superpowers/specs/assets/nearby-ui-parity-review.html",
+    "html": "docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html",
     "htmlSha256": "C69FF8F5CC3A346071DBF2BC6E0F2291232ECB6732A8F38970FFCE1126577C16",
-    "ux": "docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md"
+    "ux": "docs/archive/nearby-2026-09-21/docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md"
   },
   "units": {
     "size": "css-px-at-default-scale",

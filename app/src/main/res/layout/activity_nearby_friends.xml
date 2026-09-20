@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
-  N00 nearby() from docs/superpowers/specs/assets/nearby-ui-parity-review.html
+  N00 nearby() from docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html
   and design U06/U07: left kicker/headline/subtitle + 创建联机/输入配对码/扫码加入;
   right 附近设备/好友 tabs and 寻找设备. Pairing stages are N07/N10, not this page.
   Review-only sample friends/devices stay out of the product (design §4).

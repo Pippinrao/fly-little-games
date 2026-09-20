@@ -1,6 +1,6 @@
 {
   "contractId": "flynes-nearby-ui-v1",
-  "description": "Application UI contract for the approved nearby multiplayer UX (design docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md). This is a product UI contract shared by Android, HarmonyOS NEXT and iOS - it is NOT a wire protocol, encodes no network success results, no credentials, and no device identities. The screen/reason/string identifiers here must stay in sync with shared/include/flynes/product/nearby_ui_state.hpp; tools/quality/check_nearby_ui_contract.py enforces platform string coverage and Chinese text equality.",
+  "description": "Application UI contract for the approved nearby multiplayer UX (design docs/archive/nearby-2026-09-21/docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md). This is a product UI contract shared by Android, HarmonyOS NEXT and iOS - it is NOT a wire protocol, encodes no network success results, no credentials, and no device identities. The screen/reason/string identifiers here must stay in sync with shared/include/flynes/product/nearby_ui_state.hpp; tools/quality/check_nearby_ui_contract.py enforces platform string coverage and Chinese text equality.",
   "statusFields": [
     "connectionStatus",
     "screenId",
@@ -445,7 +445,7 @@
     "fontScales": [1.0, 1.3, 2.0],
     "qrSquare": true,
     "n00": {
-      "source": "docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()",
+      "source": "docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()",
       "leftColumnKeys": [
         "nearby.entry.kicker",
         "nearby.entry.headline",

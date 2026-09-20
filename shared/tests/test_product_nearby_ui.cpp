@@ -329,7 +329,7 @@ void test_remaining_screen_actions()
 
 void test_n00_chrome_matches_approved_html_mockup()
 {
-    // Frozen to docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()
+    // Frozen to docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()
     // and design U06/U07: left actions, right 附近设备/好友 tabs, 寻找设备 on the
     // devices tab. Pairing stages belong on N07/N10, never on N00.
     const auto left = flynes::product::nearby::n00_left_column_keys();

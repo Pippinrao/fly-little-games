@@ -6,8 +6,8 @@ import {
 } from '../ui/NearbyTypography';
 
 // Colors and geometry are the approved nearby contract
-// (docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md §6 and
-// docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()).
+// (docs/archive/nearby-2026-09-21/docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md §6 and
+// docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()).
 const COLOR_BACKGROUND: string = '#121316';
 const COLOR_SURFACE: string = '#1B1D22';
 const COLOR_ON_SURFACE: string = '#F4EFE6';

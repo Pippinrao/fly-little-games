@@ -4,6 +4,11 @@ Repository conventions live in [AGENTS.md](../AGENTS.md); this file is the
 factual map: what the product is, how the tree is laid out, and the exact
 commands that build, test, and debug each of the three platforms.
 
+For the current nearby multiplayer scope and execution order, start at
+[docs/nearby](nearby/README.md). Historical plans under `docs/archive/` do not
+expand the current milestone. Repository/document cleanup does not trigger full
+product test runs; implementation uses the affected checks for its current slice.
+
 Read it before changing platform code or adding a bundled game.
 
 ## 1. What the product is
