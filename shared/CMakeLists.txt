@@ -1402,6 +1402,24 @@ if(FLYNES_BUILD_TESTS)
             COMMAND flynes_quic_provider_linkage_test)
         set_tests_properties(flynes_quic_provider_linkage PROPERTIES
             LABELS "nearby_protocol;nearby_ports")
+
+        add_executable(flynes_product_quic_wakeup_test
+            tests/nearby/integration/test_product_quic_wakeup.cpp)
+        target_link_libraries(flynes_product_quic_wakeup_test PRIVATE
+            flynes_session flynes_nearby_quic_provider)
+        add_dependencies(flynes_product_quic_wakeup_test
+            flynes_nearby_quic_provider_build)
+        target_include_directories(flynes_product_quic_wakeup_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+            ${FLYNES_QUIC_PROVIDER_ROOT}/include)
+        target_compile_features(flynes_product_quic_wakeup_test PRIVATE cxx_std_17)
+        flynes_enable_strict_warnings(flynes_product_quic_wakeup_test)
+        if(UNIX)
+            target_link_libraries(flynes_product_quic_wakeup_test PRIVATE pthread dl m)
+        endif()
+        add_test(NAME flynes_product_quic_wakeup COMMAND flynes_product_quic_wakeup_test)
+        set_tests_properties(flynes_product_quic_wakeup PROPERTIES TIMEOUT 30)
     endif()
 
     add_executable(flynes_session_v2_fencing_test
