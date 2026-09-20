@@ -752,10 +752,13 @@ void shutdown_waits_for_quic_close_terminal()
 
 void shutdown_retains_cancelled_quic_read_until_terminal(
     int target_stream_count, bool success_data = false,
-    bool during_submit = false)
+    bool during_submit = false,
+    fly_session_result_v2 cancel_result = FLY_SESSION_V2_ACCEPTED)
 {
     std::puts(during_submit
         ? "dual mvp: shutdown during Control read port call"
+        : cancel_result == FLY_SESSION_V2_DUPLICATE
+            ? "dual mvp: duplicate cancel retains bind read terminal"
         : target_stream_count == 1
         ? "dual mvp: shutdown retains cancelled bind read"
         : success_data
@@ -863,7 +866,7 @@ void shutdown_retains_cancelled_quic_read_until_terminal(
     }
     if (!during_submit)
     {
-        pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+        pair.inviter.quic.cancel_result = cancel_result;
         pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
         check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9904) ==
                   FLY_SESSION_V2_ACCEPTED,
@@ -887,6 +890,17 @@ void shutdown_retains_cancelled_quic_read_until_terminal(
           "the old QUIC read is cancelled under its original token");
     check(pair.inviter.quic.closes == 0,
           "old read terminal must settle before connection close dispatch");
+    if (pair.inviter.quic.closes != 0)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+        if (fly_session_destroy_v2(pair.inviter.engine) == FLY_SESSION_V2_OK)
+            pair.inviter.engine = nullptr;
+        shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
+        return;
+    }
 
     if (success_data)
     {
@@ -1057,9 +1071,12 @@ void shutdown_closes_connection_created_after_cancel(bool during_submit = false)
     if (peer_destroy == FLY_SESSION_V2_OK) pair.joiner.engine = nullptr;
 }
 
-void shutdown_retains_cancelled_dual_read_until_terminal()
+void shutdown_retains_cancelled_dual_read_until_terminal(
+    fly_session_result_v2 cancel_result = FLY_SESSION_V2_ACCEPTED)
 {
-    std::puts("dual mvp: shutdown retains cancelled DUAL read");
+    std::puts(cancel_result == FLY_SESSION_V2_DUPLICATE
+        ? "dual mvp: duplicate cancel retains DUAL and Control terminals"
+        : "dual mvp: shutdown retains cancelled DUAL read");
     LobbyPair pair(true, true);
     bring_up_lobby(pair);
     const auto ref = loopback_source_choice_ref_v1();
@@ -1100,7 +1117,7 @@ void shutdown_retains_cancelled_dual_read_until_terminal()
     check(pending, "DUAL StateCommit stream has an outstanding read credit");
     if (!pending) { shutdown_pair(pair); return; }
 
-    pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+    pair.inviter.quic.cancel_result = cancel_result;
     pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
     check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9924) ==
               FLY_SESSION_V2_ACCEPTED, "DUAL read shutdown accepted");
@@ -1114,6 +1131,17 @@ void shutdown_retains_cancelled_dual_read_until_terminal()
           "DUAL and Control each retain one accepted cancellation");
     check(pair.inviter.quic.closes == 0,
           "DUAL read must settle before QUIC connection close");
+    if (pair.inviter.quic.closes != 0)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+        if (fly_session_destroy_v2(pair.inviter.engine) == FLY_SESSION_V2_OK)
+            pair.inviter.engine = nullptr;
+        shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
+        return;
+    }
     check(fly_session_destroy_v2(pair.inviter.engine) == FLY_SESSION_V2_BUSY,
           "DUAL read retains engine ownership");
     flynes::session::loopback::deliver_provider_end(
@@ -1146,9 +1174,12 @@ void shutdown_retains_cancelled_dual_read_until_terminal()
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
-void shutdown_retains_cancelled_content_read_until_terminal()
+void shutdown_retains_cancelled_content_read_until_terminal(
+    fly_session_result_v2 cancel_result = FLY_SESSION_V2_ACCEPTED)
 {
-    std::puts("dual mvp: shutdown retains cancelled ROM read");
+    std::puts(cancel_result == FLY_SESSION_V2_DUPLICATE
+        ? "dual mvp: duplicate cancel retains ROM read terminal"
+        : "dual mvp: shutdown retains cancelled ROM read");
     LobbyPair pair(true, true, false, 1u, 0u);
     bring_up_lobby(pair);
     submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_OFFER_CONTENT_V2, 9930);
@@ -1182,7 +1213,7 @@ void shutdown_retains_cancelled_content_read_until_terminal()
     check(pending, "ROM transfer has an outstanding receiver read credit");
     if (!pending) { shutdown_pair(pair); return; }
 
-    pair.joiner.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+    pair.joiner.quic.cancel_result = cancel_result;
     pair.joiner.quic.close_result = FLY_SESSION_V2_ACCEPTED;
     check(fly_session_begin_shutdown_v2(pair.joiner.engine, 9935) ==
               FLY_SESSION_V2_ACCEPTED, "ROM read shutdown accepted");
@@ -1193,6 +1224,17 @@ void shutdown_retains_cancelled_content_read_until_terminal()
     check(cancelled_rom_read, "ROM read cancelled with its original token");
     check(pair.joiner.quic.closes == 0,
           "ROM read blocks connection close until its terminal");
+    if (pair.joiner.quic.closes != 0)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.joiner.quic.inbox, pair.joiner.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.joiner.executor.run_all();
+        if (fly_session_destroy_v2(pair.joiner.engine) == FLY_SESSION_V2_OK)
+            pair.joiner.engine = nullptr;
+        shutdown_engine_with_the_pump(pair.inviter, pair.inviter_pump, pair.limits);
+        return;
+    }
     for (const auto& token : pair.joiner.quic.cancelled_tokens)
     {
         flynes::session::loopback::deliver_provider_end(

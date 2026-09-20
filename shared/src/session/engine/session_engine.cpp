@@ -660,7 +660,8 @@ void SessionEngine::cancel_link_handshake_locked() noexcept
                 result = ports_.cancel_quic(&effect->token);
             break;
         }
-        if (result == FLY_SESSION_V2_ACCEPTED &&
+        if (result != FLY_SESSION_V2_OK &&
+            result != FLY_SESSION_V2_CANCELLED &&
             (effect->kind == LinkHandshakeEffectKind::SendHello ||
              effect->kind == LinkHandshakeEffectKind::SendReady ||
              effect->kind == LinkHandshakeEffectKind::SendAck ||
@@ -734,7 +735,8 @@ void SessionEngine::cancel_initial_quic_bind_locked() noexcept
                 effect->token, initial_quic_bind_expected_kind_};
         else
             result = ports_.cancel_quic(&effect->token);
-        if (!crypto_effect && result == FLY_SESSION_V2_ACCEPTED)
+        if (!crypto_effect && result != FLY_SESSION_V2_OK &&
+            result != FLY_SESSION_V2_CANCELLED)
             retired_initial_quic_ = RetiredQuicOperation{
                 effect->token, initial_quic_bind_expected_kind_};
         if (result == FLY_SESSION_V2_OK || result == FLY_SESSION_V2_CANCELLED ||
@@ -2136,7 +2138,8 @@ void SessionEngine::cancel_dual_locked() noexcept
             else
             {
                 const auto result = ports_.cancel_quic(&dual_token_);
-                if (result == FLY_SESSION_V2_ACCEPTED)
+                if (result != FLY_SESSION_V2_OK &&
+                    result != FLY_SESSION_V2_CANCELLED)
                     retired_dual_quic_ = RetiredQuicOperation{
                         dual_token_, dual_expected_kind_};
             }
@@ -2183,7 +2186,8 @@ void SessionEngine::cancel_content_locked() noexcept
         else
         {
             const auto result = ports_.cancel_quic(&content_token_);
-            if (result == FLY_SESSION_V2_ACCEPTED)
+            if (result != FLY_SESSION_V2_OK &&
+                result != FLY_SESSION_V2_CANCELLED)
                 retired_content_quic_ = RetiredQuicOperation{
                     content_token_, content_expected_kind_};
         }
@@ -4088,8 +4092,7 @@ void SessionEngine::run_work() noexcept
                         const auto cancelled = ports_.cancel_quic(
                             &initial_quic_bind_effect.token);
                         if (cancelled == FLY_SESSION_V2_OK ||
-                            cancelled == FLY_SESSION_V2_CANCELLED ||
-                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            cancelled == FLY_SESSION_V2_CANCELLED)
                             retired_initial_quic_.reset();
                     }
                     else
@@ -4395,8 +4398,7 @@ void SessionEngine::run_work() noexcept
                         const auto cancelled = ports_.cancel_quic(
                             &link_handshake_effect.token);
                         if (cancelled == FLY_SESSION_V2_OK ||
-                            cancelled == FLY_SESSION_V2_CANCELLED ||
-                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            cancelled == FLY_SESSION_V2_CANCELLED)
                             retired_control_quic_.reset();
                     }
                     else
@@ -4513,8 +4515,7 @@ void SessionEngine::run_work() noexcept
                         const auto cancelled = ports_.cancel_quic(
                             &dual_submit_token);
                         if (cancelled == FLY_SESSION_V2_OK ||
-                            cancelled == FLY_SESSION_V2_CANCELLED ||
-                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            cancelled == FLY_SESSION_V2_CANCELLED)
                             retired_dual_quic_.reset();
                     }
                     else
@@ -4630,8 +4631,7 @@ void SessionEngine::run_work() noexcept
                         const auto cancelled = ports_.cancel_quic(
                             &content_submit_token);
                         if (cancelled == FLY_SESSION_V2_OK ||
-                            cancelled == FLY_SESSION_V2_CANCELLED ||
-                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            cancelled == FLY_SESSION_V2_CANCELLED)
                             retired_content_quic_.reset();
                     }
                     else
