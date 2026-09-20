@@ -1589,6 +1589,65 @@ mod lifecycle_tests {
                 (b.resource, a.resource)
             }
         }
+        fn another_pair(&self, accept_operation: u64, connect_operation: u64) -> (u64, u64) {
+            let (listener_handle, listener, spki) = {
+                let tables = self.get().state.tables.lock().unwrap();
+                let (handle, listener) = tables
+                    .resources
+                    .iter()
+                    .find_map(|(handle, resource)| match resource {
+                        Resource::Listener(value) => Some((*handle, value.clone())),
+                        _ => None,
+                    })
+                    .unwrap();
+                let spki = tables
+                    .resources
+                    .values()
+                    .find_map(|resource| match resource {
+                        Resource::Material(value) => Some(value.spki.clone()),
+                        _ => None,
+                    })
+                    .unwrap();
+                (handle, listener, spki)
+            };
+            let address = listener.local_addr().unwrap().to_string();
+            let pin = ring::digest::digest(&ring::digest::SHA256, &spki);
+            assert_eq!(
+                unsafe {
+                    flynes_quic_provider_accept(self.provider, accept_operation, listener_handle)
+                },
+                FLYNES_QUIC_ACCEPTED
+            );
+            assert_eq!(
+                unsafe {
+                    flynes_quic_provider_connect(
+                        self.provider,
+                        connect_operation,
+                        b"127.0.0.1:0".as_ptr(),
+                        11,
+                        address.as_ptr(),
+                        address.len(),
+                        pin.as_ref().as_ptr(),
+                        pin.as_ref().len(),
+                        2000,
+                    )
+                },
+                FLYNES_QUIC_ACCEPTED
+            );
+            let first = self.events.recv_timeout(WAIT).unwrap();
+            let second = self.events.recv_timeout(WAIT).unwrap();
+            assert_eq!([first.result, second.result], [FLYNES_QUIC_OK; 2]);
+            if first.operation == connect_operation {
+                assert_eq!(second.operation, accept_operation);
+                (first.resource, second.resource)
+            } else {
+                assert_eq!(
+                    (first.operation, second.operation),
+                    (accept_operation, connect_operation)
+                );
+                (second.resource, first.resource)
+            }
+        }
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -2011,6 +2070,83 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn a2_close_rejects_late_uni_and_accepted_bidi_batches() {
+        for accept_bidi in [false, true] {
+            let fixture = Fixture::new();
+            let (client, server) = fixture.connections();
+            let parent = if accept_bidi { server } else { client };
+            if accept_bidi {
+                assert_eq!(
+                    unsafe { flynes_quic_provider_open_bidi(fixture.provider, 140, client) },
+                    FLYNES_QUIC_ACCEPTED
+                );
+                let opened = fixture.event(140);
+                assert_eq!(opened.result, FLYNES_QUIC_OK);
+                assert_eq!(
+                    unsafe {
+                        flynes_quic_provider_write(
+                            fixture.provider,
+                            141,
+                            opened.resource,
+                            b"x".as_ptr(),
+                            1,
+                            0,
+                        )
+                    },
+                    FLYNES_QUIC_ACCEPTED
+                );
+                assert_eq!(fixture.event(141).result, FLYNES_QUIC_OK);
+            }
+            let (reached, resume) = gate(fixture.get(), 142, 0);
+            let accepted = if accept_bidi {
+                unsafe { flynes_quic_provider_accept_bidi(fixture.provider, 142, parent) }
+            } else {
+                unsafe { flynes_quic_provider_open_uni(fixture.provider, 142, parent) }
+            };
+            assert_eq!(accepted, FLYNES_QUIC_ACCEPTED);
+            reached.recv_timeout(WAIT).unwrap();
+            assert_eq!(
+                unsafe { flynes_quic_provider_close(fixture.provider, 143, parent, 0) },
+                FLYNES_QUIC_ACCEPTED
+            );
+            assert!(
+                fixture
+                    .events
+                    .recv_timeout(Duration::from_millis(100))
+                    .is_err()
+            );
+            resume.send(()).unwrap();
+            let first = fixture.events.recv_timeout(WAIT).unwrap();
+            let second = fixture.events.recv_timeout(WAIT).unwrap();
+            assert!(
+                [
+                    (first.operation, first.result),
+                    (second.operation, second.result)
+                ]
+                .contains(&(142, FLYNES_QUIC_INVALID_HANDLE))
+            );
+            assert!(
+                [
+                    (first.operation, first.result),
+                    (second.operation, second.result)
+                ]
+                .contains(&(143, FLYNES_QUIC_OK))
+            );
+            assert!(
+                fixture
+                    .get()
+                    .state
+                    .tables
+                    .lock()
+                    .unwrap()
+                    .resources
+                    .values()
+                    .all(|value| value.parent_connection() != Some(parent))
+            );
+        }
+    }
+
+    #[test]
     fn a2_close_waits_for_admitted_unpolled_query() {
         let fixture = Fixture::new();
         let (client, _server) = fixture.connections();
@@ -2046,6 +2182,94 @@ mod lifecycle_tests {
             ]
             .contains(&(61, FLYNES_QUIC_OK))
         );
+    }
+
+    #[test]
+    fn a2_close_drains_every_admitted_connection_and_stream_consumer() {
+        for kind in 0..12 {
+            let fixture = Fixture::new();
+            let (client, _server) = fixture.connections();
+            let (send, recv) = if kind == 7 || kind == 8 {
+                assert_eq!(
+                    unsafe { flynes_quic_provider_open_bidi(fixture.provider, 490, client) },
+                    FLYNES_QUIC_ACCEPTED
+                );
+                let opened = fixture.event(490);
+                (
+                    opened.resource,
+                    u64::from_be_bytes(opened.bytes.try_into().unwrap()),
+                )
+            } else {
+                (0, 0)
+            };
+            let (admitted, release_admission) = gate(fixture.get(), 500, 2);
+            let (cutoff, release_cutoff) = gate(fixture.get(), 501, 4);
+            std::thread::scope(|scope| {
+                let pointer = fixture.provider as usize;
+                let caller = scope.spawn(move || unsafe {
+                    let provider = pointer as *mut FlynesQuicProvider;
+                    match kind {
+                        0 => flynes_quic_provider_inspect_handshake(provider, 500, client),
+                        1 => {
+                            flynes_quic_provider_exporter(provider, 500, client, b"ctx".as_ptr(), 3)
+                        }
+                        2 => flynes_quic_provider_send_datagram(
+                            provider,
+                            500,
+                            client,
+                            b"x".as_ptr(),
+                            1,
+                        ),
+                        3 => flynes_quic_provider_read_datagram(provider, 500, client),
+                        4 => flynes_quic_provider_query(provider, 500, client),
+                        5 => flynes_quic_provider_payload_budget(provider, 500, client),
+                        6 => flynes_quic_provider_stats(provider, 500, client),
+                        7 => flynes_quic_provider_write(provider, 500, send, b"x".as_ptr(), 1, 0),
+                        8 => flynes_quic_provider_read(provider, 500, recv, 1),
+                        9 => flynes_quic_provider_open_bidi(provider, 500, client),
+                        10 => flynes_quic_provider_accept_bidi(provider, 500, client),
+                        11 => flynes_quic_provider_open_uni(provider, 500, client),
+                        _ => unreachable!(),
+                    }
+                });
+                admitted.recv_timeout(WAIT).unwrap();
+                assert_eq!(
+                    unsafe { flynes_quic_provider_close(fixture.provider, 501, client, 0) },
+                    FLYNES_QUIC_ACCEPTED,
+                    "consumer kind {kind}"
+                );
+                cutoff.recv_timeout(WAIT).unwrap();
+                release_cutoff.send(()).unwrap();
+                let premature = fixture.events.recv_timeout(Duration::from_millis(25)).ok();
+                release_admission.send(()).unwrap();
+                assert_eq!(
+                    caller.join().unwrap(),
+                    FLYNES_QUIC_ACCEPTED,
+                    "consumer kind {kind}"
+                );
+                assert!(
+                    premature.is_none(),
+                    "close did not drain consumer kind {kind}: {premature:?}"
+                );
+            });
+            let first = fixture.events.recv_timeout(WAIT).unwrap();
+            let second = fixture.events.recv_timeout(WAIT).unwrap();
+            assert_eq!(
+                [first.operation, second.operation]
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>(),
+                [500, 501].into_iter().collect(),
+                "consumer kind {kind}"
+            );
+            assert!(
+                [
+                    (first.operation, first.result),
+                    (second.operation, second.result)
+                ]
+                .contains(&(501, FLYNES_QUIC_OK)),
+                "consumer kind {kind}"
+            );
+        }
     }
 
     #[test]
@@ -2382,6 +2606,153 @@ mod lifecycle_tests {
             ]
             .contains(&(134, FLYNES_QUIC_OK))
         );
+    }
+
+    #[test]
+    fn a2_close_isolated_from_other_connection_and_bootstrap() {
+        let fixture = Fixture::new();
+        let (client_a, server_a) = fixture.connections();
+        let (client_b, server_b) = fixture.another_pair(150, 151);
+        assert_eq!(
+            unsafe { flynes_quic_provider_close(fixture.provider, 152, client_a, 0) },
+            FLYNES_QUIC_ACCEPTED
+        );
+        assert_eq!(fixture.event(152).result, FLYNES_QUIC_OK);
+        assert_eq!(
+            unsafe { flynes_quic_provider_close(fixture.provider, 153, server_a, 0) },
+            FLYNES_QUIC_ACCEPTED
+        );
+        assert_eq!(fixture.event(153).result, FLYNES_QUIC_OK);
+        assert_eq!(
+            unsafe { flynes_quic_provider_query(fixture.provider, 154, client_b) },
+            FLYNES_QUIC_ACCEPTED
+        );
+        assert_eq!(fixture.event(154).result, FLYNES_QUIC_OK);
+        assert_eq!(
+            unsafe { flynes_quic_provider_open_bidi(fixture.provider, 155, client_b) },
+            FLYNES_QUIC_ACCEPTED
+        );
+        let opened = fixture.event(155);
+        assert_eq!(opened.result, FLYNES_QUIC_OK);
+        assert_eq!(
+            unsafe { flynes_quic_provider_accept_bidi(fixture.provider, 156, server_b) },
+            FLYNES_QUIC_ACCEPTED
+        );
+        assert_eq!(
+            unsafe {
+                flynes_quic_provider_write(
+                    fixture.provider,
+                    157,
+                    opened.resource,
+                    b"b".as_ptr(),
+                    1,
+                    0,
+                )
+            },
+            FLYNES_QUIC_ACCEPTED
+        );
+        let first = fixture.events.recv_timeout(WAIT).unwrap();
+        let second = fixture.events.recv_timeout(WAIT).unwrap();
+        assert!(
+            [
+                (first.operation, first.result),
+                (second.operation, second.result)
+            ]
+            .contains(&(157, FLYNES_QUIC_OK))
+        );
+        let accepted = if first.operation == 156 {
+            first
+        } else {
+            second
+        };
+        assert_eq!(accepted.result, FLYNES_QUIC_OK);
+        let recv = u64::from_be_bytes(accepted.bytes.try_into().unwrap());
+        assert_eq!(
+            unsafe { flynes_quic_provider_read(fixture.provider, 158, recv, 1) },
+            FLYNES_QUIC_ACCEPTED
+        );
+        assert_eq!(fixture.event(158).bytes, b"b");
+        let (_client_c, _server_c) = fixture.another_pair(159, 160);
+        let material = {
+            let tables = fixture.get().state.tables.lock().unwrap();
+            tables
+                .resources
+                .iter()
+                .find_map(|(handle, resource)| {
+                    matches!(resource, Resource::Material(_)).then_some(*handle)
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            unsafe {
+                flynes_quic_provider_listen(
+                    fixture.provider,
+                    161,
+                    b"127.0.0.1:0".as_ptr(),
+                    11,
+                    material,
+                    2000,
+                )
+            },
+            FLYNES_QUIC_ACCEPTED
+        );
+        assert_eq!(fixture.event(161).result, FLYNES_QUIC_OK);
+    }
+
+    #[test]
+    fn a2_repeated_connections_return_to_bootstrap_baseline() {
+        let fixture = Fixture::new();
+        let (first_client, first_server) = fixture.connections();
+        for (operation, connection) in [(180, first_client), (181, first_server)] {
+            assert_eq!(
+                unsafe { flynes_quic_provider_close(fixture.provider, operation, connection, 0) },
+                FLYNES_QUIC_ACCEPTED
+            );
+            assert_eq!(fixture.event(operation).result, FLYNES_QUIC_OK);
+        }
+        let baseline = fixture.get().state.tables.lock().unwrap().resources.len();
+        assert_eq!(baseline, 2, "listener and material must remain independent");
+        for iteration in 0..8 {
+            let base = 200 + iteration * 6;
+            let (client, server) = fixture.another_pair(base, base + 1);
+            assert_eq!(
+                unsafe { flynes_quic_provider_open_bidi(fixture.provider, base + 2, client) },
+                FLYNES_QUIC_ACCEPTED
+            );
+            assert_eq!(fixture.event(base + 2).result, FLYNES_QUIC_OK);
+            assert_eq!(
+                unsafe { flynes_quic_provider_open_uni(fixture.provider, base + 3, client) },
+                FLYNES_QUIC_ACCEPTED
+            );
+            assert_eq!(fixture.event(base + 3).result, FLYNES_QUIC_OK);
+            for (operation, connection) in [(base + 4, client), (base + 5, server)] {
+                assert_eq!(
+                    unsafe {
+                        flynes_quic_provider_close(fixture.provider, operation, connection, 0)
+                    },
+                    FLYNES_QUIC_ACCEPTED
+                );
+                assert_eq!(fixture.event(operation).result, FLYNES_QUIC_OK);
+            }
+            let deadline = std::time::Instant::now() + WAIT;
+            loop {
+                let tables = fixture.get().state.tables.lock().unwrap();
+                let clean = tables.resources.len() == baseline
+                    && tables.pending.values().all(|entry| {
+                        entry.parent_connection != Some(client)
+                            && entry.parent_connection != Some(server)
+                    });
+                drop(tables);
+                if clean {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "connection {iteration} did not return to bootstrap baseline"
+                );
+                std::thread::yield_now();
+            }
+        }
     }
 
     #[test]
