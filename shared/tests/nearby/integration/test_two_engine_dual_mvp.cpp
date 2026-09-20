@@ -1138,6 +1138,94 @@ void shutdown_retains_cancelled_content_read_until_terminal()
     shutdown_engine_with_the_pump(pair.inviter, pair.inviter_pump, pair.limits);
 }
 
+void shutdown_during_dual_read_submission_waits_for_admission()
+{
+    std::puts("dual mvp: shutdown during DUAL read port call");
+    LobbyPair pair(true, true);
+    bring_up_lobby(pair);
+    const auto ref = loopback_source_choice_ref_v1();
+    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
+    {
+        std::vector<fly_session_action_descriptor_v2> actions;
+        engine->snapshot(&actions);
+        const auto* select = retain_action(
+            &actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
+        check(select != nullptr, "both peers can select for dispatch race");
+        if (select) submit_choice(*engine, *select, 9940, ref.data());
+        for (auto& action : actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+    }
+    pump_pair(pair);
+    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
+    {
+        std::vector<fly_session_action_descriptor_v2> actions;
+        engine->snapshot(&actions);
+        const auto* confirm = retain_action(
+            &actions, FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2);
+        if (confirm) submit(*engine, *confirm, 9941, false);
+        for (auto& action : actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+    }
+    pump_pair_long(pair);
+    struct Probe final
+    {
+        LobbyPair* pair = nullptr;
+        int streams_before = 0;
+        bool fired = false;
+        fly_session_result_v2 shutdown_result = FLY_SESSION_V2_INVALID_STATE;
+        fly_session_op_token_v2 token{};
+    } probe{&pair, pair.inviter.quic.opened_bidi +
+                      pair.inviter.quic.accepted_bidi};
+    pair.inviter.quic.before_read_accept_context = &probe;
+    pair.inviter.quic.before_read_accept = [](
+        void* context, const fly_session_op_token_v2* token) {
+        auto& value = *static_cast<Probe*>(context);
+        auto& fixture = value.pair->inviter;
+        if (fixture.quic.opened_bidi + fixture.quic.accepted_bidi <=
+            value.streams_before) return;
+        value.fired = true;
+        value.token = *token;
+        fixture.quic.before_read_accept = nullptr;
+        // The first cancel precedes provider admission; after this call
+        // returns ACCEPTED, a second cancel must wait for its terminal.
+        fixture.quic.cancel_result = FLY_SESSION_V2_OK;
+        fixture.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+        value.shutdown_result = fly_session_begin_shutdown_v2(
+            fixture.engine, 9943);
+        fixture.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+    };
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2, 9942);
+    check(probe.fired && probe.shutdown_result == FLY_SESSION_V2_ACCEPTED,
+          "shutdown crossed the DUAL read call before admission returned");
+    if (!probe.fired) { shutdown_pair(pair); return; }
+    check(pair.inviter.quic.closes == 0,
+          "connection cannot close while DUAL read submit is unresolved");
+    if (pair.inviter.quic.closes == 0)
+    {
+        check(pair.inviter.quic.cancelled_token.operation_id ==
+                  probe.token.operation_id,
+              "accepted late DUAL read is cancelled under its original token");
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, probe.token,
+            FLY_SESSION_PROVIDER_QUIC_DATA_V2, FLY_SESSION_V2_CANCELLED);
+        pair.inviter.executor.run_all();
+        check(pair.inviter.quic.closes == 1,
+              "late DUAL terminal permits exactly one connection close");
+    }
+    if (pair.inviter.quic.closes == 1)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+    }
+    const auto destroyed = fly_session_destroy_v2(pair.inviter.engine);
+    check(destroyed == FLY_SESSION_V2_OK,
+          "late DUAL admission settles before destroy");
+    if (destroyed == FLY_SESSION_V2_OK) pair.inviter.engine = nullptr;
+    shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
+}
+
 } // namespace
 
 int main()
@@ -1159,6 +1247,7 @@ int main()
     shutdown_closes_connection_created_after_cancel();
     shutdown_retains_cancelled_dual_read_until_terminal();
     shutdown_retains_cancelled_content_read_until_terminal();
+    shutdown_during_dual_read_submission_waits_for_admission();
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",

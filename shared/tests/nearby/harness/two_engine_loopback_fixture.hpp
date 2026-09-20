@@ -1303,6 +1303,8 @@ struct EngineFixture final
         fly_session_op_token_v2 last_read_token{};
         fly_session_resource_handle_v2 last_read_stream = 0;
         std::uint64_t last_read_credit = 0;
+        void (*before_read_accept)(void*, const fly_session_op_token_v2*) = nullptr;
+        void* before_read_accept_context = nullptr;
         /*
          * What this provider really reported back to the engine for the two
          * link-wide QUIC values, so a test can compare the two ends with each
@@ -1461,6 +1463,8 @@ struct EngineFixture final
         {
             auto* self = static_cast<Quic*>(context);
             if (credit == 0) return FLY_SESSION_V2_INVALID_ARGUMENT;
+            if (self->before_read_accept)
+                self->before_read_accept(self->before_read_accept_context, token);
             ++self->reads;
             self->last_credit = credit;
             self->capture(token, stream, inbox);

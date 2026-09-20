@@ -336,6 +336,7 @@ private:
     std::uint32_t dual_expected_kind_ = 0;
     dual::DualSessionController::EffectKind dual_effect_kind_{};
     bool dual_active_ = false;
+    bool dual_submit_inflight_ = false;
     bool dual_dispatch_pending_ = false;
     std::unique_ptr<content::ContentTransferControllerV1> content_xfer_{};
     fly_session_op_token_v2 content_token_{};

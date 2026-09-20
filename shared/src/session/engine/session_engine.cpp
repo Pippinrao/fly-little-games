@@ -2123,10 +2123,16 @@ void SessionEngine::cancel_dual_locked() noexcept
             ports_.cancel_content(&dual_token_);
         else
         {
-            const auto result = ports_.cancel_quic(&dual_token_);
-            if (result == FLY_SESSION_V2_ACCEPTED)
+            if (dual_submit_inflight_)
                 retired_dual_quic_ = RetiredQuicOperation{
                     dual_token_, dual_expected_kind_};
+            else
+            {
+                const auto result = ports_.cancel_quic(&dual_token_);
+                if (result == FLY_SESSION_V2_ACCEPTED)
+                    retired_dual_quic_ = RetiredQuicOperation{
+                        dual_token_, dual_expected_kind_};
+            }
         }
         dual_active_ = false;
     }
@@ -4351,6 +4357,7 @@ void SessionEngine::run_work() noexcept
 
         bool dispatch_dual = false;
         dual::DualSessionController::Effect dual_effect{};
+        fly_session_op_token_v2 dual_submit_token{};
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (dual_dispatch_pending_ && dual_ && !dual_active_ &&
@@ -4364,7 +4371,9 @@ void SessionEngine::run_work() noexcept
                     dual_effect_kind_ = dual_effect.kind;
                     dual_expected_kind_ = dual_effect.expected_payload_kind;
                     dual_token_ = make_link_operation_token_locked();
+                    dual_submit_token = dual_token_;
                     dual_active_ = true;
+                    dual_submit_inflight_ = true;
                     dispatch_dual = true;
                 }
                 else
@@ -4380,7 +4389,7 @@ void SessionEngine::run_work() noexcept
             {
             case dual::DualSessionController::EffectKind::QueryContent:
                 result = ports_.query_content(
-                    &dual_token_, dual_effect.content_index, inbox_);
+                    &dual_submit_token, dual_effect.content_index, inbox_);
                 if (result == FLY_SESSION_V2_EMPTY)
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
@@ -4398,14 +4407,14 @@ void SessionEngine::run_work() noexcept
                 break;
             case dual::DualSessionController::EffectKind::OpenStream:
                 result = ports_.open_quic_stream(
-                    true, dual_effect.accept, &dual_token_,
+                    true, dual_effect.accept, &dual_submit_token,
                     dual_effect.connection, dual_effect.opener_role,
                     static_cast<std::uint32_t>(wire::QuicChannel::StateCommit),
                     inbox_);
                 break;
             case dual::DualSessionController::EffectKind::GrantRead:
                 result = ports_.grant_quic_read(
-                    &dual_token_, dual_effect.stream, dual_effect.read_credit,
+                    &dual_submit_token, dual_effect.stream, dual_effect.read_credit,
                     inbox_);
                 break;
             case dual::DualSessionController::EffectKind::Write:
@@ -4417,7 +4426,7 @@ void SessionEngine::run_work() noexcept
                 if (fly_session_buffer_create_copy_v2(value, &buffer) ==
                     FLY_SESSION_V2_OK)
                     result = ports_.write_quic(
-                        &dual_token_, dual_effect.stream, buffer, false,
+                        &dual_submit_token, dual_effect.stream, buffer, false,
                         inbox_);
                 else
                     result = FLY_SESSION_V2_OUT_OF_MEMORY;
@@ -4425,13 +4434,37 @@ void SessionEngine::run_work() noexcept
                 break;
             }
             }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                dual_submit_inflight_ = false;
+                if (retired_dual_quic_ &&
+                    same_token(retired_dual_quic_->token, dual_submit_token))
+                {
+                    if (result == FLY_SESSION_V2_ACCEPTED)
+                    {
+                        const auto cancelled = ports_.cancel_quic(
+                            &dual_submit_token);
+                        if (cancelled == FLY_SESSION_V2_OK ||
+                            cancelled == FLY_SESSION_V2_CANCELLED ||
+                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            retired_dual_quic_.reset();
+                    }
+                    else
+                        retired_dual_quic_.reset();
+                    if (shutdown_requested_) complete_shutdown_locked();
+                }
+            }
             if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                dual_active_ = false;
-                cancel_dual_locked();
-                discovery_disconnect_pending_ = discovery_connection_ != 0;
-                publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                if (!shutdown_requested_ && dual_active_ &&
+                    same_token(dual_token_, dual_submit_token))
+                {
+                    dual_active_ = false;
+                    cancel_dual_locked();
+                    discovery_disconnect_pending_ = discovery_connection_ != 0;
+                    publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                }
             }
             continue;
         }
