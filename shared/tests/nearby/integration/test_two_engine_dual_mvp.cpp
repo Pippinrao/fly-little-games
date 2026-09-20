@@ -1226,6 +1226,86 @@ void shutdown_during_dual_read_submission_waits_for_admission()
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
+void shutdown_during_content_read_submission_waits_for_admission()
+{
+    std::puts("dual mvp: shutdown during ROM read port call");
+    LobbyPair pair(true, true, false, 1u, 0u);
+    bring_up_lobby(pair);
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_OFFER_CONTENT_V2, 9950);
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_APPROVE_SEND_V2, 9951);
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_APPROVE_RECEIVE_V2, 9952);
+    submit_kind(pair, pair.joiner, FLY_SESSION_ACTION_APPROVE_SEND_V2, 9953);
+    struct Probe final
+    {
+        LobbyPair* pair = nullptr;
+        bool fired = false;
+        fly_session_result_v2 shutdown_result = FLY_SESSION_V2_INVALID_STATE;
+        fly_session_op_token_v2 token{};
+    } probe{&pair};
+    pair.joiner.quic.before_read_accept_context = &probe;
+    pair.joiner.quic.before_read_accept = [](
+        void* context, const fly_session_op_token_v2* token) {
+        auto& value = *static_cast<Probe*>(context);
+        auto& fixture = value.pair->joiner;
+        if (fixture.quic.rom_streams == 0) return;
+        value.fired = true;
+        value.token = *token;
+        fixture.quic.before_read_accept = nullptr;
+        fixture.quic.cancel_result = FLY_SESSION_V2_OK;
+        fixture.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+        value.shutdown_result = fly_session_begin_shutdown_v2(
+            fixture.engine, 9955);
+        fixture.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+    };
+    std::vector<fly_session_action_descriptor_v2> actions;
+    pair.joiner.snapshot(&actions);
+    const auto* receive = retain_action(
+        &actions, FLY_SESSION_ACTION_APPROVE_RECEIVE_V2);
+    check(receive != nullptr, "receiver consent available for dispatch race");
+    if (receive) submit(pair.joiner, *receive, 9954, false);
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    if (!receive) { shutdown_pair(pair); return; }
+    for (int round = 0; round < 4000 && !probe.fired; ++round)
+    {
+        flynes::session::loopback::relay_gatt(pair.transport, pair.relayed);
+        flynes::session::loopback::relay_quic(pair.transport, pair.relayed);
+        flynes::session::loopback::pump_once(pair.inviter, pair.inviter_pump);
+        flynes::session::loopback::pump_once(pair.joiner, pair.joiner_pump);
+        pair.inviter.executor.run_all();
+        pair.joiner.executor.run_all();
+    }
+    check(probe.fired && probe.shutdown_result == FLY_SESSION_V2_ACCEPTED,
+          "shutdown crossed ROM read call before admission returned");
+    if (!probe.fired) { shutdown_pair(pair); return; }
+    check(pair.joiner.quic.closes == 0,
+          "connection cannot close while ROM read submit is unresolved");
+    if (pair.joiner.quic.closes == 0)
+    {
+        check(pair.joiner.quic.cancelled_token.operation_id ==
+                  probe.token.operation_id,
+              "accepted late ROM read is cancelled under its original token");
+        flynes::session::loopback::deliver_provider_end(
+            pair.joiner.quic.inbox, probe.token,
+            FLY_SESSION_PROVIDER_QUIC_DATA_V2, FLY_SESSION_V2_CANCELLED);
+        pair.joiner.executor.run_all();
+        check(pair.joiner.quic.closes == 1,
+              "late ROM terminal permits exactly one connection close");
+    }
+    if (pair.joiner.quic.closes == 1)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.joiner.quic.inbox, pair.joiner.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.joiner.executor.run_all();
+    }
+    const auto destroyed = fly_session_destroy_v2(pair.joiner.engine);
+    check(destroyed == FLY_SESSION_V2_OK,
+          "late ROM admission settles before destroy");
+    if (destroyed == FLY_SESSION_V2_OK) pair.joiner.engine = nullptr;
+    shutdown_engine_with_the_pump(pair.inviter, pair.inviter_pump, pair.limits);
+}
+
 } // namespace
 
 int main()
@@ -1248,6 +1328,7 @@ int main()
     shutdown_retains_cancelled_dual_read_until_terminal();
     shutdown_retains_cancelled_content_read_until_terminal();
     shutdown_during_dual_read_submission_waits_for_admission();
+    shutdown_during_content_read_submission_waits_for_admission();
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",

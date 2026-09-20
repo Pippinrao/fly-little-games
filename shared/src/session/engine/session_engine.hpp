@@ -343,6 +343,7 @@ private:
     std::uint32_t content_expected_kind_ = 0;
     content::ContentTransferControllerV1::EffectKind content_effect_kind_{};
     bool content_active_ = false;
+    bool content_submit_inflight_ = false;
     bool content_dispatch_pending_ = false;
     std::optional<CapabilitySummary> local_pair_capability_{};
     std::array<std::uint8_t, 32> pending_local_capability_hash_{};

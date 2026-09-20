@@ -2170,10 +2170,16 @@ void SessionEngine::cancel_content_locked() noexcept
 {
     if (content_active_)
     {
-        const auto result = ports_.cancel_quic(&content_token_);
-        if (result == FLY_SESSION_V2_ACCEPTED)
+        if (content_submit_inflight_)
             retired_content_quic_ = RetiredQuicOperation{
                 content_token_, content_expected_kind_};
+        else
+        {
+            const auto result = ports_.cancel_quic(&content_token_);
+            if (result == FLY_SESSION_V2_ACCEPTED)
+                retired_content_quic_ = RetiredQuicOperation{
+                    content_token_, content_expected_kind_};
+        }
         content_active_ = false;
     }
     content_dispatch_pending_ = false;
@@ -4471,6 +4477,7 @@ void SessionEngine::run_work() noexcept
 
         bool dispatch_content = false;
         content::ContentTransferControllerV1::Effect content_effect{};
+        fly_session_op_token_v2 content_submit_token{};
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (content_dispatch_pending_ && content_xfer_ && !content_active_ &&
@@ -4506,7 +4513,9 @@ void SessionEngine::run_work() noexcept
                     content_effect_kind_ = content_effect.kind;
                     content_expected_kind_ = content_effect.expected_payload_kind;
                     content_token_ = make_link_operation_token_locked();
+                    content_submit_token = content_token_;
                     content_active_ = true;
+                    content_submit_inflight_ = true;
                     dispatch_content = true;
                 }
                 else
@@ -4522,13 +4531,13 @@ void SessionEngine::run_work() noexcept
             {
             case content::ContentTransferControllerV1::EffectKind::OpenStream:
                 result = ports_.open_quic_stream(
-                    true, content_effect.accept, &content_token_,
+                    true, content_effect.accept, &content_submit_token,
                     content_effect.connection, content_effect.opener_role,
                     content_effect.stream_kind, inbox_);
                 break;
             case content::ContentTransferControllerV1::EffectKind::GrantRead:
                 result = ports_.grant_quic_read(
-                    &content_token_, content_effect.stream,
+                    &content_submit_token, content_effect.stream,
                     content_effect.read_credit, inbox_);
                 break;
             case content::ContentTransferControllerV1::EffectKind::Write:
@@ -4540,7 +4549,7 @@ void SessionEngine::run_work() noexcept
                 if (fly_session_buffer_create_copy_v2(value, &buffer) ==
                     FLY_SESSION_V2_OK)
                     result = ports_.write_quic(
-                        &content_token_, content_effect.stream, buffer, false,
+                        &content_submit_token, content_effect.stream, buffer, false,
                         inbox_);
                 else
                     result = FLY_SESSION_V2_OUT_OF_MEMORY;
@@ -4548,12 +4557,37 @@ void SessionEngine::run_work() noexcept
                 break;
             }
             }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                content_submit_inflight_ = false;
+                if (retired_content_quic_ &&
+                    same_token(retired_content_quic_->token, content_submit_token))
+                {
+                    if (result == FLY_SESSION_V2_ACCEPTED)
+                    {
+                        const auto cancelled = ports_.cancel_quic(
+                            &content_submit_token);
+                        if (cancelled == FLY_SESSION_V2_OK ||
+                            cancelled == FLY_SESSION_V2_CANCELLED ||
+                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            retired_content_quic_.reset();
+                    }
+                    else
+                        retired_content_quic_.reset();
+                    if (shutdown_requested_) complete_shutdown_locked();
+                }
+            }
             if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                content_active_ = false;
-                cancel_content_locked();
-                publish_link_view_locked(FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                if (!shutdown_requested_ && content_active_ &&
+                    same_token(content_token_, content_submit_token))
+                {
+                    content_active_ = false;
+                    cancel_content_locked();
+                    publish_link_view_locked(
+                        FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                }
             }
             continue;
         }
