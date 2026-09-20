@@ -11,6 +11,7 @@
 - 本文覆盖本次用户明确修改的 UI、导航与输入配对码需求；与旧 UI 排布不同处以本文为准。本文不默许修改原协议的身份释放、双方授权、文件确认及失败语义。
 - [修正后的交互稿](assets/nearby-ui-parity-review.html) 是设计源文件。模拟设备、示例游戏、二维码图形、配对码和模拟结果按钮仅用于评审，禁止进入正式产品数据或认证逻辑。
 - [实现计划](../plans/2026-09-13-nearby-ui-parity-implementation-plan.md) 定义接入顺序和验收门槛。
+- 后续公共后端设计补充：[总体修复](2026-09-13-nearby-backend-repair-design.md)、[接口与逐页 UX 映射](2026-09-13-nearby-interface-design.md)、[C01–C18 及系统测试设计](2026-09-13-nearby-test-design.md)。这些文档不改变本页已确认的页面和交互；协议/接口扩展仍处于设计评审阶段。
 
 本轮仅修正交互稿并交付文档。不修改 Android/ArkUI/SwiftUI 产品代码，不安装包，不把文档提交当作功能发布。
 
