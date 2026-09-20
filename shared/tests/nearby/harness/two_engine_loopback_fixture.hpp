@@ -1246,6 +1246,8 @@ struct EngineFixture final
         int writes = 0;
         int reads = 0;
         int cancels = 0;
+        fly_session_result_v2 cancel_result = FLY_SESSION_V2_OK;
+        fly_session_op_token_v2 cancelled_token{};
         int closes = 0;
         fly_session_op_token_v2 close_token{};
         fly_session_resource_handle_v2 close_connection = 0;
@@ -1476,10 +1478,12 @@ struct EngineFixture final
         }
 
         static fly_session_result_v2 cancel(
-            void* context, const fly_session_op_token_v2*)
+            void* context, const fly_session_op_token_v2* token)
         {
-            ++static_cast<Quic*>(context)->cancels;
-            return FLY_SESSION_V2_OK;
+            auto* self = static_cast<Quic*>(context);
+            ++self->cancels;
+            self->cancelled_token = *token;
+            return self->cancel_result;
         }
 
         static fly_session_result_v2 close(

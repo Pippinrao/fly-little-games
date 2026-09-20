@@ -231,6 +231,12 @@ private:
         bool active = false;
     };
     std::optional<QuicCloseDebt> quic_close_debt_{};
+    struct RetiredControlQuicOperation final
+    {
+        fly_session_op_token_v2 token{};
+        std::uint32_t expected_kind = 0;
+    };
+    std::optional<RetiredControlQuicOperation> retired_control_quic_{};
     fly_session_op_token_v2 session_signing_token_{};
     fly_session_op_token_v2 link_handshake_token_{};
     fly_session_op_token_v2 gatt_write_token_{};

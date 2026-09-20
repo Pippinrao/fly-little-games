@@ -750,6 +750,121 @@ void shutdown_waits_for_quic_close_terminal()
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
+void shutdown_retains_cancelled_control_read_until_terminal()
+{
+    std::puts("dual mvp: shutdown retains cancelled Control read");
+    LobbyPair pair(false, false);
+    pair.inviter.platform.ready();
+    pair.joiner.platform.ready();
+    pair.inviter.executor.run_all();
+    pair.joiner.executor.run_all();
+    std::vector<fly_session_action_descriptor_v2> inviter_actions;
+    std::vector<fly_session_action_descriptor_v2> joiner_actions;
+    pair.inviter.snapshot(&inviter_actions);
+    pair.joiner.snapshot(&joiner_actions);
+    const auto* create = find_action(
+        inviter_actions, FLY_SESSION_ACTION_CREATE_INVITE_V2);
+    const auto* join = find_action(
+        joiner_actions, FLY_SESSION_ACTION_JOIN_CODE_V2);
+    check(create != nullptr && join != nullptr,
+          "both link actions exist before partial handshake");
+    if (create && join)
+    {
+        submit(pair.inviter, *create, 9902, false);
+        submit(pair.joiner, *join, 9903, true);
+    }
+    for (auto& action : inviter_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    for (auto& action : joiner_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    if (!create || !join) return;
+    pair.transport.attach(LoopbackRole::AdvertiserPeripheral, pair.inviter);
+    pair.transport.attach(LoopbackRole::ScannerCentral, pair.joiner);
+    check(pair.transport.connect_ends() == 2, "both ends have one link");
+    pump_engine(pair.inviter, pair.inviter_pump, pair.limits);
+    pump_engine(pair.joiner, pair.joiner_pump, pair.limits);
+    fly_session_op_token_v2 bind_read_token{};
+    for (int round = 0; round < 4000; ++round)
+    {
+        flynes::session::loopback::relay_gatt(pair.transport, pair.relayed);
+        flynes::session::loopback::relay_quic(pair.transport, pair.relayed);
+        pump_engine(pair.inviter, pair.inviter_pump, pair.limits);
+        pump_engine(pair.joiner, pair.joiner_pump, pair.limits);
+        if (flynes::session::loopback::pairing_sas_is_offered(
+                pair.inviter, &pair.relayed.app_action_kinds) &&
+            flynes::session::loopback::pairing_sas_is_offered(
+                pair.joiner, &pair.relayed.app_action_kinds))
+        {
+            flynes::session::loopback::confirm_pairing_sas_when_the_abi_asks(
+                pair.inviter, 700 + round);
+            flynes::session::loopback::confirm_pairing_sas_when_the_abi_asks(
+                pair.joiner, 800 + round);
+        }
+        const auto streams = pair.inviter.quic.opened_bidi +
+            pair.inviter.quic.accepted_bidi;
+        if (streams < 2 && pair.inviter.quic.last_read_token.operation_id != 0)
+            bind_read_token = pair.inviter.quic.last_read_token;
+        if (streams >= 2 && pair.inviter.quic.last_read_token.operation_id != 0 &&
+            pair.inviter.quic.last_read_token.operation_id !=
+                bind_read_token.operation_id)
+            break;
+    }
+    const auto read_token = pair.inviter.quic.last_read_token;
+    check(pair.inviter.quic.opened_bidi + pair.inviter.quic.accepted_bidi >= 2 &&
+              read_token.operation_id != 0 &&
+              read_token.operation_id != bind_read_token.operation_id,
+          "Control read was dispatched and is waiting for peer bytes");
+    if (read_token.operation_id == 0 ||
+        read_token.operation_id == bind_read_token.operation_id)
+    {
+        shutdown_pair(pair);
+        return;
+    }
+    pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+    pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+    check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9904) ==
+              FLY_SESSION_V2_ACCEPTED, "shutdown accepted with Control read");
+    pair.inviter.executor.run_all();
+    check(pair.inviter.quic.cancels > 0 &&
+              pair.inviter.quic.cancelled_token.operation_id == read_token.operation_id,
+          "the old Control read is cancelled under its original token");
+    check(pair.inviter.quic.closes == 0,
+          "old read terminal must settle before connection close dispatch");
+
+    fly_session_port_event_v2 ended{};
+    ended.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+    ended.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ended.token = read_token;
+    ended.event_sequence = 1;
+    ended.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+    ended.terminal = 1;
+    ended.result = FLY_SESSION_V2_CANCELLED;
+    ended.payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
+    fly_session_provider_end_event_v2 payload{};
+    payload.struct_size = FLY_SESSION_PROVIDER_END_EVENT_V2_SIZE;
+    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ended.payload_size = sizeof(payload);
+    std::memcpy(ended.payload, &payload, sizeof(payload));
+    check(fly_session_deliver_v2(pair.inviter.quic.inbox, &ended) ==
+              FLY_SESSION_V2_ACCEPTED,
+          "retired Control read terminal is admitted, not stale");
+    pair.inviter.executor.run_all();
+    check(pair.inviter.quic.closes == 1,
+          "one close follows the old Control read terminal");
+    if (pair.inviter.quic.closes == 1)
+    {
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+    }
+    const auto destroy_result = fly_session_destroy_v2(pair.inviter.engine);
+    check(destroy_result == FLY_SESSION_V2_OK,
+          "shutdown destroys only after read and close terminals");
+    if (destroy_result == FLY_SESSION_V2_OK) pair.inviter.engine = nullptr;
+    shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
+}
+
 } // namespace
 
 int main()
@@ -765,6 +880,7 @@ int main()
     pause_and_disconnect_freeze_both_ends();
     activity_timeout_freezes_without_sliding_deadline();
     shutdown_waits_for_quic_close_terminal();
+    shutdown_retains_cancelled_control_read_until_terminal();
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",
