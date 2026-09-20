@@ -1246,6 +1246,10 @@ struct EngineFixture final
         int writes = 0;
         int reads = 0;
         int cancels = 0;
+        int closes = 0;
+        fly_session_op_token_v2 close_token{};
+        fly_session_resource_handle_v2 close_connection = 0;
+        fly_session_result_v2 close_result = FLY_SESSION_V2_OK;
         fly_session_op_token_v2 last_token{};
         fly_session_resource_handle_v2 last_resource = 0;
         std::uint64_t last_credit = 0;
@@ -1476,6 +1480,19 @@ struct EngineFixture final
         {
             ++static_cast<Quic*>(context)->cancels;
             return FLY_SESSION_V2_OK;
+        }
+
+        static fly_session_result_v2 close(
+            void* context, const fly_session_op_token_v2* token,
+            fly_session_resource_handle_v2 connection, std::uint32_t,
+            fly_session_inbox_v2_t* inbox)
+        {
+            auto* self = static_cast<Quic*>(context);
+            ++self->closes;
+            self->close_token = *token;
+            self->close_connection = connection;
+            self->capture(token, connection, inbox);
+            return self->close_result;
         }
     } quic;
 
@@ -1943,7 +1960,7 @@ private:
         quic_port.send_datagram = unavailable_quic_datagram;
         quic_port.payload_budget = unavailable_quic_query;
         quic_port.stats = unavailable_quic_query;
-        quic_port.close = unavailable_quic_close;
+        quic_port.close = Quic::close;
         quic_port.cancel = Quic::cancel;
         ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
         ports.abi_version = FLY_SESSION_ABI_VERSION_2;

@@ -720,6 +720,12 @@ void SessionEngine::cancel_initial_quic_bind_locked() noexcept
     }
     else if (effect) initial_quic_bind_->cancel_pending();
     const auto resources = initial_quic_bind_->owned_resources();
+    if (resources.connection != 0 && !quic_close_debt_)
+    {
+        auto token = initial_quic_bind_token_;
+        token.operation_id = make_link_operation_token_locked().operation_id;
+        quic_close_debt_ = QuicCloseDebt{token, resources.connection, true, false};
+    }
     if (resources.i2r_key != 0) ports_.release_secret(resources.i2r_key);
     if (resources.r2i_key != 0) ports_.release_secret(resources.r2i_key);
     initial_quic_bind_active_ = false;
@@ -1827,7 +1833,8 @@ bool SessionEngine::queue_local_endpoint_offer_locked() noexcept
 
 bool SessionEngine::start_initial_quic_bind_locked() noexcept
 {
-    if (initial_quic_bind_ || !endpoint_offer_ || !endpoint_offer_->ready() ||
+    if (initial_quic_bind_ || quic_close_debt_ || !endpoint_offer_ ||
+        !endpoint_offer_->ready() ||
         !selected_pair_plan_ || !pair_context_ || !pair_reveal_ ||
         !pair_material_ || !pair_material_->ready() ||
         !ports_.has_quic() || !ports_.has_crypto())
@@ -2706,6 +2713,9 @@ fly_session_result_v2 SessionEngine::deliver(
             same_token(event.token, endpoint_offer_token_);
         const bool initial_quic_bind_event = initial_quic_bind_active_ &&
             same_token(event.token, initial_quic_bind_token_);
+        const bool quic_close_event = quic_close_debt_ &&
+            quic_close_debt_->active &&
+            same_token(event.token, quic_close_debt_->token);
         const bool session_signing_event = session_signing_active_ &&
             same_token(event.token, session_signing_token_);
         const bool link_handshake_event = link_handshake_active_ &&
@@ -2724,6 +2734,7 @@ fly_session_result_v2 SessionEngine::deliver(
             !pair_key_confirm_event && !pair_capability_event &&
             !initial_plan_event && !initial_bearer_event &&
             !endpoint_offer_event && !initial_quic_bind_event &&
+            !quic_close_event &&
             !session_signing_event && !link_handshake_event &&
             !dual_event && !content_event &&
             !gatt_write_event)
@@ -2737,7 +2748,7 @@ fly_session_result_v2 SessionEngine::deliver(
             pair_known_event || pair_sas_event || pair_key_confirm_event ||
             pair_capability_event || initial_plan_event ||
             initial_bearer_event || endpoint_offer_event ||
-            initial_quic_bind_event || session_signing_event ||
+            initial_quic_bind_event || quic_close_event || session_signing_event ||
             link_handshake_event || dual_event || content_event ||
             gatt_write_event)
         {
@@ -2765,6 +2776,7 @@ fly_session_result_v2 SessionEngine::deliver(
                 : initial_bearer_event ? initial_bearer_token_
                 : endpoint_offer_event ? endpoint_offer_token_
                 : initial_quic_bind_event ? initial_quic_bind_token_
+                : quic_close_event ? quic_close_debt_->token
                 : session_signing_event ? session_signing_token_
                 : link_handshake_event ? link_handshake_token_
                 : dual_event ? dual_token_
@@ -2787,6 +2799,8 @@ fly_session_result_v2 SessionEngine::deliver(
                 : initial_bearer_event ? initial_bearer_expected_kind_
                 : endpoint_offer_event ? endpoint_offer_expected_kind_
                 : initial_quic_bind_event ? initial_quic_bind_expected_kind_
+                : quic_close_event
+                    ? static_cast<std::uint32_t>(FLY_SESSION_PROVIDER_QUIC_END_V2)
                 : session_signing_event ? session_signing_expected_kind_
                 : link_handshake_event ? link_handshake_expected_kind_
                 : dual_event ? dual_expected_kind_
@@ -2861,6 +2875,7 @@ void SessionEngine::run_work() noexcept
 {
     for (;;)
     {
+        dispatch_retiring_quic_close();
         fly_session_clock_sample_v2 dual_clock{};
         dual_clock.struct_size = FLY_SESSION_CLOCK_SAMPLE_V2_SIZE;
         dual_clock.abi_version = FLY_SESSION_ABI_VERSION_2;
@@ -4613,6 +4628,15 @@ void SessionEngine::run_work() noexcept
                             publish_link_view_locked(FLY_SESSION_LINK_IDLE_V2);
                         }
                     }
+                }
+                else if (quic_close_debt_ && quic_close_debt_->active &&
+                         same_token(event.token, quic_close_debt_->token))
+                {
+                    if (event.result == FLY_SESSION_V2_OK)
+                        quic_close_debt_.reset();
+                    else
+                        quic_close_debt_->active = false;
+                    if (shutdown_requested_) complete_shutdown_locked();
                 }
                 else if (pair_context_random_active_ &&
                          same_token(event.token, pair_context_random_token_))
@@ -6602,6 +6626,7 @@ fly_session_result_v2 SessionEngine::begin_shutdown(std::uint64_t request_id)
         return FLY_SESSION_V2_OUT_OF_MEMORY;
     }
     fly_session_view_release_v2(old_view);
+    dispatch_retiring_quic_close();
     if (stop_required)
     {
         const auto stop_result = ports_.stop_platform_state(&platform_watch_token_);
@@ -6645,9 +6670,39 @@ fly_session_result_v2 SessionEngine::begin_shutdown(std::uint64_t request_id)
     return FLY_SESSION_V2_ACCEPTED;
 }
 
+void SessionEngine::dispatch_retiring_quic_close() noexcept
+{
+    QuicCloseDebt close{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!quic_close_debt_ || !quic_close_debt_->dispatch_pending)
+            return;
+        quic_close_debt_->dispatch_pending = false;
+        quic_close_debt_->active = true;
+        close = *quic_close_debt_;
+    }
+    const auto result = ports_.close_quic(
+        &close.token, close.connection, 0, inbox_);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!quic_close_debt_ || !same_token(quic_close_debt_->token, close.token))
+        return;
+    if (result == FLY_SESSION_V2_OK)
+    {
+        quic_close_debt_.reset();
+        if (shutdown_requested_) complete_shutdown_locked();
+    }
+    else if (result != FLY_SESSION_V2_ACCEPTED)
+    {
+        // A refused close keeps ownership and blocks shutdown. It is not
+        // retried in a busy loop or mistaken for a completed release.
+        quic_close_debt_->active = false;
+    }
+}
+
 void SessionEngine::complete_shutdown_locked() noexcept
 {
     if (shutdown_complete_ || !shutdown_complete_view_ ||
+        quic_close_debt_ ||
         !platform_watch_terminal_ || discovery_active_ ||
         gatt_subscribe_pending_ || gatt_subscription_active_ ||
         discovery_disconnect_pending_ || discovery_disconnect_active_ ||

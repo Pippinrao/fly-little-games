@@ -690,6 +690,66 @@ void activity_timeout_freezes_without_sliding_deadline()
     shutdown_pair(pair);
 }
 
+void shutdown_waits_for_quic_close_terminal()
+{
+    std::puts("dual mvp: shutdown waits for exact QUIC close terminal");
+    LobbyPair pair(false, false);
+    bring_up_lobby(pair);
+    check(pair.inviter.snapshot().link_state == FLY_SESSION_LINK_CONNECTED_LOBBY_V2,
+          "ready lobby precondition for QUIC close");
+    pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+    check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9901) ==
+              FLY_SESSION_V2_ACCEPTED, "shutdown accepted");
+    pair.inviter.executor.run_all();
+    check(pair.inviter.quic.closes == 1 &&
+              pair.inviter.quic.close_connection != 0,
+          "one old connection close was dispatched");
+    check(pair.inviter.snapshot().engine_state ==
+              FLY_SESSION_ENGINE_SHUTTING_DOWN_V2,
+          "held close keeps engine shutting down");
+    const auto early_destroy = fly_session_destroy_v2(pair.inviter.engine);
+    check(early_destroy == FLY_SESSION_V2_BUSY,
+          "held close prevents destroy");
+    if (early_destroy == FLY_SESSION_V2_OK) pair.inviter.engine = nullptr;
+    if (pair.inviter.quic.closes == 1 && early_destroy == FLY_SESSION_V2_BUSY)
+    {
+        fly_session_port_event_v2 wrong{};
+        wrong.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+        wrong.abi_version = FLY_SESSION_ABI_VERSION_2;
+        wrong.token = pair.inviter.quic.close_token;
+        ++wrong.token.operation_id;
+        wrong.event_sequence = 1;
+        wrong.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+        wrong.terminal = 1;
+        wrong.result = FLY_SESSION_V2_OK;
+        wrong.payload_kind = FLY_SESSION_PROVIDER_QUIC_END_V2;
+        fly_session_provider_end_event_v2 payload{};
+        payload.struct_size = FLY_SESSION_PROVIDER_END_EVENT_V2_SIZE;
+        payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+        wrong.payload_size = sizeof(payload);
+        std::memcpy(wrong.payload, &payload, sizeof(payload));
+        check(fly_session_deliver_v2(pair.inviter.quic.inbox, &wrong) ==
+                  FLY_SESSION_V2_STALE,
+              "wrong close token cannot clear old connection debt");
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+        check(pair.inviter.snapshot().engine_state ==
+                  FLY_SESSION_ENGINE_SHUTDOWN_COMPLETE_V2,
+              "exact close OK permits shutdown completion");
+        check(fly_session_destroy_v2(pair.inviter.engine) == FLY_SESSION_V2_OK,
+              "exact close OK permits destroy");
+        pair.inviter.engine = nullptr;
+    }
+    else if (pair.inviter.engine != nullptr)
+    {
+        shutdown_engine_with_the_pump(pair.inviter, pair.inviter_pump,
+                                      pair.limits);
+    }
+    shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
+}
+
 } // namespace
 
 int main()
@@ -704,6 +764,7 @@ int main()
     six_hundred_frames_converge_on_local_digests();
     pause_and_disconnect_freeze_both_ends();
     activity_timeout_freezes_without_sliding_deadline();
+    shutdown_waits_for_quic_close_terminal();
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",

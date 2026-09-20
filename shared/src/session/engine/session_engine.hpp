@@ -66,6 +66,7 @@ private:
     static constexpr std::uint64_t kSchedulerOperationBlockV1 = 16;
 
     void complete_shutdown_locked() noexcept;
+    void dispatch_retiring_quic_close() noexcept;
     void publish_link_view_locked(std::uint32_t link_state);
     fly_session_op_token_v2 make_link_operation_token_locked();
     /*
@@ -222,6 +223,14 @@ private:
     fly_session_op_token_v2 initial_bearer_token_{};
     fly_session_op_token_v2 endpoint_offer_token_{};
     fly_session_op_token_v2 initial_quic_bind_token_{};
+    struct QuicCloseDebt final
+    {
+        fly_session_op_token_v2 token{};
+        fly_session_resource_handle_v2 connection = 0;
+        bool dispatch_pending = true;
+        bool active = false;
+    };
+    std::optional<QuicCloseDebt> quic_close_debt_{};
     fly_session_op_token_v2 session_signing_token_{};
     fly_session_op_token_v2 link_handshake_token_{};
     fly_session_op_token_v2 gatt_write_token_{};
