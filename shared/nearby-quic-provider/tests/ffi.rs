@@ -295,6 +295,7 @@ fn ffi_real_connection_exporter_stream_datagram_query_and_cleanup() {
     );
     let opened = wait(8);
     let client_send = opened.resource;
+    let client_recv = u64::from_be_bytes(opened.bytes[..8].try_into().unwrap());
     assert_eq!(
         unsafe { flynes_quic_provider_write(provider, 9, client_send, b"hello".as_ptr(), 5, 0) },
         FLYNES_QUIC_ACCEPTED
@@ -353,8 +354,22 @@ fn ffi_real_connection_exporter_stream_datagram_query_and_cleanup() {
     );
     assert_eq!(wait(25).result, FLYNES_QUIC_OK);
 
+    assert_eq!(
+        unsafe { flynes_quic_provider_close(provider, 14, client.resource, 0) },
+        FLYNES_QUIC_ACCEPTED
+    );
+    assert_eq!(wait(14).result, FLYNES_QUIC_OK);
+    for (operation, stream) in [(26, client_send), (27, client_recv)] {
+        let status = if operation == 26 {
+            unsafe { flynes_quic_provider_write(provider, operation, stream, b"x".as_ptr(), 1, 0) }
+        } else {
+            unsafe { flynes_quic_provider_read(provider, operation, stream, 1) }
+        };
+        assert_eq!(status, FLYNES_QUIC_ACCEPTED);
+        assert_eq!(wait(operation).result, FLYNES_QUIC_INVALID_HANDLE);
+    }
+
     for (operation, resource) in [
-        (14, client.resource),
         (15, server.resource),
         (16, listener.resource),
         (17, material.resource),

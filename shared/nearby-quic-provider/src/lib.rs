@@ -34,6 +34,7 @@ pub fn transport_config(deadline: Duration) -> Result<Arc<quinn::TransportConfig
     }
     let mut config = quinn::TransportConfig::default();
     config.max_idle_timeout(Some(deadline.min(Duration::from_secs(5)).try_into()?));
+    config.keep_alive_interval(Some(Duration::from_millis(750)));
     config.max_concurrent_bidi_streams(4u32.into());
     config.max_concurrent_uni_streams(4u32.into());
     config.stream_receive_window(quinn::VarInt::from_u32(256 * 1024));

@@ -45,6 +45,7 @@ void flynes_quic_provider_retain(FlynesQuicProvider*);
 void flynes_quic_provider_release(FlynesQuicProvider*);
 int32_t flynes_quic_provider_register_tls_material(FlynesQuicProvider*, uint64_t,
     const uint8_t*, size_t, const uint8_t*, size_t, const FlynesTlsSignerCallbacks*);
+int32_t flynes_quic_provider_generate_self_signed(FlynesQuicProvider*, uint64_t);
 int32_t flynes_quic_provider_listen(FlynesQuicProvider*, uint64_t,
     const uint8_t*, size_t, uint64_t, uint64_t);
 int32_t flynes_quic_provider_accept(FlynesQuicProvider*, uint64_t, uint64_t);
