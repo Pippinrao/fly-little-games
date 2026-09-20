@@ -750,11 +750,14 @@ void shutdown_waits_for_quic_close_terminal()
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
-void shutdown_retains_cancelled_quic_read_until_terminal(int target_stream_count)
+void shutdown_retains_cancelled_quic_read_until_terminal(
+    int target_stream_count, bool success_data = false)
 {
     std::puts(target_stream_count == 1
         ? "dual mvp: shutdown retains cancelled bind read"
-        : "dual mvp: shutdown retains cancelled Control read");
+        : success_data
+            ? "dual mvp: retired Control read accepts racing data"
+            : "dual mvp: shutdown retains cancelled Control read");
     LobbyPair pair(false, false);
     pair.inviter.platform.ready();
     pair.joiner.platform.ready();
@@ -838,23 +841,32 @@ void shutdown_retains_cancelled_quic_read_until_terminal(int target_stream_count
     check(pair.inviter.quic.closes == 0,
           "old read terminal must settle before connection close dispatch");
 
-    fly_session_port_event_v2 ended{};
-    ended.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
-    ended.abi_version = FLY_SESSION_ABI_VERSION_2;
-    ended.token = read_token;
-    ended.event_sequence = 1;
-    ended.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
-    ended.terminal = 1;
-    ended.result = FLY_SESSION_V2_CANCELLED;
-    ended.payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
-    fly_session_provider_end_event_v2 payload{};
-    payload.struct_size = FLY_SESSION_PROVIDER_END_EVENT_V2_SIZE;
-    payload.abi_version = FLY_SESSION_ABI_VERSION_2;
-    ended.payload_size = sizeof(payload);
-    std::memcpy(ended.payload, &payload, sizeof(payload));
-    check(fly_session_deliver_v2(pair.inviter.quic.inbox, &ended) ==
-              FLY_SESSION_V2_ACCEPTED,
-          "retired QUIC read terminal is admitted, not stale");
+    if (success_data)
+    {
+        const std::uint8_t one_byte[] = {0};
+        flynes::session::loopback::deliver_provider_stream_data(
+            pair.inviter.quic.inbox, read_token, one_byte, sizeof(one_byte));
+    }
+    else
+    {
+        fly_session_port_event_v2 ended{};
+        ended.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+        ended.abi_version = FLY_SESSION_ABI_VERSION_2;
+        ended.token = read_token;
+        ended.event_sequence = 1;
+        ended.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+        ended.terminal = 1;
+        ended.result = FLY_SESSION_V2_CANCELLED;
+        ended.payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
+        fly_session_provider_end_event_v2 payload{};
+        payload.struct_size = FLY_SESSION_PROVIDER_END_EVENT_V2_SIZE;
+        payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+        ended.payload_size = sizeof(payload);
+        std::memcpy(ended.payload, &payload, sizeof(payload));
+        check(fly_session_deliver_v2(pair.inviter.quic.inbox, &ended) ==
+                  FLY_SESSION_V2_ACCEPTED,
+              "retired QUIC read terminal is admitted, not stale");
+    }
     pair.inviter.executor.run_all();
     check(pair.inviter.quic.closes == 1,
           "one close follows the old Control read terminal");
@@ -889,6 +901,7 @@ int main()
     shutdown_waits_for_quic_close_terminal();
     shutdown_retains_cancelled_quic_read_until_terminal(2);
     shutdown_retains_cancelled_quic_read_until_terminal(1);
+    shutdown_retains_cancelled_quic_read_until_terminal(2, true);
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",

@@ -4670,7 +4670,11 @@ void SessionEngine::run_work() noexcept
                 else if (retired_control_quic_ &&
                          same_token(event.token, retired_control_quic_->token))
                 {
-                    if (event.terminal != 0)
+                    // One successful DATA event consumes the granted read
+                    // credit even though the provider marks it nonterminal.
+                    if (event.terminal != 0 ||
+                        (event.payload_kind == FLY_SESSION_PROVIDER_QUIC_DATA_V2 &&
+                         event.result == FLY_SESSION_V2_OK))
                     {
                         retired_control_quic_.reset();
                         if (shutdown_requested_) complete_shutdown_locked();
@@ -4679,7 +4683,9 @@ void SessionEngine::run_work() noexcept
                 else if (retired_initial_quic_ &&
                          same_token(event.token, retired_initial_quic_->token))
                 {
-                    if (event.terminal != 0)
+                    if (event.terminal != 0 ||
+                        (event.payload_kind == FLY_SESSION_PROVIDER_QUIC_DATA_V2 &&
+                         event.result == FLY_SESSION_V2_OK))
                     {
                         retired_initial_quic_.reset();
                         if (shutdown_requested_) complete_shutdown_locked();
