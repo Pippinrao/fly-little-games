@@ -750,9 +750,11 @@ void shutdown_waits_for_quic_close_terminal()
     shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
-void shutdown_retains_cancelled_control_read_until_terminal()
+void shutdown_retains_cancelled_quic_read_until_terminal(int target_stream_count)
 {
-    std::puts("dual mvp: shutdown retains cancelled Control read");
+    std::puts(target_stream_count == 1
+        ? "dual mvp: shutdown retains cancelled bind read"
+        : "dual mvp: shutdown retains cancelled Control read");
     LobbyPair pair(false, false);
     pair.inviter.platform.ready();
     pair.joiner.platform.ready();
@@ -804,18 +806,23 @@ void shutdown_retains_cancelled_control_read_until_terminal()
             pair.inviter.quic.accepted_bidi;
         if (streams < 2 && pair.inviter.quic.last_read_token.operation_id != 0)
             bind_read_token = pair.inviter.quic.last_read_token;
-        if (streams >= 2 && pair.inviter.quic.last_read_token.operation_id != 0 &&
-            pair.inviter.quic.last_read_token.operation_id !=
-                bind_read_token.operation_id)
+        if (streams >= target_stream_count &&
+            pair.inviter.quic.last_read_token.operation_id != 0 &&
+            (target_stream_count == 1 ||
+             pair.inviter.quic.last_read_token.operation_id !=
+                 bind_read_token.operation_id))
             break;
     }
     const auto read_token = pair.inviter.quic.last_read_token;
-    check(pair.inviter.quic.opened_bidi + pair.inviter.quic.accepted_bidi >= 2 &&
+    check(pair.inviter.quic.opened_bidi + pair.inviter.quic.accepted_bidi >=
+              target_stream_count &&
               read_token.operation_id != 0 &&
-              read_token.operation_id != bind_read_token.operation_id,
-          "Control read was dispatched and is waiting for peer bytes");
+              (target_stream_count == 1 ||
+               read_token.operation_id != bind_read_token.operation_id),
+          "target QUIC read was dispatched and is waiting for peer bytes");
     if (read_token.operation_id == 0 ||
-        read_token.operation_id == bind_read_token.operation_id)
+        (target_stream_count != 1 &&
+         read_token.operation_id == bind_read_token.operation_id))
     {
         shutdown_pair(pair);
         return;
@@ -827,7 +834,7 @@ void shutdown_retains_cancelled_control_read_until_terminal()
     pair.inviter.executor.run_all();
     check(pair.inviter.quic.cancels > 0 &&
               pair.inviter.quic.cancelled_token.operation_id == read_token.operation_id,
-          "the old Control read is cancelled under its original token");
+          "the old QUIC read is cancelled under its original token");
     check(pair.inviter.quic.closes == 0,
           "old read terminal must settle before connection close dispatch");
 
@@ -847,7 +854,7 @@ void shutdown_retains_cancelled_control_read_until_terminal()
     std::memcpy(ended.payload, &payload, sizeof(payload));
     check(fly_session_deliver_v2(pair.inviter.quic.inbox, &ended) ==
               FLY_SESSION_V2_ACCEPTED,
-          "retired Control read terminal is admitted, not stale");
+          "retired QUIC read terminal is admitted, not stale");
     pair.inviter.executor.run_all();
     check(pair.inviter.quic.closes == 1,
           "one close follows the old Control read terminal");
@@ -880,7 +887,8 @@ int main()
     pause_and_disconnect_freeze_both_ends();
     activity_timeout_freezes_without_sliding_deadline();
     shutdown_waits_for_quic_close_terminal();
-    shutdown_retains_cancelled_control_read_until_terminal();
+    shutdown_retains_cancelled_quic_read_until_terminal(2);
+    shutdown_retains_cancelled_quic_read_until_terminal(1);
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",
