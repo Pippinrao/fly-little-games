@@ -2,7 +2,7 @@
 
 日期：2026-09-20。工作区：`.worktrees/nearby-ui-acceptance-fixes`。QUIC provider 阶段提交 `f5649ce`，本检查点记录时版本为 `1.4.38`；接手前大量未提交改动仍保留，未清理其他 worktree。
 
-**当前滚动状态（21:36，UTC+8）：主线仅按附近双人联机计算。QUIC provider A2 关闭资源归属已提交为 `f5649ce`，但 A2 验收矩阵尚有覆盖缺口；engine 退休/关闭账本、Android adapter 回调交接、三端生产 owner/UI/唯一 DUAL 运行器及双 App 试玩仍未完成。10:14 及更早的单机/页面回归仅为历史证据，不能计入联机可用进度。下文各旧时刻均按历史快照阅读，以末尾 21:36 节为最新状态。**
+**当前滚动状态（22:53，UTC+8）：主线仅按附近双人联机计算。A2 provider、Android adapter C 的两个回调交接切片，以及 engine B 的五个关闭/退休切片均已分别提交；这只覆盖 QUIC 生命周期的一部分，双 App 联机尚不可用。DUAL/Content 在途 QUIC 操作、端口派发竞态、三端生产 owner/ports/UI/唯一运行器和双 App 试玩仍未完成。10:14 及更早的单机/页面回归仅为历史证据，不能计入联机可用进度。下文各旧时刻均按历史快照阅读，以末尾 22:53 节为最新状态。**
 
 ## 边界与执行方式
 
@@ -407,3 +407,10 @@
 - 独立只读 A2 审阅未发现确定性的生产 Critical/Important 生命周期错误，但列出未覆盖的 `accept_bidi/open_uni` 迟到提交、其余 consumer admission 参数化、另一独立连接隔离和八轮资源基线等。因此 `f5649ce` 是可回退的 A2 核心代码提交，**不是 A2 完整验收**，更不是三端联机可用。B/C 只读实施切片在 ignored `out/evidence/quic-close-lifecycle/{engine/B-execution-slice.md,android/C-execution-slice.md}`，尚未修改 B/C 产品源码。
 - 为避免把既有 Android crypto 测试构建改动混入 A2 提交，按仓库 `Bump-Patch.ps1` 手动同步 `1.4.37`，暂存 `app/build.gradle` 仅版本两行；本次提交使用 `--no-verify` 避免现有 hook 把整份未完成文件强制暂存。提交后核对 HEAD `f5649ce` 只含八个预期文件，原 Android 变更仍未暂存。后续提交须同样先检查 hook/暂存边界，不重用旧版本号。
 - 下一阶段顺序：先补齐 A2 关键矩阵并阶段提交；再做 engine B 的 close debt/退休 terminal 红绿，再做 Android adapter C 的 cancel/late-success/BACKPRESSURE 红绿，各自独立提交；随后才接三端生产 owner/ports/UI 和两个真实 App 的发现、配对、双方操作、断开/第二局及十分钟试玩。现有其他 worktree 属既有工作，未获逐一核准前不删除或清空。
+
+### 22:53 附近联机 QUIC 生命周期分阶段提交（UTC+8，最新）
+
+- Rust A2 后续验收和 Android adapter C 的取消/流归属切片已分别提交；engine B 先以 `3d1a1e4` 让已建立连接的关闭终态阻止过早 shutdown/destroy。本轮又逐项保存 RED→GREEN：`a78f24f` 保留 Control 在途 QUIC 取消终态，`792f171` 保留初始绑定读取取消终态，`a077532` 将竞态成功 `QUIC_DATA` 的非终态数据视为一次读取额度完成，`f719275` 对取消后才成功创建的连接补建关闭债务。代码阶段结束于 `1.4.46`，本检查点提交后为 `1.4.47`。每项单独提交，未把工作区其他脏文件一并暂存。
+- 定点双 engine MVP 测试覆盖上述旧令牌、关闭顺序与迟到连接句柄，最新 `flynes_two_engine_dual_mvp` 通过；本轮另外执行的 session/provider 合同、连接大厅 host 目标通过，Android `:app:testDebugUnitTest` 成功（多数任务为 UP-TO-DATE）。未重复跑三端模拟器，也未进行两个真实 App 的联机试玩。因此这些结果只能证明当前共享引擎和假端口范围的生命周期行为。
+- 尚未闭环的 engine B 范围：DUAL/Content 已接受 QUIC 业务操作的退休，端口调用尚未返回时与 shutdown 交叉的派发竞态，失败/断链/用户动作的统一退休入口，错误或拒绝 close 的资源债务及完整 token/replay 矩阵。连接已创建但异常产生第二句柄的容量/冲突策略也未由现有单债务结构证明。不能据此声称 QUIC 生命周期全绿或双人首版可用。
+- 继续按附近联机关键路径推进：先完成上述 B 剩余资源所有权与实际 Rust/Android 适配器集成验证，再接 Android、Harmony、iOS 的生产 V2 owner/真实端口/唯一 DUAL 运行器和原 UI；最后才做两个 App 从发现、配对到双方输入、断线、第二局与十分钟试玩。三端单机既有功能不再作为本任务进度重新验收。既有 worktree 和未跟踪证据保留，未获逐项核准前不删除。
