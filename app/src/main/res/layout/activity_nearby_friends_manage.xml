@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   好友管理 — rename / delete / block / identity reset (design §22.1).
 
@@ -20,20 +20,47 @@
     <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_manage_toolbar"
         android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
         android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
-        app:title="@string/nearby_friends_manage" app:titleTextColor="@color/fly_on_surface" />
+        app:title="@string/nearby_friends_manage" app:titleTextAppearance="@style/TextAppearance.FlyNes.Nearby.PageTitle"
+        app:titleTextColor="@color/fly_on_surface" />
     <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
-            <TextView android:id="@+id/nearby_manage_section" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_friends_section" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-            <TextView android:id="@+id/nearby_manage_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_friends_empty" android:textColor="@color/fly_on_surface" />
-            <TextView android:id="@+id/nearby_manage_blocked" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_friend_store" android:textColor="@color/fly_error" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_rename" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_4" android:enabled="false" android:text="@string/nearby_friends_rename" />
-            <TextView android:id="@+id/nearby_manage_rename_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_friend_store" android:textColor="@color/fly_error" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_delete" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_3" android:enabled="false" android:text="@string/nearby_friends_delete" />
-            <TextView android:id="@+id/nearby_manage_delete_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_friend_store" android:textColor="@color/fly_error" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_block" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_3" android:enabled="false" android:text="@string/nearby_friends_block" />
-            <TextView android:id="@+id/nearby_manage_block_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_friend_store" android:textColor="@color/fly_error" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_identity_reset" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_6" android:enabled="false" android:text="@string/nearby_friends_identity_reset" />
-            <TextView android:id="@+id/nearby_manage_identity_reset_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_friend_store" android:textColor="@color/fly_error" />
+            <TextView android:id="@+id/nearby_manage_section" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:includeFontPadding="false" android:text="@string/nearby_friends_section"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.SectionTitle" android:textColor="@color/fly_on_surface" />
+            <TextView android:id="@+id/nearby_manage_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/fly_space_1" android:includeFontPadding="false" android:text="@string/nearby_friends_empty"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body" android:textColor="@color/fly_on_surface" />
+            <TextView android:id="@+id/nearby_manage_blocked" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/fly_space_1" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_rename" style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_4"
+                android:enabled="false" android:minHeight="48dp" android:text="@string/nearby_friends_rename"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" />
+            <TextView android:id="@+id/nearby_manage_rename_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/fly_space_1" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_delete" style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3"
+                android:enabled="false" android:minHeight="48dp" android:text="@string/nearby_friends_delete"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" />
+            <TextView android:id="@+id/nearby_manage_delete_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/fly_space_1" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_block" style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_3"
+                android:enabled="false" android:minHeight="48dp" android:text="@string/nearby_friends_block"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" />
+            <TextView android:id="@+id/nearby_manage_block_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/fly_space_1" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_manage_identity_reset" style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6"
+                android:enabled="false" android:minHeight="48dp" android:text="@string/nearby_friends_identity_reset"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" />
+            <TextView android:id="@+id/nearby_manage_identity_reset_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/fly_space_1" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

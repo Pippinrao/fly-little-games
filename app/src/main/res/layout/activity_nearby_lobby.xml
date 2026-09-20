@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   大厅 — the pre-match page where both ends see the same pending configuration (design §22.3).
 
@@ -19,7 +19,8 @@
     <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_lobby_toolbar"
         android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
         android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
-        app:title="@string/nearby_lobby_title" app:titleTextColor="@color/fly_on_surface" />
+        app:title="@string/nearby_lobby_title" app:titleTextAppearance="@style/TextAppearance.FlyNes.Nearby.PageTitle"
+        app:titleTextColor="@color/fly_on_surface" />
     <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
         <LinearLayout android:id="@+id/nearby_lobby_rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4" />
     </ScrollView>
@@ -28,11 +29,13 @@
         android:orientation="vertical" android:padding="@dimen/fly_space_4">
         <com.google.android.material.button.MaterialButton android:id="@+id/nearby_lobby_confirm"
             style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="wrap_content"
-            android:layout_height="48dp" android:maxWidth="320dp" android:minWidth="200dp"
-            android:enabled="false" android:text="@string/nearby_lobby_confirm" />
+            android:layout_height="wrap_content" android:enabled="false" android:maxWidth="320dp"
+            android:minHeight="48dp" android:minWidth="200dp" android:text="@string/nearby_lobby_confirm"
+            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PrimaryAction"
+            />
         <TextView android:id="@+id/nearby_lobby_confirm_reason" android:layout_width="wrap_content"
             android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1"
-            android:gravity="center" android:text="@string/nearby_blocked_session_read"
-            android:textColor="@color/fly_error" />
+            android:gravity="center" android:includeFontPadding="false" android:text="@string/nearby_blocked_session_read"
+            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" />
     </LinearLayout>
 </LinearLayout>

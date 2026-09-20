@@ -32,6 +32,8 @@ add_subdirectory(
 
 add_library(entry SHARED
     napi_init.cpp
+    "${FLYNES_REPOSITORY_ROOT}/harmony/nearby/session_owner_v2.cpp"
+    "${FLYNES_REPOSITORY_ROOT}/harmony/nearby/content_port_v2.cpp"
     catalog_smoke.cpp
     play_session.cpp
     native_play_support.cpp

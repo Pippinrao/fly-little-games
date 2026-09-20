@@ -85,7 +85,7 @@ export class BuiltinGame {
  */
 export class BuiltinGames {
   static readonly ASSET_NAME: string = 'builtin-games.json';
-  static readonly ASSET_DIR: string = 'roms/';
+  static readonly ASSET_DIR: string = '';
   private static readonly SUPPORTED_SCHEMA: number = 1;
 
   private readonly entries: BuiltinGame[] = [];

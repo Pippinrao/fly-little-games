@@ -72,12 +72,27 @@ public:
     fly_session_result_v2 on_content_empty() noexcept;
     fly_session_result_v2 on_content_choice(const ParsedProviderEvent& parsed)
         noexcept;
+    fly_session_result_v2 ingest_content_choice_record(
+        const std::uint8_t* bytes, std::size_t size,
+        const std::array<std::uint8_t, 32>& record_hash) noexcept;
+    void set_observed_local_seat(std::uint8_t seat) noexcept;
 
     fly_session_result_v2 select_content(const std::uint8_t choice_id[16])
         noexcept;
+    fly_session_result_v2 confirm_local_pending() noexcept;
+    fly_session_result_v2 apply_peer_pending_confirm(const std::uint8_t id[32],
+                                                     std::uint64_t revision)
+        noexcept;
+    fly_session_result_v2 ingest_verified_pending_confirm(
+        const std::uint8_t* bytes, std::size_t size) noexcept;
+    fly_session_result_v2 ingest_verified_suspend(const std::uint8_t* bytes,
+                                                  std::size_t size) noexcept;
     fly_session_result_v2 publish_imported_choice(
         const fly_session_game_choice_v2& choice) noexcept;
     fly_session_result_v2 start_dual(const DualStartInputsV1& inputs) noexcept;
+    fly_session_result_v2 read_start_ref(
+        const DualStartInputsV1& inputs,
+        fly_session_dual_start_ref_v2& out_ref) const noexcept;
     fly_session_result_v2 submit_local(const fly_session_input_v2& input)
         noexcept;
     fly_session_result_v2 pause() noexcept;
@@ -93,7 +108,27 @@ public:
     {
         return catalog_complete_;
     }
+    [[nodiscard]] bool catalog_started() const noexcept
+    {
+        return catalog_started_;
+    }
     [[nodiscard]] bool has_selection() const noexcept { return selected_; }
+    [[nodiscard]] bool pending_start_conditions_bound() const noexcept
+    {
+        return pending_start_bound_;
+    }
+    [[nodiscard]] bool local_pending_confirmed() const noexcept
+    {
+        return pending_config_local_confirmed_ != 0;
+    }
+    [[nodiscard]] bool peer_pending_confirmed() const noexcept
+    {
+        return pending_config_peer_confirmed_ != 0;
+    }
+    [[nodiscard]] bool runtime_ready() const noexcept
+    {
+        return local_runtime_ready_;
+    }
     [[nodiscard]] bool running() const noexcept
     {
         return running_ && !frozen_ && !paused_;
@@ -121,10 +156,15 @@ private:
         const std::array<std::uint8_t, 32>& expected_hash) noexcept;
     fly_session_result_v2 queue_local_bundle(
         const DualPortInputArrayV1& samples) noexcept;
+    fly_session_result_v2 queue_runtime_ready_beacon() noexcept;
+    void maybe_enter_running() noexcept;
     fly_session_result_v2 ingest_remote_bytes(const std::uint8_t* bytes,
                                               std::size_t size) noexcept;
     fly_session_result_v2 try_step() noexcept;
     void mark_frozen(std::uint32_t reason) noexcept;
+    void bind_pending_config(const fly_session_game_choice_v2& choice) noexcept;
+    std::uint64_t revision_for_bind(
+        const std::array<std::uint8_t, 32>& id) noexcept;
     static std::array<std::uint8_t, 32> owner_key(
         const std::array<std::uint8_t, 65>& public_key) noexcept;
 
@@ -136,6 +176,19 @@ private:
     bool selected_ = false;
     std::array<std::uint8_t, 16> selected_ref_{};
     std::array<std::uint8_t, 32> selected_content_{};
+    std::array<std::uint8_t, 32> pending_config_id_{};
+    std::uint64_t pending_config_revision_ = 0;
+    std::uint32_t pending_config_local_confirmed_ = 0;
+    std::uint32_t pending_config_peer_confirmed_ = 0;
+    bool pending_start_bound_ = false;
+    struct BindRevision final
+    {
+        std::array<std::uint8_t, 32> id{};
+        std::uint64_t count = 0;
+    };
+    static constexpr std::uint8_t kMaxBindRevisions = 16;
+    BindRevision bind_revisions_[kMaxBindRevisions]{};
+    std::uint8_t bind_revision_used_ = 0;
 
     std::unique_ptr<CAbiDualRuntimePortV1> adapter_;
     std::unique_ptr<DualRunSchedulerV1> scheduler_;
@@ -160,6 +213,8 @@ private:
     std::deque<std::vector<std::uint8_t>> write_queue_{};
     std::vector<std::uint8_t> read_accumulator_{};
 
+    bool local_runtime_ready_ = false;
+    bool peer_runtime_ready_ = false;
     bool running_ = false;
     bool paused_ = false;
     bool frozen_ = false;

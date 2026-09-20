@@ -68,4 +68,6 @@
     <item name="nearby_ingame_banner_row_takeover" type="id" />
     <item name="nearby_ingame_banner_row_continue_solo" type="id" />
     <item name="nearby_ingame_banner_row_save_and_end" type="id" />
+    <item name="nearby_lobby_details" type="id" />
+    <item name="nearby_lobby_details_rows" type="id" />
 </resources>

@@ -2,27 +2,23 @@ import { router } from '@kit.ArkUI';
 import { systemDateTime } from '@kit.BasicServicesKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import nativeSession, { NearbyInviteSnapshotDto } from 'libentry.so';
+import { normalizeInviteCode } from '../service/NearbyService';
 import {
-  NEARBY_STAGE_STATUS_CURRENT,
-  NEARBY_STAGE_STATUS_NOT_REACHED,
-  NEARBY_STAGE_STATUS_PASSED,
-  NEARBY_WIFI_PATH_ORDER,
-  NearbyStageRow,
-  nearbyPairingCurrentStage,
-  nearbyPairingStages,
-  nearbyString,
-  normalizeInviteCode
-} from '../service/NearbyService';
+  NEARBY_MIN_TAP_HEIGHT_VP,
+  NEARBY_TYPE,
+  nearbyLetterSpacingFp
+} from '../ui/NearbyTypography';
 
-// Android/game-center parity: the same shell colors as pages/NearbyFriends.ets and
-// pages/Settings.ets. No new palette is introduced here.
+// HTML nearby-ui-parity-review.html N01/N02/N03 + design §6 tokens.
 const COLOR_BACKGROUND: string = '#121316';
 const COLOR_SURFACE: string = '#1B1D22';
 const COLOR_FIELD: string = '#292B31';
 const COLOR_ON_SURFACE: string = '#F4EFE6';
 const COLOR_ON_SURFACE_MUTED: string = '#BEB8AE';
-const COLOR_NOT_REACHED: string = '#292B31';
-const COLOR_BLOCKED: string = '#FF6B5E';
+const COLOR_PRIMARY: string = '#FF6B5E';
+const COLOR_ON_PRIMARY: string = '#121316';
+const COLOR_LINE: string = '#393B40';
+const COLOR_AMBER: string = '#E7B775';
 
 @Entry
 @Component
@@ -36,6 +32,8 @@ struct NearbyPairing {
   @State private joinInput: string = '';
   @State private joinError: boolean = false;
   @State private joinSubmitted: boolean = false;
+  @State private joinFailed: boolean = false;
+  @State private availableWidth: number = 0;
   private joinAttemptId: number = 0;
   private inviteTimerId: number = -1;
 
@@ -57,7 +55,7 @@ struct NearbyPairing {
     if (this.inviteGeneration > 0) {
       nativeSession.nearbyInviteHostCancel(this.inviteGeneration);
     }
-    if (this.joinSubmitted && this.joinAttemptId > 0) {
+    if (this.joinAttemptId > 0) {
       nativeSession.nearbyInviteCancelCode(this.joinAttemptId);
     }
   }
@@ -114,6 +112,7 @@ struct NearbyPairing {
       nativeSession.nearbyInviteHostCancel(this.inviteGeneration);
     }
     this.clearInviteView();
+    router.back();
   }
 
   private clearInviteView(): void {
@@ -158,10 +157,9 @@ struct NearbyPairing {
   }
 
   private submitJoin(): void {
-    // C05: no request on incomplete/invalid input; the field error is adjacent
-    // to the input and appears only after a submit attempt. With no discovery
-    // bearer in this build the honest outcome is the discovery-blocked reason,
-    // never a synthetic host approval.
+    if (this.joinSubmitted) {
+      return;
+    }
     const code = normalizeInviteCode(this.joinInput);
     if (code === '') {
       this.joinError = true;
@@ -171,285 +169,460 @@ struct NearbyPairing {
     this.joinAttemptId = nativeSession.nearbyInviteNextJoinAttemptId();
     nativeSession.nearbyInviteSubmitCode(this.joinAttemptId, code, nowMs);
     this.joinSubmitted = true;
+    this.joinFailed = false;
     this.joinError = true;
+    setTimeout(() => {
+      this.joinSubmitted = false;
+      this.joinFailed = true;
+    }, 0);
+  }
+
+  private cancelJoinAttempt(): void {
+    if (this.joinAttemptId > 0) {
+      nativeSession.nearbyInviteCancelCode(this.joinAttemptId);
+      this.joinAttemptId = 0;
+    }
+    this.joinSubmitted = false;
+    this.joinFailed = false;
+    router.back();
+  }
+
+  private pageTitle(): Resource {
+    if (this.mode === 'join_code') {
+      return $r('app.string.nearby_screen_joinCode');
+    }
+    if (this.mode === 'scan') {
+      return $r('app.string.nearby_screen_scan');
+    }
+    return $r('app.string.nearby_screen_invite');
   }
 
   build() {
     Column() {
       this.topBar()
       Scroll() {
-        Column({ space: 16 }) {
-          if (this.mode === 'create') {
-            this.createBlock()
+        if (this.availableWidth > 580) {
+          Row({ space: 18 }) {
+            this.leftPane()
+            this.rightPane()
           }
-          if (this.mode === 'join_code' || this.mode === 'scan') {
-            this.joinCodeBlock()
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+        } else {
+          Column({ space: 18 }) {
+            this.leftPane()
+            this.rightPane()
           }
-          this.codeBlock()
-          this.wifiPathBlock()
-          // §4 line 188: the anonymous-join control set (nearby.join.request_anonymous
-          // / accept / reject) is kept in the vocabulary but is PENDING §30 centralised
-          // review. This block is deliberately not built; do not add it here until that
-          // review answers.
+          .width('100%')
         }
-        .width('100%')
-        .padding(16)
-        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
       .layoutWeight(1)
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .align(Alignment.TopStart)
+      .clip(true)
+      this.footer()
     }
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_BACKGROUND)
+    .onAreaChange((_old: Area, area: Area) => {
+      this.availableWidth = Number(area.width);
+    })
   }
 
   @Builder
   topBar() {
-    Row() {
+    Row({ space: 10 }) {
       Text('‹')
+        .id('nearby_back')
         .fontSize(26)
         .fontWeight(FontWeight.Bold)
         .fontColor(COLOR_ON_SURFACE)
-        .width(48)
-        .height(48)
+        .constraintSize({ minWidth: NEARBY_MIN_TAP_HEIGHT_VP, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
         .textAlign(TextAlign.Center)
         .onClick(() => {
           router.back();
         })
-      // Page title is this page's own name, not the feature name nearby.title.
-      Text($r('app.string.nearby_pairing_title'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
+      Text(this.pageTitle())
+        .fontSize(NEARBY_TYPE.pageTitle.size)
+        .fontWeight(NEARBY_TYPE.pageTitle.weight)
+        .lineHeight(NEARBY_TYPE.pageTitle.lineHeight)
         .fontColor(COLOR_ON_SURFACE)
         .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text($r('app.string.nearby_entry_stageHint'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+      Button() {
+        Text('i')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(COLOR_ON_SURFACE)
+      }
+      .width(48)
+      .height(48)
+      .backgroundColor('#00000000')
+      .borderRadius(12)
+      .accessibilityText($r('app.string.nearby_diagnostics_title'))
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 4, right: 16 })
-    .backgroundColor(COLOR_SURFACE)
+    .constraintSize({ minHeight: 64 })
+    .padding({ left: 4, right: 8 })
+    .backgroundColor(COLOR_BACKGROUND)
   }
 
-  // BLE path: one six-digit code, entered on both ends. No code can be generated
-  // or verified without the session, so the field and its confirm control are
-  // present, disabled, and carry nearby.blocked.auth (§4).
-  // N01 创建联机: generation-bound six-digit code with the 60s continuous clock.
   @Builder
-  createBlock() {
-    Column({ space: 8 }) {
+  leftPane() {
+    if (this.mode === 'join_code') {
+      this.joinLeft()
+    } else if (this.mode === 'scan') {
+      this.scanLeft()
+    } else {
+      this.inviteLeft()
+    }
+  }
+
+  @Builder
+  rightPane() {
+    if (this.mode === 'join_code') {
+      this.joinRight()
+    } else if (this.mode === 'scan') {
+      this.scanRight()
+    } else {
+      this.inviteRight()
+    }
+  }
+
+  @Builder
+  inviteLeft() {
+    Column({ space: 10 }) {
+      Text($r('app.string.nearby_invite_kicker'))
+        .fontSize(NEARBY_TYPE.kicker.size)
+        .fontWeight(NEARBY_TYPE.kicker.weight)
+        .lineHeight(NEARBY_TYPE.kicker.lineHeight)
+        .fontColor(COLOR_PRIMARY)
+        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.kicker))
+        .width('100%')
+      Text($r('app.string.nearby_invite_headline'))
+        .id('nearby_invite_headline')
+        .fontSize(NEARBY_TYPE.paneTitle.size)
+        .fontWeight(NEARBY_TYPE.paneTitle.weight)
+        .lineHeight(NEARBY_TYPE.paneTitle.lineHeight)
+        .fontColor(COLOR_ON_SURFACE)
+        .width('100%')
+      Text($r('app.string.nearby_invite_subtitle'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .width('100%')
       Text($r('app.string.nearby_invite_codeLabel'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
+        .fontSize(NEARBY_TYPE.body.size)
+        .fontWeight(NEARBY_TYPE.body.weight)
+        .lineHeight(NEARBY_TYPE.body.lineHeight)
         .fontColor(COLOR_ON_SURFACE)
         .width('100%')
       Text(this.inviteCode === '' ? '· · · · · ·' : this.inviteCode)
-        .fontSize(32)
-        .fontWeight(FontWeight.Bold)
-        .letterSpacing(8)
+        .fontSize(NEARBY_TYPE.inviteCode.size)
+        .fontWeight(NEARBY_TYPE.inviteCode.weight)
+        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.inviteCode))
+        .lineHeight(NEARBY_TYPE.inviteCode.lineHeight)
         .fontColor(COLOR_ON_SURFACE)
         .width('100%')
-      if (this.inviteCode !== '') {
-        Text(`${$r('app.string.nearby_invite_validFor')}: ${this.remainingInviteSeconds()}s`)
-          .fontSize(14)
+        .maxLines(1)
+        .textAlign(TextAlign.Center)
+        .padding({ top: 10, bottom: 10 })
+        .backgroundColor(COLOR_FIELD)
+        .borderRadius(10)
+      Row({ space: 4 }) {
+        Text($r('app.string.nearby_invite_validFor'))
+          .fontSize(NEARBY_TYPE.muted.size)
+          .fontWeight(NEARBY_TYPE.muted.weight)
+          .lineHeight(NEARBY_TYPE.muted.lineHeight)
           .fontColor(COLOR_ON_SURFACE_MUTED)
-          .width('100%')
-      }
-      Row({ space: 8 }) {
-        Button($r('app.string.nearby_action_regenerate'))
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .backgroundColor(COLOR_FIELD)
-          .fontColor(COLOR_ON_SURFACE)
-          .onClick(() => this.regenerateInvite())
-        Button($r('app.string.nearby_action_cancelInvite'))
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .backgroundColor(COLOR_FIELD)
-          .fontColor(COLOR_ON_SURFACE)
-          .onClick(() => this.cancelInvite())
+        Text(`${this.remainingInviteSeconds()}s`)
+          .fontSize(NEARBY_TYPE.muted.size)
+          .fontWeight(NEARBY_TYPE.muted.weight)
+          .lineHeight(NEARBY_TYPE.muted.lineHeight)
+          .fontColor(COLOR_ON_SURFACE_MUTED)
       }
       .width('100%')
+      Button($r('app.string.nearby_action_regenerate'))
+        .width('100%')
+        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
+        .fontSize(NEARBY_TYPE.action.size)
+        .fontWeight(NEARBY_TYPE.action.weight)
+        .backgroundColor(COLOR_SURFACE)
+        .fontColor(COLOR_ON_SURFACE)
+        .onClick(() => this.regenerateInvite())
     }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(COLOR_SURFACE)
-    .borderRadius(8)
+    .width(this.availableWidth > 580 ? 224 : '100%')
     .alignItems(HorizontalAlign.Start)
   }
 
-  // N02 输入配对码: six digits, leading zeros kept, request never sent on
-  // incomplete input, submit locked while a request is in flight (C05/C16).
   @Builder
-  joinCodeBlock() {
-    Column({ space: 8 }) {
+  inviteRight() {
+    Column({ space: 10 }) {
+      Column() {
+        Text($r('app.string.nearby_invite_qrLabel'))
+          .fontSize(NEARBY_TYPE.muted.size)
+          .fontWeight(NEARBY_TYPE.muted.weight)
+          .lineHeight(NEARBY_TYPE.muted.lineHeight)
+          .fontColor(COLOR_ON_SURFACE_MUTED)
+      }
+      .width(170)
+      .height(170)
+      .flexShrink(0)
+      .backgroundColor('#FFFFFF')
+      .justifyContent(FlexAlign.Center)
+      Text($r('app.string.nearby_invite_qrHint'))
+        .fontSize(NEARBY_TYPE.sectionTitle.size)
+        .fontWeight(NEARBY_TYPE.sectionTitle.weight)
+        .lineHeight(NEARBY_TYPE.sectionTitle.lineHeight)
+        .fontColor(COLOR_ON_SURFACE)
+      Text($r('app.string.nearby_invite_hostMustAccept'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .layoutWeight(this.availableWidth > 580 ? 1 : 0)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  joinLeft() {
+    Column({ space: 10 }) {
+      Text($r('app.string.nearby_join_kicker'))
+        .fontSize(NEARBY_TYPE.kicker.size)
+        .fontWeight(NEARBY_TYPE.kicker.weight)
+        .lineHeight(NEARBY_TYPE.kicker.lineHeight)
+        .fontColor(COLOR_PRIMARY)
+        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.kicker))
+        .width('100%')
+      Text($r('app.string.nearby_join_headline'))
+        .fontSize(NEARBY_TYPE.paneTitle.size)
+        .fontWeight(NEARBY_TYPE.paneTitle.weight)
+        .lineHeight(NEARBY_TYPE.paneTitle.lineHeight)
+        .fontColor(COLOR_ON_SURFACE)
+        .width('100%')
+      Text($r('app.string.nearby_join_subtitle'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .width('100%')
+      Button($r('app.string.nearby_action_switchToScan'))
+        .width('100%')
+        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
+        .fontSize(NEARBY_TYPE.action.size)
+        .fontWeight(NEARBY_TYPE.action.weight)
+        .backgroundColor(COLOR_SURFACE)
+        .fontColor(COLOR_ON_SURFACE)
+        .onClick(() => {
+          this.mode = 'scan';
+        })
+    }
+    .width(this.availableWidth > 580 ? 224 : '100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  joinRight() {
+    Column({ space: 12 }) {
       Text($r('app.string.nearby_join_codeLabel'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
+        .fontSize(NEARBY_TYPE.body.size)
+        .fontWeight(NEARBY_TYPE.body.weight)
+        .lineHeight(NEARBY_TYPE.body.lineHeight)
         .fontColor(COLOR_ON_SURFACE)
         .width('100%')
-      TextInput({ text: this.joinInput })
-        .type(InputType.Number)
-        .height(48)
-        .width('100%')
-        .fontColor(COLOR_ON_SURFACE)
-        .onChange((value: string) => this.joinInputChanged(value))
-      if (this.joinError) {
-        Text(this.joinSubmitted
-          ? $r('app.string.nearby_stage_discovery_reason')
-          : $r('app.string.nearby_reason_code_invalidFormat'))
-          .fontSize(14)
-          .fontColor(COLOR_BLOCKED)
-          .width('100%')
-      }
-      Row({ space: 8 }) {
-        Button($r('app.string.nearby_action_submitJoinCode'))
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .backgroundColor(COLOR_BLOCKED)
-          .fontColor(COLOR_ON_SURFACE)
-          .enabled(normalizeInviteCode(this.joinInput) !== '' && !this.joinSubmitted)
-          .onClick(() => this.submitJoin())
-        Button($r('app.string.nearby_action_cancelRequest'))
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .backgroundColor(COLOR_FIELD)
-          .fontColor(COLOR_ON_SURFACE)
-          .onClick(() => {
-            if (this.joinAttemptId > 0) {
-              nativeSession.nearbyInviteCancelCode(this.joinAttemptId);
-            }
-            this.joinSubmitted = false;
-            this.joinError = false;
-          })
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(COLOR_SURFACE)
-    .borderRadius(8)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  codeBlock() {
-    Column({ space: 8 }) {
-      Text($r('app.string.nearby_code_label'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      TextInput({ placeholder: $r('app.string.nearby_code_label') })
+      TextInput({ text: this.joinInput, placeholder: $r('app.string.nearby_join_placeholder') })
+        .id('nearby_join_code_input')
         .type(InputType.Number)
         .maxLength(6)
-        .enabled(false)
-        .height(48)
+        .constraintSize({ minHeight: 60 })
         .width('100%')
-      Button($r('app.string.nearby_code_confirm'))
-        .width('100%')
-        .height(48)
-        .fontSize(16)
-        .enabled(false)
-      Text($r('app.string.nearby_blocked_auth'))
-        .fontSize(14)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
+        .fontSize(NEARBY_TYPE.codeInput.size)
+        .fontWeight(NEARBY_TYPE.codeInput.weight)
+        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.codeInput))
         .textAlign(TextAlign.Center)
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(COLOR_SURFACE)
-    .borderRadius(8)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  // Wi-Fi path: all five stages permission…codec rendered in pipeline order, with
-  // only the first failing one marked and explained (D5). This is the same
-  // pipeline list as the 附近设备 tab, kept as a separate element from the
-  // capability rows (§2 resolved reading).
-  @Builder
-  wifiPathBlock() {
-    Column({ space: 8 }) {
-      Text($r('app.string.nearby_wifi_path_building'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
         .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      ForEach(nearbyPairingStages(this.currentStage(), NEARBY_WIFI_PATH_ORDER),
-        (row: NearbyStageRow) => {
-          this.stageRow(row)
-        }, (row: NearbyStageRow) => row.stage)
-      Button($r('app.string.nearby_wifi_system_confirm_once'))
-        .width('100%')
-        .height(48)
-        .fontSize(16)
-        .enabled(false)
-      Text($r('app.string.nearby_blocked_wifi'))
-        .fontSize(14)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-        .textAlign(TextAlign.Center)
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(COLOR_SURFACE)
-    .borderRadius(8)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  // One pipeline-stage row: name, announced+visible state, and — on the first
-  // failing stage only — its reason. Later stages carry neither a reason nor a
-  // blocked key (D5).
-  @Builder
-  stageRow(row: NearbyStageRow) {
-    Column({ space: 4 }) {
-      Row({ space: 8 }) {
-        Circle()
-          .width(8)
-          .height(8)
-          .fill(this.stageMarkerColor(row))
-        Text(nearbyString(row.label))
-          .fontSize(16)
-          .fontColor(row.status === NEARBY_STAGE_STATUS_NOT_REACHED ? COLOR_ON_SURFACE_MUTED
-            : COLOR_ON_SURFACE)
-          .fontWeight(row.status === NEARBY_STAGE_STATUS_CURRENT ? FontWeight.Bold : FontWeight.Normal)
-          .layoutWeight(1)
-        // color-not-only: the state is visible text, not only a marker colour.
-        Text(nearbyString(row.status))
-          .fontSize(12)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-      }
-      .width('100%')
-      .height(32)
-      .alignItems(VerticalAlign.Center)
-      if (row.reason.length > 0) {
-        Text(nearbyString(row.reason))
-          .fontSize(14)
-          .fontColor(COLOR_BLOCKED)
+        .placeholderColor(COLOR_ON_SURFACE_MUTED)
+        .backgroundColor(COLOR_SURFACE)
+        .enabled(!this.joinSubmitted)
+        .onChange((value: string) => this.joinInputChanged(value))
+      if (this.joinError) {
+        Text(this.joinSubmitted || this.joinFailed
+          ? $r('app.string.nearby_stage_discovery_reason')
+          : $r('app.string.nearby_reason_code_invalidFormat'))
+          .fontSize(NEARBY_TYPE.body.size)
+          .fontWeight(NEARBY_TYPE.body.weight)
+          .lineHeight(NEARBY_TYPE.body.lineHeight)
+          .fontColor(COLOR_AMBER)
           .width('100%')
       }
+      Text($r('app.string.nearby_join_hint'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .width('100%')
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-    .backgroundColor(COLOR_SURFACE)
-    .borderRadius(8)
-    .accessibilityText(nearbyString(row.status))
+    .layoutWeight(this.availableWidth > 580 ? 1 : 0)
+    .alignItems(HorizontalAlign.Start)
   }
 
-  // Until the session ABI reports the first failing stage, 权限 is the truthful
-  // current stage: this build declares no nearby permission and holds none (D1).
-  private currentStage(): string {
-    return nearbyPairingCurrentStage('');
-  }
-
-  private stageMarkerColor(row: NearbyStageRow): string {
-    if (row.status === NEARBY_STAGE_STATUS_CURRENT) {
-      return COLOR_BLOCKED;
+  @Builder
+  scanLeft() {
+    Column({ space: 10 }) {
+      Text($r('app.string.nearby_scan_kicker'))
+        .fontSize(NEARBY_TYPE.kicker.size)
+        .fontWeight(NEARBY_TYPE.kicker.weight)
+        .lineHeight(NEARBY_TYPE.kicker.lineHeight)
+        .fontColor(COLOR_PRIMARY)
+        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.kicker))
+        .width('100%')
+      Text($r('app.string.nearby_scan_headline'))
+        .fontSize(NEARBY_TYPE.paneTitle.size)
+        .fontWeight(NEARBY_TYPE.paneTitle.weight)
+        .lineHeight(NEARBY_TYPE.paneTitle.lineHeight)
+        .fontColor(COLOR_ON_SURFACE)
+        .width('100%')
+      Text($r('app.string.nearby_scan_subtitle'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .width('100%')
+      Button($r('app.string.nearby_action_switchToJoinCode'))
+        .width('100%')
+        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
+        .fontSize(NEARBY_TYPE.action.size)
+        .fontWeight(NEARBY_TYPE.action.weight)
+        .backgroundColor(COLOR_SURFACE)
+        .fontColor(COLOR_ON_SURFACE)
+        .onClick(() => {
+          this.mode = 'join_code';
+        })
+      Text($r('app.string.nearby_scan_cameraNote'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .width('100%')
     }
-    return row.status === NEARBY_STAGE_STATUS_PASSED ? COLOR_ON_SURFACE_MUTED : COLOR_NOT_REACHED;
+    .width(this.availableWidth > 580 ? 224 : '100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  scanRight() {
+    Column({ space: 10 }) {
+      Column({ space: 14 }) {
+        Text('▣')
+          .fontSize(44)
+          .fontColor(COLOR_ON_SURFACE_MUTED)
+        Text($r('app.string.nearby_scan_cameraHint'))
+          .fontSize(NEARBY_TYPE.sectionTitle.size)
+          .fontWeight(NEARBY_TYPE.sectionTitle.weight)
+          .lineHeight(NEARBY_TYPE.sectionTitle.lineHeight)
+          .fontColor(COLOR_ON_SURFACE)
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 206 })
+      .padding(16)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .border({ width: 2, color: COLOR_ON_SURFACE_MUTED, style: BorderStyle.Dashed })
+      .borderRadius(16)
+      .backgroundColor(COLOR_SURFACE)
+      Text($r('app.string.nearby_scan_afterScan'))
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(this.availableWidth > 580 ? 1 : 0)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  footer() {
+    Row({ space: 10 }) {
+      Text(this.footerCopy())
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
+        .fontColor(COLOR_ON_SURFACE_MUTED)
+        .layoutWeight(1)
+      if (this.mode === 'join_code' && (this.joinSubmitted || this.joinFailed)) {
+        Button($r('app.string.nearby_action_cancelRequest'))
+          .id('nearby_join_cancel')
+          .constraintSize({ minWidth: 120, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
+          .fontSize(NEARBY_TYPE.action.size)
+          .fontWeight(NEARBY_TYPE.action.weight)
+          .backgroundColor(COLOR_SURFACE)
+          .fontColor(COLOR_ON_SURFACE)
+          .onClick(() => this.cancelJoinAttempt())
+      }
+      Button(this.footerActionLabel())
+        .id(this.mode === 'join_code' ? 'nearby_join_submit'
+          : (this.mode === 'scan' ? 'nearby_action_cancel' : 'nearby_invite_cancel'))
+        .constraintSize({ minWidth: 160, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
+        .fontSize(this.mode === 'join_code' ? NEARBY_TYPE.primaryAction.size : NEARBY_TYPE.action.size)
+        .fontWeight(this.mode === 'join_code' ? NEARBY_TYPE.primaryAction.weight : NEARBY_TYPE.action.weight)
+        .backgroundColor(this.mode === 'join_code' ? COLOR_PRIMARY : COLOR_SURFACE)
+        .fontColor(this.mode === 'join_code' ? COLOR_ON_PRIMARY : COLOR_ON_SURFACE)
+        .enabled(!(this.mode === 'join_code' && this.joinSubmitted))
+        .onClick(() => this.footerAction())
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 58 })
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .border({ width: { top: 1 }, color: COLOR_LINE })
+    .backgroundColor(COLOR_BACKGROUND)
+  }
+
+  private footerCopy(): Resource {
+    if (this.mode === 'join_code') {
+      return $r('app.string.nearby_join_footer');
+    }
+    if (this.mode === 'scan') {
+      return $r('app.string.nearby_scan_footer');
+    }
+    return $r('app.string.nearby_invite_footer');
+  }
+
+  private footerActionLabel(): Resource {
+    if (this.mode === 'join_code') {
+      return $r('app.string.nearby_action_submitJoinCode');
+    }
+    if (this.mode === 'scan') {
+      return $r('app.string.nearby_action_cancel');
+    }
+    return $r('app.string.nearby_action_cancelInvite');
+  }
+
+  private footerAction(): void {
+    if (this.mode === 'join_code') {
+      this.submitJoin();
+      return;
+    }
+    if (this.mode === 'scan') {
+      router.back();
+      return;
+    }
+    this.cancelInvite();
   }
 }

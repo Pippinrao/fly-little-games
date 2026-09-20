@@ -3,56 +3,90 @@ package com.flynes.emu;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Process-scoped JNI owner of the shared nearby invitation state machine. */
+/**
+ * Process-scoped invite facade over the same V2 {@link NearbySessionOwner}.
+ * Host publish/cancel map to CREATE_INVITE / CANCEL_INVITE; join-by-code maps
+ * to JOIN_CODE. There is no second fly_session_create (V1) invite owner.
+ */
 public final class NearbySession implements NearbyInviteHostState.Backend, AutoCloseable {
     public static final int RESULT_OK = 0;
+    public static final int RESULT_ACCEPTED = 1;
     public static final int HOST_ACTIVE = 1;
 
-    static { System.loadLibrary("nescore"); }
+    private static final int ACTION_CREATE_INVITE = 5;
+    private static final int ACTION_CANCEL_INVITE = 7;
+    private static final int ACTION_CANCEL_JOIN = 8;
+    private static final int ACTION_JOIN_CODE = 9;
+    private static final int LINK_JOINING = 4;
 
-    private long handle;
+    private final NearbySessionOwner owner;
     private final AtomicLong nextJoinAttemptId = new AtomicLong(1L);
+    private long hostGeneration;
+    private long joinAttemptId;
 
-    private NearbySession(long handle) { this.handle = handle; }
+    private NearbySession(NearbySessionOwner owner) {
+        this.owner = owner;
+    }
 
-    public static NearbySession create() {
-        long[] out = new long[1];
-        int result = nativeCreate(out);
-        if (result != RESULT_OK || out[0] == 0L) {
-            throw new IllegalStateException("fly_session_create failed: " + result);
-        }
-        return new NearbySession(out[0]);
+    public static NearbySession attach(NearbySessionOwner owner) {
+        if (owner == null) throw new NullPointerException("owner");
+        return new NearbySession(owner);
+    }
+
+    /** Nearby entry after create failure: pages keep working and show an unavailable reason. */
+    public static NearbySession unavailable() {
+        return new NearbySession(null);
     }
 
     @Override public boolean publish(long generation, String code, long nowMs) {
-        return nativeHostPublish(handle, generation, ascii(code), toNs(nowMs)) == RESULT_OK
-                && nativeResolvePending(handle, true) == RESULT_OK;
+        if (owner == null) return false;
+        if (!accepted(owner.submitAction(ACTION_CREATE_INVITE, null))) return false;
+        hostGeneration = generation;
+        return true;
     }
 
     @Override public boolean regenerate(long generation, String code, long nowMs) {
-        return nativeHostRegenerate(handle, generation, ascii(code), toNs(nowMs)) == RESULT_OK
-                && nativeResolvePending(handle, true) == RESULT_OK;
+        if (owner == null) return false;
+        // REGENERATE_INVITE_V2 is not reduced; cancel then create.
+        if (hostGeneration != 0L) {
+            owner.submitAction(ACTION_CANCEL_INVITE, null);
+        }
+        if (!accepted(owner.submitAction(ACTION_CREATE_INVITE, null))) return false;
+        hostGeneration = generation;
+        return true;
     }
 
     @Override public boolean cancel(long generation) {
-        return nativeHostCancel(handle, generation) == RESULT_OK;
+        if (owner == null) {
+            if (hostGeneration == generation) hostGeneration = 0L;
+            return true;
+        }
+        NearbySessionOwner.Snapshot snap = owner.snapshot();
+        if (snap.linkState != NearbySessionOwner.LINK_INVITING) {
+            if (hostGeneration == generation) hostGeneration = 0L;
+            return true;
+        }
+        if (!accepted(owner.submitAction(ACTION_CANCEL_INVITE, null))) return false;
+        if (hostGeneration == generation) hostGeneration = 0L;
+        return true;
     }
 
     @Override public void tick(long nowMs) {
-        nativeTick(handle, toNs(nowMs));
+        if (owner != null) owner.snapshot();
     }
 
     @Override public boolean active(long generation) {
-        long[] snapshot = snapshot();
-        return snapshot[1] == HOST_ACTIVE && snapshot[3] == generation;
+        return owner != null
+                && owner.snapshot().linkState == NearbySessionOwner.LINK_INVITING
+                && hostGeneration == generation;
     }
 
     public boolean submitCode(long attemptId, String code, long nowMs) {
-        if (nativeSubmitCode(handle, attemptId, ascii(code), toNs(nowMs)) != RESULT_OK) return false;
-        // No Android discovery executor is registered yet. Complete the real
-        // shared command as failed so no lookup stays live or can later revive.
-        nativeResolvePending(handle, false);
-        return false;
+        if (owner == null) return false;
+        owner.submitAction(ACTION_JOIN_CODE, ascii(code));
+        joinAttemptId = attemptId;
+        // Scan stays UNAVAILABLE on emulator: this is not a wireless peer.
+        return owner.snapshot().linkState == LINK_JOINING;
     }
 
     /** Allocates a process-session attempt fence that never resets with an Activity. */
@@ -63,48 +97,38 @@ public final class NearbySession implements NearbyInviteHostState.Backend, AutoC
     }
 
     public boolean cancelCode(long attemptId) {
-        return nativeCancelCode(handle, attemptId) == RESULT_OK;
+        if (owner != null) owner.submitAction(ACTION_CANCEL_JOIN, null);
+        if (joinAttemptId == attemptId) joinAttemptId = 0L;
+        return true;
     }
 
     /** Cancels a process-scoped host invite whose display owner no longer exists. */
     public void cancelActiveHost() {
         long[] current = snapshot();
         if (current[1] == HOST_ACTIVE && current[3] > 0L) {
-            nativeHostCancel(handle, current[3]);
+            cancel(current[3]);
         }
     }
 
     /** joinPhase, hostPhase, joinAttemptId, hostGeneration, attemptsLeft. */
     public long[] snapshot() {
-        long[] out = new long[5];
-        int result = nativeSnapshot(handle, out);
-        if (result != RESULT_OK) throw new IllegalStateException("invite snapshot failed: " + result);
-        return out;
+        if (owner == null) {
+            return new long[] { 0L, 0L, joinAttemptId, hostGeneration, 0L };
+        }
+        NearbySessionOwner.Snapshot snap = owner.snapshot();
+        long hostPhase = snap.linkState == NearbySessionOwner.LINK_INVITING ? HOST_ACTIVE : 0L;
+        return new long[] { 0L, hostPhase, joinAttemptId, hostGeneration, 0L };
     }
 
     @Override public void close() {
-        if (handle != 0L) {
-            nativeDestroy(handle);
-            handle = 0L;
-        }
+        // The V2 owner is process-scoped; this facade must not destroy it.
+    }
+
+    private static boolean accepted(int result) {
+        return result == RESULT_OK || result == RESULT_ACCEPTED;
     }
 
     private static byte[] ascii(String value) {
         return (value == null ? "" : value).getBytes(StandardCharsets.US_ASCII);
     }
-
-    private static long toNs(long milliseconds) {
-        return Math.multiplyExact(milliseconds, 1_000_000L);
-    }
-
-    private static native int nativeCreate(long[] out);
-    private static native void nativeDestroy(long handle);
-    private static native int nativeHostPublish(long handle, long generation, byte[] code, long nowNs);
-    private static native int nativeHostRegenerate(long handle, long generation, byte[] code, long nowNs);
-    private static native int nativeHostCancel(long handle, long generation);
-    private static native int nativeSubmitCode(long handle, long attemptId, byte[] code, long nowNs);
-    private static native int nativeCancelCode(long handle, long attemptId);
-    private static native int nativeTick(long handle, long nowNs);
-    private static native int nativeSnapshot(long handle, long[] out);
-    private static native int nativeResolvePending(long handle, boolean success);
 }

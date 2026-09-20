@@ -10,7 +10,11 @@ unrelated pre-existing failure, so this contract can be read on its own.
 from pathlib import Path
 import hashlib
 import json
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +83,28 @@ def main() -> int:
             "harmony rawfile must not keep the retired licence text")
     require((ROOT / "tools" / "content" / "sync-builtin-content.ps1").is_file(),
             "the rawfile staging script must exist")
+
+    # Exercise the official stager, then resolve every ROM using the loader's
+    # actual assetPath contract. A prefix mismatch must fail before packaging.
+    prefix = re.search(r"ASSET_DIR:\s*string\s*=\s*'([^']*)'", loader)
+    require(prefix is not None, "BuiltinGames must declare its rawfile asset prefix")
+    require("return BuiltinGames.ASSET_DIR + this.assetFilename;" in loader,
+            "assetPath contract changed; update the staging/read regression")
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    require(shell is not None, "PowerShell is required to verify the official content stager")
+    with tempfile.TemporaryDirectory(prefix="flynes-harmony-content-") as directory:
+        fixture = Path(directory)
+        shutil.copytree(MANIFEST.parent, fixture / "content" / "assets")
+        subprocess.run([shell, "-NoProfile", "-File",
+                        str(ROOT / "tools/content/sync-builtin-content.ps1"),
+                        "-Root", str(fixture)], check=True, capture_output=True, text=True)
+        staged = fixture / "harmony/entry/src/main/resources/rawfile"
+        for game in games:
+            asset_path = prefix.group(1) + game["assetFilename"]
+            rom = staged / asset_path
+            require(rom.is_file(), f"runtime rawfile path is not staged: {asset_path}")
+            require(hashlib.sha256(rom.read_bytes()).hexdigest() == game["romSha256"],
+                    f"runtime rawfile differs from manifest: {asset_path}")
 
     print("PASS harmony builtin-games contract")
     return 0

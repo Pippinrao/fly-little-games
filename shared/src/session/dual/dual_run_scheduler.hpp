@@ -64,6 +64,9 @@ public:
         const DualInputKeyV1& context,
         const std::array<DualOwnerKeyV1, kDualPortCountV1>& owners) noexcept;
 
+    /* Load success is Ready, not Running. Both ends must announce before step. */
+    fly_session_result_v2 announce_running() noexcept;
+
     /* ------------------------------------------------------------ stepping */
 
     /* Advance exactly one frame. On OK the produced bundle, its prediction

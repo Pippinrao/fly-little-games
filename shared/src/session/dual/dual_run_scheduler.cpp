@@ -101,6 +101,18 @@ fly_session_result_v2 DualRunSchedulerV1::begin(
     transport_terminal_ = false;
     shutdown_ = false;
     freeze_reason_ = DualFreezeReasonV1::None;
+    state_ = DualSimStateV1::Ready;
+    return FLY_SESSION_V2_OK;
+}
+
+fly_session_result_v2 DualRunSchedulerV1::announce_running() noexcept
+{
+    if (shutdown_)
+        return FLY_SESSION_V2_CLOSED;
+    if (state_ == DualSimStateV1::Frozen)
+        return FLY_SESSION_V2_INVALID_STATE;
+    if (state_ != DualSimStateV1::Ready)
+        return FLY_SESSION_V2_INVALID_STATE;
     state_ = DualSimStateV1::Running;
     return FLY_SESSION_V2_OK;
 }
@@ -193,17 +205,11 @@ fly_session_result_v2 DualRunSchedulerV1::step_next_frame() noexcept
             return freeze(DualFreezeReasonV1::TransportTerminal);
         }
 
-        std::uint8_t state_bytes[1024];
-        std::size_t written = 0;
-        std::array<std::uint8_t, 32> state_hash{};
-        const auto export_result =
-            port_.export_state(state_bytes, sizeof(state_bytes), &written,
-                               &state_hash);
-        if (export_result != FLY_SESSION_V2_OK)
-            return export_result;
+        DualStateDigestV1 digest{};
+        const auto digest_result = port_.state_digest(plan.frame_index, &digest);
+        if (digest_result != FLY_SESSION_V2_OK)
+            return digest_result;
 
-        const auto digest = dual_state_digest_v1(state_bytes, written,
-                                                 plan.frame_index);
         const auto slot = digest_slot(plan.frame_index);
         digests_[slot] = digest;
         digest_frame_[slot] = plan.frame_index;

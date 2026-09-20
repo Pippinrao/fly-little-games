@@ -57,7 +57,7 @@ _Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE >
 _Static_assert(FLY_SESSION_SNAPSHOT_V2_R1_SIZE ==
                    offsetof(fly_session_snapshot_v2, dual_state_digest),
                "the snapshot R1 prefix stops before the DUAL digest block");
-_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
                    FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96,
                "the DUAL digest block is a pure tail append");
 _Static_assert(FLY_SESSION_SNAPSHOT_V2_R0_SIZE <=
@@ -84,6 +84,8 @@ _Static_assert(FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2 == 290,
                "content choice completions use the frozen hash payload kind");
 _Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE == 56,
                "the content choice header is frozen");
+_Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_START_TAIL_SIZE == 96,
+               "version 2 start conditions are a 96-byte tail after the name");
 _Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_MAX_NAME == 64,
                "the content choice name bound is frozen");
 _Static_assert(FLY_SESSION_PORTS_V2_SIZE > FLY_SESSION_PORTS_V2_R1_SIZE,
@@ -97,6 +99,58 @@ _Static_assert(FLY_SESSION_DUAL_FREEZE_TRANSPORT_TERMINAL_V2 == 6,
                "freeze vocabulary matches the frozen DUAL seam");
 _Static_assert(FLY_SESSION_DUAL_FREEZE_SEAT_OR_AUTHORITY_CHANGED_V2 == 9,
                "freeze vocabulary matches the frozen DUAL seam");
+
+_Static_assert(FLY_SESSION_ACTION_ACCEPT_REQUEST_V2 == 15,
+               "N05 accept reuses ACCEPT_REQUEST");
+_Static_assert(FLY_SESSION_ACTION_CONFIRM_SAS_V2 == 17,
+               "N06 confirm reuses CONFIRM_SAS");
+_Static_assert(FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2 == 24,
+               "N09 confirm reuses CONFIRM_GAME_CONFIG");
+_Static_assert(FLY_SESSION_ACTION_RETURN_TO_LOBBY_V2 == 25,
+               "N09 back reuses RETURN_TO_LOBBY");
+_Static_assert(FLY_SESSION_ACTION_PAUSE_GAME_V2 == 32, "pause reuses PAUSE_GAME");
+_Static_assert(FLY_SESSION_ACTION_SAVE_AND_END_V2 == 36, "end reuses SAVE_AND_END");
+_Static_assert(FLY_SESSION_ACTION_SELECT_CONTENT_V2 == 42, "select content is 42");
+_Static_assert(FLY_SESSION_ACTION_START_DUAL_V2 == 43, "start dual is 43");
+_Static_assert(FLY_SESSION_ACTION_START_DUAL_V2 !=
+                   FLY_SESSION_ACTION_SELECT_CONTENT_V2,
+               "SELECT_CONTENT must not be START_DUAL");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
+                   offsetof(fly_session_snapshot_v2, pending_config_id),
+               "pending-config dual-confirm is a tail after the digest block");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
+                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96u,
+               "R2 starts where the previous snapshot size ended");
+_Static_assert(sizeof(((fly_session_snapshot_v2*)0)->pending_config_id) == 32,
+               "pending config id is a 32-byte fingerprint, not a UI hash");
+_Static_assert(offsetof(fly_session_snapshot_v2, pending_config_local_confirmed) >
+                   offsetof(fly_session_snapshot_v2, pending_config_id),
+               "local confirm follows the fingerprint");
+_Static_assert(offsetof(fly_session_snapshot_v2, pending_config_peer_confirmed) >
+                   offsetof(fly_session_snapshot_v2, pending_config_local_confirmed),
+               "peer confirm is a separate field; one-sided confirm is not start");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+                   FLY_SESSION_SNAPSHOT_V2_R2_SIZE + 48,
+               "the pending-config block is a 48-byte tail append");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE > FLY_SESSION_SNAPSHOT_V2_R2_SIZE,
+               "the pending-config block is appended");
+_Static_assert(offsetof(fly_session_pairing_v2, local_confirmed) <
+                   offsetof(fly_session_pairing_v2, peer_confirmed),
+               "SAS dual-confirm already has local/peer fields; do not invent a third");
+_Static_assert(FLY_SESSION_GAME_CHOICE_V2_R0_SIZE == 272,
+               "the published game-choice prefix stays 272 bytes");
+_Static_assert(FLY_SESSION_GAME_CHOICE_V2_SIZE ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE + 96,
+               "core/profile/options are a 96-byte tail append");
+_Static_assert(offsetof(fly_session_game_choice_v2, core_id) ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE,
+               "the R0 game-choice prefix stops where core_id begins");
+_Static_assert(offsetof(fly_session_game_choice_v2, profile_id) ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE + 32,
+               "profile_id follows core_id");
+_Static_assert(offsetof(fly_session_game_choice_v2, options_id) ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE + 64,
+               "options_id follows profile_id");
 
 int main(void)
 {

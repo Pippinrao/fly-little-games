@@ -290,6 +290,49 @@ void test_typed_async_failure_uses_end_payload_without_fake_resource()
           "a nonterminal operation cannot report a typed failure");
 }
 
+void test_quic_read_failure_is_a_typed_terminal()
+{
+    using flynes::session::ParsedProviderEvent;
+    using flynes::session::parse_provider_event_v2;
+    for (const auto failure : {FLY_SESSION_V2_IO_FAILED, FLY_SESSION_V2_CANCELLED})
+    {
+        auto event = event_with(FLY_SESSION_PROVIDER_QUIC_DATA_V2, 1, end_payload());
+        event.result = failure;
+        ParsedProviderEvent parsed;
+        check(parse_provider_event_v2(event, token(), event.payload_kind, parsed) ==
+                  FLY_SESSION_V2_OK && parsed.buffer == nullptr && parsed.resource == 0,
+              "QUIC read error terminates with typed END and no fake buffer");
+        event.terminal = 0;
+        check(parse_provider_event_v2(event, token(), event.payload_kind, parsed) ==
+                  FLY_SESSION_V2_CONTRACT_VIOLATION,
+              "QUIC read error must be terminal");
+        event.terminal = 1;
+        event.payload_size -= 1;
+        check(parse_provider_event_v2(event, token(), event.payload_kind, parsed) ==
+                  FLY_SESSION_V2_ABI_MISMATCH,
+              "QUIC read error validates END size");
+        event.payload_size += 1;
+        event.token.connection_generation += 1;
+        check(parse_provider_event_v2(event, token(), event.payload_kind, parsed) ==
+                  FLY_SESSION_V2_STALE, "QUIC read error preserves token fence");
+        event.token = token();
+        event.payload_kind = FLY_SESSION_PROVIDER_QUIC_END_V2;
+        check(parse_provider_event_v2(event, token(), FLY_SESSION_PROVIDER_QUIC_DATA_V2, parsed) ==
+                  FLY_SESSION_V2_CONTRACT_VIOLATION,
+              "QUIC END kind cannot substitute for DATA read failure");
+    }
+    auto success = event_with(FLY_SESSION_PROVIDER_QUIC_DATA_V2, 1, end_payload());
+    ParsedProviderEvent parsed;
+    check(parse_provider_event_v2(success, token(), success.payload_kind, parsed) ==
+              FLY_SESSION_V2_CONTRACT_VIOLATION,
+          "successful DATA still cannot carry terminal END");
+    auto discovery = event_with(FLY_SESSION_PROVIDER_DISCOVERY_BYTES_V2, 1, end_payload());
+    discovery.result = FLY_SESSION_V2_IO_FAILED;
+    check(parse_provider_event_v2(discovery, token(), discovery.payload_kind, parsed) ==
+              FLY_SESSION_V2_CONTRACT_VIOLATION,
+          "discovery byte termination contract is not broadened");
+}
+
 void test_mutations_fail_closed_without_taking_buffer()
 {
     std::atomic<std::uint32_t> destroyed{0};
@@ -420,6 +463,7 @@ int main()
 {
     test_every_payload_kind_and_buffer_lifetime();
     test_typed_async_failure_uses_end_payload_without_fake_resource();
+    test_quic_read_failure_is_a_typed_terminal();
     test_mutations_fail_closed_without_taking_buffer();
     return failures == 0 ? 0 : 1;
 }

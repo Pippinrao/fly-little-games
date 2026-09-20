@@ -10,18 +10,45 @@ import com.flynes.emu.settings.SettingsRepository;
 public final class FlyNesApplication extends Application {
     private AndroidCatalogRuntime catalogRuntime;
     private AndroidGameLaunchService gameLaunchService;
+    private NearbyAvailability<NearbySessionOwner> nearbyAvailability;
     private NearbySession nearbySession;
 
     @Override public void onCreate() {
         super.onCreate();
         catalogRuntime = new AndroidCatalogRuntime(this);
         gameLaunchService = new AndroidGameLaunchService(catalogRuntime);
-        nearbySession = NearbySession.create();
+        nearbyAvailability = new NearbyAvailability<>(NearbyAvailability.fromIllegalState(
+                () -> NearbySessionOwner.create(catalogRuntime), "nearby_blocked_session_read"));
     }
 
     public AndroidCatalogRuntime catalogRuntime() { return catalogRuntime; }
     public AndroidGameLaunchService gameLaunchService() { return gameLaunchService; }
-    public NearbySession nearbySession() { return nearbySession; }
+
+    /** Creates the process-scoped V2 owner on first nearby entry. Catalog never calls this. */
+    public NearbyAvailability.Status ensureNearby() {
+        NearbyAvailability.Status status = nearbyAvailability.ensure();
+        if (status.ready() && nearbySession == null) {
+            nearbySession = NearbySession.attach(nearbyAvailability.ownerOrNull());
+        }
+        return status;
+    }
+
+    public NearbySession nearbySession() {
+        ensureNearby();
+        return nearbySession != null ? nearbySession : NearbySession.unavailable();
+    }
+
+    public NearbySessionOwner nearbySessionOwner() {
+        return nearbyAvailability == null ? null : nearbyAvailability.ownerOrNull();
+    }
+
+    public NearbyAvailability.Status nearbyStatus() {
+        if (nearbyAvailability == null) {
+            return NearbyAvailability.Status.unavailable("nearby_blocked_session_read");
+        }
+        if (nearbyAvailability.ready()) return NearbyAvailability.Status.ok();
+        return NearbyAvailability.Status.unavailable(nearbyAvailability.reasonKey());
+    }
     public SettingsRepository settingsRepository() {
         return catalogRuntime == null ? null : catalogRuntime.settingsRepository();
     }

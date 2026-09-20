@@ -1,9 +1,8 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   One 大厅 field row, inflated once per §22.3 field by NearbyLobbyActivity. It exists as a layout
-  rather than as code so the row keeps the same theme typography as every other page
-  (`?attr/textAppearanceTitleMedium` for the field name) instead of hard-coding a text size, which
-  the spec's visual-style decision forbids.
+  rather than as code so the row keeps the same Nearby body/muted roles as the other Nearby pages
+  instead of inheriting theme TitleMedium.
 
   The two TextViews carry no ids on purpose: the row is addressed by its own id and read through its
   children, so an inflated list never has duplicate child ids to disambiguate.
@@ -11,7 +10,9 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
+        android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body"
+        android:textColor="@color/fly_on_surface" />
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
         android:textColor="@color/fly_error" />
 </LinearLayout>

@@ -934,7 +934,7 @@ void two_stage_parse_then_accept()
 
     /* A non-canonical (zero) signature is still a stage-1 rejection. */
     auto zero_signature = golden;
-    std::fill(zero_signature.begin() + 424, zero_signature.end(), 0);
+    std::fill(zero_signature.begin() + 424, zero_signature.end(), std::uint8_t{0});
     wire::LinkControlDecodeReportV1 zero_report{};
     wire::LinkControlParsedV1 zero_parsed{};
     link::LinkHelloV1 zero_value{};

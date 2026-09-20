@@ -48,7 +48,6 @@ public final class NearbyUiParityTest {
                      ActivityScenario.launch(NearbyFriendsActivity.class)) {
             onView(withId(R.id.nearby_tabs)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_find_devices)).check(matches(isDisplayed()));
-            onView(withId(R.id.nearby_friends_manage_inline)).check(matches(isDisplayed()));
         }
     }
 

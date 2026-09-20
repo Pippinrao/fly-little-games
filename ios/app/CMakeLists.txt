@@ -64,6 +64,7 @@ set(FLYNES_PRODUCT_SWIFT
     CatalogSourceManagementView.swift
     SettingsView.swift
     NearbyFriendsView.swift
+    NearbyTypography.swift
     NearbyPairingView.swift
     NearbyLobbyView.swift
     NearbyFriendsManageView.swift
@@ -280,6 +281,7 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
     set_target_properties(FlyNES PROPERTIES ENABLE_EXPORTS YES CXX_VISIBILITY_PRESET default)
     xctest_add_bundle(FlyNESRuntimeTests FlyNES
         ../tests/PlaybackRuntimeBridgeTests.mm
+        ../tests/NearbySessionV2BridgeTests.mm
         ../tests/GamepadOverlayTests.mm
         ../tests/PlaybackAudioPlayerTests.mm
         ../tests/CatalogTitleCoverTests.mm
@@ -298,14 +300,14 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
         XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@loader_path/Frameworks @executable_path/Frameworks ${_platform_developer}/Library/Frameworks")
-    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm ../tests/ProductImportUITests.mm ../tests/NearbyUiParityTests.mm
+    add_library(FlyNESUITests MODULE ../tests/ProductUITests.mm ../tests/ProductImportUITests.mm ../tests/NearbyUiParityTests.mm ../tests/NearbyUxRestorationTests.mm
         "${FLYNES_IOS_BUNDLED_MANIFEST}")
     # The UI tests assert against the shared manifest instead of hardcoding a
     # single bundled game, so the manifest travels in the test bundle too.
     set_source_files_properties("${FLYNES_IOS_BUNDLED_MANIFEST}"
         PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     add_dependencies(FlyNESUITests FlyNES)
-    target_link_libraries(FlyNESUITests PRIVATE "${XCTest_LIBRARY}" "-framework Foundation" "-framework UIKit")
+    target_link_libraries(FlyNESUITests PRIVATE "${XCTest_LIBRARY}" "-framework Foundation" "-framework UIKit" "-framework CoreGraphics")
     set_target_properties(FlyNESUITests PROPERTIES
         BUNDLE TRUE
         XCODE_PRODUCT_TYPE "com.apple.product-type.bundle.ui-testing"

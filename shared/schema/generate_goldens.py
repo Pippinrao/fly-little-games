@@ -302,6 +302,9 @@ def build_records() -> list[dict]:
     tlv = u16(1) + u16(1) + u16(99) + u32(1) + bytes([0])
     records.append(("end_package_unknown_critical", tlv, "flynes-end-package-v1", None, None, {"kind": "0x0306", "negative_only": True}))
 
+    legal = u16(1) + z(2) + fill(32, 0xA1) + u64(1)
+    records.append(("pending_config_confirm_v1", legal, "flynes-pending-config-confirm-v1", None, 2, {"kind": "0x0218"}))
+
     return records
 
 

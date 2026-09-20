@@ -221,6 +221,31 @@
     "resetIdentity": { "labelKey": "nearby.action.resetIdentity" }
   },
   "strings": {
+    "nearby.entry.kicker": "PLAY TOGETHER",
+    "nearby.entry.headline": "和身边的人再来一局。",
+    "nearby.entry.subtitle": "一人创建，另一人加入。",
+    "nearby.entry.stageHint": "连接后再选游戏",
+    "nearby.entry.footer": "输入配对码 / 扫码 / 附近设备 → 接受请求 → 验证 → 游戏大厅",
+    "nearby.invite.kicker": "HOST · INVITE",
+    "nearby.invite.headline": "让朋友加入",
+    "nearby.invite.subtitle": "把配对码告诉朋友，或让朋友扫码。",
+    "nearby.invite.qrHint": "扫描房主二维码",
+    "nearby.invite.hostMustAccept": "朋友加入时，你仍需接受请求。",
+    "nearby.invite.footer": "正在等待朋友 · 尚未选择游戏",
+    "nearby.join.kicker": "JOIN WITH CODE",
+    "nearby.join.headline": "输入房主的配对码",
+    "nearby.join.subtitle": "请朋友打开「创建联机」，查看本次配对码。",
+    "nearby.join.hint": "配对码只用于找到本次邀请，之后还需房主接受和身份验证。",
+    "nearby.join.footer": "尚未认证",
+    "nearby.join.placeholder": "输入六位数字",
+    "nearby.scan.kicker": "SCAN TO JOIN",
+    "nearby.scan.headline": "扫描房主的二维码",
+    "nearby.scan.subtitle": "让朋友打开「创建联机」，出示本次邀请。",
+    "nearby.scan.cameraHint": "将二维码放入取景区域",
+    "nearby.scan.cameraNote": "仅在扫码时申请相机权限。",
+    "nearby.scan.afterScan": "扫描后等待房主接受，随后验证身份。",
+    "nearby.scan.footer": "无效、过期或已使用的二维码不能加入",
+    "nearby.diagnostics.title": "连接详情",
     "nearby.open": "附近联机",
     "nearby.entry.connected": "双人联机中",
     "nearby.entry.interrupted": "联机中断",
@@ -419,6 +444,21 @@
     "gridToleranceDp": 2,
     "fontScales": [1.0, 1.3, 2.0],
     "qrSquare": true,
+    "n00": {
+      "source": "docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()",
+      "leftColumnKeys": [
+        "nearby.entry.kicker",
+        "nearby.entry.headline",
+        "nearby.entry.subtitle",
+        "nearby.action.create",
+        "nearby.action.enterCode",
+        "nearby.action.scanQr"
+      ],
+      "tabsPlacement": "rightColumn",
+      "findDevicesPlacement": "devicesTab",
+      "showsStagePipeline": false,
+      "forbiddenControls": ["scanHostQr", "openPairingShortcut"]
+    },
     "horizontalScrollAllowedOnlyFor": ["lobbyGameGrid"],
     "colors": {
       "background": "#121316",
@@ -436,5 +476,29 @@
     "uiShortCodeIsDisplayOnly": true,
     "anyChangeInvalidatesBothConfirmations": true,
     "bothConfirmationsRequiredToStart": true
-  }
+  },
+  "containers": {
+    "ENTRY": ["N00"],
+    "PAIR": ["N01", "N02", "N03", "N04", "N05", "N06", "N07"],
+    "CONNECTED": ["N08"],
+    "HOME": ["G00"],
+    "CONFIG": ["N09"],
+    "FAILURE": ["N10"],
+    "CONTENT": ["N11"],
+    "FRIENDS": ["N12"]
+  },
+  "navigation": [
+    {"from": "N00", "action": "createInvite", "to": "N01"},
+    {"from": "N00", "action": "enterInviteCode", "to": "N02"},
+    {"from": "N00", "action": "scanQr", "to": "N03"},
+    {"from": "N02", "action": "submitJoinCode", "when": "joinAccepted && !localIsHost", "to": "N04"},
+    {"from": "N02", "action": "submitJoinCode", "when": "joinAccepted && localIsHost", "to": "N05"},
+    {"from": "N05", "action": "acceptRequest", "when": "!qrSignedPath", "to": "N06"},
+    {"from": "N05", "action": "acceptRequest", "when": "qrSignedPath", "to": "N07"},
+    {"from": "N06", "action": "confirmSasMatch", "when": "!sasPeerConfirmed", "to": "N06"},
+    {"from": "N08", "action": "goToGameCenter", "to": "G00"},
+    {"from": "G00", "action": "selectGame", "when": "sessionConnected", "to": "N09"},
+    {"from": "N09", "action": "backToLobby", "to": "G00", "clearsConfigConfirm": true},
+    {"from": "N03", "action": "cancel", "to": "N00", "terminateAttempt": false}
+  ]
 }

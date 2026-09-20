@@ -207,13 +207,16 @@ fly_session_result_v2 parse_provider_event_v2(
     if (source.result > FLY_SESSION_V2_OK)
         return FLY_SESSION_V2_CONTRACT_VIOLATION;
 
-    // A terminal provider operation keeps its expected typed payload kind on
-    // failure, but carries only the standard END record. Requiring a fake key,
+    // A terminal provider operation, including a failed QUIC read, keeps its
+    // expected typed payload kind but carries only the standard END record.
+    // Successful QUIC DATA remains nonterminal. Requiring a fake key,
     // buffer, or path on failure would turn ordinary asynchronous errors into
     // contract violations and tempt adapters to manufacture capabilities.
     if (source.result != FLY_SESSION_V2_OK)
     {
-        if (contract.terminal != 1 || source.terminal != 1)
+        if (source.terminal != 1 ||
+            (contract.terminal != 1 &&
+             source.payload_kind != FLY_SESSION_PROVIDER_QUIC_DATA_V2))
             return FLY_SESSION_V2_CONTRACT_VIOLATION;
         fly_session_provider_end_event_v2 payload{};
         const auto result = read_payload(source, payload);

@@ -129,23 +129,26 @@ struct GameCenter {
         .fontWeight(FontWeight.Bold)
         .fontColor('#F2F4F7')
         .margin({ right: 8 })
-      this.categoryToggles()
+        .flexShrink(0)
+      this.categoryToggleHost()
       this.navButtons()
     }
     .width('100%')
     .height(64)
     .alignItems(VerticalAlign.Center)
+    .constraintSize({ minWidth: 0 })
   }
 
   @Builder
   compactToolbar() {
     Row({ space: 8 }) {
-      this.categoryToggles()
+      this.categoryToggleHost()
       this.navButtons()
     }
     .width('100%')
     .height(72)
     .alignItems(VerticalAlign.Center)
+    .constraintSize({ minWidth: 0 })
   }
 
   @Builder
@@ -208,41 +211,84 @@ struct GameCenter {
         }
       })
     }
+    .constraintSize({ minWidth: 0 })
+  }
+
+  @Builder
+  categoryToggleHost() {
+    Scroll() {
+      this.categoryToggles()
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
     .layoutWeight(1)
+    .constraintSize({ minWidth: 0 })
+    .align(Alignment.Start)
   }
 
   @Builder
   navButtons() {
-    Button('🔍')
+    // HTML .fe-tools / .fe-mode: transparent 48 icons, then visible 附近联机 text.
+    Row({ space: 0 }) {
+      Button() {
+        Text('⌕')
+          .fontSize(19)
+          .fontColor('#F2F4F7')
+      }
       .width(this.compactHeader ? 56 : 48)
       .height(this.compactHeader ? 56 : 48)
-      .fontSize(18)
-      .type(ButtonType.Circle)
-      .backgroundColor('#1B1F28')
-      .fontColor('#F2F4F7')
+      .backgroundColor('#00000000')
+      .borderRadius(12)
       .accessibilityText($r('app.string.game_center_search'))
       .onClick(() => {
         this.openSearch();
       })
-    Button($r('app.string.game_center_sources'))
+      Button() {
+        Text('📁')
+          .fontSize(19)
+          .fontColor('#F2F4F7')
+      }
+      .width(this.compactHeader ? 56 : 48)
       .height(this.compactHeader ? 56 : 48)
-      .fontSize(16)
+      .backgroundColor('#00000000')
+      .borderRadius(12)
+      .accessibilityText($r('app.string.game_center_sources'))
       .onClick(() => {
         void router.pushUrl({ url: 'pages/Sources' });
       })
-    Button($r('app.string.game_center_settings'))
+      Button() {
+        Text('⚙')
+          .fontSize(19)
+          .fontColor('#F2F4F7')
+      }
+      .width(this.compactHeader ? 56 : 48)
       .height(this.compactHeader ? 56 : 48)
-      .fontSize(16)
+      .backgroundColor('#00000000')
+      .borderRadius(12)
+      .accessibilityText($r('app.string.game_center_settings'))
       .onClick(() => {
         void router.pushUrl({ url: 'pages/Settings' });
       })
-    // 附近联机 entry: real local navigation into the friends/nearby-devices page.
-    Button($r('app.string.nearby_title'))
+      Button() {
+        Row({ space: 6 }) {
+          Text('◉')
+            .fontSize(14)
+            .fontColor('#F2F4F7')
+          Text($r('app.string.nearby_title'))
+            .fontSize(14)
+            .fontColor('#F2F4F7')
+            .maxLines(1)
+        }
+      }
       .height(this.compactHeader ? 56 : 48)
-      .fontSize(16)
+      .padding({ left: 8, right: 8 })
+      .backgroundColor('#00000000')
+      .borderRadius(12)
       .onClick(() => {
         void router.pushUrl({ url: 'pages/NearbyFriends' });
       })
+    }
+    .flexShrink(0)
   }
 
   private openSearch(): void {

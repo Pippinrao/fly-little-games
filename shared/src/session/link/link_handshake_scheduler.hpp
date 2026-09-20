@@ -35,6 +35,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <vector>
 
@@ -328,6 +329,25 @@ public:
      * OpenControlStream effect completed. */
     [[nodiscard]] fly_session_resource_handle_v2 control_stream() const noexcept
     { return control_stream_; }
+    /*
+     * After CONNECTED_LOBBY the handshake remains the only Control-stream
+     * reader. Arming grants further read credit without extending the frozen
+     * HELLO/READY/ACK stage trace. 0x0218 pending-config confirms are queued
+     * for take_routed_pending_config_confirm(); HELLO/READY/ACK after this
+     * point still fail closed.
+     */
+    fly_session_result_v2 arm_app_control();
+    fly_session_result_v2 queue_pending_config_confirm(
+        const std::uint8_t pending_config_id[32],
+        std::uint64_t pending_config_revision);
+    bool take_routed_pending_config_confirm(std::uint8_t out[44]) noexcept;
+    fly_session_result_v2 queue_suspend_intent();
+    bool take_routed_suspend_intent(std::uint8_t out[240]) noexcept;
+    void drop_control_read_if_pending() noexcept;
+    /* Post-Connected Control I/O must mint from a block the engine reserved
+     * after folding its high-water mark; otherwise HELLO/READY leftover cursor
+     * ids collide with catalog queries and QUIC_END is CONTRACT_VIOLATION. */
+    void adopt_operation_id(std::uint64_t first_id) noexcept;
     /* Bytes received on the Control stream that do not yet form a complete
      * frame. Zero-length at every record boundary. */
     [[nodiscard]] const std::vector<std::uint8_t>& control_read_buffer()
@@ -405,12 +425,15 @@ private:
      * allow-list and the object codec, and routes it by ObjectKind:
      *   0x0216 LINK_HELLO_V1 -> accept_peer_hello
      *   0x0217 LINK_READY_V1 -> accept_peer_ready / accept_peer_ack by ready_phase
+     *   0x0218 PENDING_CONFIG_CONFIRM_V1 after CONNECTED_LOBBY -> queued for dual
      * Anything else, on any other channel, fails closed. A frame from a stale
      * generation (FLY_SESSION_V2_STALE) or an exact duplicate
      * (FLY_SESSION_V2_DUPLICATE) is consumed and dropped without failing the
      * live attempt. *routed reports whether a frame advanced the state machine.
      */
     fly_session_result_v2 route_buffered_control_frame(bool* routed);
+    fly_session_result_v2 request_app_control_read();
+    fly_session_result_v2 send_queued_app_control();
     /* gap 4. Frames one link control object for the Control channel exactly as
      * wire::encode_app_frame does (u32be(2 + len) || tag u16be || object) and
      * issues the write on the Control stream. */
@@ -458,6 +481,10 @@ private:
      * Control bytes not yet forming a complete frame. */
     fly_session_resource_handle_v2 control_stream_ = 0;
     std::vector<std::uint8_t> control_read_accumulator_{};
+    std::deque<std::vector<std::uint8_t>> app_control_writes_{};
+    std::deque<std::array<std::uint8_t, 44>> routed_pending_confirms_{};
+    std::deque<std::array<std::uint8_t, 240>> routed_suspend_intents_{};
+    bool sending_app_control_ = false;
     link::LinkControlProgressV1 progress_{};
     link::LinkHelloV1 local_hello_{};
     link::LinkReadyV1 local_ready_{};

@@ -693,6 +693,21 @@ typedef struct fly_session_dual_content_ref_v2
     uint64_t timeline_epoch;
 } fly_session_dual_content_ref_v2;
 
+/* Readonly first-start identity, captured using the current START approval. */
+typedef struct fly_session_dual_start_ref_v2
+{
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t view_revision;
+    fly_session_dual_content_ref_v2 content;
+    uint8_t source_choice_ref[16];
+    uint8_t pending_config_id[32];
+    uint64_t pending_config_revision;
+} fly_session_dual_start_ref_v2;
+
+#define FLY_SESSION_DUAL_START_REF_V2_SIZE \
+    ((uint32_t)sizeof(fly_session_dual_start_ref_v2))
+
 /* One port of the canonical four-port bundle. */
 typedef struct fly_session_dual_port_sample_v2
 {
@@ -814,19 +829,25 @@ typedef struct fly_session_dual_runtime_port_v2
  * The canonical local encoding of one content choice. Network byte order:
  *
  *   off  size  field
- *     0     2  version u16be (= 1)
+ *     0     2  version u16be (1 or 2)
  *     2     2  reserved_zero[2]
  *     4    16  source_choice_ref   (opaque; the typed reference the UI binds)
  *    20    32  content_id          (the content identity the two ends compare)
  *    52     4  display_name_size u32be (1..64)
  *    56     n  display_name[display_name_size] (UTF-8, no NUL)
+ *  56+n    32  core_id             (version 2 only)
+ *  88+n    32  profile_id          (version 2 only)
+ * 120+n    32  options_id          (version 2 only)
  *
- * Total 56 + display_name_size. The record hash is
+ * Version 1 total 56 + display_name_size. Version 2 appends the 96-byte
+ * start-condition tail; missing or zero core/profile/options stay unbound and
+ * cannot be confirmed. The record hash is
  * SHA256("flynes-content-choice-v1" || u32be(exact_length) || exact bytes),
  * which is the value a provider answers with and the value the engine keeps, so
  * a reference can never be resolved against a record that changed underneath it.
  */
 #define FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE ((uint32_t)56)
+#define FLY_SESSION_CONTENT_CHOICE_V2_START_TAIL_SIZE ((uint32_t)96)
 
 typedef fly_session_result_v2 (*fly_session_content_query_v2)(
     void*, const fly_session_op_token_v2*, uint32_t index,
@@ -1037,8 +1058,19 @@ typedef struct fly_session_game_choice_v2
     uint32_t display_name_size;
     uint8_t display_name[128];
     char reason_key[64];
+    /*
+     * Start conditions bound into pending_config_id (ENG-05). Absent/unverified
+     * values stay zero; a zero core/profile/options hash is not "don't care",
+     * it is "not yet bound" and both ends must agree. Local catalog_revision
+     * is not part of this identity.
+     */
+    uint8_t core_id[32];
+    uint8_t profile_id[32];
+    uint8_t options_id[32];
 } fly_session_game_choice_v2;
 
+#define FLY_SESSION_GAME_CHOICE_V2_R0_SIZE \
+    ((uint32_t)(offsetof(fly_session_game_choice_v2, core_id)))
 #define FLY_SESSION_GAME_CHOICE_V2_SIZE \
     ((uint32_t)sizeof(fly_session_game_choice_v2))
 
@@ -1093,6 +1125,17 @@ typedef struct fly_session_snapshot_v2
     uint8_t dual_state_digest[32];
     uint8_t dual_frame_digest[32];
     uint8_t dual_pcm_digest[32];
+    /*
+     * Pending-config dual-confirm, appended (ENG-02). Empty pending_config_id
+     * means there is no bound configuration: platforms must disable 确认入局
+     * with the snapshot reason, never a local bool. One-sided
+     * pending_config_*_confirmed is not start. Readers whose struct_size stops
+     * at R2 are served the digest block and nothing past it.
+     */
+    uint8_t pending_config_id[32];
+    uint32_t pending_config_local_confirmed;
+    uint32_t pending_config_peer_confirmed;
+    uint64_t pending_config_revision;
 } fly_session_snapshot_v2;
 
 /*
@@ -1109,11 +1152,16 @@ typedef struct fly_session_snapshot_v2
  */
 #define FLY_SESSION_SNAPSHOT_V2_R1_SIZE \
     ((uint32_t)(offsetof(fly_session_snapshot_v2, dual_state_digest)))
+#define FLY_SESSION_SNAPSHOT_V2_R2_SIZE \
+    ((uint32_t)(offsetof(fly_session_snapshot_v2, pending_config_id)))
 #define FLY_SESSION_SNAPSHOT_V2_SIZE ((uint32_t)sizeof(fly_session_snapshot_v2))
 #ifdef __cplusplus
-static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96u,
               "the DUAL digest block is a pure tail append");
+static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+                  FLY_SESSION_SNAPSHOT_V2_R2_SIZE + 48u,
+              "the pending-config confirm block is a pure tail append");
 static_assert(FLY_SESSION_SNAPSHOT_V2_R0_SIZE <=
                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE,
               "the pre-DUAL prefix is not larger than the pre-digest prefix");
@@ -1515,6 +1563,23 @@ FLYNES_API void fly_session_inbox_release_v2(fly_session_inbox_v2_t* inbox);
 FLYNES_API fly_session_result_v2 fly_session_acquire_view_v2(
     fly_session_v2_t* engine,
     fly_session_view_v2_t** out_view);
+/*
+ * Capture before START, outside provider callbacks. Supply a retained START
+ * approval from the current view, then submit that SAME token. Capture neither
+ * loads content nor consumes approval. A view change invalidates that token.
+ * Bind prepared ROM bytes to source_choice_ref and pending_config_id/revision;
+ * the load resolver compares the cached complete content ref without reentering
+ * the engine. Clear the cache on error, selection/link change, or shutdown.
+ * Returns INVALID_STATE before bilateral confirmation or after first start,
+ * UNAVAILABLE without required providers, STALE for an unknown/old approval,
+ * INVALID_ARGUMENT for another current action, CLOSED once shutdown starts.
+ * Output requires SIZE and ABI v2. It is written only on OK; bytes beyond SIZE
+ * are untouched. Existing snapshot and provider layouts are unchanged.
+ */
+FLYNES_API fly_session_result_v2 fly_session_read_dual_start_ref_v2(
+    fly_session_v2_t* engine,
+    const fly_session_approval_token_v2_t* start_approval,
+    fly_session_dual_start_ref_v2* out_ref);
 FLYNES_API fly_session_result_v2 fly_session_view_read_v2(
     const fly_session_view_v2_t* view,
     fly_session_snapshot_v2* out_snapshot);
@@ -1539,6 +1604,12 @@ FLYNES_API fly_session_result_v2 fly_session_view_copy_friends_v2(
     fly_session_friend_v2* out_friends,
     uint32_t capacity,
     uint32_t* written);
+/*
+ * out_choices[0].struct_size is the caller-allocated element stride. Each
+ * element copies min(declared, SIZE) bytes and the copy advances by that
+ * stride, never by sizeof(the current struct). declared < R0, declared > SIZE,
+ * or abi_version != 2 returns ABI_MISMATCH with written=0 and no stores.
+ */
 FLYNES_API fly_session_result_v2 fly_session_view_copy_game_choices_v2(
     const fly_session_view_v2_t* view,
     uint32_t offset,

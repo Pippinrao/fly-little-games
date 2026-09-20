@@ -1286,6 +1286,25 @@ def build_schema():
     )
     kinds.append(
         kind(
+            "0x0218",
+            "PENDING_CONFIG_CONFIRM_V1",
+            44,
+            "HARD",
+            "fixed",
+            "flynes-pending-config-confirm-v1",
+            [
+                field("version", "u16be"),
+                field("reserved_zero", "u8[2]"),
+                field("pending_config_id", "u8[32]"),
+                field("pending_config_revision", "u64be"),
+            ],
+            [],
+            fixed_length=44,
+            notes="Control-only after LINK_READY. Codec rejects zero id and zero revision. Dual maps id/revision mismatch to STALE and a repeated (id, revision) to DUPLICATE. Authentication is the existing Control stream, not a new signature.",
+        )
+    )
+    kinds.append(
+        kind(
             "0x0301",
             "OFFLINE_RELEASE_CERTIFICATE_V1",
             312,

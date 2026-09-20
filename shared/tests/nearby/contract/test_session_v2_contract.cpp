@@ -1,9 +1,12 @@
 #include <flynes/flynes_session.h>
 
 #include "../harness/deterministic_executor.hpp"
+#include "view/session_view.hpp"
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 namespace {
 
@@ -608,7 +611,8 @@ void test_dual_prefix_appends_keep_older_callers_legal()
 {
     check(FLY_SESSION_INPUT_V2_R0_SIZE < FLY_SESSION_INPUT_V2_SIZE &&
               FLY_SESSION_SNAPSHOT_V2_R0_SIZE < FLY_SESSION_SNAPSHOT_V2_SIZE &&
-              FLY_SESSION_PORTS_V2_R1_SIZE < FLY_SESSION_PORTS_V2_SIZE,
+              FLY_SESSION_PORTS_V2_R1_SIZE < FLY_SESSION_PORTS_V2_SIZE &&
+              FLY_SESSION_GAME_CHOICE_V2_R0_SIZE < FLY_SESSION_GAME_CHOICE_V2_SIZE,
           "every DUAL append grew its structure");
 
     Counts clock_counts;
@@ -678,6 +682,29 @@ void test_dual_prefix_appends_keep_older_callers_legal()
               pre_digest.snapshot.dual_state_digest[0] == 0 &&
               pre_digest.snapshot.dual_pcm_digest[31] == 0,
           "the digest block is not written past the size the caller declared");
+
+    /*
+     * A reader from before the pending-config confirm block: it declares exactly
+     * the R2 prefix, so it must be served the digest block and none of the
+     * pending-config bytes may be written into its buffer.
+     */
+    Guarded pre_pending{};
+    pre_pending.canary = 0xC3C3C3C3C3C3C3C3ull;
+    pre_pending.snapshot.struct_size = FLY_SESSION_SNAPSHOT_V2_R2_SIZE;
+    pre_pending.snapshot.abi_version = FLY_SESSION_ABI_VERSION_2;
+    check(fly_session_view_read_v2(view, &pre_pending.snapshot) ==
+              FLY_SESSION_V2_OK,
+          "a pre-pending-config snapshot prefix reads successfully");
+    check(pre_pending.canary == 0xC3C3C3C3C3C3C3C3ull &&
+              pre_pending.snapshot.pending_config_id[0] == 0 &&
+              pre_pending.snapshot.pending_config_local_confirmed == 0 &&
+              pre_pending.snapshot.pending_config_peer_confirmed == 0,
+          "the pending-config block is not written past the size the caller declared");
+
+    check(full.pending_config_id[0] == 0 &&
+              full.pending_config_local_confirmed == 0 &&
+              full.pending_config_peer_confirmed == 0,
+          "empty pending_config_id is unset config, not a platform bool");
 
     fly_session_view_release_v2(view);
     check(fly_session_begin_shutdown_v2(engine, 1301) == FLY_SESSION_V2_ACCEPTED &&
@@ -760,6 +787,159 @@ void test_content_port_is_optional_and_validated()
           "the content engine shuts down");
 }
 
+fly_session_game_choice_v2 make_catalog_choice(std::uint8_t tag)
+{
+    fly_session_game_choice_v2 item{};
+    item.struct_size = FLY_SESSION_GAME_CHOICE_V2_SIZE;
+    item.abi_version = FLY_SESSION_ABI_VERSION_2;
+    item.content_id[0] = tag;
+    item.source_choice_ref[0] = static_cast<std::uint8_t>(tag + 16);
+    item.catalog_revision = 1000u + tag;
+    item.progress_revision = 2000u + tag;
+    item.selectable = 1;
+    item.display_name_size = 1;
+    item.display_name[0] = static_cast<std::uint8_t>('A' + tag);
+    item.reason_key[0] = 'r';
+    item.core_id[0] = static_cast<std::uint8_t>(0xC0u + tag);
+    item.profile_id[0] = static_cast<std::uint8_t>(0xD0u + tag);
+    item.options_id[0] = static_cast<std::uint8_t>(0xE0u + tag);
+    return item;
+}
+
+void fill_populated_catalog_view(fly_session_view_v2_handle& view)
+{
+    view.game_choices.clear();
+    view.game_choices.push_back(make_catalog_choice(1));
+    view.game_choices.push_back(make_catalog_choice(2));
+    view.snapshot.game_choice_count = 2;
+}
+
+bool old_layout_canary_intact(const std::uint8_t* storage, std::uint32_t count)
+{
+    const auto prefix = FLY_SESSION_GAME_CHOICE_V2_R0_SIZE;
+    const auto tail = FLY_SESSION_GAME_CHOICE_V2_SIZE - prefix;
+    for (std::uint32_t i = 0; i < count * tail; ++i)
+    {
+        if (storage[count * prefix + i] != 0xA5u)
+            return false;
+    }
+    return true;
+}
+
+void fill_old_layout_page(std::vector<std::uint8_t>& storage, std::uint32_t count)
+{
+    const auto prefix = FLY_SESSION_GAME_CHOICE_V2_R0_SIZE;
+    const auto tail = FLY_SESSION_GAME_CHOICE_V2_SIZE - prefix;
+    storage.assign(count * prefix + count * tail, 0xA5u);
+    auto* header = reinterpret_cast<fly_session_game_choice_v2*>(storage.data());
+    header->struct_size = prefix;
+    header->abi_version = FLY_SESSION_ABI_VERSION_2;
+}
+
+void test_game_choice_copy_keeps_old_element_stride()
+{
+    fly_session_view_v2_handle view{};
+    fill_populated_catalog_view(view);
+    const auto prefix = FLY_SESSION_GAME_CHOICE_V2_R0_SIZE;
+    const auto full = FLY_SESSION_GAME_CHOICE_V2_SIZE;
+
+    std::vector<std::uint8_t> one;
+    fill_old_layout_page(one, 1);
+    std::uint32_t written = 99;
+    check(fly_session_view_copy_game_choices_v2(
+              &view, 0,
+              reinterpret_cast<fly_session_game_choice_v2*>(one.data()), 1,
+              &written) == FLY_SESSION_V2_OK &&
+              written == 1,
+          "an R0 game-choice page copies one element");
+    check(one[offsetof(fly_session_game_choice_v2, content_id)] == 1,
+          "the R0 page receives the first element's prefix");
+    check(old_layout_canary_intact(one.data(), 1),
+          "the R0 game-choice copy never writes past the caller element");
+
+    std::vector<std::uint8_t> two;
+    fill_old_layout_page(two, 2);
+    written = 99;
+    check(fly_session_view_copy_game_choices_v2(
+              &view, 0,
+              reinterpret_cast<fly_session_game_choice_v2*>(two.data()), 2,
+              &written) == FLY_SESSION_V2_OK &&
+              written == 2,
+          "an R0 game-choice page copies two elements");
+    check(two[offsetof(fly_session_game_choice_v2, content_id)] == 1 &&
+              two[prefix + offsetof(fly_session_game_choice_v2, content_id)] == 2,
+          "the second R0 element begins at the old 272-byte stride");
+    check(old_layout_canary_intact(two.data(), 2),
+          "a two-element R0 page is not written at the new 368-byte stride");
+
+    std::vector<std::uint8_t> page;
+    fill_old_layout_page(page, 1);
+    written = 99;
+    check(fly_session_view_copy_game_choices_v2(
+              &view, 1,
+              reinterpret_cast<fly_session_game_choice_v2*>(page.data()), 1,
+              &written) == FLY_SESSION_V2_OK &&
+              written == 1 &&
+              page[offsetof(fly_session_game_choice_v2, content_id)] == 2 &&
+              old_layout_canary_intact(page.data(), 1),
+          "pagination serves the requested R0 element without overrunning");
+
+    fly_session_game_choice_v2 current[2]{};
+    current[0].struct_size = full;
+    current[0].abi_version = FLY_SESSION_ABI_VERSION_2;
+    current[1].struct_size = full;
+    current[1].abi_version = FLY_SESSION_ABI_VERSION_2;
+    written = 0;
+    check(fly_session_view_copy_game_choices_v2(&view, 0, current, 2, &written) ==
+              FLY_SESSION_V2_OK &&
+              written == 2 &&
+              current[0].content_id[0] == 1 && current[0].core_id[0] == 0xC1u &&
+              current[0].profile_id[0] == 0xD1u &&
+              current[0].options_id[0] == 0xE1u &&
+              current[1].content_id[0] == 2 && current[1].core_id[0] == 0xC2u,
+          "a current game-choice page receives the bound core profile and options");
+
+    std::vector<std::uint8_t> bad_size(full + prefix, 0xA5u);
+    auto* bad_header = reinterpret_cast<fly_session_game_choice_v2*>(bad_size.data());
+    bad_header->struct_size = prefix - 1;
+    bad_header->abi_version = FLY_SESSION_ABI_VERSION_2;
+    written = 99;
+    check(fly_session_view_copy_game_choices_v2(
+              &view, 0, bad_header, 1, &written) == FLY_SESSION_V2_ABI_MISMATCH &&
+              written == 0,
+          "a too-small game-choice element is rejected");
+    check(bad_size[offsetof(fly_session_game_choice_v2, content_id)] == 0xA5u &&
+              bad_size[prefix] == 0xA5u,
+          "a size mismatch leaves the caller buffer untouched");
+
+    std::vector<std::uint8_t> bad_abi(full + prefix, 0xA5u);
+    auto* abi_header = reinterpret_cast<fly_session_game_choice_v2*>(bad_abi.data());
+    abi_header->struct_size = prefix;
+    abi_header->abi_version = 1;
+    written = 99;
+    check(fly_session_view_copy_game_choices_v2(
+              &view, 0, abi_header, 1, &written) == FLY_SESSION_V2_ABI_MISMATCH &&
+              written == 0 &&
+              bad_abi[offsetof(fly_session_game_choice_v2, content_id)] == 0xA5u,
+          "a version mismatch leaves the caller buffer untouched");
+
+    std::vector<std::uint8_t> zeroed;
+    fill_old_layout_page(zeroed, 2);
+    auto* zero_header =
+        reinterpret_cast<fly_session_game_choice_v2*>(zeroed.data());
+    zero_header->struct_size = 0;
+    zero_header->abi_version = 0;
+    written = 99;
+    check(fly_session_view_copy_game_choices_v2(
+              &view, 0, zero_header, 2, &written) == FLY_SESSION_V2_OK &&
+              written == 2 &&
+              zeroed[offsetof(fly_session_game_choice_v2, content_id)] == 1 &&
+              zeroed[prefix + offsetof(fly_session_game_choice_v2, content_id)] ==
+                  2 &&
+              old_layout_canary_intact(zeroed.data(), 2),
+          "a zeroed old caller buffer still copies at the R0 272-byte stride");
+}
+
 } // namespace
 
 int main()
@@ -769,6 +949,7 @@ int main()
     test_bounded_action_and_notice_queues();
     test_input_contract_rejects_invalid_or_inactive_input();
     test_dual_prefix_appends_keep_older_callers_legal();
+    test_game_choice_copy_keeps_old_element_stride();
     test_content_port_is_optional_and_validated();
     test_fail_closed_shutdown();
     if (failures != 0)

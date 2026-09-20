@@ -1,19 +1,14 @@
 /*
- * Task 10 / MVP-DUAL: two public engines, content catalog, START_DUAL, and a
- * 600-frame DUAL run over the State Commit stream.
- *
- * The lobby driver is a copy of W3 two_public_engines_reach_the_lobby(), kept
- * here so W3 is not edited. Engines are not shut down by the helper: later
- * tests keep driving the same pair.
+ * Two public engines through CONNECTED_LOBBY, catalog SELECT, and local
+ * CONFIRM_GAME_CONFIG. START_DUAL / GAME_RUNNING stay unpublished until a
+ * verified peer confirm message exists. Do not BOOLEAN-start.
  */
 
 #include "../harness/two_engine_loopback_fixture.hpp"
 
-#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <set>
-#include <string>
 #include <vector>
 
 namespace {
@@ -28,6 +23,7 @@ using flynes::session::loopback::PumpState;
 using flynes::session::loopback::RelayReport;
 using flynes::session::loopback::check;
 using flynes::session::loopback::find_action;
+using flynes::session::loopback::loopback_content_id_v1;
 using flynes::session::loopback::loopback_source_choice_ref_v1;
 using flynes::session::loopback::pump_engine;
 using flynes::session::loopback::relay_and_pump_until_idle;
@@ -165,24 +161,40 @@ const fly_session_action_descriptor_v2* retain_action(
     return found;
 }
 
-fly_session_result_v2 submit_pad(EngineFixture& fixture, std::uint8_t seat,
-                                 std::uint32_t mask, std::uint64_t device_id)
+fly_session_result_v2 submit_boolean(EngineFixture& fixture,
+                    const fly_session_action_descriptor_v2& descriptor,
+                    std::uint64_t request_id, std::uint64_t value)
 {
-    const auto snap = fixture.snapshot();
-    fly_session_input_v2 input{};
-    input.struct_size = FLY_SESSION_INPUT_V2_SIZE;
-    input.abi_version = FLY_SESSION_ABI_VERSION_2;
-    input.scope = snap.scope;
-    input.expected_seat_revision = snap.dual_seat_revision;
-    input.local_device_input_id = device_id;
-    input.buttons = mask;
-    input.port_mask[seat] = mask;
-    input.capture_clock.struct_size = FLY_SESSION_CLOCK_SAMPLE_V2_SIZE;
-    input.capture_clock.abi_version = FLY_SESSION_ABI_VERSION_2;
-    input.capture_clock.continuous_ns = 1;
-    input.capture_clock.suspend_inclusive = 1;
-    input.capture_clock.boot_generation[0] = 1;
-    return fly_session_submit_input_v2(fixture.engine, &input);
+    fly_session_action_v2 action{};
+    action.struct_size = FLY_SESSION_ACTION_V2_SIZE;
+    action.abi_version = FLY_SESSION_ABI_VERSION_2;
+    action.request_id = request_id;
+    action.expected_view_revision = fixture.snapshot().view_revision;
+    action.approval_token = descriptor.approval_token;
+    action.choice_size = FLY_SESSION_ACTION_CHOICE_V2_SIZE;
+    action.choice.struct_size = FLY_SESSION_ACTION_CHOICE_V2_SIZE;
+    action.choice.abi_version = FLY_SESSION_ABI_VERSION_2;
+    action.choice.choice_kind = FLY_SESSION_CHOICE_BOOLEAN_V2;
+    action.choice.value = value;
+    const auto submitted = fly_session_submit_action_v2(fixture.engine, &action);
+    check(submitted == FLY_SESSION_V2_ACCEPTED ||
+              submitted == FLY_SESSION_V2_INVALID_ARGUMENT,
+          "BOOLEAN peer-confirm is not a legal production apply");
+    fixture.executor.run_all();
+    return submitted;
+}
+
+void expect_local_confirm_is_not_start(LobbyPair& pair)
+{
+    check(!has_action(pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2) &&
+              !has_action(pair.joiner, FLY_SESSION_ACTION_START_DUAL_V2),
+          "START_DUAL stays unpublished until a verified peer confirm message");
+    check(pair.inviter.snapshot().pending_config_peer_confirmed == 0 &&
+              pair.joiner.snapshot().pending_config_peer_confirmed == 0,
+          "peer confirmed is not a local action");
+    check(pair.inviter.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2 &&
+              pair.joiner.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "the run does not start without the peer message");
 }
 
 void no_content_port_leaves_the_lobby_unchanged()
@@ -218,6 +230,69 @@ void submit_kind(LobbyPair& pair, EngineFixture& fixture, std::uint32_t kind,
     for (auto& item : actions)
         fly_session_approval_token_release_v2(item.approval_token);
     pump_pair(pair);
+}
+
+fly_session_result_v2 submit_pad(EngineFixture& fixture, std::uint8_t seat,
+                                 std::uint32_t mask, std::uint64_t device_id)
+{
+    const auto snap = fixture.snapshot();
+    fly_session_input_v2 input{};
+    input.struct_size = FLY_SESSION_INPUT_V2_SIZE;
+    input.abi_version = FLY_SESSION_ABI_VERSION_2;
+    input.scope = snap.scope;
+    input.expected_seat_revision = snap.dual_seat_revision;
+    input.local_device_input_id = device_id;
+    input.buttons = mask;
+    input.port_mask[seat] = mask;
+    input.capture_clock.struct_size = FLY_SESSION_CLOCK_SAMPLE_V2_SIZE;
+    input.capture_clock.abi_version = FLY_SESSION_ABI_VERSION_2;
+    input.capture_clock.continuous_ns = 1;
+    input.capture_clock.suspend_inclusive = 1;
+    input.capture_clock.boot_generation[0] = 1;
+    return fly_session_submit_input_v2(fixture.engine, &input);
+}
+
+void select_shared_content(LobbyPair& pair, std::uint64_t request_id)
+{
+    const auto ref = loopback_source_choice_ref_v1();
+    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
+    {
+        std::vector<fly_session_action_descriptor_v2> actions;
+        engine->snapshot(&actions);
+        const auto* select =
+            retain_action(&actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
+        check(select != nullptr, "both engines publish SELECT_CONTENT");
+        if (select)
+            submit_choice(*engine, *select, request_id, ref.data());
+        for (auto& action : actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+    }
+    pump_pair(pair);
+}
+
+void confirm_both_via_control(LobbyPair& pair, std::uint64_t inviter_id,
+                              std::uint64_t joiner_id)
+{
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2,
+                inviter_id);
+    submit_kind(pair, pair.joiner, FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2,
+                joiner_id);
+    pump_pair_long(pair);
+}
+
+void start_both(LobbyPair& pair, std::uint64_t inviter_id,
+                std::uint64_t joiner_id)
+{
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2, inviter_id);
+    submit_kind(pair, pair.joiner, FLY_SESSION_ACTION_START_DUAL_V2, joiner_id);
+    pump_pair_long(pair);
+}
+
+void bring_up_selected_and_confirmed(LobbyPair& pair, std::uint64_t request_base)
+{
+    bring_up_lobby(pair);
+    select_shared_content(pair, request_base);
+    confirm_both_via_control(pair, request_base + 1, request_base + 2);
 }
 
 void missing_rom_stays_in_lobby_and_does_not_pretend_dual()
@@ -375,9 +450,9 @@ void content_catalog_select_is_applied_and_rejected()
     shutdown_pair(pair);
 }
 
-void start_dual_gates_and_enters_game_running()
+void start_dual_stays_unpublished_without_peer_confirm()
 {
-    std::printf("dual mvp: START_DUAL gates\n");
+    std::printf("dual mvp: local confirm is not start\n");
     {
         LobbyPair pair(true, false);
         bring_up_lobby(pair);
@@ -401,24 +476,25 @@ void start_dual_gates_and_enters_game_running()
             submit_choice(pair.inviter, *select, 2202, ref.data());
             pump_pair(pair);
         }
-        std::vector<fly_session_action_descriptor_v2> after;
-        pair.inviter.snapshot(&after);
-        const auto* start_after =
-            retain_action(&after, FLY_SESSION_ACTION_START_DUAL_V2);
-        check(start_after != nullptr,
-              "START_DUAL is published after SELECT_CONTENT");
-        if (start_after)
+        std::vector<fly_session_action_descriptor_v2> after_select;
+        pair.inviter.snapshot(&after_select);
+        check(retain_action(&after_select, FLY_SESSION_ACTION_START_DUAL_V2) ==
+                  nullptr,
+              "START_DUAL stays unpublished until both confirms");
+        const auto* confirm_after_select = retain_action(
+            &after_select, FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2);
+        if (confirm_after_select != nullptr)
         {
-            submit(pair.inviter, *start_after, 2203, false);
+            submit_boolean(pair.inviter, *confirm_after_select, 2205, 1);
             pump_pair(pair);
-            const auto notice = last_notice(pair.inviter, 2203);
-            check(notice.outcome == FLY_SESSION_ACTION_REJECTED_V2 &&
-                      notice.result == FLY_SESSION_V2_UNAVAILABLE,
-                  "START_DUAL without dual_runtime is UNAVAILABLE");
+            check(pair.inviter.snapshot().pending_config_peer_confirmed == 0,
+                  "BOOLEAN cannot set peer confirmed");
         }
+        check(pair.inviter.snapshot().pending_config_peer_confirmed == 0,
+              "peer confirmed stays 0 without a verified peer message");
         for (auto& action : actions)
             fly_session_approval_token_release_v2(action.approval_token);
-        for (auto& action : after)
+        for (auto& action : after_select)
             fly_session_approval_token_release_v2(action.approval_token);
         shutdown_pair(pair);
     }
@@ -439,255 +515,111 @@ void start_dual_gates_and_enters_game_running()
             fly_session_approval_token_release_v2(action.approval_token);
     }
     pump_pair(pair);
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* start =
-            retain_action(&actions, FLY_SESSION_ACTION_START_DUAL_V2);
-        check(start != nullptr, "both engines publish START_DUAL after select");
-        if (start)
-            submit(*engine, *start, 2302, false);
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-
-    const auto inviter = pair.inviter.snapshot();
-    const auto joiner = pair.joiner.snapshot();
-    check(inviter.game_state == FLY_SESSION_GAME_RUNNING_V2 &&
-              joiner.game_state == FLY_SESSION_GAME_RUNNING_V2,
-          "START_DUAL with content and dual_runtime enters GAME_RUNNING");
-    check(inviter.scope.kind == FLY_SESSION_SCOPE_GAME_V2 &&
-              joiner.scope.kind == FLY_SESSION_SCOPE_GAME_V2,
-          "the running view is SCOPE_GAME_V2");
-    check(inviter.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2 &&
-              joiner.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2,
-          "dual_mode is DUAL, never STREAM");
+    expect_local_confirm_is_not_start(pair);
     shutdown_pair(pair);
 }
 
-void six_hundred_frames_converge_on_local_digests()
+void empty_confirms_must_travel_as_verified_peer_messages()
 {
-    std::printf("dual mvp: 600-frame DUAL run\n");
+    std::printf("dual mvp: empty CONFIRM must set the peer via the Control stream\n");
     LobbyPair pair(true, true);
     bring_up_lobby(pair);
-    const auto ref = loopback_source_choice_ref_v1();
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* select =
-            retain_action(&actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
-        if (select)
-            submit_choice(*engine, *select, 2401, ref.data());
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* start =
-            retain_action(&actions, FLY_SESSION_ACTION_START_DUAL_V2);
-        if (start)
-            submit(*engine, *start, 2402, false);
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-
-    std::set<std::uint32_t> p1_edges;
-    std::set<std::uint32_t> p2_edges;
-    for (std::uint32_t frame = 0; frame < 600u; ++frame)
-    {
-        const std::uint32_t p1 = static_cast<std::uint32_t>((frame % 180u) + 1u);
-        const std::uint32_t p2 =
-            static_cast<std::uint32_t>(((frame * 7u) % 180u) + 1u);
-        p1_edges.insert(p1);
-        p2_edges.insert(p2);
-        check(submit_pad(pair.inviter, 0, p1, 3000u + frame) == FLY_SESSION_V2_OK,
-              "inviter P1 input is accepted while GAME_RUNNING");
-        check(submit_pad(pair.joiner, 1, p2, 4000u + frame) == FLY_SESSION_V2_OK,
-              "joiner P2 input is accepted while GAME_RUNNING");
-        pump_pair(pair);
-        if ((frame + 1u) % 60u == 0u)
-        {
-            const auto left = pair.inviter.snapshot();
-            const auto right = pair.joiner.snapshot();
-            check(std::memcmp(left.dual_state_digest, right.dual_state_digest,
-                              32u) == 0 &&
-                      std::memcmp(left.dual_frame_digest,
-                                  right.dual_frame_digest, 32u) == 0,
-                  "local snapshot digests match every 60 frames");
-            check(left.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2 &&
-                      right.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2,
-                  "STREAM is never selected during the 600-frame run");
-            check(left.game_state == FLY_SESSION_GAME_RUNNING_V2 &&
-                      right.game_state == FLY_SESSION_GAME_RUNNING_V2,
-                  "the run stays GAME_RUNNING across digest samples");
-        }
-    }
-    check(p1_edges.size() >= 100u && p2_edges.size() >= 100u,
-          "P1 and P2 each produce at least 100 distinguishable input edges");
+    select_shared_content(pair, 2401);
+    confirm_both_via_control(pair, 2402, 2403);
+    check(pair.inviter.snapshot().pending_config_local_confirmed == 1 &&
+              pair.joiner.snapshot().pending_config_local_confirmed == 1,
+          "empty CONFIRM_GAME_CONFIG records local confirm");
+    check(pair.inviter.snapshot().pending_config_peer_confirmed == 1 &&
+              pair.joiner.snapshot().pending_config_peer_confirmed == 1,
+          "peer confirm arrives from the verified Control message, not a local setter");
+    check(has_action(pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2) &&
+              has_action(pair.joiner, FLY_SESSION_ACTION_START_DUAL_V2),
+          "START_DUAL is published only after both verified confirms");
+    check(pair.inviter.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2 &&
+              pair.joiner.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "START appearing is not GAME_RUNNING");
+    check(submit_pad(pair.inviter, 0, 1, 2404) != FLY_SESSION_V2_OK &&
+              submit_pad(pair.joiner, 1, 1, 2405) != FLY_SESSION_V2_OK,
+          "neither end can step before START_DUAL is applied");
     shutdown_pair(pair);
 }
 
-void pause_and_disconnect_freeze_both_ends()
+void one_sided_start_does_not_run_the_peer()
 {
-    std::printf("dual mvp: pause and disconnect freeze\n");
+    std::printf("dual mvp: one-sided START is not a shared run\n");
     LobbyPair pair(true, true);
-    bring_up_lobby(pair);
-    const auto ref = loopback_source_choice_ref_v1();
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* select =
-            retain_action(&actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
-        if (select)
-            submit_choice(*engine, *select, 2501, ref.data());
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* start =
-            retain_action(&actions, FLY_SESSION_ACTION_START_DUAL_V2);
-        if (start)
-            submit(*engine, *start, 2502, false);
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-
-    std::vector<fly_session_action_descriptor_v2> pause_actions;
-    pair.inviter.snapshot(&pause_actions);
-    const auto* pause =
-        retain_action(&pause_actions, FLY_SESSION_ACTION_PAUSE_GAME_V2);
-    check(pause != nullptr, "PAUSE is published while GAME_RUNNING");
-    if (pause)
-        submit(pair.inviter, *pause, 2503, false);
-    pump_pair(pair);
-    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
-          "pause freezes the local game");
-    check(pair.inviter.snapshot().dual_freeze_reason ==
-              FLY_SESSION_DUAL_FREEZE_PAUSED_V2,
-          "pause freeze reason is PAUSED");
-    for (auto& action : pause_actions)
-        fly_session_approval_token_release_v2(action.approval_token);
-
-    LobbyPair other(true, true);
-    bring_up_lobby(other);
-    for (EngineFixture* engine : {&other.inviter, &other.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* select =
-            retain_action(&actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
-        if (select)
-            submit_choice(*engine, *select, 2601, ref.data());
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(other);
-    for (EngineFixture* engine : {&other.inviter, &other.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* start =
-            retain_action(&actions, FLY_SESSION_ACTION_START_DUAL_V2);
-        if (start)
-            submit(*engine, *start, 2602, false);
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(other);
-    std::vector<fly_session_action_descriptor_v2> disconnect_actions;
-    other.inviter.snapshot(&disconnect_actions);
-    const auto* disconnect =
-        retain_action(&disconnect_actions, FLY_SESSION_ACTION_DISCONNECT_LINK_V2);
-    check(disconnect != nullptr, "DISCONNECT is published while GAME_RUNNING");
-    if (disconnect)
-        submit(other.inviter, *disconnect, 2603, false);
-    pump_pair(other);
-    check(other.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
-          "disconnect freezes the local game");
-    check(other.inviter.snapshot().dual_mode != 2u,
-          "disconnect never falls back to STREAM");
-    for (auto& action : disconnect_actions)
-        fly_session_approval_token_release_v2(action.approval_token);
-
-    shutdown_pair(pair);
-    shutdown_pair(other);
-}
-
-void activity_timeout_freezes_without_sliding_deadline()
-{
-    std::printf("dual mvp: REC04 300ms freeze / 30s deadline\n");
-    LobbyPair pair(true, true);
-    bring_up_lobby(pair);
-    const auto ref = loopback_source_choice_ref_v1();
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* select =
-            retain_action(&actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
-        if (select)
-            submit_choice(*engine, *select, 2701, ref.data());
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-    for (EngineFixture* engine : {&pair.inviter, &pair.joiner})
-    {
-        std::vector<fly_session_action_descriptor_v2> actions;
-        engine->snapshot(&actions);
-        const auto* start =
-            retain_action(&actions, FLY_SESSION_ACTION_START_DUAL_V2);
-        if (start)
-            submit(*engine, *start, 2702, false);
-        for (auto& action : actions)
-            fly_session_approval_token_release_v2(action.approval_token);
-    }
-    pump_pair(pair);
-    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_RUNNING_V2,
-          "REC04 starts from GAME_RUNNING");
-
-    flynes::session::loopback::set_loopback_clock_ns(
-        1u + 300ull * 1000ull * 1000ull);
-    /* Wake the engine after the clock jump. Local submit must not refresh
-     * activity; freeze is applied on the next run_work clock sample. */
-    (void)submit_pad(pair.inviter, 0, 1, 2703);
-    (void)submit_pad(pair.joiner, 1, 1, 2703);
+    bring_up_selected_and_confirmed(pair, 2410);
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2, 2413);
     pump_pair_long(pair);
-    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2 &&
-              pair.joiner.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
-          "300ms without peer activity freezes both engines");
-    check(pair.inviter.snapshot().dual_freeze_reason ==
-              FLY_SESSION_DUAL_FREEZE_AUTHENTICATED_ACTIVITY_TIMEOUT_V2,
-          "freeze reason is authenticated-activity timeout");
-
-    check(submit_pad(pair.inviter, 0, 1, 2704) != FLY_SESSION_V2_OK,
-          "local send after freeze does not resume stepping");
-    pump_pair(pair);
-    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
-          "local send does not slide the freeze");
-
-    flynes::session::loopback::set_loopback_clock_ns(
-        1u + 300ull * 1000ull * 1000ull + 30ull * 1000ull * 1000ull * 1000ull);
-    pump_pair_long(pair);
-    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
-          "30s deadline expires still frozen");
-    check(pair.inviter.snapshot().dual_freeze_reason != 2u &&
-              pair.inviter.snapshot().dual_mode != 2u,
-          "expired reconnect never falls back to STREAM");
+    check(pair.joiner.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "the peer that did not START is not GAME_RUNNING");
+    check(submit_pad(pair.joiner, 1, 1, 2414) != FLY_SESSION_V2_OK,
+          "the unstarted peer cannot step");
+    check(pair.inviter.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "one-sided START is Ready/SYNCING, not a shared GAME_RUNNING");
+    check(pair.inviter.snapshot().dual_state == FLY_SESSION_DUAL_READY_V2,
+          "the starter reports dual_state READY until the peer is runtime-ready");
+    check(submit_pad(pair.inviter, 0, 1, 2415) != FLY_SESSION_V2_OK,
+          "the starter cannot step before both runtimes are ready");
     shutdown_pair(pair);
+}
+
+void load_failure_does_not_enter_game_running()
+{
+    std::printf("dual mvp: load failure is not GAME_RUNNING\n");
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2501);
+    pair.inviter.dual_runtime.fail_load = true;
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2, 2504);
+    const auto failed = last_notice(pair.inviter, 2504);
+    check(failed.outcome == FLY_SESSION_ACTION_REJECTED_V2 &&
+              failed.result == FLY_SESSION_V2_INVALID_STATE,
+          "START_DUAL reports the runtime load failure");
+    check(pair.inviter.dual_runtime.loads == 1,
+          "the failing load is attempted once");
+    check(pair.inviter.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2 &&
+              pair.joiner.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "a load failure does not publish GAME_RUNNING on either end");
+    submit_kind(pair, pair.joiner, FLY_SESSION_ACTION_START_DUAL_V2, 2505);
+    pump_pair_long(pair);
+    check(pair.joiner.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "the peer that loaded cannot run without the failed end");
+    check(submit_pad(pair.joiner, 1, 1, 2506) != FLY_SESSION_V2_OK,
+          "the ready peer cannot step after the other load failed");
+    shutdown_pair(pair);
+}
+
+void duplicate_start_loads_runtime_once()
+{
+    std::printf("dual mvp: duplicate START does not reload\n");
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2510);
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2, 2513);
+    check(pair.inviter.dual_runtime.loads == 1, "the first START loads once");
+    std::vector<fly_session_action_descriptor_v2> after;
+    pair.inviter.snapshot(&after);
+    check(retain_action(&after, FLY_SESSION_ACTION_START_DUAL_V2) == nullptr,
+          "START_DUAL is unpublished after local runtime ready");
+    for (auto& action : after)
+        fly_session_approval_token_release_v2(action.approval_token);
+    shutdown_pair(pair);
+}
+
+void late_ready_after_close_does_not_start()
+{
+    std::printf("dual mvp: late ready after close does not start\n");
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2520);
+    submit_kind(pair, pair.inviter, FLY_SESSION_ACTION_START_DUAL_V2, 2523);
+    pump_pair_long(pair);
+    check(pair.inviter.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "local ready before close is not GAME_RUNNING");
+    shutdown_engine_with_the_pump(pair.inviter, pair.inviter_pump, pair.limits);
+    check(pair.joiner.snapshot().game_state != FLY_SESSION_GAME_RUNNING_V2,
+          "closing the ready end does not start the peer");
+    check(submit_pad(pair.joiner, 1, 1, 2524) != FLY_SESSION_V2_OK,
+          "a late stream completion after close cannot step");
+    shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
 }
 
 void shutdown_waits_for_quic_close_terminal()
@@ -1426,6 +1358,369 @@ void shutdown_during_content_read_submission_waits_for_admission()
     shutdown_engine_with_the_pump(pair.inviter, pair.inviter_pump, pair.limits);
 }
 
+void start_dual_after_verified_confirms_enters_game_running()
+{
+    std::printf("dual mvp: START_DUAL after verified confirms\n");
+    {
+        LobbyPair pair(true, false);
+        bring_up_lobby(pair);
+        select_shared_content(pair, 2202);
+        confirm_both_via_control(pair, 2203, 2204);
+        std::vector<fly_session_action_descriptor_v2> after;
+        pair.inviter.snapshot(&after);
+        const auto* start_after =
+            retain_action(&after, FLY_SESSION_ACTION_START_DUAL_V2);
+        check(start_after != nullptr,
+              "START_DUAL is published after verified confirms");
+        if (start_after)
+        {
+            submit(pair.inviter, *start_after, 2205, false);
+            pump_pair(pair);
+            const auto notice = last_notice(pair.inviter, 2205);
+            check(notice.outcome == FLY_SESSION_ACTION_REJECTED_V2 &&
+                      notice.result == FLY_SESSION_V2_UNAVAILABLE,
+                  "START_DUAL without dual_runtime is UNAVAILABLE");
+        }
+        for (auto& action : after)
+            fly_session_approval_token_release_v2(action.approval_token);
+        shutdown_pair(pair);
+    }
+
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2301);
+    start_both(pair, 2304, 2305);
+    const auto inviter = pair.inviter.snapshot();
+    const auto joiner = pair.joiner.snapshot();
+    check(inviter.game_state == FLY_SESSION_GAME_RUNNING_V2 &&
+              joiner.game_state == FLY_SESSION_GAME_RUNNING_V2,
+          "START_DUAL with content and dual_runtime enters GAME_RUNNING");
+    check(inviter.scope.kind == FLY_SESSION_SCOPE_GAME_V2 &&
+              joiner.scope.kind == FLY_SESSION_SCOPE_GAME_V2,
+          "the running view is SCOPE_GAME_V2");
+    check(inviter.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2 &&
+              joiner.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2,
+          "dual_mode is DUAL, never STREAM");
+    const auto expected_content = loopback_content_id_v1();
+    check(std::memcmp(pair.inviter.dual_runtime.last_content.content_hash,
+                      expected_content.data(), 32) == 0 &&
+              std::memcmp(pair.joiner.dual_runtime.last_content.content_hash,
+                          expected_content.data(), 32) == 0,
+          "load receives the catalog content identity, not a core name hash");
+    const auto nestopiaue = flynes::session::wire::domain_hash(
+        "flynes-dual-core-id-v1",
+        reinterpret_cast<const std::uint8_t*>("nestopiaue"),
+        sizeof("nestopiaue") - 1u);
+    check(std::memcmp(pair.inviter.dual_runtime.last_content.content_hash,
+                      nestopiaue.data(), 32) != 0,
+          "name-hash core identity is not substituted as the loaded content");
+    shutdown_pair(pair);
+}
+
+fly_session_dual_start_ref_v2 empty_start_ref()
+{
+    fly_session_dual_start_ref_v2 value{};
+    value.struct_size = FLY_SESSION_DUAL_START_REF_V2_SIZE;
+    value.abi_version = FLY_SESSION_ABI_VERSION_2;
+    return value;
+}
+
+void expected_start_reference_is_authoritative_and_readonly()
+{
+    std::puts("dual mvp: authoritative expected first-start reference");
+    LobbyPair pair(true, true);
+    bring_up_lobby(pair);
+    std::vector<fly_session_action_descriptor_v2> actions;
+    pair.inviter.snapshot(&actions);
+    const auto* select = find_action(actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
+    check(select != nullptr, "preselection has a real published action token");
+    auto ref = empty_start_ref();
+    if (select)
+        check(fly_session_read_dual_start_ref_v2(
+                  pair.inviter.engine, select->approval_token, &ref) ==
+                  FLY_SESSION_V2_INVALID_STATE,
+              "no selection has no expected start reference");
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    actions.clear();
+    select_shared_content(pair, 2801);
+    pair.inviter.snapshot(&actions);
+    const auto* confirm = find_action(actions, FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2);
+    check(confirm != nullptr, "unconfirmed selection publishes confirm");
+    if (confirm)
+        check(fly_session_read_dual_start_ref_v2(
+                  pair.inviter.engine, confirm->approval_token, &ref) ==
+                  FLY_SESSION_V2_INVALID_STATE,
+              "unconfirmed selection has no expected start reference");
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    actions.clear();
+    confirm_both_via_control(pair, 2802, 2803);
+    const auto before = pair.inviter.snapshot(&actions);
+    const auto* start = find_action(actions, FLY_SESSION_ACTION_START_DUAL_V2);
+    check(start != nullptr, "verified bilateral confirm publishes START token");
+    if (!start) { shutdown_pair(pair); return; }
+
+    struct Guarded { fly_session_dual_start_ref_v2 value; std::uint64_t tail; } guarded{};
+    guarded.value = empty_start_ref();
+    guarded.value.struct_size = sizeof(guarded);
+    guarded.tail = UINT64_C(0xA5C396A5C396A5C3);
+    check(fly_session_read_dual_start_ref_v2(
+              pair.inviter.engine, start->approval_token, &guarded.value) ==
+              FLY_SESSION_V2_OK,
+          "confirmed connected engine exposes expected fullref before load");
+    ref = guarded.value;
+    check(guarded.tail == UINT64_C(0xA5C396A5C396A5C3),
+          "oversized output keeps unknown tail bytes untouched");
+    const auto nonzero = [](const std::uint8_t* bytes, std::size_t count) {
+        return std::any_of(bytes, bytes + count, [](std::uint8_t byte) { return byte != 0; });
+    };
+    check(nonzero(ref.content.session_id, 16) && nonzero(ref.content.branch_id, 16) &&
+              nonzero(ref.content.content_hash, 32) && ref.content.timeline_epoch == 1,
+          "expected first-start tuple has nonzero session branch content and epoch1");
+    check(ref.view_revision == before.view_revision &&
+              ref.pending_config_revision == before.pending_config_revision &&
+              std::memcmp(ref.pending_config_id, before.pending_config_id, 32) == 0 &&
+              std::memcmp(ref.source_choice_ref, loopback_source_choice_ref_v1().data(), 16) == 0,
+          "expected ref atomically binds selected source config and action view");
+    auto repeated = empty_start_ref();
+    check(fly_session_read_dual_start_ref_v2(
+              pair.inviter.engine, start->approval_token, &repeated) == FLY_SESSION_V2_OK &&
+              std::memcmp(&ref, &repeated, sizeof(ref)) == 0 &&
+              pair.inviter.dual_runtime.loads == 0 &&
+              pair.inviter.snapshot().view_revision == before.view_revision,
+          "reading is readonly and does not consume the START approval");
+
+    auto failed = empty_start_ref();
+    const auto unchanged = failed;
+    check(fly_session_read_dual_start_ref_v2(nullptr, start->approval_token, &failed) ==
+              FLY_SESSION_V2_INVALID_ARGUMENT &&
+              fly_session_read_dual_start_ref_v2(pair.inviter.engine, nullptr, &failed) ==
+              FLY_SESSION_V2_INVALID_ARGUMENT &&
+              fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, nullptr) ==
+              FLY_SESSION_V2_INVALID_ARGUMENT,
+          "expected ref rejects null arguments");
+    failed.struct_size = FLY_SESSION_DUAL_START_REF_V2_SIZE - 1;
+    check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, &failed) ==
+              FLY_SESSION_V2_ABI_MISMATCH,
+          "expected ref rejects short output prefix");
+    failed = unchanged;
+    failed.abi_version = 99;
+    check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, &failed) ==
+              FLY_SESSION_V2_ABI_MISMATCH,
+          "expected ref rejects wrong ABI version");
+    failed = unchanged;
+    const auto* unknown = reinterpret_cast<const fly_session_approval_token_v2_t*>(&failed);
+    check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, unknown, &failed) ==
+              FLY_SESSION_V2_STALE && std::memcmp(&failed, &unchanged, sizeof(failed)) == 0,
+          "unknown opaque token is rejected without dereferencing or writing output");
+    select = find_action(actions, FLY_SESSION_ACTION_SELECT_CONTENT_V2);
+    if (select)
+        check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, select->approval_token, &failed) ==
+                  FLY_SESSION_V2_INVALID_ARGUMENT,
+              "another current action cannot authorize expected START ref");
+
+    // Re-selecting even identical content publishes a new generation.
+    select_shared_content(pair, 2804);
+    check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, &failed) ==
+              FLY_SESSION_V2_STALE && std::memcmp(&failed, &unchanged, sizeof(failed)) == 0,
+          "old START token cannot capture a newer selection, even with identical config");
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    actions.clear();
+    pair.inviter.snapshot(&actions);
+    start = find_action(actions, FLY_SESSION_ACTION_START_DUAL_V2);
+    check(start != nullptr, "same-content selection retains bilateral config consent");
+    if (start)
+    {
+        ref = empty_start_ref();
+        check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, &ref) ==
+                  FLY_SESSION_V2_OK, "fresh START token captures the new view");
+        submit(pair.inviter, *start, 2805, false);
+        pump_pair_long(pair);
+        check(pair.inviter.dual_runtime.loads == 1 &&
+                  std::memcmp(&ref.content, &pair.inviter.dual_runtime.last_content,
+                              sizeof(ref.content)) == 0,
+              "actual first synchronous runtime load exactly matches independently captured ref");
+        check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, &failed) ==
+                  FLY_SESSION_V2_INVALID_STATE,
+              "first-start getter refuses an already loaded runtime");
+
+        LobbyPair next(true, true);
+        bring_up_selected_and_confirmed(next, 2810);
+        check(fly_session_read_dual_start_ref_v2(next.inviter.engine, start->approval_token, &failed) ==
+                  FLY_SESSION_V2_STALE,
+              "new engine never accepts a previous round's START approval");
+        std::vector<fly_session_action_descriptor_v2> next_actions;
+        next.inviter.snapshot(&next_actions);
+        const auto* next_start = find_action(next_actions, FLY_SESSION_ACTION_START_DUAL_V2);
+        auto next_ref = empty_start_ref();
+        if (next_start)
+        {
+            check(fly_session_read_dual_start_ref_v2(next.inviter.engine, next_start->approval_token, &next_ref) ==
+                      FLY_SESSION_V2_OK, "new round captures its own expected fullref");
+            submit(next.inviter, *next_start, 2813, false);
+            pump_pair_long(next);
+            check(std::memcmp(&next_ref.content, &next.inviter.dual_runtime.last_content,
+                              sizeof(next_ref.content)) == 0,
+                  "new round actual load matches only its own capture");
+        }
+        else check(false, "new round publishes START");
+        for (auto& action : next_actions)
+            fly_session_approval_token_release_v2(action.approval_token);
+        shutdown_pair(next);
+        check(fly_session_begin_shutdown_v2(pair.inviter.engine, 2820) == FLY_SESSION_V2_ACCEPTED,
+              "shutdown request accepted before expected-ref closed check");
+        check(fly_session_read_dual_start_ref_v2(pair.inviter.engine, start->approval_token, &failed) ==
+                  FLY_SESSION_V2_CLOSED,
+              "shutdown immediately closes expected-start getter");
+    }
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    shutdown_pair(pair);
+
+    LobbyPair unavailable(true, false);
+    bring_up_selected_and_confirmed(unavailable, 2830);
+    actions.clear();
+    unavailable.inviter.snapshot(&actions);
+    start = find_action(actions, FLY_SESSION_ACTION_START_DUAL_V2);
+    if (start)
+        check(fly_session_read_dual_start_ref_v2(unavailable.inviter.engine, start->approval_token, &failed) ==
+                  FLY_SESSION_V2_UNAVAILABLE && std::memcmp(&failed, &unchanged, sizeof(failed)) == 0,
+              "missing runtime is unavailable and leaves output unchanged");
+    else check(false, "missing-runtime fixture still publishes START");
+    for (auto& action : actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+    shutdown_pair(unavailable);
+}
+
+void six_hundred_frames_converge_on_local_digests()
+{
+    std::printf("dual mvp: 600-frame DUAL run\n");
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2401);
+    start_both(pair, 2404, 2405);
+
+    std::set<std::uint32_t> p1_edges;
+    std::set<std::uint32_t> p2_edges;
+    for (std::uint32_t frame = 0; frame < 600u; ++frame)
+    {
+        const std::uint32_t p1 = static_cast<std::uint32_t>((frame % 180u) + 1u);
+        const std::uint32_t p2 =
+            static_cast<std::uint32_t>(((frame * 7u) % 180u) + 1u);
+        p1_edges.insert(p1);
+        p2_edges.insert(p2);
+        check(submit_pad(pair.inviter, 0, p1, 3000u + frame) == FLY_SESSION_V2_OK,
+              "inviter P1 input is accepted while GAME_RUNNING");
+        check(submit_pad(pair.joiner, 1, p2, 4000u + frame) == FLY_SESSION_V2_OK,
+              "joiner P2 input is accepted while GAME_RUNNING");
+        pump_pair(pair);
+        if ((frame + 1u) % 60u == 0u)
+        {
+            const auto left = pair.inviter.snapshot();
+            const auto right = pair.joiner.snapshot();
+            check(std::memcmp(left.dual_state_digest, right.dual_state_digest,
+                              32u) == 0 &&
+                      std::memcmp(left.dual_frame_digest,
+                                  right.dual_frame_digest, 32u) == 0,
+                  "local snapshot digests match every 60 frames");
+            check(left.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2 &&
+                      right.dual_mode == FLY_SESSION_DUAL_MODE_DUAL_V2,
+                  "STREAM is never selected during the 600-frame run");
+            check(left.game_state == FLY_SESSION_GAME_RUNNING_V2 &&
+                      right.game_state == FLY_SESSION_GAME_RUNNING_V2,
+                  "the run stays GAME_RUNNING across digest samples");
+        }
+    }
+    check(p1_edges.size() >= 100u && p2_edges.size() >= 100u,
+          "P1 and P2 each produce at least 100 distinguishable input edges");
+    shutdown_pair(pair);
+}
+
+void pause_and_disconnect_freeze_both_ends()
+{
+    std::printf("dual mvp: pause and disconnect freeze\n");
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2501);
+    start_both(pair, 2504, 2505);
+
+    std::vector<fly_session_action_descriptor_v2> pause_actions;
+    pair.inviter.snapshot(&pause_actions);
+    const auto* pause =
+        retain_action(&pause_actions, FLY_SESSION_ACTION_PAUSE_GAME_V2);
+    check(pause != nullptr, "PAUSE is published while GAME_RUNNING");
+    if (pause)
+        submit(pair.inviter, *pause, 2506, false);
+    pump_pair(pair);
+    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
+          "pause freezes the local game");
+    check(pair.inviter.snapshot().dual_freeze_reason ==
+              FLY_SESSION_DUAL_FREEZE_PAUSED_V2,
+          "pause freeze reason is PAUSED");
+    for (auto& action : pause_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+
+    LobbyPair other(true, true);
+    bring_up_selected_and_confirmed(other, 2601);
+    start_both(other, 2604, 2605);
+    std::vector<fly_session_action_descriptor_v2> disconnect_actions;
+    other.inviter.snapshot(&disconnect_actions);
+    const auto* disconnect =
+        retain_action(&disconnect_actions, FLY_SESSION_ACTION_DISCONNECT_LINK_V2);
+    check(disconnect != nullptr, "DISCONNECT is published while GAME_RUNNING");
+    if (disconnect)
+        submit(other.inviter, *disconnect, 2606, false);
+    pump_pair(other);
+    check(other.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
+          "disconnect freezes the local game");
+    check(other.inviter.snapshot().dual_mode != 2u,
+          "disconnect never falls back to STREAM");
+    for (auto& action : disconnect_actions)
+        fly_session_approval_token_release_v2(action.approval_token);
+
+    shutdown_pair(pair);
+    shutdown_pair(other);
+}
+
+void activity_timeout_freezes_without_sliding_deadline()
+{
+    std::printf("dual mvp: REC04 300ms freeze / 30s deadline\n");
+    LobbyPair pair(true, true);
+    bring_up_selected_and_confirmed(pair, 2701);
+    start_both(pair, 2704, 2705);
+    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_RUNNING_V2,
+          "REC04 starts from GAME_RUNNING");
+
+    pair.inviter.clock_fixture.advance_ms(300);
+    pair.joiner.clock_fixture.advance_ms(300);
+    /* Wake the engine after the clock jump. Local submit must not refresh
+     * activity; freeze is applied on the next run_work clock sample. */
+    (void)submit_pad(pair.inviter, 0, 1, 2706);
+    (void)submit_pad(pair.joiner, 1, 1, 2706);
+    pump_pair_long(pair);
+    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2 &&
+              pair.joiner.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
+          "300ms without peer activity freezes both engines");
+    check(pair.inviter.snapshot().dual_freeze_reason ==
+              FLY_SESSION_DUAL_FREEZE_AUTHENTICATED_ACTIVITY_TIMEOUT_V2,
+          "freeze reason is authenticated-activity timeout");
+
+    check(submit_pad(pair.inviter, 0, 1, 2707) != FLY_SESSION_V2_OK,
+          "local send after freeze does not resume stepping");
+    pump_pair(pair);
+    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
+          "local send does not slide the freeze");
+
+    pair.inviter.clock_fixture.advance_ms(30000);
+    pair.joiner.clock_fixture.advance_ms(30000);
+    pump_pair_long(pair);
+    check(pair.inviter.snapshot().game_state == FLY_SESSION_GAME_FROZEN_V2,
+          "30s deadline expires still frozen");
+    check(pair.inviter.snapshot().dual_freeze_reason != 2u &&
+              pair.inviter.snapshot().dual_mode != 2u,
+          "expired reconnect never falls back to STREAM");
+    shutdown_pair(pair);
+}
+
 } // namespace
 
 int main()
@@ -1436,21 +1731,33 @@ int main()
     send_only_consent_does_not_move_rom_bytes();
     both_consents_import_then_select();
     content_catalog_select_is_applied_and_rejected();
-    start_dual_gates_and_enters_game_running();
-    six_hundred_frames_converge_on_local_digests();
-    pause_and_disconnect_freeze_both_ends();
-    activity_timeout_freezes_without_sliding_deadline();
+    start_dual_stays_unpublished_without_peer_confirm();
+    empty_confirms_must_travel_as_verified_peer_messages();
+    one_sided_start_does_not_run_the_peer();
+    load_failure_does_not_enter_game_running();
+    duplicate_start_loads_runtime_once();
+    late_ready_after_close_does_not_start();
     shutdown_waits_for_quic_close_terminal();
     shutdown_retains_cancelled_quic_read_until_terminal(2);
     shutdown_retains_cancelled_quic_read_until_terminal(1);
+    shutdown_retains_cancelled_quic_read_until_terminal(
+        1, false, false, FLY_SESSION_V2_DUPLICATE);
     shutdown_retains_cancelled_quic_read_until_terminal(2, true);
     shutdown_retains_cancelled_quic_read_until_terminal(2, false, true);
     shutdown_closes_connection_created_after_cancel();
     shutdown_closes_connection_created_after_cancel(true);
     shutdown_retains_cancelled_dual_read_until_terminal();
+    shutdown_retains_cancelled_dual_read_until_terminal(FLY_SESSION_V2_DUPLICATE);
     shutdown_retains_cancelled_content_read_until_terminal();
+    shutdown_retains_cancelled_content_read_until_terminal(
+        FLY_SESSION_V2_DUPLICATE);
     shutdown_during_dual_read_submission_waits_for_admission();
     shutdown_during_content_read_submission_waits_for_admission();
+    start_dual_after_verified_confirms_enters_game_running();
+    expected_start_reference_is_authoritative_and_readonly();
+    six_hundred_frames_converge_on_local_digests();
+    pause_and_disconnect_freeze_both_ends();
+    activity_timeout_freezes_without_sliding_deadline();
     if (flynes::session::loopback::failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n",

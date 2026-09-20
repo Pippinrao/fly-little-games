@@ -419,6 +419,17 @@ public:
 
     int drain()
     {
+        // Retry debt from an earlier owner pass, never a result produced by
+        // this pass. This avoids a BACKPRESSURE spin on the serial owner.
+        std::vector<std::uint64_t> retry;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto& entry : pending_)
+                if (entry.second.delivery_ready && !entry.second.delivery_orphaned)
+                    retry.push_back(entry.first);
+        }
+        for (auto operation : retry)
+            retry_delivery(operation);
         std::deque<Completion> batch;
         {
             std::lock_guard<std::mutex> lock(mailbox_->mutex);
@@ -480,6 +491,9 @@ private:
         fly_session_inbox_v2_t* inbox = nullptr;
         bool cancel_requested = false;
         std::uint64_t parent_connection = 0;
+        bool delivery_ready = false;
+        bool delivery_orphaned = false;
+        fly_session_port_event_v2 delivery_event{};
     };
 
     struct StreamMap final
@@ -876,6 +890,91 @@ private:
         return false;
     }
 
+    static fly_session_port_event_v2 delivery_event(
+        const Pending& pending, std::uint32_t kind,
+        fly_session_result_v2 result, std::uint64_t resource = 0)
+    {
+        fly_session_port_event_v2 event{};
+        event.struct_size = FLY_SESSION_PORT_EVENT_V2_SIZE;
+        event.abi_version = FLY_SESSION_ABI_VERSION_2;
+        event.token = pending.token;
+        event.event_sequence = 1;
+        event.event_kind = FLY_SESSION_PORT_EVENT_OPERATION_V2;
+        event.terminal = 1;
+        event.result = result;
+        event.payload_kind = kind;
+        if (result == FLY_SESSION_V2_OK &&
+            kind == FLY_SESSION_PROVIDER_QUIC_CONNECTION_V2)
+        {
+            fly_session_provider_resource_event_v2 payload{};
+            payload.struct_size = FLY_SESSION_PROVIDER_RESOURCE_EVENT_V2_SIZE;
+            payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+            payload.resource = resource;
+            payload.generation = pending.token.connection_generation;
+            event.payload_size = sizeof(payload);
+            std::memcpy(event.payload, &payload, sizeof(payload));
+        }
+        else
+        {
+            fly_session_provider_end_event_v2 payload{};
+            payload.struct_size = FLY_SESSION_PROVIDER_END_EVENT_V2_SIZE;
+            payload.abi_version = FLY_SESSION_ABI_VERSION_2;
+            event.payload_size = sizeof(payload);
+            std::memcpy(event.payload, &payload, sizeof(payload));
+        }
+        return event;
+    }
+
+    void retire_closed_connection(std::uint64_t connection)
+    {
+        for (auto it = streams_.begin(); it != streams_.end();)
+        {
+            if (it->second.parent_connection == connection)
+            {
+                if (control_stream_ == it->first) control_stream_ = 0;
+                it = streams_.erase(it);
+            }
+            else ++it;
+        }
+        if (connection_ == connection) connection_ = 0;
+    }
+
+    void retry_delivery(std::uint64_t operation)
+    {
+        Pending pending{};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto found = pending_.find(operation);
+            if (found == pending_.end() || !found->second.delivery_ready ||
+                found->second.delivery_orphaned)
+                return;
+            pending = found->second;
+        }
+        const auto result = fly_session_deliver_v2(pending.inbox,
+                                                    &pending.delivery_event);
+        if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_DUPLICATE)
+        {
+            if (result != FLY_SESSION_V2_BACKPRESSURE)
+            {
+                std::fprintf(stderr, "QUIC delivery debt: operation=%llu result=%d\n",
+                             static_cast<unsigned long long>(operation),
+                             static_cast<int>(result));
+                std::lock_guard<std::mutex> lock(mutex_);
+                const auto found = pending_.find(operation);
+                if (found != pending_.end()) found->second.delivery_orphaned = true;
+            }
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            pending_.erase(operation);
+        }
+        if (pending.kind == OpKind::Close &&
+            pending.delivery_event.result == FLY_SESSION_V2_OK)
+            retire_closed_connection(pending.parent_connection);
+        fly_session_inbox_release_v2(pending.inbox);
+    }
+
     void apply(Completion& item)
     {
         Pending pending{};
@@ -885,7 +984,10 @@ private:
             if (found == pending_.end())
                 return;
             pending = found->second;
-            pending_.erase(found);
+            if (pending.inbox == nullptr ||
+                (pending.kind != OpKind::Accept && pending.kind != OpKind::Connect &&
+                 pending.kind != OpKind::Close))
+                pending_.erase(found);
         }
         if (pending.kind == OpKind::GenerateMaterial && item.result == FLYNES_QUIC_OK)
         {
@@ -923,19 +1025,30 @@ private:
                 delivered_stream = handle;
             }
         }
-        if (pending.kind == OpKind::Close && item.result == FLYNES_QUIC_OK)
+        if (pending.kind == OpKind::Close && item.result == FLYNES_QUIC_OK &&
+            pending.inbox == nullptr)
+            retire_closed_connection(pending.parent_connection);
+        if (pending.inbox != nullptr &&
+            (pending.kind == OpKind::Accept || pending.kind == OpKind::Connect ||
+             pending.kind == OpKind::Close))
         {
-            for (auto it = streams_.begin(); it != streams_.end();)
+            const bool connection = pending.kind != OpKind::Close;
+            const bool resource_ok = item.result == FLYNES_QUIC_OK && item.resource != 0;
+            const auto event = delivery_event(
+                pending, connection ? FLY_SESSION_PROVIDER_QUIC_CONNECTION_V2
+                                    : FLY_SESSION_PROVIDER_QUIC_END_V2,
+                item.result == FLYNES_QUIC_OK && (!connection || resource_ok)
+                    ? FLY_SESSION_V2_OK : quic_map_provider_result(item.result),
+                item.resource);
             {
-                if (it->second.parent_connection == pending.parent_connection)
-                {
-                    if (control_stream_ == it->first) control_stream_ = 0;
-                    it = streams_.erase(it);
-                }
-                else ++it;
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto found = pending_.find(item.operation);
+                if (found == pending_.end()) return;
+                found->second.delivery_event = event;
+                found->second.delivery_ready = true;
             }
-            if (connection_ == pending.parent_connection)
-                connection_ = 0;
+            retry_delivery(item.operation);
+            return;
         }
         if (pending.kind == OpKind::Read && item.result == FLYNES_QUIC_OK)
             bytes_read_ += item.bytes.size();

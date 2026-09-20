@@ -44,12 +44,21 @@ static NSString *installedDataContainer(void)
     XCTAssertEqualObjects(distinct.value, @"1", @"Android controls reset includes haptics preferences");
     [app.buttons[@"settings_done"] tap];
 }
+- (void)ensureMultiplayerFilterShowsSinglePlayerLibrary:(XCUIApplication *)app {
+    XCUIElement *filter = app.switches[@"nearby_multiplayer_filter"];
+    if ([filter waitForExistenceWithTimeout:5] &&
+        ![[filter.value description] isEqual:@"0"]) {
+        [filter tap];
+    }
+}
+
 - (void)testAndroidGameCenterSelectionStaysBesideGrid {
     self.continueAfterFailure = NO;
     XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
     XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
     app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
     [app launch];
+    [self ensureMultiplayerFilterShowsSinglePlayerLibrary:app];
     XCUIElement *game = [app.buttons matchingPredicate:[NSPredicate predicateWithFormat:@"identifier BEGINSWITH %@", @"game_card_"]].firstMatch;
     XCTAssertTrue([game waitForExistenceWithTimeout:15]);
     [game tap];
@@ -107,6 +116,27 @@ static NSString *installedDataContainer(void)
     if (![hash isKindOfClass:NSString.class] || hash.length == 0) return nil;
     return [@"game_card_game:" stringByAppendingString:hash.uppercaseString];
 }
+
+/// Test-only menu/navigation inputs already exercised on the other two
+/// simulators. A newly bundled game still receives the generic launch path.
+- (NSArray<NSString *> *)gameplayActionsForGame:(NSString *)identifier
+{
+    if ([identifier isEqualToString:@"builtin:super-tilt-bro"])
+        return @[@"START", @"START", @"START", @"WAIT:2000", @"A", @"START", @"A"];
+    if ([identifier isEqualToString:@"builtin:twin-dragons"])
+        return @[@"START", @"RIGHT", @"A", @"RIGHT", @"B"];
+    if ([identifier isEqualToString:@"builtin:rhde"])
+        return @[@"START", @"A", @"START", @"A", @"WAIT:7000", @"RIGHT", @"A"];
+    if ([identifier isEqualToString:@"builtin:zap-ruder"])
+        return @[@"START", @"DOWN", @"DOWN", @"DOWN", @"DOWN", @"A", @"A", @"A", @"A", @"UP", @"DOWN", @"A"];
+    if ([identifier isEqualToString:@"builtin:concentration-room"])
+        return @[@"START", @"A", @"UP", @"DOWN", @"A", @"RIGHT", @"A", @"DOWN", @"A"];
+    if ([identifier isEqualToString:@"builtin:thwaite"])
+        return @[@"START", @"A", @"START", @"RIGHT", @"A", @"B", @"A", @"A"];
+    if ([identifier isEqualToString:@"builtin:dabg"])
+        return @[@"START", @"A", @"A", @"A", @"A", @"A", @"RIGHT", @"A", @"B"];
+    return @[@"START", @"A"];
+}
 /// The gate samples the native frame at frames 120/240/360/480, so a slower
 /// simulator can still be four seconds away from its last chance at capture.
 - (BOOL)waitForCoverEntries:(NSString *)covers
@@ -124,6 +154,7 @@ static NSString *installedDataContainer(void)
     XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
     app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
     [app launch];
+    [self ensureMultiplayerFilterShowsSinglePlayerLibrary:app];
     XCUIElement *game = [app.buttons matchingPredicate:[NSPredicate predicateWithFormat:@"identifier BEGINSWITH %@", @"game_card_"]].firstMatch;
     XCTAssertTrue([game waitForExistenceWithTimeout:15]);
     // Android presents the trusted manifest title, never the ROM filename.
@@ -232,6 +263,7 @@ static NSString *installedDataContainer(void)
     XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
     app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
     [app launch];
+    [self ensureMultiplayerFilterShowsSinglePlayerLibrary:app];
     XCUIElement *game = [app.buttons matchingPredicate:[NSPredicate predicateWithFormat:@"identifier BEGINSWITH %@", @"game_card_"]].firstMatch;
     XCTAssertTrue([game waitForExistenceWithTimeout:15]);
     [game tap];
@@ -261,6 +293,54 @@ static NSString *installedDataContainer(void)
     [app terminate];
     [app launch];
     XCTAssertTrue([game waitForExistenceWithTimeout:10]);
+}
+
+- (void)testEveryBundledGameLaunchesAndAcceptsControls {
+    self.continueAfterFailure = NO;
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
+    XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
+    app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
+    [app launch];
+    [self ensureMultiplayerFilterShowsSinglePlayerLibrary:app];
+    NSArray<NSDictionary *> *games = [self bundledGames];
+    XCTAssertGreaterThan(games.count, 0u, @"the test bundle must include the shared game manifest");
+
+    for (NSDictionary *game in games) {
+        NSString *cardId = [self cardIdentifierForGame:game];
+        XCTAssertGreaterThan(cardId.length, 0u);
+        XCUIElement *grid = app.scrollViews[@"game_grid"];
+        XCTAssertTrue([grid waitForExistenceWithTimeout:10]);
+        XCUIElement *card = app.buttons[cardId];
+        for (NSUInteger attempt = 0; attempt < 12 && !card.isHittable; attempt++) {
+            [grid swipeLeft];
+        }
+        XCTAssertTrue(card.isHittable, @"bundled card must be reachable: %@", game[@"canonicalId"]);
+        [card tap];
+        XCUIElement *launch = app.buttons[@"launch_selected"];
+        XCTAssertTrue([launch waitForExistenceWithTimeout:5]);
+        [launch tap];
+        XCUIElement *pause = app.buttons[@"OPEN_PAUSE"];
+        XCTAssertTrue([pause waitForExistenceWithTimeout:10], @"launch failed: %@", game[@"canonicalId"]);
+        for (NSString *action in [self gameplayActionsForGame:game[@"canonicalId"]]) {
+            if ([action hasPrefix:@"WAIT:"]) {
+                [NSThread sleepForTimeInterval:[[action substringFromIndex:5] doubleValue] / 1000.0];
+                continue;
+            }
+            XCUIElement *control = app.buttons[[@"NES_" stringByAppendingString:action]];
+            XCTAssertTrue([control waitForExistenceWithTimeout:5], @"missing %@ for %@", action, game[@"canonicalId"]);
+            [control tap];
+        }
+        [NSThread sleepForTimeInterval:2.0];
+        XCTAttachment *frame = [XCTAttachment attachmentWithScreenshot:app.screenshot];
+        frame.name = [@"playing-" stringByAppendingString:game[@"canonicalId"]];
+        frame.lifetime = XCTAttachmentLifetimeKeepAlways;
+        [self addAttachment:frame];
+        [pause tap];
+        XCUIElement *gameCenter = app.buttons[@"game_center"];
+        XCTAssertTrue([gameCenter waitForExistenceWithTimeout:5]);
+        [gameCenter tap];
+        XCTAssertTrue([grid waitForExistenceWithTimeout:5]);
+    }
 }
 
 #pragma mark - Nearby multiplayer (slice A1c)
@@ -307,25 +387,18 @@ static XCUIApplication *launchGameCenter(void)
     XCUIApplication *app = launchGameCenter();
     [app.buttons[@"open_nearby"] tap];
     XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
-    // No friend is saved anywhere in this build, so the tab opens on 附近设备: the
-    // pipeline is what the user lands on, and the 好友 empty state is absent.
-    XCTAssertTrue([identified(app, @"nearby_stage_permission") waitForExistenceWithTimeout:5]);
+    // Approved HTML nearby(): devices tab is the landing tab with no saved friend.
+    // Pairing stages are not on N00.
+    XCTAssertFalse(identified(app, @"nearby_stage_permission").exists);
     XCTAssertFalse(identified(app, @"nearby_friends_empty").exists);
     XCTAssertTrue(revealElement(app, identified(app, @"nearby_devices_empty"), 6),
                   @"The devices empty state must be reachable by scrolling");
-    // The pipeline's own end-to-end shape (a later stage marked not-reached, and
-    // no reason rendered for it) is asserted by
-    // testNearbyPipelineMarksOnlyTheFirstFailingStage; asserting the last stage
-    // row here as well would only re-test the scroll position, because by the
-    // time this list is scrolled to the empty state that row is above the fold.
     XCUIElement *find = identified(app, @"nearby_find_devices");
     XCTAssertTrue(revealElement(app, find, 6), @"寻找设备 must be reachable");
     XCTAssertFalse(find.enabled, @"No bearer exists, so 寻找设备 must not act");
     XCTAssertTrue(identified(app, @"nearby_find_devices_reason").exists);
-    XCUIElement *scan = identified(app, @"nearby_scan_host_qr");
-    XCTAssertTrue(revealElement(app, scan, 4), @"扫描房主二维码 must be reachable");
-    XCTAssertFalse(scan.enabled);
-    XCTAssertTrue(identified(app, @"nearby_scan_host_qr_reason").exists);
+    XCTAssertFalse(identified(app, @"nearby_scan_host_qr").exists);
+    XCTAssertFalse(identified(app, @"nearby_open_pairing").exists);
     XCTAttachment *shot = [XCTAttachment attachmentWithScreenshot:app.screenshot];
     shot.name = @"nearby-devices"; shot.lifetime = XCTAttachmentLifetimeKeepAlways;
     [self addAttachment:shot];
@@ -334,28 +407,18 @@ static XCUIApplication *launchGameCenter(void)
 /// A1c: only the first failing stage explains itself. The later stages carry no
 /// reason at all, which is what decision D5 requires and what a review cannot
 /// check by reading the design.
-- (void)testNearbyPipelineMarksOnlyTheFirstFailingStage {
+- (void)testCreateInviteShowsApprovedN01ChromeWithoutPipeline {
     self.continueAfterFailure = NO;
     XCUIApplication *app = launchGameCenter();
     [app.buttons[@"open_nearby"] tap];
     XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
-    XCUIElement *permission = identified(app, @"nearby_stage_permission");
-    XCTAssertTrue([permission waitForExistenceWithTimeout:5]);
-    XCTAssertEqualObjects(permission.value, @"Current stage",
-                          @"权限 is the first failing stage and must be marked as current");
-    XCUIElement *discovery = identified(app, @"nearby_stage_discovery");
-    XCTAssertTrue([discovery waitForExistenceWithTimeout:5]);
-    XCTAssertEqualObjects(discovery.value, @"Not yet reached",
-                          @"A later stage is neutral, not blocked");
-    // iOS declares no usage key, so the permission reason is its own static key.
-    XCTAssertTrue([app.staticTexts[@"Not requested yet: this build declares no Bluetooth, camera or local-network usage, so no permission state can be reported."] exists],
-                  @"The first failing stage must explain itself");
-    // The codec reason belongs to a stage that is not current, so it must not be
-    // rendered anywhere on the page — the check the design's D5 actually needs,
-    // and one that does not depend on the row being scrolled into view: a reason
-    // rendered for a later stage would be found wherever it sat.
-    XCTAssertFalse([app.staticTexts[@"No codec negotiation result is available."] exists],
-                   @"Only the first failing stage may render a reason");
+    XCUIElement *create = identified(app, @"nearby_action_create");
+    XCTAssertTrue([create waitForExistenceWithTimeout:5]);
+    [create tap];
+    XCTAssertTrue([app.staticTexts[@"nearby_invite_code_value"] waitForExistenceWithTimeout:5],
+                  @"N01 must show the six-digit invite code");
+    XCTAssertTrue(identified(app, @"nearby_invite_regenerate").exists);
+    XCTAssertFalse(identified(app, @"nearby_stage_permission").exists);
 }
 
 /// A1c: the 好友 tab shows the empty state with its blocked key and reaches
@@ -390,18 +453,15 @@ static XCUIApplication *launchGameCenter(void)
     XCUIApplication *app = launchGameCenter();
     [app.buttons[@"open_nearby"] tap];
     XCTAssertTrue([identified(app, @"nearby_root") waitForExistenceWithTimeout:10]);
-    XCUIElement *entry = identified(app, @"nearby_open_pairing");
-    XCTAssertTrue(revealElement(app, entry, 8), @"The 配对 entry must be reachable by scrolling");
+    XCUIElement *entry = identified(app, @"nearby_action_create");
+    XCTAssertTrue([entry waitForExistenceWithTimeout:5], @"创建联机 opens N01");
     [entry tap];
-    // The pairing page opens with the same seven-stage pipeline, so both blocks
-    // sit below it and have to be scrolled into existence.
-    XCUIElement *confirm = identified(app, @"nearby_code_confirm");
-    XCTAssertTrue(revealElement(app, confirm, 6), @"Six-digit-code confirm must be reachable");
-    XCTAssertFalse(confirm.enabled);
-    XCTAssertTrue(identified(app, @"nearby_code_confirm_reason").exists);
-    XCUIElement *wifi = identified(app, @"nearby_wifi_system_confirm");
-    XCTAssertTrue(revealElement(app, wifi, 4), @"The Wi-Fi path block must be reachable");
-    XCTAssertFalse(wifi.enabled);
+    XCTAssertTrue([app.staticTexts[@"nearby_invite_code_value"] waitForExistenceWithTimeout:5],
+                  @"N01 shows the invite code, not the pairing pipeline");
+    XCTAssertTrue(identified(app, @"nearby_invite_regenerate").exists);
+    XCTAssertFalse(identified(app, @"nearby_code_confirm").exists);
+    XCTAssertFalse(identified(app, @"nearby_wifi_system_confirm").exists);
+    XCTAssertFalse(identified(app, @"nearby_stage_permission").exists);
     // The anonymous-join control set is deliberately not built (spec §4), so the
     // page must not offer an accept or reject action.
     XCTAssertFalse(app.buttons[@"Accept"].exists);

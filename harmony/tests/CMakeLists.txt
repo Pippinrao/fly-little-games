@@ -248,6 +248,27 @@ else()
 endif()
 add_test(NAME flynes_harmony_native_play_support COMMAND flynes_harmony_native_play_support_test)
 
+if(UNIX AND NOT APPLE)
+    add_executable(flynes_harmony_native_play_runtime_audio_test
+        native_play_runtime_audio_test.cpp
+        ../entry/src/main/cpp/native_play_runtime.cpp
+        ../entry/src/main/cpp/native_play_support.cpp
+        ../entry/src/main/cpp/play_session.cpp)
+    target_include_directories(flynes_harmony_native_play_runtime_audio_test PRIVATE
+        ../entry/src/main/cpp "${CMAKE_CURRENT_LIST_DIR}")
+    target_compile_features(flynes_harmony_native_play_runtime_audio_test PRIVATE cxx_std_17)
+    target_compile_definitions(flynes_harmony_native_play_runtime_audio_test PRIVATE
+        FLYNES_HOST_AUDIO_TEST=1
+        FLYNES_HARMONY_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_LIST_DIR}/../../content/assets/roms/thwaite.nes")
+    target_compile_options(flynes_harmony_native_play_runtime_audio_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_link_libraries(flynes_harmony_native_play_runtime_audio_test PRIVATE flynes_runtime dl pthread)
+    add_test(NAME flynes_harmony_native_play_runtime_audio COMMAND flynes_harmony_native_play_runtime_audio_test)
+    foreach(case pause mute start close create_failure start_failure release_failure reuse persistent_release timestamp overflow close_callback state_interleave close_noalloc)
+        add_test(NAME flynes_harmony_native_audio_${case}
+            COMMAND flynes_harmony_native_play_runtime_audio_test ${case})
+    endforeach()
+endif()
+
 add_executable(flynes_harmony_motion_frame_scheduler_test
     motion_frame_scheduler_test.cpp
     ../entry/src/main/cpp/motion_frame_scheduler.cpp
@@ -300,3 +321,32 @@ else()
     )
 endif()
 add_test(NAME flynes_harmony_nearby_adapter COMMAND flynes_harmony_nearby_adapter_test)
+
+add_executable(flynes_harmony_nearby_content_port_v2_test
+    nearby_content_port_v2_test.cpp ../nearby/content_port_v2.cpp)
+target_include_directories(flynes_harmony_nearby_content_port_v2_test PRIVATE
+    ../nearby "${CMAKE_CURRENT_LIST_DIR}/../../shared/src")
+target_compile_features(flynes_harmony_nearby_content_port_v2_test PRIVATE cxx_std_17)
+target_compile_options(flynes_harmony_nearby_content_port_v2_test PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>)
+target_link_libraries(flynes_harmony_nearby_content_port_v2_test PRIVATE flynes_app flynes_product flynes_session)
+add_test(NAME flynes_harmony_nearby_content_port_v2 COMMAND flynes_harmony_nearby_content_port_v2_test)
+
+find_package(Threads REQUIRED)
+add_executable(flynes_harmony_nearby_session_owner_v2_test
+    nearby_session_owner_v2_test.cpp nearby_content_port_v2_test.cpp
+    ../nearby/session_owner_v2.cpp ../nearby/content_port_v2.cpp
+    ../../shared/tests/nearby/harness/two_engine_loopback_fixture.cpp)
+target_include_directories(flynes_harmony_nearby_session_owner_v2_test PRIVATE
+    ../nearby "${CMAKE_CURRENT_LIST_DIR}/../../shared/src"
+    "${CMAKE_CURRENT_LIST_DIR}/../../shared/src/session"
+    "${CMAKE_CURRENT_LIST_DIR}/../../shared/tests")
+target_compile_definitions(flynes_harmony_nearby_session_owner_v2_test PRIVATE FLYNES_HARMONY_CONTENT_NO_MAIN=1)
+target_compile_features(flynes_harmony_nearby_session_owner_v2_test PRIVATE cxx_std_17)
+target_compile_options(flynes_harmony_nearby_session_owner_v2_test PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>)
+target_link_libraries(flynes_harmony_nearby_session_owner_v2_test PRIVATE flynes_app flynes_product flynes_session Threads::Threads)
+add_test(NAME flynes_harmony_nearby_session_owner_v2 COMMAND flynes_harmony_nearby_session_owner_v2_test)
+set_tests_properties(flynes_harmony_nearby_session_owner_v2 PROPERTIES TIMEOUT 45)

@@ -83,6 +83,11 @@ static NSString *const HundredSource = @"FlyNES-E2E-Hundred";
     self.app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US"];
     [self.app launch];
     XCTAssertTrue([self.app.buttons[@"open_sources"] waitForExistenceWithTimeout:15]);
+    XCUIElement *filter = self.app.switches[@"nearby_multiplayer_filter"];
+    if ([filter waitForExistenceWithTimeout:5] &&
+        ![[filter.value description] isEqual:@"0"]) {
+        [filter tap];
+    }
     [self closeSearch];
     [self.app.buttons[@"category_all"] tap];
     [self openSources];

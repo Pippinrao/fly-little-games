@@ -201,27 +201,6 @@ void sha256(const std::uint8_t* data, std::size_t size, std::uint8_t out[32])
     }
 }
 
-struct Snapshot
-{
-    bool valid = false;
-    bool timeline_set = false;
-    bool rom_loaded = false;
-    bool has_complete_frame = false;
-    std::uint32_t sample_rate = FLY_RUNTIME_DEFAULT_SAMPLE_RATE;
-    std::uint32_t predicted_port_mask = 0;
-    std::uint32_t buttons[FLY_RUNTIME_PORT_COUNT] = {};
-    std::uint64_t timeline_epoch = 0;
-    std::uint64_t next_frame_index = 0;
-    std::uint64_t input_sequence[FLY_RUNTIME_PORT_COUNT] = {};
-    std::uint64_t frame_sequence = 0;
-    std::uint64_t pcm_producer_sequence = 0;
-    std::uint64_t last_batch_sequence = 0;
-    std::uint64_t last_source_time_ns = 0;
-    std::uint64_t last_produced_time_ns = 0;
-    std::vector<std::uint8_t> core;
-    std::vector<std::uint8_t> pixels;
-};
-
 bool is_clear_reason(std::uint32_t reason)
 {
     return reason == FLY_RUNTIME_CLEAR_STOP || reason == FLY_RUNTIME_CLEAR_PAUSE ||
@@ -276,6 +255,31 @@ fly_result validate_input(const fly_frame_input_v1* input)
     return FLY_RESULT_OK;
 }
 
+} // namespace
+
+namespace flynes_runtime_detail {
+
+struct Snapshot
+{
+    bool valid = false;
+    bool timeline_set = false;
+    bool rom_loaded = false;
+    bool has_complete_frame = false;
+    std::uint32_t sample_rate = FLY_RUNTIME_DEFAULT_SAMPLE_RATE;
+    std::uint32_t predicted_port_mask = 0;
+    std::uint32_t buttons[FLY_RUNTIME_PORT_COUNT] = {};
+    std::uint64_t timeline_epoch = 0;
+    std::uint64_t next_frame_index = 0;
+    std::uint64_t input_sequence[FLY_RUNTIME_PORT_COUNT] = {};
+    std::uint64_t frame_sequence = 0;
+    std::uint64_t pcm_producer_sequence = 0;
+    std::uint64_t last_batch_sequence = 0;
+    std::uint64_t last_source_time_ns = 0;
+    std::uint64_t last_produced_time_ns = 0;
+    std::vector<std::uint8_t> core;
+    std::vector<std::uint8_t> pixels;
+};
+
 struct NesDeleter
 {
     void operator()(nes_t* nes) const
@@ -287,7 +291,10 @@ struct NesDeleter
     }
 };
 
-} // namespace
+} // namespace flynes_runtime_detail
+
+using flynes_runtime_detail::NesDeleter;
+using flynes_runtime_detail::Snapshot;
 
 struct fly_runtime_handle
 {
@@ -308,6 +315,8 @@ struct fly_runtime_handle
     std::uint64_t last_source_time_ns = 0;
     std::uint64_t last_produced_time_ns = 0;
     std::vector<std::int16_t> audio_scratch;
+    bool has_frame_digest = false;
+    std::uint8_t frame_pcm_sha256[kSha256Size] = {};
     std::vector<std::int16_t> pcm;
     std::uint32_t pcm_read = 0;
     std::uint32_t pcm_count = 0;
@@ -320,6 +329,7 @@ struct fly_runtime_handle
         rom_loaded = false;
         timeline_set = false;
         has_complete_frame = false;
+        has_frame_digest = false;
         predicted_port_mask = 0;
         timeline_epoch = 0;
         next_frame_index = 0;
@@ -422,16 +432,26 @@ struct fly_runtime_handle
         {
             return FLY_RESULT_INVALID_ARGUMENT;
         }
+        if (snapshot.rom_loaded && snapshot.core.empty())
+        {
+            return FLY_RESULT_INVALID_ARGUMENT;
+        }
+        // Checkpoints intentionally contain no per-frame PCM observation.
+        const bool had_frame_digest = has_frame_digest;
+        has_frame_digest = false;
         if (snapshot.rom_loaded)
         {
-            if (snapshot.core.empty())
-            {
-                return FLY_RESULT_INVALID_ARGUMENT;
-            }
             const int loaded =
                 nes_load_state(nes.get(), snapshot.core.data(), snapshot.core.size());
             if (loaded < 0)
             {
+                // This wrapper-only error precedes Machine::LoadState. Do not
+                // generalize to CRC/corrupt errors: the machine can emit those
+                // after modifying or resetting state, invalidating the digest.
+                if (loaded == NES_ERR_STATE_ROM_MISMATCH)
+                {
+                    has_frame_digest = had_frame_digest;
+                }
                 return FLY_RESULT_INTERNAL_ERROR;
             }
             for (std::uint32_t port = 0; port < FLY_RUNTIME_PORT_COUNT; ++port)
@@ -536,6 +556,7 @@ bool deserialize_snapshot(const std::uint8_t* bytes, std::size_t size, Snapshot&
     if (!read_u32_le(cursor, end, version) || version != FLY_RUNTIME_CHECKPOINT_VERSION_1 ||
         !read_u32_le(cursor, end, reserved) || reserved != 0u ||
         !read_u32_le(cursor, end, snapshot.sample_rate) ||
+        snapshot.sample_rate < 44100u || snapshot.sample_rate > 96000u ||
         !read_u32_le(cursor, end, snapshot.predicted_port_mask) ||
         !read_u32_le(cursor, end, timeline_set) || !read_u32_le(cursor, end, rom_loaded) ||
         !read_u32_le(cursor, end, has_frame) || !read_u32_le(cursor, end, reserved1) ||
@@ -574,6 +595,13 @@ bool deserialize_snapshot(const std::uint8_t* bytes, std::size_t size, Snapshot&
         (!snapshot.has_complete_frame && pixel_size != 0u) ||
         (snapshot.rom_loaded && core_size == 0u) ||
         (!snapshot.rom_loaded && core_size != 0u))
+    {
+        return false;
+    }
+    // Validate the complete payload before allocating from declared lengths.
+    // Subtraction after the bound check avoids a core_size + pixel_size overflow.
+    const std::size_t remaining = static_cast<std::size_t>(end - cursor);
+    if (core_size > remaining || pixel_size != remaining - core_size)
     {
         return false;
     }
@@ -680,6 +708,10 @@ extern "C" fly_result fly_runtime_load_rom(fly_runtime_t* runtime,
     try
     {
         std::lock_guard<std::mutex> lock(runtime->mutex);
+        if (runtime->nes == nullptr)
+        {
+            return FLY_RESULT_INVALID_STATE;
+        }
         runtime->reset_simulation();
         nes_rom_info info{};
         info.struct_size = sizeof(info);
@@ -689,6 +721,61 @@ extern "C" fly_result fly_runtime_load_rom(fly_runtime_t* runtime,
         {
             return FLY_RESULT_INVALID_ARGUMENT;
         }
+        runtime->rom_loaded = true;
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return FLY_RESULT_OUT_OF_MEMORY;
+    }
+    catch (...)
+    {
+        return FLY_RESULT_INTERNAL_ERROR;
+    }
+}
+
+extern "C" fly_result fly_runtime_load_rom_fresh(fly_runtime_t* runtime,
+                                                 const uint8_t* bytes,
+                                                 size_t size,
+                                                 const uint8_t* expected_sha256)
+{
+    if (runtime == nullptr || bytes == nullptr || size == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (expected_sha256 != nullptr)
+    {
+        std::uint8_t digest[kSha256Size];
+        sha256(bytes, size, digest);
+        if (std::memcmp(digest, expected_sha256, kSha256Size) != 0)
+        {
+            return FLY_RESULT_INVALID_ARGUMENT;
+        }
+    }
+    try
+    {
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        runtime->reset_simulation();
+        runtime->nes.reset();
+        nes_config config{};
+        config.struct_size = sizeof(config);
+        config.version = NES_STRUCT_VERSION;
+        config.favored_system = NES_FAVORED_NES_NTSC;
+        config.sample_rate = runtime->sample_rate;
+        config.pixfmt = NES_PIXFMT_RGB565;
+        // The previous core is already retired. Keep the replacement local
+        // until loaded so every failure (including an exception) destroys it
+        // while holding the runtime mutex and leaves the runtime unloaded.
+        std::unique_ptr<nes_t, NesDeleter> replacement(nes_create(&config));
+        if (replacement == nullptr)
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        if (nes_load_rom(replacement.get(), bytes, size, nullptr) < 0)
+        {
+            return FLY_RESULT_INVALID_ARGUMENT;
+        }
+        runtime->nes = std::move(replacement);
         runtime->rom_loaded = true;
         return FLY_RESULT_OK;
     }
@@ -743,6 +830,9 @@ extern "C" fly_result fly_runtime_step_frame(fly_runtime_t* runtime,
             return FLY_RESULT_INVALID_ARGUMENT;
         }
 
+        // A partially failed step must never expose the previous observation
+        // paired with an already modified core.
+        runtime->has_frame_digest = false;
         for (std::uint32_t port = 0; port < FLY_RUNTIME_PORT_COUNT; ++port)
         {
             nes_set_input(runtime->nes.get(), port, input->buttons[port]);
@@ -777,6 +867,19 @@ extern "C" fly_result fly_runtime_step_frame(fly_runtime_t* runtime,
         runtime->last_produced_time_ns = monotonic_now_ns();
         ++runtime->frame_sequence;
 
+        // Hash the actual frame output before any audio callback can consume it.
+        // Explicit byte order keeps this independent of host endianness.
+        std::uint8_t pcm_bytes[kAudioScratchSamples * 2u];
+        for (std::uint32_t index = 0; index < samples_written; ++index)
+        {
+            const auto sample = static_cast<std::uint16_t>(runtime->audio_scratch[index]);
+            pcm_bytes[index * 2u] = static_cast<std::uint8_t>(sample);
+            pcm_bytes[index * 2u + 1u] = static_cast<std::uint8_t>(sample >> 8u);
+        }
+        sha256(pcm_bytes, static_cast<std::size_t>(samples_written) * 2u,
+               runtime->frame_pcm_sha256);
+        runtime->has_frame_digest = true;
+
         fly_frame_result_v1 output{};
         output.struct_size = result->struct_size;
         output.version = result->version;
@@ -808,6 +911,116 @@ extern "C" fly_result fly_runtime_step_frame(fly_runtime_t* runtime,
     }
 }
 
+extern "C" fly_result fly_runtime_copy_frame_digest(fly_runtime_t* runtime,
+                                                    uint64_t timeline_epoch,
+                                                    uint64_t frame_index,
+                                                    fly_runtime_frame_digest_v1* out)
+{
+    if (runtime == nullptr || out == nullptr ||
+        out->struct_size < FLY_RUNTIME_FRAME_DIGEST_V1_SIZE ||
+        out->version != FLY_RUNTIME_FRAME_DIGEST_VERSION_1)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    try
+    {
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        if (!runtime->has_frame_digest || !runtime->has_complete_frame ||
+            !runtime->timeline_set || runtime->timeline_epoch != timeline_epoch ||
+            runtime->next_frame_index - 1u != frame_index)
+        {
+            return FLY_RESULT_INVALID_STATE;
+        }
+        std::size_t written = 0;
+        std::size_t needed = 0;
+        const int query =
+            nes_copy_canonical_state(runtime->nes.get(), nullptr, 0, &written, &needed);
+        if (query != NES_ERR_BUFFER_TOO_SMALL || needed == 0)
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        std::vector<std::uint8_t> core(needed);
+        const int copied = nes_copy_canonical_state(runtime->nes.get(), core.data(),
+                                                     core.size(), &written, &needed);
+        if (copied < 0 || written != core.size())
+        {
+            return FLY_RESULT_INTERNAL_ERROR;
+        }
+        // Presentation buffers retain their native RGB565 representation. Only
+        // the digest encoding is little-endian, independently of the host.
+        std::vector<std::uint8_t> pixels(runtime->complete_pixels.size());
+        for (std::size_t offset = 0; offset < pixels.size(); offset += 2)
+        {
+            std::uint16_t pixel = 0;
+            std::memcpy(&pixel, runtime->complete_pixels.data() + offset, sizeof(pixel));
+            pixels[offset] = static_cast<std::uint8_t>(pixel);
+            pixels[offset + 1] = static_cast<std::uint8_t>(pixel >> 8u);
+        }
+        fly_runtime_frame_digest_v1 digest{};
+        digest.struct_size = out->struct_size;
+        digest.version = out->version;
+        digest.timeline_epoch = timeline_epoch;
+        digest.frame_index = frame_index;
+        digest.predicted_port_mask = runtime->predicted_port_mask;
+        sha256(core.data(), core.size(), digest.state_sha256);
+        sha256(pixels.data(), pixels.size(), digest.frame_sha256);
+        std::memcpy(digest.pcm_sha256, runtime->frame_pcm_sha256, kSha256Size);
+        std::memcpy(out, &digest, sizeof(digest));
+        return FLY_RESULT_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return FLY_RESULT_OUT_OF_MEMORY;
+    }
+    catch (...)
+    {
+        return FLY_RESULT_INTERNAL_ERROR;
+    }
+}
+
+extern "C" fly_result fly_runtime_get_source_timing(
+    fly_runtime_t* runtime, fly_runtime_source_timing_v1* out)
+{
+    if (runtime == nullptr || out == nullptr ||
+        out->struct_size < FLY_RUNTIME_SOURCE_TIMING_V1_SIZE ||
+        out->version != FLY_RUNTIME_SOURCE_TIMING_VERSION_1)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    try
+    {
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        if (!runtime->rom_loaded || runtime->nes == nullptr)
+        {
+            return FLY_RESULT_INVALID_STATE;
+        }
+        nes_rom_info info{};
+        info.struct_size = sizeof(info);
+        info.version = NES_STRUCT_VERSION;
+        if (nes_get_rom_info(runtime->nes.get(), &info) < 0)
+        {
+            return FLY_RESULT_INVALID_STATE;
+        }
+        const bool ntsc = info.region_ntsc != 0;
+        fly_runtime_source_timing_v1 value{};
+        value.struct_size = out->struct_size;
+        value.version = FLY_RUNTIME_SOURCE_TIMING_VERSION_1;
+        value.source_region = ntsc ? FLY_RUNTIME_SOURCE_REGION_NTSC
+                                   : FLY_RUNTIME_SOURCE_REGION_PAL;
+        value.frame_rate_numerator = ntsc ? NES_SOURCE_NTSC_RATE_NUMERATOR
+                                          : NES_SOURCE_PAL_RATE_NUMERATOR;
+        value.frame_rate_denominator = ntsc ? NES_SOURCE_NTSC_RATE_DENOMINATOR
+                                            : NES_SOURCE_PAL_RATE_DENOMINATOR;
+        value.sample_rate = runtime->sample_rate;
+        std::memcpy(out, &value, sizeof(value));
+        return FLY_RESULT_OK;
+    }
+    catch (...)
+    {
+        return FLY_RESULT_INTERNAL_ERROR;
+    }
+}
+
 extern "C" fly_result fly_runtime_clear_input_ports(fly_runtime_t* runtime,
                                                     uint32_t port_mask,
                                                     uint32_t reason)
@@ -819,6 +1032,7 @@ extern "C" fly_result fly_runtime_clear_input_ports(fly_runtime_t* runtime,
     try
     {
         std::lock_guard<std::mutex> lock(runtime->mutex);
+        runtime->has_frame_digest = false;
         for (std::uint32_t port = 0; port < FLY_RUNTIME_PORT_COUNT; ++port)
         {
             if ((port_mask & (1u << port)) == 0u)
@@ -1057,22 +1271,56 @@ extern "C" fly_result fly_runtime_save_checkpoint(fly_runtime_t* runtime,
     }
 }
 
-extern "C" fly_result fly_runtime_load_checkpoint(fly_runtime_t* runtime,
-                                                  const uint8_t* bytes,
-                                                  size_t size)
+namespace {
+
+// The fixed v1 header ends with the two payload lengths. Check them before
+// constructing Snapshot: MSVC's checked std::vector allocates even when empty.
+constexpr std::size_t kCheckpointFixedBytes =
+    8u + 8u * sizeof(std::uint32_t) + 7u * sizeof(std::uint64_t) +
+    FLY_RUNTIME_PORT_COUNT * (sizeof(std::uint32_t) + sizeof(std::uint64_t)) +
+    2u * sizeof(std::uint32_t);
+
+bool checkpoint_payload_length_valid(const std::uint8_t* bytes, std::size_t size)
 {
-    if (runtime == nullptr || bytes == nullptr || size == 0u)
-    {
-        return FLY_RESULT_INVALID_ARGUMENT;
-    }
-    Snapshot snapshot;
-    if (!deserialize_snapshot(bytes, size, snapshot))
+    if (bytes == nullptr || size < kCheckpointFixedBytes) return false;
+    const std::uint8_t* cursor = bytes + kCheckpointFixedBytes - 2u * sizeof(std::uint32_t);
+    const std::uint8_t* const end = bytes + size;
+    std::uint32_t core_size = 0;
+    std::uint32_t pixel_size = 0;
+    if (!read_u32_le(cursor, end, core_size) || !read_u32_le(cursor, end, pixel_size))
+        return false;
+    const std::size_t remaining = size - kCheckpointFixedBytes;
+    return core_size <= remaining && pixel_size == remaining - core_size;
+}
+
+fly_result load_checkpoint(fly_runtime_t* runtime, const uint8_t* bytes, size_t size,
+                           uint64_t expected_timeline_epoch)
+{
+    if (runtime == nullptr || !checkpoint_payload_length_valid(bytes, size))
     {
         return FLY_RESULT_INVALID_ARGUMENT;
     }
     try
     {
+        Snapshot snapshot;
+        if (!deserialize_snapshot(bytes, size, snapshot))
+        {
+            return FLY_RESULT_INVALID_ARGUMENT;
+        }
+        if (expected_timeline_epoch != 0u &&
+            (!snapshot.rom_loaded || !snapshot.timeline_set ||
+             snapshot.timeline_epoch != expected_timeline_epoch))
+        {
+            return FLY_RESULT_INVALID_STATE;
+        }
         std::lock_guard<std::mutex> lock(runtime->mutex);
+        // Loading a snapshot cannot reconfigure the core's audio output. Keep
+        // the v1 format and same-configuration saves compatible, but reject a
+        // different valid rate before touching core state or its observations.
+        if (snapshot.sample_rate != runtime->sample_rate)
+        {
+            return FLY_RESULT_INVALID_STATE;
+        }
         return runtime->apply_snapshot(snapshot, true);
     }
     catch (const std::bad_alloc&)
@@ -1083,4 +1331,24 @@ extern "C" fly_result fly_runtime_load_checkpoint(fly_runtime_t* runtime,
     {
         return FLY_RESULT_INTERNAL_ERROR;
     }
+}
+
+} // namespace
+
+extern "C" fly_result fly_runtime_load_checkpoint(fly_runtime_t* runtime,
+                                                  const uint8_t* bytes,
+                                                  size_t size)
+{
+    return load_checkpoint(runtime, bytes, size, 0);
+}
+
+extern "C" fly_result fly_runtime_load_checkpoint_for_epoch(
+    fly_runtime_t* runtime, const uint8_t* bytes, size_t size,
+    uint64_t expected_timeline_epoch)
+{
+    if (expected_timeline_epoch == 0u)
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    return load_checkpoint(runtime, bytes, size, expected_timeline_epoch);
 }

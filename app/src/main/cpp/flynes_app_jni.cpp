@@ -4,9 +4,11 @@
 
 #include <flynes/flynes_app.h>
 #include <flynes/flynes_session.h>
+#include "nearby/session_owner.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -789,6 +791,224 @@ Java_com_flynes_emu_app_FlyNesApp_nativeControlLayoutApply(
     const std::string text = copy_bytes(env, utf8);
     return fly_control_layout_apply(
         app_from(app), text.data(), static_cast<uint32_t>(text.size()));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeCreate(
+    JNIEnv* env, jclass, jlongArray out_handle)
+{
+    if (out_handle == nullptr || env->GetArrayLength(out_handle) < 1)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    const jlong zero = 0;
+    env->SetLongArrayRegion(out_handle, 0, 1, &zero);
+    auto* owner = flynes::android::nearby::SessionOwner::create();
+    if (owner == nullptr)
+        return FLY_SESSION_V2_UNAVAILABLE;
+    const jlong handle = reinterpret_cast<jlong>(owner);
+    env->SetLongArrayRegion(out_handle, 0, 1, &handle);
+    return FLY_SESSION_V2_OK;
+}
+
+JNIEXPORT void JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeDestroy(JNIEnv*, jclass, jlong handle)
+{
+    delete reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeV2CreateCount(
+    JNIEnv*, jclass, jlong handle)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    return owner == nullptr ? 0 : owner->v2_create_count();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeSubmitAction(
+    JNIEnv* env, jclass, jlong handle, jint action_kind, jbyteArray code)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    const std::uint8_t* bytes = nullptr;
+    std::size_t size = 0;
+    jbyte* raw = nullptr;
+    if (code != nullptr)
+    {
+        const jsize length = env->GetArrayLength(code);
+        if (length < 0)
+            return FLY_SESSION_V2_INVALID_ARGUMENT;
+        size = static_cast<std::size_t>(length);
+        if (size > 0)
+        {
+            raw = env->GetByteArrayElements(code, nullptr);
+            if (raw == nullptr)
+                return FLY_SESSION_V2_OUT_OF_MEMORY;
+            bytes = reinterpret_cast<const std::uint8_t*>(raw);
+        }
+    }
+    const auto result =
+        owner->submit_action(static_cast<std::uint32_t>(action_kind), bytes, size);
+    if (raw != nullptr)
+        env->ReleaseByteArrayElements(code, raw, JNI_ABORT);
+    return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeSnapshot(
+    JNIEnv* env, jclass, jlong handle, jlongArray fields, jbyteArray reason,
+    jbyteArray pending_config_id)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr || fields == nullptr || env->GetArrayLength(fields) < 10 ||
+        reason == nullptr || env->GetArrayLength(reason) < 64 ||
+        pending_config_id == nullptr || env->GetArrayLength(pending_config_id) != 32)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    flynes::android::nearby::OwnerSnapshot snap{};
+    if (!owner->read_snapshot(&snap))
+        return FLY_SESSION_V2_UNAVAILABLE;
+    const jlong values[12] = {
+        static_cast<jlong>(snap.abi_version),
+        static_cast<jlong>(snap.link_state),
+        static_cast<jlong>(snap.game_state),
+        static_cast<jlong>(snap.pending_config_local_confirmed),
+        static_cast<jlong>(snap.pending_config_peer_confirmed),
+        static_cast<jlong>(snap.pending_config_revision),
+        static_cast<jlong>(snap.last_action_request_id),
+        static_cast<jlong>(snap.last_action_result),
+        static_cast<jlong>(snap.last_action_outcome),
+        static_cast<jlong>(snap.shutdown_complete),
+        static_cast<jlong>(snap.content_query_attempted),
+        static_cast<jlong>(snap.last_content_query_result),
+    };
+    env->SetLongArrayRegion(fields, 0, env->GetArrayLength(fields) >= 12 ? 12 : 10, values);
+    env->SetByteArrayRegion(pending_config_id, 0, 32,
+                            reinterpret_cast<const jbyte*>(snap.pending_config_id));
+    env->SetByteArrayRegion(reason, 0, 64,
+                            reinterpret_cast<const jbyte*>(snap.primary_reason_key));
+    return env->ExceptionCheck() ? FLY_SESSION_V2_INVALID_ARGUMENT : FLY_SESSION_V2_OK;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeConfirmGameConfig(
+    JNIEnv* env, jclass, jlong handle, jbyteArray pending_config_id, jlong revision)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr || pending_config_id == nullptr ||
+        env->GetArrayLength(pending_config_id) != 32 || revision == 0)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    std::uint8_t id[32]{};
+    env->GetByteArrayRegion(pending_config_id, 0, 32, reinterpret_cast<jbyte*>(id));
+    if (env->ExceptionCheck())
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    // Action 24 has an empty choice. ID/revision fence the displayed view here;
+    // the engine additionally checks its own view revision and approval token.
+    return owner->submit_action(FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2,
+                               id, sizeof(id), static_cast<std::uint64_t>(revision));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeQuicProviderType(
+    JNIEnv* env, jclass, jlong handle)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    const char* type = owner == nullptr ? "" : owner->quic_provider_type();
+    return env->NewStringUTF(type == nullptr ? "" : type);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeQuicReady(JNIEnv*, jclass, jlong handle)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    return owner != nullptr && owner->quic_ready() ? 1 : 0;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeQuicListenAddress(
+    JNIEnv* env, jclass, jlong handle)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    const char* addr = owner == nullptr ? "" : owner->quic_listen_address();
+    return env->NewStringUTF(addr == nullptr ? "" : addr);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeQuicEngineListen(
+    JNIEnv*, jclass, jlong handle)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    return owner->quic_engine_listen();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeQuicControlRoundtrip(
+    JNIEnv* env, jclass, jlong listener_handle, jlong connector_handle,
+    jlongArray facts)
+{
+    auto* listener =
+        reinterpret_cast<flynes::android::nearby::SessionOwner*>(listener_handle);
+    auto* connector =
+        reinterpret_cast<flynes::android::nearby::SessionOwner*>(connector_handle);
+    if (listener == nullptr || connector == nullptr || facts == nullptr ||
+        env->GetArrayLength(facts) < 5)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    std::int32_t listen_result = FLY_SESSION_V2_UNAVAILABLE;
+    std::int32_t connect_result = FLY_SESSION_V2_UNAVAILABLE;
+    std::int32_t write_result = FLY_SESSION_V2_UNAVAILABLE;
+    std::uint64_t written = 0;
+    std::uint64_t read = 0;
+    const auto rc = listener->quic_control_roundtrip(
+        connector, &listen_result, &connect_result, &write_result, &written, &read);
+    const jlong values[5] = {listen_result, connect_result, write_result,
+                             static_cast<jlong>(written), static_cast<jlong>(read)};
+    env->SetLongArrayRegion(facts, 0, 5, values);
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeArmTestTimer(
+    JNIEnv*, jclass, jlong handle, jlong timer_id, jlong delay_ms)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr || delay_ms < 0)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    return owner->arm_test_timer(static_cast<std::uint64_t>(timer_id),
+                                 static_cast<std::uint64_t>(delay_ms));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeCancelTestTimer(
+    JNIEnv*, jclass, jlong handle, jlong timer_id)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    return owner->cancel_test_timer(static_cast<std::uint64_t>(timer_id));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeTestTimerFires(
+    JNIEnv*, jclass, jlong handle, jlong timer_id)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr)
+        return 0;
+    return owner->test_timer_fires(static_cast<std::uint64_t>(timer_id));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_flynes_emu_NearbySessionOwner_nativeWaitTestTimer(
+    JNIEnv*, jclass, jlong handle, jlong timer_id, jlong timeout_ms)
+{
+    auto* owner = reinterpret_cast<flynes::android::nearby::SessionOwner*>(handle);
+    if (owner == nullptr || timeout_ms < 0)
+        return 0;
+    return owner->wait_test_timer(static_cast<std::uint64_t>(timer_id),
+                                  static_cast<std::uint64_t>(timeout_ms))
+               ? 1
+               : 0;
 }
 
 } // extern "C"

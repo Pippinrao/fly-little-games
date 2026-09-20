@@ -7,6 +7,7 @@ nes_cheat_decode
 nes_cheat_encode
 nes_cheat_remove
 nes_clear_input
+nes_copy_canonical_state
 nes_copy_video_frame
 nes_copy_video_frame_if_new
 nes_core_version

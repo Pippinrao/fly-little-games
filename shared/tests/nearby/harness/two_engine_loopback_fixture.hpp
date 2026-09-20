@@ -45,6 +45,7 @@
 #include "wire/quic_contract.hpp"
 #include "wire/session_signing_binding.hpp"
 #include "wire/sha256.hpp"
+#include "dual/dual_runtime_contract.hpp"
 #include "wire/app_frame.hpp"
 #include "wire/link_hello.hpp"
 #include "link/link_control_contract.hpp"
@@ -54,6 +55,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,6 +75,7 @@ inline void check(bool value, const char* message)
 inline void retain_noop(void*) {}
 inline void release_noop(void*) {}
 
+/* Leftover global. EngineFixture samples ClockFixtureV1, not this value. */
 inline std::uint64_t g_loopback_clock_ns = 1;
 
 inline void set_loopback_clock_ns(std::uint64_t ns) noexcept
@@ -89,7 +92,7 @@ inline fly_session_result_v2 read_clock(void*, fly_session_clock_sample_v2* out)
 {
     if (!out) return FLY_SESSION_V2_INVALID_ARGUMENT;
     out->continuous_ns = g_loopback_clock_ns;
-    out->suspend_inclusive = g_loopback_clock_ns;
+    out->suspend_inclusive = 1;
     out->boot_generation[0] = 1;
     return FLY_SESSION_V2_OK;
 }
@@ -459,7 +462,7 @@ struct ClockFixtureV1 final
         auto* self = static_cast<ClockFixtureV1*>(context);
         ++self->reads;
         out->continuous_ns = self->continuous_ns;
-        out->suspend_inclusive = self->suspend_inclusive_ns;
+        out->suspend_inclusive = 1;
         out->boot_generation[0] = 1;
         return FLY_SESSION_V2_OK;
     }
@@ -1746,13 +1749,19 @@ struct EngineFixture final
         int loads = 0;
         int steps = 0;
         int exports = 0;
+        bool fail_load = false;
+        fly_session_dual_runtime_port_v2 override{};
 
         static fly_session_result_v2 load(
             void* context, const fly_session_dual_content_ref_v2* content)
         {
             auto* self = static_cast<DualRuntime*>(context);
+            if (self->override.load != nullptr)
+                return self->override.load(self->override.context, content);
             ++self->loads;
             self->last_content = *content;
+            if (self->fail_load)
+                return FLY_SESSION_V2_INVALID_STATE;
             self->frame = 0;
             std::memcpy(self->state.data(), content->content_hash, 32u);
             return FLY_SESSION_V2_OK;
@@ -1763,6 +1772,8 @@ struct EngineFixture final
             fly_session_dual_frame_outcome_v2* out)
         {
             auto* self = static_cast<DualRuntime*>(context);
+            if (self->override.step != nullptr)
+                return self->override.step(self->override.context, input, out);
             ++self->steps;
             for (std::uint32_t port = 0; port < FLY_SESSION_DUAL_PORT_COUNT_V2;
                  ++port)
@@ -1790,6 +1801,10 @@ struct EngineFixture final
             std::size_t* out_written, std::uint8_t hash_out[32])
         {
             auto* self = static_cast<DualRuntime*>(context);
+            if (self->override.export_state != nullptr)
+                return self->override.export_state(self->override.context, out,
+                                                   capacity, out_written,
+                                                   hash_out);
             ++self->exports;
             if (capacity < self->state.size())
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
@@ -1803,6 +1818,9 @@ struct EngineFixture final
             void* context, const std::uint8_t* bytes, std::size_t size)
         {
             auto* self = static_cast<DualRuntime*>(context);
+            if (self->override.import_state != nullptr)
+                return self->override.import_state(self->override.context, bytes,
+                                                   size);
             if (size != self->state.size())
                 return FLY_SESSION_V2_INVALID_ARGUMENT;
             std::memcpy(self->state.data(), bytes, size);
@@ -1814,6 +1832,9 @@ struct EngineFixture final
             fly_session_dual_state_digest_v2* out)
         {
             auto* self = static_cast<DualRuntime*>(context);
+            if (self->override.state_digest != nullptr)
+                return self->override.state_digest(self->override.context,
+                                                   frame_index, out);
             *out = {};
             std::memcpy(out->state, self->state.data(), 32u);
             out->frame[0] = static_cast<std::uint8_t>(frame_index);
@@ -1840,6 +1861,12 @@ struct EngineFixture final
     fly_session_dual_runtime_port_v2 dual_runtime_port{};
     fly_session_ports_v2 ports{};
     fly_session_v2_t* engine = nullptr;
+    bool real_quic = false;
+    bool use_tls_der_spki = false;
+    bool use_bearer_endpoint_override = false;
+    std::array<std::uint8_t, 91> tls_der_spki{};
+    std::array<std::uint8_t, 18> bearer_endpoint_override{};
+    fly_session_resource_handle_v2 tls_material_handle_override = 0;
     /*
      * The loopback link this engine was attached to, if any. `LoopbackTransport`
      * sets it in `attach`. The QUIC port is answered from the LINK's own facts
@@ -1865,9 +1892,12 @@ struct EngineFixture final
                   bool secure_pairing_ports = true,
                   bool enable_content = false,
                   bool enable_dual_runtime = false,
-                  std::uint32_t content_items = 1)
+                  std::uint32_t content_items = 1,
+                  fly_session_quic_port_v2* quic_override = nullptr,
+                  const fly_session_content_port_v2* content_override = nullptr)
         : EngineFixture(&shared_world, shared_side, secure_pairing_ports,
-                        enable_content, enable_dual_runtime, content_items)
+                        enable_content, enable_dual_runtime, content_items,
+                        quic_override, content_override)
     {
     }
 
@@ -1875,7 +1905,9 @@ private:
     EngineFixture(LoopbackWorld* shared_world, LoopbackSide shared_side,
                   bool secure_pairing_ports, bool enable_content = false,
                   bool enable_dual_runtime = false,
-                  std::uint32_t content_items = 1)
+                  std::uint32_t content_items = 1,
+                  fly_session_quic_port_v2* quic_override = nullptr,
+                  const fly_session_content_port_v2* content_override = nullptr)
     {
         key.world = shared_world;
         key.side = shared_side;
@@ -1955,28 +1987,36 @@ private:
         bearer_port.cancel = Bearer::cancel;
         bearer_port.prepare_credential = Bearer::prepare;
         bearer_port.release_credential = unavailable_secret_release;
-        quic_port.struct_size = FLY_SESSION_QUIC_PORT_V2_SIZE;
-        quic_port.abi_version = FLY_SESSION_ABI_VERSION_2;
-        quic_port.context = &quic;
-        quic_port.retain = retain_noop;
-        quic_port.release = release_noop;
-        quic_port.listen = Quic::start;
-        quic_port.connect = Quic::start;
-        quic_port.inspect_handshake = Quic::inspect;
-        quic_port.exporter = Quic::exporter;
-        quic_port.open_uni = unavailable_quic_stream;
-        quic_port.open_bidi = Quic::open_bidi;
-        quic_port.accept_uni = unavailable_quic_stream;
-        quic_port.accept_bidi = Quic::accept_bidi;
-        quic_port.write = Quic::write;
-        quic_port.finish = unavailable_quic_control;
-        quic_port.reset = unavailable_quic_control;
-        quic_port.grant_read_credit = Quic::grant_read;
-        quic_port.send_datagram = unavailable_quic_datagram;
-        quic_port.payload_budget = unavailable_quic_query;
-        quic_port.stats = unavailable_quic_query;
-        quic_port.close = Quic::close;
-        quic_port.cancel = Quic::cancel;
+        if (quic_override != nullptr)
+        {
+            quic_port = *quic_override;
+            real_quic = true;
+        }
+        else
+        {
+            quic_port.struct_size = FLY_SESSION_QUIC_PORT_V2_SIZE;
+            quic_port.abi_version = FLY_SESSION_ABI_VERSION_2;
+            quic_port.context = &quic;
+            quic_port.retain = retain_noop;
+            quic_port.release = release_noop;
+            quic_port.listen = Quic::start;
+            quic_port.connect = Quic::start;
+            quic_port.inspect_handshake = Quic::inspect;
+            quic_port.exporter = Quic::exporter;
+            quic_port.open_uni = unavailable_quic_stream;
+            quic_port.open_bidi = Quic::open_bidi;
+            quic_port.accept_uni = unavailable_quic_stream;
+            quic_port.accept_bidi = Quic::accept_bidi;
+            quic_port.write = Quic::write;
+            quic_port.finish = unavailable_quic_control;
+            quic_port.reset = unavailable_quic_control;
+            quic_port.grant_read_credit = Quic::grant_read;
+            quic_port.send_datagram = unavailable_quic_datagram;
+            quic_port.payload_budget = unavailable_quic_query;
+            quic_port.stats = unavailable_quic_query;
+            quic_port.close = Quic::close;
+            quic_port.cancel = Quic::cancel;
+        }
         ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
         ports.abi_version = FLY_SESSION_ABI_VERSION_2;
         ports.clock = &clock;
@@ -2005,6 +2045,7 @@ private:
             content_port.cancel = Content::cancel;
             ports.content = &content_port;
         }
+        if (content_override) ports.content = content_override;
         if (enable_dual_runtime)
         {
             dual_runtime_port.struct_size = FLY_SESSION_DUAL_RUNTIME_PORT_V2_SIZE;
@@ -2078,6 +2119,8 @@ public:
         std::vector<fly_session_game_choice_v2> choices(value.game_choice_count);
         if (value.game_choice_count != 0)
         {
+            choices[0].struct_size = FLY_SESSION_GAME_CHOICE_V2_SIZE;
+            choices[0].abi_version = FLY_SESSION_ABI_VERSION_2;
             std::uint32_t written = 0;
             check(fly_session_view_copy_game_choices_v2(
                       view, 0, choices.data(), value.game_choice_count,
@@ -2125,19 +2168,52 @@ inline std::array<std::uint8_t, 16> loopback_source_choice_ref_v1() noexcept
 
 inline std::array<std::uint8_t, 32> loopback_content_id_v1() noexcept
 {
+#ifdef FLYNES_RUNTIME_ROM_FIXTURE
+    static const auto hash = []() -> std::array<std::uint8_t, 32> {
+        std::ifstream in(FLYNES_RUNTIME_ROM_FIXTURE, std::ios::binary);
+        if (!in)
+            return {};
+        in.seekg(0, std::ios::end);
+        const auto end = in.tellg();
+        if (end <= 0)
+            return {};
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(end));
+        in.seekg(0, std::ios::beg);
+        if (!in.read(reinterpret_cast<char*>(bytes.data()),
+                     static_cast<std::streamsize>(end)))
+            return {};
+        return flynes::session::wire::sha256(bytes.data(), bytes.size());
+    }();
+    return hash;
+#else
     std::array<std::uint8_t, 32> value{};
     value.fill(0xD1);
     return value;
+#endif
 }
 
 inline std::vector<std::uint8_t> loopback_content_choice_record_v1()
 {
     const auto name_size = static_cast<std::uint32_t>(
         sizeof(kLoopbackContentNameV1) - 1u);
+    const auto core = flynes::session::wire::domain_hash(
+        "flynes-dual-core-id-v1",
+        reinterpret_cast<const std::uint8_t*>("1.53.2"),
+        sizeof("1.53.2") - 1u);
+    std::uint8_t profile_bytes[flynes::session::dual::kDualCanonicalProfileBytesV1]{};
+    flynes::session::dual::write_canonical_dual_profile_bytes_v1(profile_bytes);
+    const auto profile = flynes::session::wire::domain_hash(
+        "flynes-dual-profile-id-v1", profile_bytes, sizeof(profile_bytes));
+    std::uint8_t options_bytes[flynes::session::dual::kDualCanonicalOptionsBytesV1]{};
+    flynes::session::dual::write_canonical_dual_options_bytes_v1(options_bytes);
+    const auto options = flynes::session::wire::domain_hash(
+        "flynes-dual-options-id-v1", options_bytes, sizeof(options_bytes));
     std::vector<std::uint8_t> record(
-        FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE + name_size, 0);
+        FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE + name_size +
+            FLY_SESSION_CONTENT_CHOICE_V2_START_TAIL_SIZE,
+        0);
     record[0] = 0;
-    record[1] = 1;
+    record[1] = 2;
     const auto choice = loopback_source_choice_ref_v1();
     const auto content = loopback_content_id_v1();
     std::copy(choice.begin(), choice.end(), record.begin() + 4);
@@ -2148,6 +2224,11 @@ inline std::vector<std::uint8_t> loopback_content_choice_record_v1()
     record[55] = static_cast<std::uint8_t>(name_size);
     std::copy_n(reinterpret_cast<const std::uint8_t*>(kLoopbackContentNameV1),
                 name_size, record.begin() + 56);
+    auto* tail = record.data() + FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE +
+                 name_size;
+    std::copy(core.begin(), core.end(), tail);
+    std::copy(profile.begin(), profile.end(), tail + 32);
+    std::copy(options.begin(), options.end(), tail + 64);
     return record;
 }
 
@@ -2334,8 +2415,17 @@ inline void deliver_provider_end(
     event.payload_size = sizeof(payload);
     std::memcpy(event.payload, &payload, sizeof(payload));
     const auto end_result = fly_session_deliver_v2(inbox, &event);
-    check(end_result == FLY_SESSION_V2_ACCEPTED,
-          "typed provider end completion enters public engine");
+    if (end_result != FLY_SESSION_V2_ACCEPTED)
+    {
+        char message[192];
+        std::snprintf(message, sizeof(message),
+                      "typed provider end completion enters public engine "
+                      "(result %d, kind 0x%x, op %llu)",
+                      static_cast<int>(end_result),
+                      static_cast<unsigned>(kind),
+                      static_cast<unsigned long long>(token.operation_id));
+        check(false, message);
+    }
 }
 
 // Builds one provider hash completion without asserting the engine result, so
@@ -3644,18 +3734,25 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
     if (fixture.tls.creates > state.tls_creates)
     {
         ++state.tls_creates;
-        const auto handle = state.next_handle++;
         /* TLS_MATERIAL_V2 is a HASH form completion whose hash must be the digest of
          * the key's public bytes: the scheduler compares it against the SPKI it read
          * through the key port, and rejects anything else as AUTH_FAILED. */
         const auto* point = fixture.key.world != nullptr
             ? fixture.key.world->point_of(fixture.tls.last_key)
             : nullptr;
-        check(point != nullptr,
+        check(point != nullptr || fixture.use_tls_der_spki,
               "the provider mints TLS material for a key the shared world really "
               "holds");
         std::array<std::uint8_t, 32> hash{};
-        if (point != nullptr)
+        auto handle = state.next_handle++;
+        if (fixture.use_tls_der_spki)
+        {
+            hash = wire::sha256(fixture.tls_der_spki.data(),
+                                fixture.tls_der_spki.size());
+            if (fixture.tls_material_handle_override != 0)
+                handle = fixture.tls_material_handle_override;
+        }
+        else if (point != nullptr)
             hash = wire::sha256(point->data(), point->size());
         /* The SPKI hash the engine is told it observed. The link reads it back
          * for the connector's handshake facts, so both ends of the link agree on
@@ -3740,12 +3837,17 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         /* One loopback link has one endpoint; this is the address the peer's QUIC
          * listener is reachable at, which is what `resolve` asks for. */
         std::array<std::uint8_t, 18> endpoint{};
-        endpoint[12] = 192;
-        endpoint[13] = 168;
-        endpoint[14] = 1;
-        endpoint[15] = 9;
-        endpoint[16] = 0xd6;
-        endpoint[17] = 0xd8;
+        if (fixture.use_bearer_endpoint_override)
+            endpoint = fixture.bearer_endpoint_override;
+        else
+        {
+            endpoint[12] = 192;
+            endpoint[13] = 168;
+            endpoint[14] = 1;
+            endpoint[15] = 9;
+            endpoint[16] = 0xd6;
+            endpoint[17] = 0xd8;
+        }
         deliver_provider_buffer(fixture.bearer.inbox, fixture.bearer.last_token,
                                 FLY_SESSION_PROVIDER_BEARER_ENDPOINT_V2,
                                 endpoint.data(), endpoint.size());
@@ -3894,6 +3996,17 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         const auto& request = fixture.key.public_requests[
             static_cast<std::size_t>(state.key_public_reads)];
         ++state.key_public_reads;
+        if (request.encoding == FLY_SESSION_PUBLIC_KEY_DER_SPKI_V2 &&
+            fixture.use_tls_der_spki)
+        {
+            deliver_provider_buffer(fixture.key.inbox, request.token,
+                                    FLY_SESSION_PROVIDER_KEY_PUBLIC_V2,
+                                    fixture.tls_der_spki.data(),
+                                    fixture.tls_der_spki.size());
+            ++state.counts.key_publics;
+            ++state.counts.answers;
+            return PumpOutcome::Answered;
+        }
         /* KEY_PUBLIC_V2 is a BUFFER form completion carrying the peer-visible X9.63
          * public bytes of the key the engine asked about. */
         const auto* point = fixture.key.world->point_of(request.resource);
@@ -4121,7 +4234,8 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
      * peer claim.
      * --------------------------------------------------------------------- */
     const bool quic_pending =
-        fixture.quic.listens > state.quic_listens ||
+        !fixture.real_quic &&
+        (fixture.quic.listens > state.quic_listens ||
         fixture.quic.connects > state.quic_connects ||
         fixture.quic.inspections > state.quic_inspections ||
         fixture.quic.exporters > state.quic_exporters ||
@@ -4129,7 +4243,7 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
         fixture.quic.opened_bidi > state.quic_opened_bidi ||
         fixture.quic.writes > state.quic_writes ||
         fixture.quic.reads > state.quic_reads ||
-        fixture.quic.cancels > state.quic_cancels;
+        fixture.quic.cancels > state.quic_cancels);
     if (quic_pending && fixture.attached_link == nullptr)
     {
         check(false,
@@ -4256,12 +4370,18 @@ inline PumpOutcome pump_once(EngineFixture& fixture, PumpState& state)
 
     if (fixture.quic.writes > state.quic_writes)
     {
+        const auto write_index = static_cast<std::size_t>(state.quic_writes);
         ++state.quic_writes;
         /* QUIC_END_V2 is an END form completion, terminal 1: the provider reports
          * that the bytes the engine handed over were really written. The bytes
          * themselves are carried by the transport, straight from the engine's own
-         * write log. */
-        deliver_provider_end(fixture.quic.inbox, fixture.quic.last_token,
+         * write log. last_token is overwritten by later grant_read/write calls in
+         * the same worker burst, so the completion must use the write log token. */
+        const auto& write_token =
+            write_index < fixture.quic.written_streams.size()
+                ? fixture.quic.written_streams[write_index].token
+                : fixture.quic.last_token;
+        deliver_provider_end(fixture.quic.inbox, write_token,
                              FLY_SESSION_PROVIDER_QUIC_END_V2);
         ++state.counts.quic_write_ends;
         ++state.counts.answers;
@@ -4433,7 +4553,7 @@ struct QuicDirectionState final
      * `delivered_fin` says which of them were the FIN rather than payload bytes.
      */
     std::vector<std::vector<std::uint8_t>> delivered;
-    std::vector<std::uint32_t> delivered_streams;
+    std::vector<fly_session_resource_handle_v2> delivered_streams;
     std::vector<std::uint32_t> delivered_fin;
     int units = 0;
     int fins = 0;
@@ -5018,7 +5138,8 @@ inline void relay_and_pump_until_idle(LoopbackTransport& transport,
                                       PumpLimits limits, int max_rounds,
                                       int idle_rounds_required,
                                       RelayReport* report = nullptr,
-                                      bool answer_the_app_action = false)
+                                      bool answer_the_app_action = false,
+                                      bool relay_loopback_quic = true)
 {
     RelayReport local{};
     if (report == nullptr) report = &local;
@@ -5043,7 +5164,9 @@ inline void relay_and_pump_until_idle(LoopbackTransport& transport,
             first_pump.counts.answers + second_pump.counts.answers;
 
         relay_gatt(transport, *report);
-        const auto quic = relay_quic(transport, *report);
+        const auto quic = relay_loopback_quic
+            ? relay_quic(transport, *report)
+            : QuicRelayRound{};
         pump_engine(first, first_pump, limits);
         pump_engine(second, second_pump, limits);
 

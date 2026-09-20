@@ -1357,6 +1357,106 @@
       "value": "The other side did not allow receiving files"
     },
     {
+      "name": "nearby_entry_kicker",
+      "value": "PLAY TOGETHER"
+    },
+    {
+      "name": "nearby_entry_headline",
+      "value": "Play another round with someone nearby."
+    },
+    {
+      "name": "nearby_entry_subtitle",
+      "value": "One person creates. The other joins."
+    },
+    {
+      "name": "nearby_entry_stageHint",
+      "value": "Connect first, then pick a game"
+    },
+    {
+      "name": "nearby_entry_footer",
+      "value": "Code / scan / nearby device → accept → verify → game hall"
+    },
+    {
+      "name": "nearby_invite_kicker",
+      "value": "HOST · INVITE"
+    },
+    {
+      "name": "nearby_invite_headline",
+      "value": "Let a friend join"
+    },
+    {
+      "name": "nearby_invite_subtitle",
+      "value": "Tell your friend the code, or let them scan the QR."
+    },
+    {
+      "name": "nearby_invite_qrHint",
+      "value": "Scan the host QR"
+    },
+    {
+      "name": "nearby_invite_hostMustAccept",
+      "value": "You still need to accept when a friend joins."
+    },
+    {
+      "name": "nearby_invite_footer",
+      "value": "Waiting for a friend · no game selected yet"
+    },
+    {
+      "name": "nearby_join_kicker",
+      "value": "JOIN WITH CODE"
+    },
+    {
+      "name": "nearby_join_headline",
+      "value": "Enter the host invite code"
+    },
+    {
+      "name": "nearby_join_subtitle",
+      "value": "Ask your friend to open Create session and show this code."
+    },
+    {
+      "name": "nearby_join_hint",
+      "value": "The code only finds this invite; the host still has to accept and both of you verify identity."
+    },
+    {
+      "name": "nearby_join_footer",
+      "value": "Not verified yet"
+    },
+    {
+      "name": "nearby_join_placeholder",
+      "value": "Enter six digits"
+    },
+    {
+      "name": "nearby_scan_kicker",
+      "value": "SCAN TO JOIN"
+    },
+    {
+      "name": "nearby_scan_headline",
+      "value": "Scan the host QR code"
+    },
+    {
+      "name": "nearby_scan_subtitle",
+      "value": "Ask your friend to open Create session and show this invite."
+    },
+    {
+      "name": "nearby_scan_cameraHint",
+      "value": "Place the QR in the viewfinder"
+    },
+    {
+      "name": "nearby_scan_cameraNote",
+      "value": "Camera permission is requested only when scanning."
+    },
+    {
+      "name": "nearby_scan_afterScan",
+      "value": "After a scan, wait for the host to accept, then verify identity."
+    },
+    {
+      "name": "nearby_scan_footer",
+      "value": "Invalid, expired, or already-used QR codes cannot join"
+    },
+    {
+      "name": "nearby_diagnostics_title",
+      "value": "Connection details"
+    },
+    {
       "name": "nearby_open_entry",
       "value": "Nearby Play"
     }

@@ -177,8 +177,18 @@ fly_session_result_v2 start(EngineV1& engine)
     content.session_id = engine.context.session_id;
     content.branch_id = engine.context.branch_id;
     content.timeline_epoch = engine.context.timeline_epoch;
-    return engine.scheduler.begin(dual::DualModeV1::Dual, content,
-                                  engine.context, engine.owners);
+    const auto began = engine.scheduler.begin(dual::DualModeV1::Dual, content,
+                                              engine.context, engine.owners);
+    if (began != FLY_SESSION_V2_OK)
+        return began;
+    check(engine.scheduler.state() == DualSimStateV1::Ready,
+          "the race engine is Ready after loading");
+    const auto announced = engine.scheduler.announce_running();
+    if (announced != FLY_SESSION_V2_OK)
+        return announced;
+    check(engine.scheduler.state() == DualSimStateV1::Running,
+          "the race engine is Running after announcing");
+    return FLY_SESSION_V2_OK;
 }
 
 std::uint32_t generated_mask(std::uint64_t frame, std::uint64_t seed) noexcept

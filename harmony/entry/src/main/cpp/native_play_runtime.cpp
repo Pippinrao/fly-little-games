@@ -1,18 +1,44 @@
 #include "native_play_runtime.hpp"
 
+#if defined(FLYNES_HOST_AUDIO_TEST)
+#include "native_audio_test_backend.hpp"
+#else
 #include "harmony_renderer.hpp"
-
 #include <ohaudio/native_audiostreambuilder.h>
 #include <ohaudio/native_audiorenderer.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <dlfcn.h>
+#include <new>
 #include <stdexcept>
 
 namespace flynes::harmony {
+
+// Allocated before platform creation. If Release permanently fails, retaining
+// this record at process scope needs no allocation on the close/destructor path.
+struct AudioHandleRecord {
+    enum class State { PREPARED, RUNNING, PAUSED, STOPPED };
+    OH_AudioRenderer* renderer = nullptr;
+    AudioHandleRecord* next = nullptr;
+    // Physical state belongs to the control thread, independently of whether
+    // a result is still current enough to publish audio_started_ to consumers.
+    State state = State::PREPARED;
+};
 namespace {
+
+std::atomic<bool> audio_creation_disabled{false};
+std::atomic<AudioHandleRecord*> quarantined_audio_handles{nullptr};
+
+void quarantine_audio_handle(AudioHandleRecord* record) noexcept
+{
+    auto* head = quarantined_audio_handles.load(std::memory_order_relaxed);
+    do { record->next = head; }
+    while (!quarantined_audio_handles.compare_exchange_weak(
+        head, record, std::memory_order_release, std::memory_order_relaxed));
+}
 
 bool audio_ok(OH_AudioStream_Result result)
 {
@@ -24,10 +50,14 @@ using GetAudioTimestamp = OH_AudioStream_Result (*)(OH_AudioRenderer*,
 
 GetAudioTimestamp get_audio_timestamp_api()
 {
+#if defined(FLYNES_HOST_AUDIO_TEST)
+    return &OH_AudioRenderer_GetAudioTimestampInfo;
+#else
     static void* library = dlopen("libohaudio.so", RTLD_NOW | RTLD_LOCAL);
     static auto api = library == nullptr ? nullptr : reinterpret_cast<GetAudioTimestamp>(
         dlsym(library, "OH_AudioRenderer_GetAudioTimestampInfo"));
     return api;
+#endif
 }
 
 } // namespace
@@ -38,13 +68,7 @@ std::unique_ptr<NativePlayRuntime> NativePlayRuntime::open(
     SourceTiming timing = detect_source_timing(rom, size);
     auto result = std::unique_ptr<NativePlayRuntime>(
         new NativePlayRuntime(PlaySession::open(rom, size), std::move(timing)));
-    result->initialize_audio(true);
-    if (!result->audio_ready_.load(std::memory_order_acquire))
-    {
-        result->audio_fast_path_.store(false, std::memory_order_release);
-        result->release_audio();
-        result->initialize_audio(false);
-    }
+    result->audio_thread_ = std::thread([runtime = result.get()] { runtime->run_audio(); });
     result->running_.store(true, std::memory_order_release);
     result->thread_ = std::thread([runtime = result.get()] { runtime->run(); });
     {
@@ -78,43 +102,33 @@ void NativePlayRuntime::set_buttons(std::uint32_t buttons) noexcept
 
 void NativePlayRuntime::set_paused(bool paused)
 {
-    paused_.store(paused, std::memory_order_release);
-    if (paused)
     {
         std::lock_guard lock(audio_mutex_);
-        if (audio_renderer_ != nullptr)
+        if (paused_.exchange(paused, std::memory_order_acq_rel) != paused)
         {
-            (void)OH_AudioRenderer_Pause(audio_renderer_);
-            (void)OH_AudioRenderer_Flush(audio_renderer_);
+            ++audio_generation_;
             audio_started_.store(false, std::memory_order_release);
+            audio_timestamp_valid_.store(false, std::memory_order_release);
+            if (paused) discard_audio_locked();
         }
-        pcm_.clear();
-        temporal_audio_.reset();
-        audio_queued_samples_.store(0, std::memory_order_release);
     }
-    else
-    {
-        std::lock_guard lock(audio_mutex_);
-        // The simulation worker restarts the sink after refilling its prime.
-    }
+    audio_wake_.notify_all();
     wake_.notify_all();
 }
 
 void NativePlayRuntime::set_muted(bool muted) noexcept
 {
-    muted_.store(muted, std::memory_order_release);
-    if (muted)
     {
         std::lock_guard lock(audio_mutex_);
-        if (audio_renderer_ != nullptr && audio_started_.load(std::memory_order_acquire))
+        if (muted_.exchange(muted, std::memory_order_acq_rel) != muted)
         {
-            (void)OH_AudioRenderer_Pause(audio_renderer_);
-            (void)OH_AudioRenderer_Flush(audio_renderer_);
+            ++audio_generation_;
             audio_started_.store(false, std::memory_order_release);
+            audio_timestamp_valid_.store(false, std::memory_order_release);
+            if (muted) discard_audio_locked();
         }
-        pcm_.clear();
-        audio_queued_samples_.store(0, std::memory_order_release);
     }
+    audio_wake_.notify_all();
 }
 
 PlayStepResult NativePlayRuntime::copy_latest_frame() const
@@ -181,12 +195,12 @@ NativePlayStatus NativePlayRuntime::status() const
     result.audio_last_callback_bytes = audio_last_callback_bytes_.load(std::memory_order_acquire);
     result.audio_callback_count = audio_callback_count_.load(std::memory_order_acquire);
     result.audio_fast_path = audio_fast_path_.load(std::memory_order_acquire);
-    if (!result.audio_fast_path)
     {
-        result.audio_fallback_reason = "fast audio path underrun; using normal latency";
+        std::lock_guard lock(audio_mutex_);
+        result.audio_fallback_reason = audio_fallback_reason_;
+        result.audio_delay_samples = temporal_audio_.current_delay_samples();
+        result.audio_temporal_state = temporal_audio_.state();
     }
-    result.audio_delay_samples = temporal_audio_.current_delay_samples();
-    result.audio_temporal_state = temporal_audio_.state();
     result.audio_frame_position = audio_frame_position_.load(std::memory_order_acquire);
     result.audio_timestamp_ns = audio_timestamp_ns_.load(std::memory_order_acquire);
     result.source_fps = timing_.frames_per_second;
@@ -202,8 +216,9 @@ void NativePlayRuntime::close()
 {
     stop_.store(true, std::memory_order_release);
     wake_.notify_all();
+    audio_wake_.notify_all();
     if (thread_.joinable()) thread_.join();
-    release_audio();
+    if (audio_thread_.joinable()) audio_thread_.join();
     session_.reset();
     running_.store(false, std::memory_order_release);
 }
@@ -235,12 +250,14 @@ void NativePlayRuntime::run()
             }
             harmony_renderer().submit_frame(
                 step.frame_index, step.width, step.height, step.rgb565);
-            temporal_audio_.set_motion_enabled(
-                harmony_renderer().status().display.motion_qualified);
+            {
+                const bool motion = harmony_renderer().status().display.motion_qualified;
+                std::lock_guard lock(audio_mutex_);
+                temporal_audio_.set_motion_enabled(motion);
+            }
             if (!paused_.load(std::memory_order_acquire) &&
                 !muted_.load(std::memory_order_acquire) && !step.pcm.empty())
             {
-                bool start_audio = false;
                 const auto adjusted = adapt_pcm_to_queue_clock(
                     step.pcm.data(), step.pcm.size(),
                     static_cast<std::size_t>(audio_queued_samples_.load(
@@ -251,25 +268,16 @@ void NativePlayRuntime::run()
                         audio_fast_path_.load(std::memory_order_acquire)));
                 {
                     std::lock_guard lock(audio_mutex_);
-                    pcm_.push(adjusted.data(), adjusted.size());
-                    audio_dropped_samples_.store(pcm_.dropped_samples(), std::memory_order_release);
+                    if (!paused_.load(std::memory_order_acquire) &&
+                        !muted_.load(std::memory_order_acquire))
+                        pcm_.push(adjusted.data(), adjusted.size());
+                    audio_dropped_samples_.store(pcm_.dropped_samples() + audio_discarded_samples_, std::memory_order_release);
                     audio_produced_samples_.store(pcm_.produced_samples(), std::memory_order_release);
                     audio_queued_samples_.store(pcm_.size(), std::memory_order_release);
                     audio_high_water_samples_.store(
                         pcm_.high_water_samples(), std::memory_order_release);
-                    const auto callback_frames = static_cast<std::size_t>(std::max(
-                        1, audio_callback_frames_.load(std::memory_order_acquire)));
-                    start_audio = audio_renderer_ != nullptr &&
-                        pcm_.size() >= audio_start_prime_samples(callback_frames) &&
-                        !audio_started_.load(std::memory_order_acquire);
-                    if (start_audio && audio_renderer_ != nullptr &&
-                        !paused_.load(std::memory_order_acquire) &&
-                        !muted_.load(std::memory_order_acquire) &&
-                        audio_ok(OH_AudioRenderer_Start(audio_renderer_)))
-                    {
-                        audio_started_.store(true, std::memory_order_release);
-                    }
                 }
+                audio_wake_.notify_all();
             }
             step.pcm.clear();
             step.pcm_sample_count = 0;
@@ -278,19 +286,20 @@ void NativePlayRuntime::run()
                 latest_ = step;
             }
             first_frame_ready_.notify_all();
-            const std::uint64_t count = source_frames_.fetch_add(
-                1, std::memory_order_acq_rel) + 1;
-            if (count % 60 == 0) sample_audio_timestamp();
+            source_frames_.fetch_add(1, std::memory_order_acq_rel);
             if (should_fallback_audio_latency(
                     audio_underflows_.load(std::memory_order_acquire),
                     audio_fast_path_.load(std::memory_order_acquire)))
             {
+                std::lock_guard lock(audio_mutex_);
                 audio_fast_path_.store(false, std::memory_order_release);
-                release_audio();
+                ++audio_generation_;
+                audio_started_.store(false, std::memory_order_release);
+                audio_fallback_reason_ = "fast audio path underrun; switching to normal latency";
                 audio_fallback_underflow_baseline_.store(
                     audio_underflows_.load(std::memory_order_acquire),
                     std::memory_order_release);
-                initialize_audio(false);
+                audio_wake_.notify_all();
             }
 
             deadline += period;
@@ -317,12 +326,122 @@ void NativePlayRuntime::run()
     first_frame_ready_.notify_all();
 }
 
-void NativePlayRuntime::initialize_audio(bool fast_path)
+void NativePlayRuntime::run_audio()
 {
+    std::uint64_t attempted_generation = static_cast<std::uint64_t>(-1);
+    auto next_timestamp = std::chrono::steady_clock::now();
+    while (!stop_.load(std::memory_order_acquire))
+    {
+        std::uint64_t generation;
+        bool enabled;
+        bool fast_path;
+        {
+            std::lock_guard lock(audio_mutex_);
+            generation = audio_generation_;
+            enabled = !paused_.load() && !muted_.load();
+            fast_path = audio_fast_path_.load();
+        }
+        if (generation != attempted_generation)
+        {
+            if (audio_renderer_ != nullptr &&
+                audio_renderer_fast_path_ == fast_path && audio_ready_.load())
+            {
+                // Preserve the established pause/mute path and healthy sink.
+                // Source/callback already observe the new desired state; these
+                // potentially slow platform operations run without their lock.
+                // Pause is legal only for a RUNNING renderer. PREPARED has no
+                // device data to flush; PAUSED was already paused/flushed and
+                // can resume directly. Desired-generation changes alone do not
+                // imply a physical state transition.
+                if (audio_handle_->state == AudioHandleRecord::State::RUNNING)
+                {
+                    const bool paused = audio_ok(OH_AudioRenderer_Pause(audio_renderer_));
+                    if (paused) audio_handle_->state = AudioHandleRecord::State::PAUSED;
+                    const bool flushed = paused && audio_ok(OH_AudioRenderer_Flush(audio_renderer_));
+                    if (!flushed) release_audio();
+                }
+            }
+            else if (audio_handle_ != nullptr) release_audio();
+            attempted_generation = generation;
+            if (enabled && !stop_.load() && audio_handle_ == nullptr)
+                initialize_audio(fast_path, generation);
+        }
+        OH_AudioRenderer* renderer = nullptr;
+        {
+            std::lock_guard lock(audio_mutex_);
+            if (generation == audio_generation_ && !stop_.load() &&
+                !paused_.load() && !muted_.load() && audio_renderer_ != nullptr && audio_ready_.load() &&
+                !audio_started_.load() && pcm_.size() >= audio_start_prime_samples(
+                    static_cast<std::size_t>(std::max(1, audio_callback_frames_.load()))))
+                renderer = audio_renderer_;
+        }
+        if (renderer != nullptr)
+        {
+            const bool started = audio_ok(OH_AudioRenderer_Start(renderer));
+            // Even a now-stale successful Start really started the device. The
+            // next generation must Pause it before any later Start is legal.
+            if (started) audio_handle_->state = AudioHandleRecord::State::RUNNING;
+            std::lock_guard lock(audio_mutex_);
+            if (generation == audio_generation_ && !stop_.load() &&
+                !paused_.load() && !muted_.load())
+            {
+                audio_started_.store(started, std::memory_order_release);
+                if (started)
+                {
+                    audio_fallback_reason_ = fast_path ? "" :
+                        "fast audio path unavailable; using normal latency";
+                }
+                else
+                {
+                    audio_ready_.store(false, std::memory_order_release);
+                    audio_fallback_reason_ = "audio renderer start failed";
+                    // Do not spin Start on a failing device. A state change
+                    // creates a new generation and permits recovery.
+                    attempted_generation = audio_generation_;
+                }
+            }
+        }
+        if (std::chrono::steady_clock::now() >= next_timestamp)
+        {
+            sample_audio_timestamp();
+            next_timestamp = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        }
+        std::unique_lock lock(audio_mutex_);
+        audio_wake_.wait_for(lock, std::chrono::milliseconds(5));
+    }
+    release_audio(true);
+    std::lock_guard lock(audio_mutex_);
+    discard_audio_locked();
+}
+
+void NativePlayRuntime::initialize_audio(bool fast_path, std::uint64_t generation)
+{
+    if (audio_creation_disabled.load(std::memory_order_acquire))
+    {
+        std::lock_guard lock(audio_mutex_);
+        audio_fallback_reason_ = "audio disabled for this process after renderer release failure";
+        return;
+    }
+    audio_handle_ = new (std::nothrow) AudioHandleRecord;
+    if (audio_handle_ == nullptr)
+    {
+        std::lock_guard lock(audio_mutex_);
+        audio_fallback_reason_ = "audio renderer ownership allocation failed";
+        return;
+    }
+    OH_AudioRenderer* renderer = nullptr;
     OH_AudioStreamBuilder* builder = nullptr;
     if (!audio_ok(OH_AudioStreamBuilder_Create(&builder, AUDIOSTREAM_TYPE_RENDERER)) ||
         builder == nullptr)
     {
+        delete audio_handle_;
+        audio_handle_ = nullptr;
+        std::lock_guard lock(audio_mutex_);
+        if (generation == audio_generation_)
+        {
+            audio_fallback_reason_ = "audio renderer creation failed";
+            if (fast_path) { audio_fast_path_.store(false); ++audio_generation_; }
+        }
         return;
     }
     const bool configured =
@@ -338,67 +457,134 @@ void NativePlayRuntime::initialize_audio(bool fast_path)
         audio_ok(OH_AudioStreamBuilder_SetRendererWriteDataCallback(
             builder, reinterpret_cast<OH_AudioRenderer_OnWriteDataCallback>(&NativePlayRuntime::audio_write),
             this)) &&
-        audio_ok(OH_AudioStreamBuilder_GenerateRenderer(builder, &audio_renderer_));
+        audio_ok(OH_AudioStreamBuilder_GenerateRenderer(builder, &renderer));
     (void)OH_AudioStreamBuilder_Destroy(builder);
-    if (!configured || audio_renderer_ == nullptr)
+    audio_handle_->renderer = renderer;
+    if (!configured || renderer == nullptr)
     {
-        release_audio();
+        if (!release_audio()) return;
+        std::lock_guard lock(audio_mutex_);
+        if (generation == audio_generation_)
+        {
+            audio_fallback_reason_ = "audio renderer configuration failed";
+            if (fast_path) { audio_fast_path_.store(false); ++audio_generation_; }
+        }
         return;
     }
     std::int32_t callback_frames = 0;
-    if (audio_ok(OH_AudioRenderer_GetFrameSizeInCallback(
-            audio_renderer_, &callback_frames)) && callback_frames > 0)
-    {
-        audio_callback_frames_.store(callback_frames, std::memory_order_release);
-    }
+    (void)OH_AudioRenderer_GetFrameSizeInCallback(renderer, &callback_frames);
     std::int32_t sample_rate = 0;
-    if (audio_ok(OH_AudioRenderer_GetSamplingRate(audio_renderer_, &sample_rate)) &&
-        sample_rate > 0)
-    {
-        audio_sample_rate_.store(sample_rate, std::memory_order_release);
-    }
+    (void)OH_AudioRenderer_GetSamplingRate(renderer, &sample_rate);
     std::int32_t channel_count = 0;
-    if (audio_ok(OH_AudioRenderer_GetChannelCount(audio_renderer_, &channel_count)) &&
-        channel_count > 0)
+    (void)OH_AudioRenderer_GetChannelCount(renderer, &channel_count);
     {
-        audio_channel_count_.store(channel_count, std::memory_order_release);
+        std::lock_guard lock(audio_mutex_);
+        if (generation == audio_generation_ && !stop_.load() &&
+            !audio_creation_disabled.load(std::memory_order_acquire) &&
+            !paused_.load() && !muted_.load())
+        {
+            audio_renderer_ = renderer;
+            audio_renderer_fast_path_ = fast_path;
+            audio_callback_frames_.store(callback_frames, std::memory_order_release);
+            audio_sample_rate_.store(sample_rate, std::memory_order_release);
+            audio_channel_count_.store(channel_count, std::memory_order_release);
+            audio_ready_.store(true, std::memory_order_release);
+            return;
+        }
     }
-    audio_ready_.store(true, std::memory_order_release);
+    release_audio();
 }
 
-void NativePlayRuntime::release_audio()
+bool NativePlayRuntime::release_audio(bool closing)
 {
-    std::lock_guard lock(audio_mutex_);
-    if (audio_renderer_ != nullptr)
     {
-        (void)OH_AudioRenderer_Stop(audio_renderer_);
-        (void)OH_AudioRenderer_Release(audio_renderer_);
+        std::lock_guard lock(audio_mutex_);
         audio_renderer_ = nullptr;
+        audio_ready_.store(false, std::memory_order_release);
+        audio_started_.store(false, std::memory_order_release);
+        audio_timestamp_valid_.store(false, std::memory_order_release);
     }
+    // Called only by audio_thread_, never the source or callback. OpenHarmony
+    // 6.0 AudioRendererPrivate::Release joins its callback loop on this path.
+    // The identity is detached before Stop/Release, so late old callbacks fill
+    // silence. Release returns before another sink may be published or runtime
+    // storage destroyed. Keep queued PCM across fallback; overflow is counted.
+    if (audio_handle_ == nullptr) return true;
+    auto* renderer = audio_handle_->renderer;
+    if (renderer != nullptr)
+    {
+        if (audio_release_failed_ && !closing) return false;
+        if (audio_ok(OH_AudioRenderer_Stop(renderer)))
+            audio_handle_->state = AudioHandleRecord::State::STOPPED;
+        const int attempts = closing ? 1 : 2;
+        bool released = false;
+        for (int attempt = 0; attempt < attempts; ++attempt)
+        {
+            if (audio_ok(OH_AudioRenderer_Release(renderer))) { released = true; break; }
+            if (attempt + 1 < attempts) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        if (!released)
+        {
+            audio_release_failed_ = true;
+            audio_creation_disabled.store(true, std::memory_order_release);
+            std::lock_guard lock(audio_mutex_);
+            audio_fallback_reason_ = "audio renderer release failed; audio disabled for this process";
+            if (closing)
+            {
+                // The verified noncallback Release path has joined callbacks,
+                // even on failure. Keep the unreleased opaque platform resource
+                // until process exit, without losing its ownership record.
+                // No further sinks may be created, bounding retained records
+                // to sinks already alive/in creation at the first failure.
+                quarantine_audio_handle(audio_handle_);
+                audio_handle_ = nullptr;
+            }
+            return false;
+        }
+    }
+    delete audio_handle_;
+    audio_handle_ = nullptr;
+    audio_release_failed_ = false;
+    return true;
+}
+
+void NativePlayRuntime::discard_audio_locked()
+{
+    audio_discarded_samples_ += pcm_.size();
     pcm_.clear();
     temporal_audio_.reset();
+    audio_dropped_samples_.store(pcm_.dropped_samples() + audio_discarded_samples_, std::memory_order_release);
     audio_queued_samples_.store(0, std::memory_order_release);
-    audio_ready_.store(false, std::memory_order_release);
-    audio_started_.store(false, std::memory_order_release);
-    audio_timestamp_valid_.store(false, std::memory_order_release);
 }
 
 void NativePlayRuntime::sample_audio_timestamp()
 {
     GetAudioTimestamp api = get_audio_timestamp_api();
-    if (api == nullptr || audio_renderer_ == nullptr) return;
+    OH_AudioRenderer* renderer;
+    std::uint64_t generation;
+    {
+        std::lock_guard lock(audio_mutex_);
+        renderer = audio_renderer_;
+        generation = audio_generation_;
+        if (api == nullptr || renderer == nullptr || !audio_started_.load()) return;
+    }
     std::int64_t position = 0;
     std::int64_t timestamp = 0;
-    if (api(audio_renderer_, &position, &timestamp) == AUDIOSTREAM_SUCCESS &&
-        position >= 0 && timestamp > 0)
+    const bool valid = api(renderer, &position, &timestamp) == AUDIOSTREAM_SUCCESS &&
+        position >= 0 && timestamp > 0;
+    std::lock_guard lock(audio_mutex_);
+    if (generation == audio_generation_ && !stop_.load() && !paused_.load() && !muted_.load())
     {
-        audio_frame_position_.store(position, std::memory_order_release);
-        audio_timestamp_ns_.store(timestamp, std::memory_order_release);
-        audio_timestamp_valid_.store(true, std::memory_order_release);
+        if (valid)
+        {
+            audio_frame_position_.store(position, std::memory_order_release);
+            audio_timestamp_ns_.store(timestamp, std::memory_order_release);
+        }
+        audio_timestamp_valid_.store(valid, std::memory_order_release);
     }
 }
 
-int NativePlayRuntime::audio_write(OH_AudioRenderer*, void* user_data,
+int NativePlayRuntime::audio_write(OH_AudioRenderer* renderer, void* user_data,
                                    void* buffer, std::int32_t bytes)
 {
     if (user_data == nullptr || buffer == nullptr || bytes <= 0)
@@ -409,6 +595,14 @@ int NativePlayRuntime::audio_write(OH_AudioRenderer*, void* user_data,
     self->audio_last_callback_bytes_.store(bytes, std::memory_order_relaxed);
     self->audio_callback_count_.fetch_add(1, std::memory_order_relaxed);
     std::memset(buffer, 0, static_cast<std::size_t>(bytes));
+    std::unique_lock lock(self->audio_mutex_, std::try_to_lock);
+    if (!lock.owns_lock())
+    {
+        self->audio_lock_misses_.fetch_add(1, std::memory_order_relaxed);
+        return AUDIO_DATA_CALLBACK_RESULT_VALID;
+    }
+    if (renderer != self->audio_renderer_ || self->stop_.load(std::memory_order_acquire))
+        return AUDIO_DATA_CALLBACK_RESULT_VALID;
     if (!self->audio_started_.load(std::memory_order_acquire))
     {
         self->audio_priming_callbacks_.fetch_add(1, std::memory_order_relaxed);

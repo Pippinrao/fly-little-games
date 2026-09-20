@@ -63,7 +63,7 @@ void test_policy_and_handshake()
               decoded.pin_verifier_invoked,
           "provider handshake facts use one strict canonical 88-byte record");
 
-    for (int mutation = 0; mutation < 6; ++mutation)
+    for (int mutation = 0; mutation < 7; ++mutation)
     {
         auto bad = facts;
         if (mutation == 0) bad.full_handshake = false;
@@ -72,8 +72,14 @@ void test_policy_and_handshake()
         if (mutation == 3) bad.zero_rtt = true;
         if (mutation == 4) bad.alpn[14] = '1';
         if (mutation == 5) bad.der_spki_hash[0] ^= 1;
+        if (mutation == 6) { bad.tls_major = 0; bad.tls_minor = 0; }
         check(flynes::session::wire::verify_quic_handshake_v2(expected, bad) != Status::Ok,
               "handshake mutation rejected");
+        check(flynes::session::wire::encode_quic_handshake_facts_v2(
+                  bad, &encoded) != Status::Ok ||
+                  flynes::session::wire::verify_quic_handshake_v2(expected, bad) !=
+                      Status::Ok,
+              "missing or wrong TLS/ALPN/pin is not encoded as a successful handshake");
     }
 }
 

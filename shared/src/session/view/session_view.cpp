@@ -232,9 +232,42 @@ extern "C" fly_session_result_v2 fly_session_view_copy_game_choices_v2(
     fly_session_game_choice_v2* out_choices, uint32_t capacity,
     uint32_t* written)
 {
-    return view ? copy_view_page(view->game_choices, offset, out_choices,
-                                 capacity, written)
-                : FLY_SESSION_V2_INVALID_ARGUMENT;
+    if (!view || !written || (capacity != 0 && !out_choices))
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    *written = 0;
+    const auto total = static_cast<std::uint32_t>(view->game_choices.size());
+    if (offset > total)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    if (offset == total || capacity == 0)
+        return FLY_SESSION_V2_OK;
+
+    const auto declared_in = out_choices->struct_size;
+    const auto abi_in = out_choices->abi_version;
+    const auto declared =
+        (declared_in == 0u && abi_in == 0u)
+            ? FLY_SESSION_GAME_CHOICE_V2_R0_SIZE
+            : declared_in;
+    const auto abi =
+        (declared_in == 0u && abi_in == 0u) ? FLY_SESSION_ABI_VERSION_2 : abi_in;
+    if (declared < FLY_SESSION_GAME_CHOICE_V2_R0_SIZE ||
+        declared > FLY_SESSION_GAME_CHOICE_V2_SIZE ||
+        abi != FLY_SESSION_ABI_VERSION_2)
+    {
+        return FLY_SESSION_V2_ABI_MISMATCH;
+    }
+
+    const auto count = (std::min)(capacity, total - offset);
+    const auto copied = declared;
+    auto* bytes = reinterpret_cast<std::uint8_t*>(out_choices);
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        auto* dest = bytes + static_cast<std::size_t>(index) * declared;
+        std::memcpy(dest, &view->game_choices[offset + index], copied);
+        std::memcpy(dest, &declared, sizeof(declared));
+        std::memcpy(dest + sizeof(declared), &abi, sizeof(abi));
+    }
+    *written = count;
+    return FLY_SESSION_V2_OK;
 }
 
 extern "C" void fly_session_approval_token_retain_v2(

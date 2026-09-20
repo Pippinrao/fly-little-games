@@ -443,9 +443,34 @@ const LOBBY_BLOCKED: NearbyStringKey[] = [
 export function nearbyLobbyRows(): NearbyLobbyRow[] {
   const rows: NearbyLobbyRow[] = [];
   for (let index = 0; index < LOBBY_LABELS.length; index++) {
-    rows.push({ label: LOBBY_LABELS[index], blocked: LOBBY_BLOCKED[index] });
+    rows.push({
+      label: LOBBY_LABELS[index],
+      blocked: LOBBY_BLOCKED[index]
+    });
   }
   return rows;
+}
+
+export function nearbyLobbyFirstScreenRows(): NearbyLobbyRow[] {
+  return [
+    { label: 'nearby_lobby_rom_identity', blocked: 'nearby_blocked_rom_transfer' },
+    { label: 'nearby_lobby_network_owner', blocked: 'nearby_blocked_session_read' },
+    { label: 'nearby_lobby_seat', blocked: 'nearby_blocked_mode_gate' }
+  ];
+}
+
+export function nearbyLobbyDetailRows(): NearbyLobbyRow[] {
+  const first = nearbyLobbyFirstScreenRows().map((row: NearbyLobbyRow) => row.label);
+  const rows: NearbyLobbyRow[] = nearbyLobbyRows();
+  const details: NearbyLobbyRow[] = [];
+  for (let index = 0; index < rows.length; index++) {
+    const label = rows[index].label;
+    if (label === 'nearby_lobby_confirm' || first.indexOf(label) >= 0) {
+      continue;
+    }
+    details.push(rows[index]);
+  }
+  return details;
 }
 
 /** §2.2 in-game field rows; every value needs the session surface (§3). */

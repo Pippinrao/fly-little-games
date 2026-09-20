@@ -1,4 +1,5 @@
 #include "session_codec.hpp"
+#include "sha256.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -78,8 +79,12 @@ const char* status_name(Status status)
         return "unknown_enum";
     case Status::NonzeroReserved:
         return "nonzero_reserved";
+    case Status::UnknownKind:
+        return "unknown_kind";
     case Status::UnknownCriticalTag:
         return "unknown_critical";
+    case Status::InvalidField:
+        return "invalid_field";
     default:
         return "other";
     }
@@ -126,6 +131,58 @@ void test_case(const fs::path& dir)
         expect_status(dir / "unknown_enum.bin", type, Status::UnknownEnum);
     if (!fs::exists(dir / "skip_reserved.txt"))
         expect_status(dir / "nonzero_reserved.bin", type, Status::NonzeroReserved);
+}
+
+std::vector<std::uint8_t> pending_config_confirm_legal()
+{
+    std::vector<std::uint8_t> bytes(44u, 0u);
+    bytes[1] = 1u;
+    for (std::size_t i = 0; i < 32u; ++i)
+        bytes[4u + i] = static_cast<std::uint8_t>(0xA1u + i);
+    bytes[43] = 1u;
+    return bytes;
+}
+
+void expect_check(const std::vector<std::uint8_t>& bytes, Status expected, const char* message)
+{
+    std::uint8_t hash[32]{};
+    const Status got = flynes::session::wire::check(
+        "0x0218", bytes.empty() ? nullptr : bytes.data(), bytes.size(), hash);
+    check(got == expected, std::string(message) + " expected " + status_name(expected) +
+                               " got " + status_name(got));
+}
+
+void pending_config_confirm_v1_codec()
+{
+    const auto legal = pending_config_confirm_legal();
+    check(legal.size() == 44u, "PendingConfigConfirmV1 is 44 bytes");
+    std::uint8_t hash[32]{};
+    const Status got = flynes::session::wire::check("0x0218", legal.data(), legal.size(), hash);
+    check(got == Status::Ok, "legal PendingConfigConfirmV1 decodes");
+    const auto expected = flynes::session::wire::domain_hash(
+        "flynes-pending-config-confirm-v1", legal.data(), legal.size());
+    check(std::memcmp(hash, expected.data(), 32u) == 0,
+          "PendingConfigConfirmV1 hashes under flynes-pending-config-confirm-v1");
+
+    auto truncated = legal;
+    truncated.pop_back();
+    expect_check(truncated, Status::Truncated, "43-byte confirm");
+    auto trailing = legal;
+    trailing.push_back(0u);
+    expect_check(trailing, Status::Trailing, "45-byte confirm");
+
+    auto bad_version = legal;
+    bad_version[1] = 2u;
+    expect_check(bad_version, Status::InvalidField, "confirm version != 1");
+    auto reserved = legal;
+    reserved[2] = 1u;
+    expect_check(reserved, Status::NonzeroReserved, "confirm reserved nonzero");
+    auto zero_id = legal;
+    std::fill(zero_id.begin() + 4, zero_id.begin() + 36, std::uint8_t{0});
+    expect_check(zero_id, Status::InvalidField, "zero pending_config_id");
+    auto zero_revision = legal;
+    std::fill(zero_revision.begin() + 36, zero_revision.end(), std::uint8_t{0});
+    expect_check(zero_revision, Status::InvalidField, "zero pending_config_revision");
 }
 
 void session_signing_binding_rejects_semantic_mutations(const fs::path& root)
@@ -209,6 +266,8 @@ int main()
     check(flynes::session::wire::encode_frame_cursor(0, 0, cursor, &written) == Status::Ok,
           "encode GENESIS");
     check(written == 16u && cursor[0] == 0, "GENESIS wire kind");
+
+    pending_config_confirm_v1_codec();
 
     const fs::path root(FLYNES_SESSION_GOLDEN_DIR);
     check(fs::exists(root / "manifest.json"), "golden manifest exists");

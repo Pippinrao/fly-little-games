@@ -35,6 +35,17 @@ struct NearbyLayout
 
 [[nodiscard]] NearbyLayout project_layout(double available_width) noexcept;
 
+// N00 chrome frozen to the approved HTML mockup `nearby()`
+// (docs/superpowers/specs/assets/nearby-ui-parity-review.html) and U06/U07:
+// left column is kicker/headline/subtitle then 创建联机/输入配对码/扫码加入;
+// 附近设备/好友 tabs and 寻找设备 live on the right; pairing stages are N07/N10.
+[[nodiscard]] std::array<std::string_view, 6> n00_left_column_keys() noexcept;
+[[nodiscard]] bool n00_shows_stage_pipeline() noexcept;
+[[nodiscard]] bool n00_shows_scan_host_qr() noexcept;
+[[nodiscard]] bool n00_shows_pairing_shortcut() noexcept;
+[[nodiscard]] bool n00_tabs_on_right_column() noexcept;
+[[nodiscard]] bool n00_find_devices_on_devices_tab() noexcept;
+
 // ---------------------------------------------------------------------------
 // Screen identifiers (design §4). These are semantic test/adaptation IDs, not
 // a requirement to create one native page per value.
@@ -258,5 +269,60 @@ struct PendingConfigFacts
 
 // Both sides confirmed the same pending config; only then may the game start.
 [[nodiscard]] bool config_start_allowed(const PendingConfigFacts& facts);
+
+// ---------------------------------------------------------------------------
+// UX-00.S: screen/action projection. One PAIR surface hosts N01–N07; screen
+// comes from session facts plus an explicit local action, never from showing
+// every module at once. Platform providers are out of this card.
+// ---------------------------------------------------------------------------
+enum class NearbyContainer : uint8_t
+{
+    Entry = 0,
+    Pair,
+    Connected,
+    Home,
+    Config,
+    Failure,
+    Content,
+    Friends,
+};
+
+struct NearbyNavigationFacts
+{
+    ScreenId screen = ScreenId::NearbyEntry;
+    bool details_open = false;
+    bool local_is_host = false;
+    bool join_accepted = false;        // async lookup result; never guessed
+    bool qr_capability_ready = false;  // camera + decoder actually wired
+    bool qr_signed_path = false;       // verified QR skips forced SAS
+    bool sas_peer_confirmed = false;
+    bool link_ready = false;           // every link check passed
+    bool session_connected = false;    // the four Connected facts
+    bool first_stage_failed = false;
+    std::string_view failure_reason_key{};
+};
+
+struct NearbyNavigation
+{
+    ScreenId screen = ScreenId::NearbyEntry;
+    bool details_open = false;
+    bool terminate_attempt = false;
+    bool clear_config_confirm = false;
+    bool rebuild_invite = false;
+    bool rebuild_connection = false;
+    std::string_view failure_reason_key{};
+};
+
+[[nodiscard]] NearbyContainer screen_container(ScreenId screen) noexcept;
+
+[[nodiscard]] NearbyNavigation apply_nearby_action(const NearbyNavigationFacts& facts,
+                                                   ActionId action);
+
+[[nodiscard]] NearbyNavigation apply_nearby_session(const NearbyNavigationFacts& facts);
+
+// UX action → existing fly_session_action_kind_v2 numeric identity. 0 means
+// the UX action is local routing only (no session kind). Platforms must send
+// these kinds; they must not invent a parallel connected/confirmed bool.
+[[nodiscard]] uint32_t session_action_kind(ActionId action) noexcept;
 
 } // namespace flynes::product::nearby

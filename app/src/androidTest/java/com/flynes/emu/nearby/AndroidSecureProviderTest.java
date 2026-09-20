@@ -10,6 +10,12 @@ import org.junit.runner.RunWith;
 
 import java.security.Signature;
 import java.security.MessageDigest;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECGenParameterSpec;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import javax.crypto.Mac;
@@ -17,6 +23,128 @@ import javax.crypto.spec.SecretKeySpec;
 
 @RunWith(AndroidJUnit4.class)
 public final class AndroidSecureProviderTest {
+    private static final BigInteger P256_ORDER = new BigInteger(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 16);
+
+    private static byte[] unsigned32(BigInteger value) {
+        byte[] encoded = value.toByteArray();
+        byte[] result = new byte[32];
+        int count = Math.min(encoded.length, result.length);
+        System.arraycopy(encoded, encoded.length - count, result, result.length - count, count);
+        return result;
+    }
+
+    private static byte[] peerX963(KeyPair pair) {
+        ECPublicKey key = (ECPublicKey) pair.getPublic();
+        byte[] result = new byte[65];
+        result[0] = 4;
+        System.arraycopy(unsigned32(key.getW().getAffineX()), 0, result, 1, 32);
+        System.arraycopy(unsigned32(key.getW().getAffineY()), 0, result, 33, 32);
+        return result;
+    }
+
+    private static final class PeerSignature {
+        final byte[] domain = "flynes-pair-signature-v1".getBytes(StandardCharsets.US_ASCII);
+        final byte[] preimage = "flynes-pair-signature-v1\0independent-peer".getBytes(
+                StandardCharsets.US_ASCII);
+        final byte[] publicKey;
+        final byte[] digest;
+        final byte[] der;
+        final byte[] raw;
+
+        PeerSignature() throws Exception {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+            generator.initialize(new ECGenParameterSpec("secp256r1"));
+            KeyPair pair = generator.generateKeyPair();
+            publicKey = peerX963(pair);
+            digest = MessageDigest.getInstance("SHA-256").digest(preimage);
+            // Independent JCA signer hashes the preimage once. No private-key export.
+            Signature signer = Signature.getInstance("SHA256withECDSA");
+            signer.initSign(pair.getPrivate());
+            signer.update(preimage);
+            der = signer.sign();
+            raw = AndroidSecureProvider.canonicalRawSignature(der);
+        }
+    }
+
+    @Test public void importedPeerSignatureVerifiesExactPrehashedDigest() throws Exception {
+        AndroidSecureProvider provider = new AndroidSecureProvider(
+                ApplicationProvider.getApplicationContext());
+        PeerSignature peer = new PeerSignature();
+        assertTrue("independent peer X9.63 signature must verify", provider.verifyPrehashed(
+                peer.publicKey, peer.domain, peer.digest, peer.raw));
+        byte[] changedDigest = peer.digest.clone();
+        changedDigest[0] ^= 1;
+        assertFalse(provider.verifyPrehashed(peer.publicKey, peer.domain, changedDigest, peer.raw));
+        assertFalse(provider.verifyPrehashed(peer.publicKey, peer.domain,
+                MessageDigest.getInstance("SHA-256").digest(peer.digest), peer.raw));
+        byte[] otherDomainPreimage = peer.preimage.clone();
+        otherDomainPreimage[0] ^= 1;
+        assertFalse(provider.verifyPrehashed(peer.publicKey, peer.domain,
+                MessageDigest.getInstance("SHA-256").digest(otherDomainPreimage), peer.raw));
+        assertFalse(provider.verifyPrehashed(new PeerSignature().publicKey,
+                peer.domain, peer.digest, peer.raw));
+        byte[] tampered = peer.raw.clone();
+        tampered[31] ^= 1;
+        assertFalse(provider.verifyPrehashed(peer.publicKey, peer.domain, peer.digest, tampered));
+        // Domain is opaque metadata; the already-separated digest carries its binding.
+        // Changing metadata alone cannot be distinguished cryptographically here.
+        byte[] binaryDomain = new byte[129];
+        Arrays.fill(binaryDomain, (byte) 0xff);
+        binaryDomain[0] = 0;
+        assertTrue(provider.verifyPrehashed(peer.publicKey, binaryDomain, peer.digest, peer.raw));
+    }
+
+    @Test public void importedPeerSignatureRejectsNoncanonicalScalarsAndPoints() throws Exception {
+        AndroidSecureProvider provider = new AndroidSecureProvider(
+                ApplicationProvider.getApplicationContext());
+        PeerSignature peer = new PeerSignature();
+        BigInteger lowS = new BigInteger(1, Arrays.copyOfRange(peer.raw, 32, 64));
+        byte[] highS = peer.raw.clone();
+        System.arraycopy(unsigned32(P256_ORDER.subtract(lowS)), 0, highS, 32, 32);
+        assertFalse(provider.verifyPrehashed(peer.publicKey, peer.domain, peer.digest, highS));
+        for (int offset : new int[]{0, 32}) {
+            for (BigInteger invalid : new BigInteger[]{BigInteger.ZERO, P256_ORDER,
+                    BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE)}) {
+                byte[] raw = peer.raw.clone();
+                System.arraycopy(unsigned32(invalid), 0, raw, offset, 32);
+                assertFalse(provider.verifyPrehashed(peer.publicKey, peer.domain, peer.digest, raw));
+            }
+        }
+        byte[] offCurve = new byte[65];
+        offCurve[0] = 4;
+        assertFalse(provider.verifyPrehashed(offCurve, peer.domain, peer.digest, peer.raw));
+        byte[] outOfField = peer.publicKey.clone();
+        Arrays.fill(outOfField, 1, 33, (byte) 0xff);
+        assertFalse(provider.verifyPrehashed(outOfField, peer.domain, peer.digest, peer.raw));
+    }
+
+    @Test public void importedPeerSignatureRejectsMalformedArguments() throws Exception {
+        AndroidSecureProvider provider = new AndroidSecureProvider(
+                ApplicationProvider.getApplicationContext());
+        PeerSignature peer = new PeerSignature();
+        byte[] wrongPrefix = peer.publicKey.clone();
+        wrongPrefix[0] = 2;
+        for (byte[] publicKey : new byte[][]{null, new byte[0], new byte[33],
+                Arrays.copyOf(peer.publicKey, 64), Arrays.copyOf(peer.publicKey, 66), wrongPrefix}) {
+            assertThrows(IllegalArgumentException.class, () -> provider.verifyPrehashed(
+                    publicKey, peer.domain, peer.digest, peer.raw));
+        }
+        for (byte[] domain : new byte[][]{null, new byte[0]}) {
+            assertThrows(IllegalArgumentException.class, () -> provider.verifyPrehashed(
+                    peer.publicKey, domain, peer.digest, peer.raw));
+        }
+        for (byte[] digest : new byte[][]{null, new byte[0], new byte[31], new byte[33]}) {
+            assertThrows(IllegalArgumentException.class, () -> provider.verifyPrehashed(
+                    peer.publicKey, peer.domain, digest, peer.raw));
+        }
+        for (byte[] signature : new byte[][]{null, new byte[0], peer.der,
+                Arrays.copyOf(peer.raw, 63), Arrays.copyOf(peer.raw, 65)}) {
+            assertThrows(IllegalArgumentException.class, () -> provider.verifyPrehashed(
+                    peer.publicKey, peer.domain, peer.digest, signature));
+        }
+    }
+
     @Test public void prehashedSigningIsExactNonExportableAndPurposeBound() throws Exception {
         AndroidSecureProvider provider = new AndroidSecureProvider(
                 ApplicationProvider.getApplicationContext());
@@ -30,6 +158,9 @@ public final class AndroidSecureProviderTest {
                     identity, "flynes-pair-signature-v1", digest);
             assertEquals(64, signature.length);
             assertTrue(AndroidSecureProvider.isCanonicalLowS(signature));
+            assertTrue(provider.verifyPrehashed(provider.publicKeyX963(identity),
+                    "flynes-pair-signature-v1".getBytes(StandardCharsets.US_ASCII),
+                    digest, signature));
             Signature verifier = Signature.getInstance("NONEwithECDSA");
             verifier.initVerify(provider.publicKey(identity));
             verifier.update(digest);

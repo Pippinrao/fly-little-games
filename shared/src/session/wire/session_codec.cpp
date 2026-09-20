@@ -16,6 +16,14 @@ std::uint16_t be16(const std::uint8_t* p) noexcept
     return static_cast<std::uint16_t>((p[0] << 8) | p[1]);
 }
 
+std::uint64_t be64(const std::uint8_t* p) noexcept
+{
+    std::uint64_t value = 0u;
+    for (int i = 0; i < 8; ++i)
+        value = (value << 8u) | p[i];
+    return value;
+}
+
 bool zeros(const std::uint8_t* p, std::size_t n) noexcept
 {
     for (std::size_t i = 0; i < n; ++i)
@@ -124,6 +132,24 @@ Status check_fixed(const std::uint8_t* bytes, std::size_t size, std::size_t expe
             return Status::UnknownEnum;
     }
     write_hash(domain, bytes, size, hash_out);
+    return Status::Ok;
+}
+
+Status check_pending_config_confirm(const std::uint8_t* bytes, std::size_t size,
+                                    std::uint8_t hash_out[32])
+{
+    const Status ls = length_status(size, 44u);
+    if (ls != Status::Ok)
+        return ls;
+    if (be16(bytes) != 1u)
+        return Status::InvalidField;
+    if (!zeros(bytes + 2, 2u))
+        return Status::NonzeroReserved;
+    if (zeros(bytes + 4, 32u))
+        return Status::InvalidField;
+    if (be64(bytes + 36) == 0u)
+        return Status::InvalidField;
+    write_hash("flynes-pending-config-confirm-v1", bytes, size, hash_out);
     return Status::Ok;
 }
 
@@ -367,6 +393,8 @@ Status check(const char* type_name, const std::uint8_t* bytes, std::size_t size,
         write_hash("", bytes, size, hash_out);
         return Status::Ok;
     }
+    if (name == "0x0218")
+        return check_pending_config_confirm(bytes, size, hash_out);
 
     struct FixedKind
     {

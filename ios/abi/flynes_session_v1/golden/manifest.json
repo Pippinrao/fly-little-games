@@ -351,6 +351,15 @@
       "negative_only": true,
       "reserved_offset": null,
       "sha256": "b804d5018ccb5f370d6fae39c5100552947f956a9b4c6dd534f68cb8b01e9a9b"
+    },
+    {
+      "domain": "flynes-pending-config-confirm-v1",
+      "enum_offset": null,
+      "kind": "0x0218",
+      "length": 44,
+      "name": "pending_config_confirm_v1",
+      "reserved_offset": 2,
+      "sha256": "d1f97b78853721a16af2c249650258af2dac682868275e974b771a7eeb6dbf6d"
     }
   ]
 }

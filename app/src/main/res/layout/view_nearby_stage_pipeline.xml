@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   The §2.1 pairing pipeline as one reusable element, included by every page that has to explain why
   pairing cannot proceed (好友/附近设备 and 配对). It is a separate element from a capability row:

@@ -10,11 +10,11 @@ import {
   NEARBY_STAGE_STATUS_CURRENT,
   NEARBY_STAGE_STATUS_NOT_REACHED,
   NEARBY_STAGE_STATUS_PASSED,
-  NEARBY_WIFI_PATH_ORDER,
   nearbyAuthorityTimeoutOptions,
   nearbyInGameBanner,
   nearbyInGameRows,
-  nearbyLobbyRows,
+  nearbyLobbyDetailRows,
+  nearbyLobbyFirstScreenRows,
   nearbyManageActions,
   nearbyPairingCurrentStage,
   nearbyPairingStages,
@@ -114,20 +114,26 @@ export default function nearbyServiceTest() {
       expect(nearbyPairingCurrentStage('nearby_stage_wifi')).assertEqual('nearby_stage_wifi');
     });
 
-    it('renders_every_lobby_field_with_its_blocked_key_and_one_confirm_control', 0, () => {
-      const rows: NearbyLobbyRow[] = nearbyLobbyRows();
-      expect(rows.length).assertEqual(15);
-      let confirmRows = 0;
-      for (let index = 0; index < rows.length; index++) {
-        expect(rows[index].blocked.startsWith('nearby_blocked_')).assertTrue();
-        if (rows[index].label === 'nearby_lobby_confirm') {
-          confirmRows++;
+    it('first_screen_is_game_host_seat_confirm_and_details_hold_the_rest', 0, () => {
+      const first: NearbyLobbyRow[] = nearbyLobbyFirstScreenRows();
+      expect(first.length).assertEqual(3);
+      expect(first[0].label).assertEqual('nearby_lobby_rom_identity');
+      expect(first[1].label).assertEqual('nearby_lobby_network_owner');
+      expect(first[2].label).assertEqual('nearby_lobby_seat');
+      const details: NearbyLobbyRow[] = nearbyLobbyDetailRows();
+      expect(details.length > 0).assertTrue();
+      let dumpedGame = false;
+      let fingerprint = false;
+      for (let index = 0; index < details.length; index++) {
+        if (details[index].label === 'nearby_lobby_rom_identity') {
+          dumpedGame = true;
+        }
+        if (details[index].label === 'nearby_lobby_identity_fingerprint') {
+          fingerprint = true;
         }
       }
-      // D8: exactly one primary 确认入局 control, and it is blocked today.
-      expect(confirmRows).assertEqual(1);
-      expect(rows[13].label).assertEqual('nearby_lobby_confirm');
-      expect(rows[13].blocked).assertEqual('nearby_blocked_session_read');
+      expect(dumpedGame).assertFalse();
+      expect(fingerprint).assertTrue();
     });
 
     it('covers_every_in_game_field_and_keeps_the_no_auto_merge_invariant_unblocked', 0, () => {

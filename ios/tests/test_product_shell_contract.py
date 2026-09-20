@@ -15,6 +15,7 @@ REQUIRED = (
     "ios/app/CatalogLibraryView.swift",
     "ios/app/CatalogGameDetailView.swift",
     "ios/app/CatalogSourceManagementView.swift",
+    "ios/app/NearbyFriendsView.swift",
     "ios/app/SettingsView.swift",
     "ios/app/ControlLayoutEditorView.swift",
     "ios/app/NearbyLobbyView.swift",
@@ -81,6 +82,9 @@ def main() -> int:
             "settings page must apply snapshots through the ObjC++ app bridge")
 
     nearby_lobby = texts["ios/app/NearbyLobbyView.swift"]
+    nearby_friends = texts["ios/app/NearbyFriendsView.swift"]
+    require("ToolbarItem(placement: .navigationBarTrailing)" in nearby_friends,
+            "Nearby friends toolbar must compile with the iOS 16.4 toolchain")
     require("safeAreaInset(edge: .bottom)" in nearby_lobby,
             "NearbyLobby confirmation must be a fixed safe-area footer")
     scroll_start = nearby_lobby.find("ScrollView {")
@@ -89,6 +93,12 @@ def main() -> int:
             "NearbyLobby must measure scrolling body before its footer")
     require("confirmSection" not in nearby_lobby[scroll_start:footer_modifier],
             "NearbyLobby confirmation must not remain inside scrolling content")
+    require("LobbyField.firstScreen" in nearby_lobby,
+            "N09 first screen must be game/host/seat, not a dump of allCases")
+    require("nearby_lobby_details" in nearby_lobby,
+            "N09 technical fields must sit behind nearby_lobby_details")
+    require("ForEach(LobbyField.allCases.filter { $0 != .confirmInvalidated })" not in nearby_lobby,
+            "N09 must not tile every §22.3 field on the first screen")
 
     nearby_pairing = texts["ios/app/NearbyPairingView.swift"]
     require(".onDisappear" in nearby_pairing and "nearbyHostCancelGeneration" in nearby_pairing,

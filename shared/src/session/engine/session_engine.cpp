@@ -375,7 +375,15 @@ void SessionEngine::publish_link_view_locked(std::uint32_t link_state)
             !dual_->running())
             actions.push_back({30, FLY_SESSION_ACTION_CANCEL_CONTENT_V2, true,
                                "nearby.action.cancel_content", ""});
-        if (dual_->has_selection() && !dual_->running() && !dual_->frozen())
+        if (dual_->has_selection() && dual_->pending_start_conditions_bound() &&
+            !(dual_->local_pending_confirmed() &&
+              dual_->peer_pending_confirmed()) &&
+            !dual_->running() && !dual_->frozen())
+            actions.push_back({24, FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2,
+                               true, "nearby.action.confirmConfig", ""});
+        if (dual_->has_selection() && dual_->local_pending_confirmed() &&
+            dual_->peer_pending_confirmed() && !dual_->running() &&
+            !dual_->runtime_ready() && !dual_->frozen())
             actions.push_back({43, FLY_SESSION_ACTION_START_DUAL_V2, true,
                                "nearby.action.start_dual", ""});
         if (dual_->running())
@@ -2108,6 +2116,103 @@ void SessionEngine::ensure_dual_controller_locked() noexcept
     {
         dual_.reset();
     }
+}
+
+fly_session_result_v2 SessionEngine::dual_start_inputs_locked(
+    dual::DualStartInputsV1& inputs) const noexcept
+{
+    if (shutdown_requested_ || shutdown_complete_ || handle_detached_)
+        return FLY_SESSION_V2_CLOSED;
+    if (!dual_ || !dual_->has_selection() ||
+        !dual_->pending_start_conditions_bound() ||
+        !dual_->local_pending_confirmed() || !dual_->peer_pending_confirmed() ||
+        dual_->runtime_ready() || dual_->running() || dual_->frozen() ||
+        current_view_->snapshot.link_state != FLY_SESSION_LINK_CONNECTED_LOBBY_V2)
+        return FLY_SESSION_V2_INVALID_STATE;
+    if (!ports_.has_dual_runtime() || !initial_quic_bind_ || !session_signing_ ||
+        !link_handshake_)
+        return FLY_SESSION_V2_UNAVAILABLE;
+    inputs = {};
+    inputs.session_id = initial_quic_bind_->session_id();
+    inputs.branch_id = initial_quic_bind_->channel_id();
+    inputs.local_role = local_pair_role_;
+    inputs.local_signing_public = session_signing_->material().public_key;
+    if (link_handshake_->peer_binding_accepted())
+        inputs.peer_signing_public =
+            link_handshake_->peer_binding().session_signing_public_key;
+    inputs.quic_connection = initial_quic_bind_->owned_resources().connection;
+    inputs.local_is_listener = initial_quic_bind_->listener();
+    inputs.runtime = ports_.dual_runtime();
+    return FLY_SESSION_V2_OK;
+}
+
+void SessionEngine::reserve_handshake_app_control_ids_locked() noexcept
+{
+    if (!link_handshake_)
+        return;
+    available_operation_id_ = (std::max)(
+        available_operation_id_, link_handshake_->next_operation_id());
+    const auto base =
+        reserve_operation_ids_locked(kSchedulerOperationBlockV1);
+    if (base != 0)
+        link_handshake_->adopt_operation_id(base);
+}
+
+void SessionEngine::drain_pending_config_confirms_locked() noexcept
+{
+    if (!link_handshake_ || !dual_)
+        return;
+    std::uint8_t object[44]{};
+    while (link_handshake_->take_routed_pending_config_confirm(object))
+    {
+        const auto applied =
+            dual_->ingest_verified_pending_confirm(object, sizeof(object));
+        if (applied == FLY_SESSION_V2_OK && dual_->view_dirty())
+        {
+            dual_dispatch_pending_ = true;
+            publish_link_view_locked(FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+        }
+    }
+}
+
+void SessionEngine::drain_suspend_intents_locked() noexcept
+{
+    if (!link_handshake_ || !dual_)
+        return;
+    std::uint8_t object[240]{};
+    while (link_handshake_->take_routed_suspend_intent(object))
+    {
+        const auto applied =
+            dual_->ingest_verified_suspend(object, sizeof(object));
+        if ((applied == FLY_SESSION_V2_OK ||
+             applied == FLY_SESSION_V2_DUPLICATE) &&
+            dual_->view_dirty())
+        {
+            dual_dispatch_pending_ = true;
+            publish_link_view_locked(FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+        }
+    }
+}
+
+fly_session_result_v2 SessionEngine::queue_dual_suspend_control_locked() noexcept
+{
+    if (!link_handshake_ || !link_handshake_->connected())
+        return FLY_SESSION_V2_INVALID_STATE;
+    if (link_handshake_active_)
+    {
+        ports_.cancel_quic(&link_handshake_token_);
+        link_handshake_active_ = false;
+    }
+    link_handshake_->drop_control_read_if_pending();
+    reserve_handshake_app_control_ids_locked();
+    const auto queued = link_handshake_->queue_suspend_intent();
+    if (queued != FLY_SESSION_V2_OK)
+        return queued;
+    const auto armed = link_handshake_->arm_app_control();
+    if (armed != FLY_SESSION_V2_OK && armed != FLY_SESSION_V2_INVALID_STATE)
+        return armed;
+    link_handshake_dispatch_pending_ = link_handshake_->poll_effect().has_value();
+    return FLY_SESSION_V2_OK;
 }
 
 void SessionEngine::apply_dual_projection_locked(
@@ -5800,7 +5905,7 @@ void SessionEngine::run_work() noexcept
                          same_token(event.token, link_handshake_token_))
                 {
                     link_handshake_active_ = false;
-                    const auto result = link_handshake_->complete(event);
+                    auto result = link_handshake_->complete(event);
                     if (shutdown_requested_)
                     {
                         link_handshake_dispatch_pending_ = false;
@@ -5818,25 +5923,18 @@ void SessionEngine::run_work() noexcept
                             link_handshake_->next_operation_id());
                         link_handshake_dispatch_pending_ =
                             link_handshake_->poll_effect().has_value();
-                    }
-                    if (accepted)
-                    {
-                        // Step 2: CONNECTED_LOBBY has exactly one gate. The
-                        // scheduler's connected() is
-                        // project_link_control_state_v1(progress) ==
-                        // ConnectedLobby, which requires a durable local READY
-                        // AND a verified peer READY AND the peer ACK. A
-                        // one-sided READY therefore can never reach the lobby,
-                        // and no other code path in this engine publishes it.
                         if (link_handshake_->connected())
                         {
                             ensure_dual_controller_locked();
                             ensure_content_controller_locked();
-                            if (ports_.has_content() && dual_)
+                            if (ports_.has_content() && dual_ &&
+                                !dual_->catalog_started())
                             {
                                 dual_->begin_catalog();
                                 dual_dispatch_pending_ = true;
                             }
+                            drain_pending_config_confirms_locked();
+                            drain_suspend_intents_locked();
                             publish_link_view_locked(
                                 FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
                         }
@@ -6434,37 +6532,79 @@ void SessionEngine::run_work() noexcept
                 }
             }
             else if (applied &&
-                     action_kind == FLY_SESSION_ACTION_START_DUAL_V2)
+                     action_kind == FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2)
             {
-                applied = pending.choice_size == 0 && dual_ &&
-                          dual_->has_selection() &&
-                          current_view_->snapshot.link_state ==
-                              FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
-                if (!applied)
-                    action_result = FLY_SESSION_V2_INVALID_STATE;
-                else if (!ports_.has_dual_runtime() ||
-                         !initial_quic_bind_ || !session_signing_ ||
-                         !link_handshake_)
+                /* Empty choice = local confirm only. Peer confirmed is not a
+                 * local BOOLEAN; it arrives through DualSessionController
+                 * ingest of a verified peer message. */
+                if (pending.choice_size != 0)
                 {
                     applied = false;
-                    action_result = FLY_SESSION_V2_UNAVAILABLE;
+                    action_result = FLY_SESSION_V2_INVALID_ARGUMENT;
                 }
                 else
                 {
-                    dual::DualStartInputsV1 inputs{};
-                    inputs.session_id = initial_quic_bind_->session_id();
-                    inputs.branch_id = initial_quic_bind_->channel_id();
-                    inputs.local_role = local_pair_role_;
-                    inputs.local_signing_public =
-                        session_signing_->material().public_key;
-                    if (link_handshake_->peer_binding_accepted())
-                        inputs.peer_signing_public =
-                            link_handshake_->peer_binding()
-                                .session_signing_public_key;
-                    inputs.quic_connection =
-                        initial_quic_bind_->owned_resources().connection;
-                    inputs.local_is_listener = initial_quic_bind_->listener();
-                    inputs.runtime = ports_.dual_runtime();
+                    applied = dual_ &&
+                              current_view_->snapshot.link_state ==
+                                  FLY_SESSION_LINK_CONNECTED_LOBBY_V2;
+                        if (applied)
+                        {
+                            const auto confirmed = dual_->confirm_local_pending();
+                            applied = confirmed == FLY_SESSION_V2_OK;
+                            action_result = confirmed;
+                            if (applied)
+                            {
+                                if (link_handshake_ &&
+                                    link_handshake_->connected())
+                                {
+                                    reserve_handshake_app_control_ids_locked();
+                                    fly_session_snapshot_v2 pending_snapshot{};
+                                    dual_->fill_snapshot(pending_snapshot);
+                                    const auto queued =
+                                        link_handshake_->queue_pending_config_confirm(
+                                            pending_snapshot.pending_config_id,
+                                            pending_snapshot.pending_config_revision);
+                                    if (queued != FLY_SESSION_V2_OK)
+                                    {
+                                        applied = false;
+                                        action_result = queued;
+                                    }
+                                    else
+                                    {
+                                        const auto armed =
+                                            link_handshake_->arm_app_control();
+                                        if (armed != FLY_SESSION_V2_OK &&
+                                            armed != FLY_SESSION_V2_INVALID_STATE)
+                                        {
+                                            applied = false;
+                                            action_result = armed;
+                                        }
+                                        else
+                                            link_handshake_dispatch_pending_ =
+                                                link_handshake_->poll_effect()
+                                                    .has_value();
+                                    }
+                                }
+                            }
+                            if (applied)
+                            {
+                                dual_dispatch_pending_ = true;
+                                publish_link_view_locked(
+                                    FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                            }
+                        }
+                }
+            }
+            else if (applied &&
+                     action_kind == FLY_SESSION_ACTION_START_DUAL_V2)
+            {
+                dual::DualStartInputsV1 inputs{};
+                action_result = pending.choice_size == 0
+                    ? dual_start_inputs_locked(inputs)
+                    : FLY_SESSION_V2_INVALID_STATE;
+                applied = action_result == FLY_SESSION_V2_OK;
+                if (applied)
+                {
                     const auto started = dual_->start_dual(inputs);
                     applied = started == FLY_SESSION_V2_OK;
                     action_result = started;
@@ -6642,8 +6782,17 @@ void SessionEngine::run_work() noexcept
                     applied = paused == FLY_SESSION_V2_OK;
                     action_result = paused;
                     if (applied)
-                        publish_link_view_locked(
-                            FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    {
+                        const auto queued = queue_dual_suspend_control_locked();
+                        if (queued != FLY_SESSION_V2_OK)
+                        {
+                            applied = false;
+                            action_result = queued;
+                        }
+                        else
+                            publish_link_view_locked(
+                                FLY_SESSION_LINK_CONNECTED_LOBBY_V2);
+                    }
                 }
             }
             else if (applied &&
@@ -6658,6 +6807,7 @@ void SessionEngine::run_work() noexcept
                     action_result = disconnected;
                     if (applied)
                     {
+                        (void)queue_dual_suspend_control_locked();
                         discovery_disconnect_pending_ =
                             discovery_connection_ != 0;
                         publish_link_view_locked(
@@ -6770,6 +6920,38 @@ fly_session_result_v2 SessionEngine::acquire_view(
     std::lock_guard<std::mutex> lock(mutex_);
     session_view_retain(current_view_);
     *out_view = current_view_;
+    return FLY_SESSION_V2_OK;
+}
+
+fly_session_result_v2 SessionEngine::read_dual_start_ref(
+    const fly_session_approval_token_v2_t* start_approval,
+    fly_session_dual_start_ref_v2& out_ref)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    dual::DualStartInputsV1 inputs{};
+    const auto ready = dual_start_inputs_locked(inputs);
+    if (ready != FLY_SESSION_V2_OK)
+        return ready;
+
+    // Recognize the opaque pointer before dereferencing it. Only the current
+    // engine-owned descriptor is passed to the existing authorization check.
+    const auto action = std::find_if(
+        current_view_->actions.begin(), current_view_->actions.end(),
+        [start_approval](const fly_session_action_descriptor_v2& candidate) {
+            return candidate.approval_token == start_approval;
+        });
+    if (action == current_view_->actions.end() ||
+        !approval_token_matches(action->approval_token, authorization_))
+        return FLY_SESSION_V2_STALE;
+    if (action->action_kind != FLY_SESSION_ACTION_START_DUAL_V2)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+
+    fly_session_dual_start_ref_v2 value{};
+    const auto result = dual_->read_start_ref(inputs, value);
+    if (result != FLY_SESSION_V2_OK)
+        return result;
+    value.view_revision = current_view_->snapshot.view_revision;
+    out_ref = value;
     return FLY_SESSION_V2_OK;
 }
 

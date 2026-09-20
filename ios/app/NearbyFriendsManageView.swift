@@ -16,7 +16,7 @@ struct NearbyFriendsManageView: View {
         List {
             Section {
                 Text("nearby.friends.saved_after_auth")
-                    .font(.footnote)
+                    .nearbyRole(NearbyTypography.muted)
                     .foregroundStyle(.secondary)
                 ForEach(ManageAction.allCases) { action in
                     DisabledActionRow(
@@ -30,6 +30,7 @@ struct NearbyFriendsManageView: View {
         .accessibilityIdentifier("nearby_manage_root")
         .navigationTitle("nearby.friends.manage")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -46,9 +47,10 @@ private struct DisabledActionRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Button(titleKey) {}
                 .disabled(true)
+                .nearbyRole(NearbyTypography.action)
                 .accessibilityIdentifier(identifier)
             Text(reasonKey)
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(identifier + "_reason")
         }

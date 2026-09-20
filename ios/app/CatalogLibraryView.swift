@@ -277,8 +277,8 @@ struct CatalogLibraryView: View {
             }
             icon("magnifyingglass", "library.search", "open_search") { searchOpen = true; sourcesOpen = false }
             icon("folder", "library.sources", "open_sources") { sourcesOpen = true }
-            // The connection state is visible text, not an icon-only accessibility label.
-            // The shared session projection replaces nearby.open when a verified link exists.
+            icon("gearshape", "settings.title", "open_settings") { settingsOpen = true }
+            // HTML .fe-mode: visible 附近联机 text after the icon tools.
             Button {
                 sourcesOpen = false
                 searchOpen = false
@@ -293,7 +293,6 @@ struct CatalogLibraryView: View {
                 .frame(minHeight: 48)
             }
             .accessibilityIdentifier("open_nearby")
-            icon("gearshape", "settings.title", "open_settings") { settingsOpen = true }
         }.frame(height: largeText ? 80 : 64)
     }
 

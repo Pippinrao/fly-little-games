@@ -37,6 +37,7 @@
     "flynes-open-input-reservation-set-v1",
     "flynes-pair-transcript-object-v1",
     "flynes-pair-transcript-v1",
+    "flynes-pending-config-confirm-v1",
     "flynes-preprepare-terminal-evidence-v1",
     "flynes-prime-authorization-v1",
     "flynes-published-save-index-v1",
@@ -3414,6 +3415,49 @@
       "max_decode_length": 432,
       "name": "LINK_READY_V1",
       "notes": "Same bytes carry both READY (ready_phase=1) and the required ACK (ready_phase=2). Sender signature digest uses flynes-link-ready-v1 over the 368-byte pretag only. Pretag layout: version u16be || reserved_zero[6] || sender_role u8 || receiver_role u8 || phase u8 || ready_phase u8 || reserved_zero[4] || session_id[16] || link_id[16] || channel_id[16] || connection_generation u64be || reconnect_attempt u64be || link_generation u64be || channel_bind_hash[32] || local_hello_object_hash[32] || peer_hello_object_hash[32] || negotiated_result_hash[32] || local_summary_hash[32] || peer_summary_hash[32] || merge_result_hash[32] || reserved_zero[56].",
+      "reserved_zero_required": true,
+      "unassigned_kind_illegal": true,
+      "unknown_enum_rejects": true,
+      "version_u16be": 1
+    },
+    {
+      "children": [],
+      "closure_role": "HARD",
+      "enums": {},
+      "fields": [
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "version",
+          "wire_type": "u16be"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "reserved_zero",
+          "wire_type": "u8[2]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_config_id",
+          "wire_type": "u8[32]"
+        },
+        {
+          "cardinality": "required_1",
+          "endian": "network",
+          "name": "pending_config_revision",
+          "wire_type": "u64be"
+        }
+      ],
+      "fixed_length": 44,
+      "hash_domain": "flynes-pending-config-confirm-v1",
+      "hash_preimage": "SHA256(\"flynes-pending-config-confirm-v1\" || u32be(len) || exact_bytes)",
+      "kind": "0x0218",
+      "layout": "fixed",
+      "max_decode_length": 44,
+      "name": "PENDING_CONFIG_CONFIRM_V1",
+      "notes": "Control-only after LINK_READY. Codec rejects zero id and zero revision. Dual maps id/revision mismatch to STALE and a repeated (id, revision) to DUPLICATE. Authentication is the existing Control stream, not a new signature.",
       "reserved_zero_required": true,
       "unassigned_kind_illegal": true,
       "unknown_enum_rejects": true,

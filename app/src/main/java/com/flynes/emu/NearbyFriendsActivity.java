@@ -18,20 +18,9 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 
 /**
- * 好友 / 附近设备 — one page with two tabs (spec §10 D13).
- *
- * <p>The 附近设备 tab renders the §2.1 pairing pipeline through {@link NearbyStagePipeline}, so the
- * whole page has exactly one source for "which stage is marked". Until the session ABI reports the
- * current stage, 权限 is the first failing stage: it is marked current with its reason, and later
- * stages stay in the neutral not-yet-reached treatment with no blocked key and no reason (D5).
- *
- * <p>Nothing here is invented. The friends list is empty because no local friend store exists, and
- * it says so with the specific blocked key. Discovery controls are disabled because no bearer
- * exists, and each states the reason it cannot act. 好友管理 is the one control on this page that
- * really navigates, because its page must exist to display the blocking stages the design requires.
- *
- * <p>The initial tab follows the friend store (附近设备 while no friend is saved, 好友 once one is)
- * and is never persisted; see {@link #savedFriendCount()}.
+ * N00 nearby entry (approved HTML nearby() / design U06–U07). Left column holds the
+ * kicker, headline, subtitle and 创建联机 / 输入配对码 / 扫码加入. Right column holds
+ * 附近设备 / 好友 and 寻找设备. Pairing stages belong on N07/N10, not this page.
  */
 public final class NearbyFriendsActivity extends AppCompatActivity
         implements PermissionGate.CameraPermissionHost {
@@ -89,62 +78,58 @@ public final class NearbyFriendsActivity extends AppCompatActivity
         tabs.check(hasSavedFriend ? R.id.nearby_tab_friends : R.id.nearby_tab_devices);
         showTab(hasSavedFriend);
 
-        NearbyStagePipeline.render(this, firstFailingStage());
-
-        // N00's three primary actions (design 2026-09-13 U07). None requires a
-        // selected game (C04). 扫码加入 is the only camera consumer: the
-        // permission is requested on use, a denial disables nothing else (C10),
-        // and the system prompt is never repeated in one visit.
+        // N00's three primary actions (design 2026-09-13 U07 / HTML nearby()).
+        // None requires a selected game (C04). 扫码加入 is the only camera
+        // consumer: the permission is requested on use, a denial disables
+        // nothing else (C10), and the system prompt is never repeated in one visit.
         findViewById(R.id.nearby_action_create).setOnClickListener(view ->
                 NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_CREATE));
         findViewById(R.id.nearby_action_enter_code).setOnClickListener(view ->
                 NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_JOIN_CODE));
         findViewById(R.id.nearby_action_scan_qr).setOnClickListener(view -> onScanClicked());
-        findViewById(R.id.nearby_friends_manage_inline).setOnClickListener(view ->
-                startActivity(new Intent(this, NearbyFriendsManageActivity.class)));
 
-        // 好友管理 is a real destination, not a placeholder: rename / delete / block / identity
-        // reset are governed by the friend store and the page states exactly what is missing.
         findViewById(R.id.nearby_friends_manage).setOnClickListener(view ->
                 startActivity(new Intent(this, NearbyFriendsManageActivity.class)));
 
-        // The one navigate-only entry §4 permits besides the game-center entry, because the 配对
-        // page must exist to display its blocked stages. 大厅 has no equivalent entry: it follows a
-        // completed pairing, and §4 permits the exception only into 配对.
-        findViewById(R.id.nearby_open_pairing).setOnClickListener(view ->
-                NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_CREATE));
-
-        // A disabled control still has to say why it cannot act (spec §4); the visible reason is
-        // the row below each button and the same text is repeated to accessibility services.
         describeDisabled(R.id.nearby_find_devices, R.id.nearby_find_devices_reason);
-        describeDisabled(R.id.nearby_scan_host_qr, R.id.nearby_scan_host_qr_reason);
         applyResponsiveColumns();
     }
 
     private void applyResponsiveColumns() {
+        View root = findViewById(R.id.nearby_root);
+        root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight,
+                                        oldBottom) -> {
+            if (right - left != oldRight - oldLeft) {
+                layoutNearbyColumns();
+            }
+        });
+        root.post(this::layoutNearbyColumns);
+    }
+
+    private void layoutNearbyColumns() {
+        View root = findViewById(R.id.nearby_root);
         LinearLayout columns = findViewById(R.id.nearby_device_columns);
         LinearLayout actions = findViewById(R.id.nearby_action_column);
         LinearLayout statusColumn = findViewById(R.id.nearby_status_column);
-        columns.post(() -> {
-            float density = getResources().getDisplayMetrics().density;
-            float availableDp = (columns.getWidth() - columns.getPaddingLeft()
-                    - columns.getPaddingRight()) / density;
-            boolean split = availableDp > 580f;
-            columns.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        if (root.getWidth() == 0) return;
+        float density = getResources().getDisplayMetrics().density;
+        float contentAfterInsets = (root.getWidth() - root.getPaddingLeft()
+                - root.getPaddingRight()) / density;
+        boolean split = contentAfterInsets > 580f;
+        columns.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
 
-            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                    split ? Math.round(224f * density) : ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            actions.setLayoutParams(actionParams);
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                split ? Math.round(224f * density) : ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        actions.setLayoutParams(actionParams);
 
-            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                    split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    split ? 1f : 0f);
-            if (split) statusParams.leftMargin = Math.round(18f * density);
-            else statusParams.topMargin = Math.round(18f * density);
-            statusColumn.setLayoutParams(statusParams);
-        });
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                split ? 1f : 0f);
+        if (split) statusParams.leftMargin = Math.round(18f * density);
+        else statusParams.topMargin = Math.round(18f * density);
+        statusColumn.setLayoutParams(statusParams);
     }
 
     private void onScanClicked() {
@@ -169,16 +154,6 @@ public final class NearbyFriendsActivity extends AppCompatActivity
         TextView reason = findViewById(R.id.nearby_scan_denied_reason);
         reason.setText(R.string.nearby_reason_permission_cameraDenied);
         reason.setVisibility(View.VISIBLE);
-    }
-
-    /**
-     * Index in §2.1's order of the first failing pairing stage. This build declares no nearby
-     * permission, so the 权限 stage is truthfully the first failure. Once the session ABI reports
-     * the current stage this method must read it rather than return a constant — it is the single
-     * source for every row's status, so nothing else needs to change.
-     */
-    private int firstFailingStage() {
-        return NearbyStagePipeline.PERMISSION;
     }
 
     /**

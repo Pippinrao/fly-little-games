@@ -130,5 +130,25 @@ int main()
 {
     test_exact_fences_and_terminal_semantics();
     test_cancel_and_failure_completion();
+    ProviderOperationJournal journal(1);
+    ProviderOperationCompletion out{};
+    check(journal.expect(token(30), FLY_SESSION_PROVIDER_QUIC_DATA_V2) == FLY_SESSION_V2_OK,
+          "read error case registers exact operation");
+    const auto error = completion(token(30), FLY_SESSION_PROVIDER_QUIC_DATA_V2, FLY_SESSION_V2_IO_FAILED);
+    check(journal.accept(error, out) == FLY_SESSION_V2_OK && out.terminal &&
+              out.result == FLY_SESSION_V2_IO_FAILED && !journal.has_pending(),
+          "read failure terminates journal without leaking pending slot");
+    check(journal.accept(error, out) == FLY_SESSION_V2_DUPLICATE,
+          "same read failure terminal is idempotent");
+    auto conflict = error;
+    conflict.result = FLY_SESSION_V2_CANCELLED;
+    check(journal.accept(conflict, out) == FLY_SESSION_V2_CONTRACT_VIOLATION,
+          "conflicting read terminal cannot overwrite first result");
+    check(journal.expect(token(31), FLY_SESSION_PROVIDER_QUIC_DATA_V2) == FLY_SESSION_V2_OK,
+          "read terminal returns active journal capacity");
+    check(journal.cancel(token(31)) == FLY_SESSION_V2_OK &&
+              journal.accept(completion(token(31), FLY_SESSION_PROVIDER_QUIC_DATA_V2,
+                                        FLY_SESSION_V2_IO_FAILED), out) == FLY_SESSION_V2_STALE,
+          "late read failure after cancel remains stale");
     return failures == 0 ? 0 : 1;
 }

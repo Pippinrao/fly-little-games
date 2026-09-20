@@ -24,6 +24,31 @@ CENTRAL_SIGNATURE = 0x02014B50
 END_SIGNATURE = 0x06054B50
 DESCRIPTOR_SIGNATURE = 0x08074B50
 
+# These raw DEFLATE streams preserve the frozen v1 ZIP bytes. zlib and
+# zlib-ng can encode the same payload differently, even at the same level.
+# The two complete streams were extracted from their v1 fixtures; the
+# truncated stream restores the final 00 byte before applying the original
+# truncation below. Keep these independent of the output files at runtime.
+LARGE_RAW_DEFLATE = bytes.fromhex(
+    "138e59facebce1a450f492b766f52704a316bf31ad3b2e10b9e8b549ed31fe88"
+    "85af8c6b8ef2852f7869547d84376cfe0bc3aac33ca1f39e1b541ee20e99fb4c"
+    "bfe22057f09ca77ae5073883663fd12ddbcf1138ebb14ee93ef680998fb44bf6"
+    "b2f9cf78a855bc87d56ffa03cda2dd2cbed3ee6b14ee62f6997a4fbd602793f7"
+    "94bb6af93b18bd26df51cddbcee039e9b64aeeb6ff1e136f29e76cfde73ee1a6"
+    "52f696bf6efd3714b336ff71edbbae90b9e9b74bef35f98c8dbf9c7baecaa56f"
+    "f8e9d47d45366dfd0fc7aecb32a9ebbe3b745e924e59fbcdbee3a254f29aaf76"
+    "ed172493567fb16d3b2f91b8eab34deb39f184959fac5bce8ac5aff868d57c46"
+    "346ef907cba6d322b1cbde5b349e121ef5ffa8ff47fd3feaff51ff8ffa7fd4ff"
+    "a3fe1ff5ffa8ff47fd3feaff51ff8ffa7fd4ffa3fe1ff5ffa8ff47fd3feaff51"
+    "ff8ffa7fd4ffa3fe1ff5ffa8ff47fd3feaff51ff8ffa7fd4ffa3fe1ff5bfde88"
+    "f03f00"
+)
+DIRECTORY_RAW_DEFLATE = bytes.fromhex(
+    "05c1510a00200844c1abecd5c25e204981fad3ed9b999e58df7ce2743aa591a808ac"
+    "990adf6879501f"
+)
+TRUNCATED_RAW_DEFLATE = bytes.fromhex("2b292acd4b4e2c494d51284a2c5748494dcb492c490500")
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -234,6 +259,7 @@ def fixtures() -> list[Fixture]:
         b"large-deflate.nes",
         large_payload,
         method=8,
+        compressed_payload=LARGE_RAW_DEFLATE,
         descriptor="signed",
     )])
     result.append(selected_success(
@@ -251,7 +277,9 @@ def fixtures() -> list[Fixture]:
     result.append(selected_success("deflate_empty", empty, 0))
 
     directory_payload = b"directory entries are selected like files"
-    directory = build_zip([EntrySpec(b"folder/", directory_payload, method=8)])
+    directory = build_zip([EntrySpec(
+        b"folder/", directory_payload, method=8, compressed_payload=DIRECTORY_RAW_DEFLATE,
+    )])
     result.append(selected_success("directory_payload_not_rejected", directory, 0))
 
     lazy = build_zip([
@@ -354,7 +382,7 @@ def fixtures() -> list[Fixture]:
     ))
 
     truncated_payload = b"truncated raw deflate"
-    truncated_bytes = raw_deflate(truncated_payload)
+    truncated_bytes = TRUNCATED_RAW_DEFLATE
     if len(truncated_bytes) < 2:
         raise AssertionError("truncated fixture requires a multi-byte raw stream")
     truncated = build_zip([EntrySpec(

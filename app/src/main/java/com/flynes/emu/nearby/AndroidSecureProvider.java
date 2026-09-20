@@ -8,6 +8,8 @@ import android.security.keystore.KeyProperties;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
+import java.security.GeneralSecurityException;
+import java.security.InvalidKeyException;
 import java.security.KeyFactory;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
@@ -17,9 +19,11 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECFieldFp;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
+import java.security.spec.InvalidKeySpecException;
 import java.security.interfaces.ECPublicKey;
 import java.util.Arrays;
 import java.util.Locale;
@@ -199,6 +203,45 @@ public final class AndroidSecureProvider {
         signer.initSign(handle.privateKey);
         signer.update(digest);
         return canonicalRawSignature(signer.sign());
+    }
+
+    /**
+     * Verifies an imported P-256 peer signature over the exact shared digest.
+     * Domain is opaque metadata: shared already included it in the digest.
+     * Malformed argument shapes throw; invalid peer keys/signatures return false.
+     * Provider failures propagate, including SignatureException: after importing
+     * the key and constructing canonical DER locally, it is not a parse verdict
+     * for untrusted signature bytes and must not be relabeled AUTH_FAILED.
+     */
+    public boolean verifyPrehashed(byte[] publicKeyX963, byte[] domain,
+                                   byte[] digest, byte[] signature)
+            throws GeneralSecurityException {
+        if (publicKeyX963 == null || publicKeyX963.length != 65 || publicKeyX963[0] != 4
+                || domain == null || domain.length == 0
+                || digest == null || digest.length != 32
+                || signature == null || signature.length != 64) {
+            throw new IllegalArgumentException("X9.63 key, domain, SHA-256 digest and raw64 required");
+        }
+        if (!isCanonicalLowS(signature)) return false;
+
+        AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
+        parameters.init(new ECGenParameterSpec("secp256r1"));
+        ECParameterSpec p256 = parameters.getParameterSpec(ECParameterSpec.class);
+        BigInteger x = new BigInteger(1, Arrays.copyOfRange(publicKeyX963, 1, 33));
+        BigInteger y = new BigInteger(1, Arrays.copyOfRange(publicKeyX963, 33, 65));
+        BigInteger prime = ((ECFieldFp) p256.getCurve().getField()).getP();
+        // Do not let a provider reduce noncanonical coordinates modulo the field.
+        if (x.compareTo(prime) >= 0 || y.compareTo(prime) >= 0) return false;
+        KeyFactory factory = KeyFactory.getInstance("EC");
+        Signature verifier = Signature.getInstance("NONEwithECDSA");
+        try {
+            PublicKey peer = factory.generatePublic(new ECPublicKeySpec(new ECPoint(x, y), p256));
+            verifier.initVerify(peer);
+        } catch (InvalidKeySpecException | InvalidKeyException invalidPeerKey) {
+            return false;
+        }
+        verifier.update(digest);
+        return verifier.verify(rawToDer(signature));
     }
 
     public byte[] signTlsMessage(KeyHandle handle, byte[] message) throws Exception {

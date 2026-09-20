@@ -264,6 +264,13 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 context, repository, permissions::hasPersistedRead);
     }
 
+    /** Creates a read-only loader; its caller supplies the IO worker and later owner scope. */
+    public com.flynes.emu.nearby.NearbyExactContentLoader nearbyContentLoader() {
+        AndroidCatalogStreamOpener opener = streamOpener();
+        return new com.flynes.emu.nearby.NearbyExactContentLoader(
+                catalog, new com.flynes.emu.launch.ExactRomLoader(opener), opener::validateAccess);
+    }
+
     private BootstrapResult bootstrapOnCatalogThread() throws Exception {
         if (nativeCatalog) {
             migrateSettingsIfNeeded();

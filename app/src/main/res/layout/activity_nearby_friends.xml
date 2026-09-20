@@ -1,97 +1,113 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
-  好友 / 附近设备 — one page, two tabs (decision D13), single column: tabs on top, the selected
-  panel below.
-
-  The 附近设备 tab opens with the discovery capability row, then the §2.1 pairing pipeline, then the
-  empty device list. Every stage row's status — and therefore its icon, its name colour, its
-  accessibility label and whether its reason is shown — is computed once by
-  NearbyStagePipeline.render() from the first failing stage, so neither this layout nor its include
-  holds any per-row status of its own. Until the session ABI reports the current stage, 权限 is the
-  first failing stage: it is marked (current) and carries its reason, and every later stage uses the
-  neutral not-yet-reached treatment with no blocked key and no reason (decision D5). No stage
-  precedes 权限, so no row renders in the passed treatment yet; that treatment is a live code path
-  and keeps its key (nearby_stage_status_passed) for when the session reports a later first failure.
-
-  The discovery capability row below is a separate element from the pipeline's 发现 row: a
-  capability row names the stage that blocks it, its reason, and the disabled control's own
-  blocked reason. The two elements are deliberately ordered action-first — emulator instrumentation
-  proved the opposite order pushed both controls below the fold (nearby_find_devices at y=972 with
-  an empty global visible rect on a landscape phone), so a user had to scroll past seven status rows
-  to reach the only thing the 附近设备 tab can do. Order follows `content-priority`.
-
-  The friends list is empty (nearby_friends_empty) and says so with the specific blocked reason
-  nearby_blocked_friend_store; no sample friend row is ever inflated. 好友管理 is a real navigation
-  row — the only control here that works — and it is disabled-looking only in the sense that its
-  target is empty; it must never be replaced by a fake list. Discovery has no bearer, so 寻找设备 /
-  扫描房主二维码 are present but disabled, each with the visible nearby_blocked_discovery reason.
+  N00 nearby() from docs/superpowers/specs/assets/nearby-ui-parity-review.html
+  and design U06/U07: left kicker/headline/subtitle + 创建联机/输入配对码/扫码加入;
+  right 附近设备/好友 tabs and 寻找设备. Pairing stages are N07/N10, not this page.
+  Review-only sample friends/devices stay out of the product (design §4).
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/nearby_root" android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="@color/fly_background" android:orientation="vertical">
-    <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_toolbar"
-        android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
-        android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
-        app:title="@string/nearby_title" app:titleTextColor="@color/fly_on_surface" />
-    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
-        android:orientation="vertical" android:padding="@dimen/fly_space_2">
-        <com.google.android.material.button.MaterialButtonToggleGroup android:id="@+id/nearby_tabs" android:layout_width="wrap_content" android:layout_height="48dp" app:selectionRequired="true" app:singleSelection="true">
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_tab_friends" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="96dp" android:text="@string/nearby_tab_friends" android:textColor="@color/fly_on_surface" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_tab_devices" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="96dp" android:text="@string/nearby_tab_devices" android:textColor="@color/fly_on_surface" />
-        </com.google.android.material.button.MaterialButtonToggleGroup>
-        <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_marginTop="@dimen/fly_space_2" android:layout_weight="1">
-            <ScrollView android:id="@+id/nearby_friends_panel" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/fly_surface" android:fillViewport="true">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
-                    <TextView android:id="@+id/nearby_friends_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_friends_empty" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-                    <TextView android:id="@+id/nearby_friends_blocked" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:text="@string/nearby_blocked_friend_store" android:textColor="@color/fly_error" />
-                    <!--
-                      The saved-friends explanation states the rule the friend store will follow
-                      rather than implying that friends are lost: a friend record is written after
-                      authentication, and it grants nothing by itself (design §22.1).
-                    -->
-                    <TextView android:id="@+id/nearby_friends_saved_after_auth" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_4" android:text="@string/nearby_friends_saved_after_auth" android:textColor="@color/fly_on_surface_muted" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_friends_manage" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_4" android:text="@string/nearby_friends_manage" />
-                </LinearLayout>
-            </ScrollView>
-            <ScrollView android:id="@+id/nearby_devices_panel" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/fly_surface" android:fillViewport="true" android:visibility="gone">
-                <LinearLayout android:id="@+id/nearby_device_columns" android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:orientation="vertical" android:padding="@dimen/fly_space_4">
-                    <LinearLayout android:id="@+id/nearby_action_column" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-                    <!--
-                      N00's three primary actions (design 2026-09-13 U07, C04): 创建联机 / 输入配对码 /
-                      扫码加入, in the approved order. None of them requires a selected game. 扫码加入
-                      is the only one that touches the camera permission, and it is requested on use;
-                      a camera denial must not disable the code or discovery paths (C10).
-                    -->
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_create" style="@style/Widget.Material3.Button" android:layout_width="match_parent" android:layout_height="48dp" android:text="@string/nearby_action_create" android:textColor="@color/fly_on_primary" app:backgroundTint="@color/fly_primary" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_enter_code" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:text="@string/nearby_action_enterCode" android:textColor="@color/fly_on_surface" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_scan_qr" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:text="@string/nearby_action_scanQr" android:textColor="@color/fly_on_surface" />
-                    <TextView android:id="@+id/nearby_scan_denied_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" android:textColor="@color/fly_error" />
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:orientation="horizontal">
-                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_find_devices" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:layout_weight="1" android:enabled="false" android:text="@string/nearby_find_devices" />
-                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_friends_manage_inline" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_marginStart="@dimen/fly_space_2" android:layout_marginTop="@dimen/fly_space_2" android:layout_weight="1" android:text="@string/nearby_friends_manage" />
-                    </LinearLayout>
-                    <TextView android:id="@+id/nearby_find_devices_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_discovery" android:textColor="@color/fly_error" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_scan_host_qr" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_3" android:enabled="false" android:text="@string/nearby_scan_host_qr" />
-                    <TextView android:id="@+id/nearby_scan_host_qr_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_discovery" android:textColor="@color/fly_error" />
-                    <!--
-                      The one navigate-only entry §4 permits besides the game-center entry: the 配对
-                      page must exist to display the six-digit-code and Wi-Fi stages with the stage
-                      that blocks them, and this is how a user reaches it while discovery is blocked.
-                      It sits with the other actions, above the explanatory pipeline, so the user
-                      does not have to scroll past seven status rows to find it — the same
-                      `content-priority` reason that put the discovery row first. It is labelled with
-                      the page's own name, not the feature's, so nobody reads it as "start pairing
-                      now". 大厅 gets no such entry: §4 permits the exception only into 配对, and
-                      大厅 sits after pairing completes.
-                    -->
-                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_open_pairing" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_3" android:text="@string/nearby_pairing_title" />
-                    </LinearLayout>
-                    <LinearLayout android:id="@+id/nearby_status_column" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-                        <include layout="@layout/view_nearby_stage_pipeline" android:layout_width="match_parent" android:layout_height="wrap_content" />
-                        <TextView android:id="@+id/nearby_devices_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" android:text="@string/nearby_devices_empty" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-                    </LinearLayout>
-                </LinearLayout>
-            </ScrollView>
-        </FrameLayout>
+    <LinearLayout android:id="@+id/nearby_toolbar_row" android:layout_width="match_parent" android:layout_height="64dp"
+        android:background="@color/fly_background" android:gravity="center_vertical" android:orientation="horizontal">
+        <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_toolbar"
+            android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
+            android:background="@color/fly_background" android:minHeight="48dp"
+            app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
+            app:title="@string/nearby_title" app:titleTextAppearance="@style/TextAppearance.FlyNes.Nearby.PageTitle"
+            app:titleTextColor="@color/fly_on_surface" />
+        <TextView android:id="@+id/nearby_entry_stage_hint" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:gravity="center_vertical" android:includeFontPadding="false" android:minHeight="48dp" android:paddingEnd="16dp"
+            android:text="@string/nearby_entry_stageHint" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+            android:textColor="@color/fly_on_surface_muted" />
     </LinearLayout>
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
+        <LinearLayout android:id="@+id/nearby_device_columns" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:baselineAligned="false" android:orientation="horizontal" android:padding="16dp">
+            <LinearLayout android:id="@+id/nearby_action_column" android:layout_width="224dp" android:layout_height="wrap_content"
+                android:minWidth="0dp" android:orientation="vertical">
+                <TextView android:id="@+id/nearby_entry_kicker" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:includeFontPadding="false" android:text="@string/nearby_entry_kicker" android:textAllCaps="true"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Kicker" android:textColor="@color/fly_primary" />
+                <TextView android:id="@+id/nearby_entry_headline" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_entry_headline"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PaneTitle" android:textColor="@color/fly_on_surface" />
+                <TextView android:id="@+id/nearby_entry_subtitle" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_entry_subtitle"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_create" style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                    android:minHeight="48dp" android:text="@string/nearby_action_create"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PrimaryAction"
+                    android:textColor="@color/fly_on_primary" app:backgroundTint="@color/fly_primary"
+                    />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_enter_code" style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:minHeight="48dp" android:text="@string/nearby_action_enterCode"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
+                    />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_scan_qr" style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:minHeight="48dp" android:text="@string/nearby_action_scanQr"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
+                    />
+                <TextView android:id="@+id/nearby_scan_denied_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+                    android:textColor="@color/fly_error" android:visibility="gone" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/nearby_status_column" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_marginStart="18dp" android:layout_weight="1" android:minWidth="0dp" android:orientation="vertical">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical"
+                    android:minHeight="48dp" android:orientation="horizontal">
+                    <com.google.android.material.button.MaterialButtonToggleGroup android:id="@+id/nearby_tabs" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" app:selectionRequired="true" app:singleSelection="true">
+                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_tab_devices" style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="96dp"
+                            android:text="@string/nearby_tab_devices" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
+                            android:textColor="@color/fly_on_surface" />
+                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_tab_friends" style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="96dp"
+                            android:text="@string/nearby_tab_friends" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
+                            android:textColor="@color/fly_on_surface" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+                    <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_friends_manage" style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="48dp" android:layout_height="48dp" android:contentDescription="@string/nearby_friends_manage"
+                        app:icon="@drawable/ic_settings" app:iconTint="@color/fly_on_surface" />
+                </LinearLayout>
+                <FrameLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp">
+                    <LinearLayout android:id="@+id/nearby_friends_panel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:visibility="gone">
+                        <TextView android:id="@+id/nearby_friends_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:includeFontPadding="false" android:text="@string/nearby_friends_empty"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body" android:textColor="@color/fly_on_surface" />
+                        <TextView android:id="@+id/nearby_friends_blocked" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                        <TextView android:id="@+id/nearby_friends_saved_after_auth" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_friends_saved_after_auth"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                    </LinearLayout>
+                    <LinearLayout android:id="@+id/nearby_devices_panel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView android:id="@+id/nearby_devices_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:includeFontPadding="false" android:text="@string/nearby_devices_empty"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_find_devices" style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                            android:enabled="false" android:minHeight="48dp" android:minWidth="160dp"
+                            android:text="@string/nearby_find_devices" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
+                            android:textColor="@color/fly_on_surface" />
+                        <TextView android:id="@+id/nearby_find_devices_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:includeFontPadding="false" android:text="@string/nearby_blocked_discovery"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                    </LinearLayout>
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+    <TextView android:id="@+id/nearby_entry_footer" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:gravity="center_vertical" android:includeFontPadding="false" android:minHeight="58dp" android:padding="16dp"
+        android:text="@string/nearby_entry_footer" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+        android:textColor="@color/fly_on_surface_muted" />
 </LinearLayout>

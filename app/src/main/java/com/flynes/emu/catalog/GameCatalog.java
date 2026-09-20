@@ -279,6 +279,31 @@ public final class GameCatalog {
         }
     }
 
+    /**
+     * Read-only exact-content revalidation while catalog scan publication is excluded. The access
+     * check must only inspect current source permissions; it must not perform ROM I/O, wait for an
+     * owner, or write catalog state. This is a moment-in-time check, not an external permission lease.
+     * Metadata renames may rebase identity without changing the selected physical payload.
+     */
+    public Optional<GameVariant> revalidateExactContent(
+            LaunchResolution resolution, java.util.function.Consumer<GameVariant> accessCheck) {
+        DomainValidation.requireNonNull(resolution, "launch resolution");
+        DomainValidation.requireNonNull(accessCheck, "read access check");
+        synchronized (scanCommitGate) {
+            GameVariant current = rebaseExactContentVariant(resolution);
+            if (current == null) return Optional.empty();
+            accessCheck.accept(current);
+            // A synchronous callback may reenter publication on this thread.
+            return Optional.ofNullable(rebaseExactContentVariant(resolution));
+        }
+    }
+
+    private GameVariant rebaseExactContentVariant(LaunchResolution resolution) {
+        GameVariant current = rebaseExactLaunchVariant(resolution);
+        return current != null && current.hashes().crc32().equals(resolution.variant().hashes().crc32())
+                ? current : null;
+    }
+
     private GameVariant rebaseExactLaunchVariant(LaunchResolution resolution) {
         GameVariant loaded = resolution.variant();
         GameVariant current = snapshot.variantsById.get(loaded.variantId());

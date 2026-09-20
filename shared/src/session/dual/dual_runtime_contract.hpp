@@ -328,6 +328,41 @@ inline fly_session_result_v2 evaluate_dual_mode_v1(DualModeV1 mode) noexcept
                                     : FLY_SESSION_V2_UNAVAILABLE;
 }
 
+/*
+ * Required DUAL start-condition preimages for NestopiaUE 1.53.2 / fly_runtime.
+ * These identify the required configuration, not a loaded ROM's actual region
+ * or AutoSelect controller topology. Providers must verify content support.
+ * Identity hashes are domain_hash of these exact little-endian bytes.
+ */
+inline constexpr std::size_t kDualCanonicalProfileBytesV1 = 20;
+inline constexpr std::size_t kDualCanonicalOptionsBytesV1 = 12;
+
+inline void write_u32le_v1(std::uint8_t* bytes, std::uint32_t value) noexcept
+{
+    bytes[0] = static_cast<std::uint8_t>(value);
+    bytes[1] = static_cast<std::uint8_t>(value >> 8u);
+    bytes[2] = static_cast<std::uint8_t>(value >> 16u);
+    bytes[3] = static_cast<std::uint8_t>(value >> 24u);
+}
+
+inline void write_canonical_dual_profile_bytes_v1(
+    std::uint8_t out[kDualCanonicalProfileBytesV1]) noexcept
+{
+    write_u32le_v1(out + 0, 0u); /* NES_FAVORED_NES_NTSC */
+    write_u32le_v1(out + 4, 2u); /* P1+P2 */
+    write_u32le_v1(out + 8, 0u); /* NES_PIXFMT_RGB565 */
+    write_u32le_v1(out + 12, FLY_RUNTIME_FRAME_WIDTH);
+    write_u32le_v1(out + 16, FLY_RUNTIME_FRAME_HEIGHT);
+}
+
+inline void write_canonical_dual_options_bytes_v1(
+    std::uint8_t out[kDualCanonicalOptionsBytesV1]) noexcept
+{
+    write_u32le_v1(out + 0, 0u); /* SetRamPowerState(0) */
+    write_u32le_v1(out + 4, FLY_RUNTIME_DEFAULT_SAMPLE_RATE);
+    write_u32le_v1(out + 8, 0u); /* mono */
+}
+
 } // namespace flynes::session::dual
 
 #endif

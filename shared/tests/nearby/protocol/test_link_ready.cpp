@@ -892,7 +892,7 @@ void two_stage_parse_then_accept()
           "stage 1 still rejects a role-reflected READY before any crypto");
 
     auto zero_signature = bytes_of(golden.data(), golden.size());
-    std::fill(zero_signature.begin() + 368, zero_signature.end(), 0);
+    std::fill(zero_signature.begin() + 368, zero_signature.end(), std::uint8_t{0});
     wire::LinkControlDecodeReportV1 zero_report{};
     wire::LinkControlParsedV1 zero_parsed{};
     link::LinkReadyV1 zero_value{};

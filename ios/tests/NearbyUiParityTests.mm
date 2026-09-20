@@ -57,9 +57,13 @@
     XCUIElement *filter = app.switches[@"nearby_multiplayer_filter"];
     XCTAssertTrue([filter waitForExistenceWithTimeout:5]);
     XCTAssertTrue(filter.isEnabled);
-    NSString *before = filter.value;
+    NSString *before = [filter.value description];
     [filter tap];
-    XCTAssertNotEqualObjects(filter.value, before);
+    XCTAssertNotEqualObjects([filter.value description], before);
+    // AppStorage persists GameCenterMultiplayerOnly. Restore so later suites
+    // still see single-player bundled cards (UX03: builtins are not SUPPORTED).
+    [filter tap];
+    XCTAssertEqualObjects([filter.value description], before);
 }
 
 - (void)testJoinCodeFormNeverSubmitsIncompleteInput {
@@ -105,7 +109,75 @@
     XCTAssertNotEqualObjects(first, second);
 
     [app.buttons[@"nearby_invite_cancel"] tap];
-    XCTAssertEqualObjects(code.label, @"· · · · · ·");
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_entry_headline" inApp:app]
+        waitForExistenceWithTimeout:10], @"cancel returns to N00");
+    XCTAssertFalse(code.exists, @"cancel must remove the old invite code from the screen");
+}
+
+- (void)testJoinSubmitFailureAllowsModifyRetryAndCancel {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = [self launchApp];
+    XCTAssertTrue([app.buttons[@"open_nearby"] waitForExistenceWithTimeout:15]);
+    [app.buttons[@"open_nearby"] tap];
+    XCUIElement *enterCode = [self elementWithIdentifier:@"nearby_action_enter_code" inApp:app];
+    XCTAssertTrue([enterCode waitForExistenceWithTimeout:10]);
+    [enterCode tap];
+    XCUIElement *input = app.textFields[@"nearby_join_code_input"];
+    XCTAssertTrue([input waitForExistenceWithTimeout:10]);
+    [input tap];
+    [input typeText:@"123456"];
+    XCUIElement *submit = app.buttons[@"nearby_join_submit"];
+    XCTAssertTrue(submit.isEnabled);
+    [submit tap];
+    [submit tap];
+    XCUIElement *cancel = app.buttons[@"nearby_join_cancel"];
+    XCTAssertTrue([cancel waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(submit.isEnabled, @"failure must restore submit on the same page");
+    XCTAssertTrue(input.isEnabled, @"failure must unlock the code field for modify/retry");
+    [input tap];
+    NSString *current = [input.value description];
+    for (NSUInteger i = 0; i < current.length; i++) {
+        [input typeText:XCUIKeyboardKeyDelete];
+    }
+    [input typeText:@"654321"];
+    [submit tap];
+    XCTAssertTrue([cancel waitForExistenceWithTimeout:5]);
+    [cancel tap];
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_entry_headline" inApp:app]
+        waitForExistenceWithTimeout:10]);
+}
+
+- (void)testLobbyFirstScreenHidesDiagnosticsUntilOpened {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = [[XCUIApplication alloc] initWithBundleIdentifier:@"com.flynes.app"];
+    app.launchArguments = @[@"-AppleLanguages", @"(en)", @"-AppleLocale", @"en_US",
+                            @"-flynes.test.nearby_lobby"];
+    [app launch];
+    XCUIElement *game = [self elementWithIdentifier:@"nearby_lobby_row_rom_identity" inApp:app];
+    XCTAssertTrue([game waitForExistenceWithTimeout:10]);
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_lobby_row_network_owner" inApp:app] exists]);
+    XCTAssertTrue([[self elementWithIdentifier:@"nearby_lobby_row_seat" inApp:app] exists]);
+    XCTAssertFalse([[self elementWithIdentifier:@"nearby_lobby_row_identity_fingerprint" inApp:app] exists]);
+    XCUIElement *confirm = app.buttons[@"nearby_lobby_confirm"];
+    XCTAssertTrue([confirm waitForExistenceWithTimeout:5]);
+    XCTAssertFalse(confirm.isEnabled, @"confirm stays disabled until pending-config exists");
+    XCUIElement *details = [self elementWithIdentifier:@"nearby_lobby_details" inApp:app];
+    XCTAssertTrue([details waitForExistenceWithTimeout:5]);
+    XCUIElement *scroll = app.scrollViews.firstMatch;
+    XCUICoordinate *revealStart = [scroll coordinateWithNormalizedOffset:CGVectorMake(0.2, 0.32)];
+    XCUICoordinate *revealEnd = [scroll coordinateWithNormalizedOffset:CGVectorMake(0.2, 0.10)];
+    [revealStart pressForDuration:0.3 thenDragToCoordinate:revealEnd];
+    XCTAssertTrue(details.isHittable, @"details control must be reachable above the fixed confirm section");
+    [details tap];
+    XCUIElement *fingerprint = [self elementWithIdentifier:@"nearby_lobby_row_identity_fingerprint" inApp:app];
+    for (NSUInteger attempt = 0; attempt < 12 && !fingerprint.exists; attempt++) {
+        XCUICoordinate *start = [scroll coordinateWithNormalizedOffset:CGVectorMake(0.2, 0.31)];
+        XCUICoordinate *end = [scroll coordinateWithNormalizedOffset:CGVectorMake(0.2, 0.18)];
+        [start pressForDuration:0.5 thenDragToCoordinate:end];
+        fingerprint = [self elementWithIdentifier:@"nearby_lobby_row_identity_fingerprint" inApp:app];
+    }
+    XCTAssertTrue(fingerprint.exists, @"expanded diagnostics must reveal the identity row after scrolling");
+    XCTAssertFalse(confirm.isEnabled);
 }
 
 @end

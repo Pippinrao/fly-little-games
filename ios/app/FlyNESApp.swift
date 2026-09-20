@@ -13,7 +13,15 @@ struct FlyNESApp: App {
 
     var body: some Scene {
         WindowGroup {
-            CatalogLibraryView()
+            Group {
+                if ProcessInfo.processInfo.arguments.contains("-flynes.test.nearby_lobby") {
+                    NavigationStack {
+                        NearbyLobbyView()
+                    }
+                } else {
+                    CatalogLibraryView()
+                }
+            }
                 .environment(\.locale, localeTag == "system" ? .autoupdatingCurrent : Locale(identifier: localeTag))
         }
     }

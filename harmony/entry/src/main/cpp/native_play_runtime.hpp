@@ -17,6 +17,8 @@ typedef struct OH_AudioRendererStruct OH_AudioRenderer;
 
 namespace flynes::harmony {
 
+struct AudioHandleRecord;
+
 struct NativePlayStatus final
 {
     bool running = false;
@@ -74,9 +76,11 @@ private:
         audio_queue_capacity_samples(48'000);
     NativePlayRuntime(std::unique_ptr<PlaySession> session, SourceTiming timing);
     void run();
-    void initialize_audio(bool fast_path);
-    void release_audio();
+    void run_audio();
+    void initialize_audio(bool fast_path, std::uint64_t generation);
+    bool release_audio(bool closing = false);
     void sample_audio_timestamp();
+    void discard_audio_locked();
     static int audio_write(OH_AudioRenderer*, void* user_data,
                            void* buffer, std::int32_t bytes);
 
@@ -88,11 +92,24 @@ private:
     mutable std::mutex error_mutex_;
     std::condition_variable wake_;
     std::condition_variable first_frame_ready_;
+    std::condition_variable audio_wake_;
     std::thread thread_;
+    std::thread audio_thread_;
     PlayStepResult latest_;
     SpscPcmRingBuffer pcm_{kPcmCapacitySamples};
     TemporalAudioDelayGate temporal_audio_{800, 80};
     OH_AudioRenderer* audio_renderer_ = nullptr;
+    AudioHandleRecord* audio_handle_ = nullptr; // control thread ownership
+    bool audio_release_failed_ = false;
+    bool audio_renderer_fast_path_ = true;
+    // audio_mutex_ protects publication, PCM/gate and generation only. Never
+    // hold it across an OHAudio call or a thread join. Only audio_thread_ may
+    // call platform control APIs; callback and source never do so.
+    std::uint64_t audio_generation_ = 0;
+    std::uint64_t audio_discarded_samples_ = 0;
+    // Static-lifetime literals only. Status copies under audio_mutex_; audio
+    // control, especially failed close/quarantine, never allocates a message.
+    const char* audio_fallback_reason_ = "";
     std::atomic<std::uint32_t> buttons_{0};
     std::atomic<bool> stop_{false};
     std::atomic<bool> paused_{false};

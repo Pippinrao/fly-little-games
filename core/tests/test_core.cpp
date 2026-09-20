@@ -13,12 +13,30 @@
  */
 #include "nes/nes.h"
 #include "../src/nes_audio_clock.hpp"
+#include "../src/nes_state.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <vector>
+
+// Test-only allocator history: fill fresh storage before constructors run.
+// Outside the scoped create calls below this behaves like ordinary new/delete.
+namespace { thread_local int allocation_fill = -1; }
+void* operator new(std::size_t size)
+{
+	void* memory = std::malloc(size ? size : 1);
+	if (!memory) throw std::bad_alloc();
+	if (allocation_fill >= 0) std::memset(memory, allocation_fill, size);
+	return memory;
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void* memory) noexcept { std::free(memory); }
+void operator delete[](void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
+void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); }
 
 namespace
 {
@@ -49,6 +67,237 @@ namespace
 		const size_t got = std::fread(out.data(), 1, out.size(), f);
 		std::fclose(f);
 		return got == out.size();
+	}
+
+	std::vector<uint8_t> save_bytes(nes_t* nes)
+	{
+		size_t written = 0, needed = 0;
+		check(nes_save_state(nes, nullptr, 0, &written, &needed) == NES_ERR_BUFFER_TOO_SMALL,
+		      "save size query succeeds");
+		std::vector<uint8_t> bytes(needed);
+		check(nes_save_state(nes, bytes.data(), bytes.size(), &written, &needed) == NES_OK,
+		      "save bytes succeeds");
+		bytes.resize(written);
+		return bytes;
+	}
+
+	std::vector<int16_t> run_pcm(nes_t* nes, uint32_t count)
+	{
+		std::vector<int16_t> pcm(count * 2048);
+		uint32_t frames = 0, samples = 0;
+		check(nes_run_frames(nes, count, pcm.data(), static_cast<uint32_t>(pcm.size()),
+		                     &frames, &samples) == NES_OK && frames == count,
+		      "PCM replay runs requested frames");
+		pcm.resize(samples);
+		return pcm;
+	}
+
+	std::vector<uint8_t> canonical_bytes(nes_t* nes)
+	{
+		size_t written = 99, needed = 0;
+		check(nes_copy_canonical_state(nes, nullptr, 0, &written, &needed) == NES_ERR_BUFFER_TOO_SMALL
+		      && written == 0 && needed > 93, "canonical query reports exact required size");
+		std::vector<uint8_t> bytes(needed);
+		check(nes_copy_canonical_state(nes, bytes.data(), bytes.size(), &written, &needed) == NES_OK
+		      && written == bytes.size() && needed == bytes.size(), "canonical exact-size copy succeeds");
+		bytes.resize(written);
+		return bytes;
+	}
+
+	void put_le(std::vector<uint8_t>& bytes, size_t offset, uint64_t value, size_t size)
+	{
+		for (size_t i = 0; i < size; ++i)
+			bytes[offset + i] = static_cast<uint8_t>(value >> (i * 8));
+	}
+
+	uint32_t get_le32(const std::vector<uint8_t>& bytes, size_t offset)
+	{
+		uint32_t value = 0;
+		for (size_t i = 0; i < 4; ++i) value |= uint32_t(bytes[offset + i]) << (i * 8);
+		return value;
+	}
+
+	size_t find_chunk(const std::vector<uint8_t>& bytes, size_t begin, size_t end,
+	                  const char* id)
+	{
+		for (size_t offset = begin; offset + 8 <= end;)
+		{
+			const size_t length = get_le32(bytes, offset + 4);
+			if (length > end - offset - 8) break;
+			if (std::memcmp(bytes.data() + offset, id, 4) == 0) return offset;
+			offset += 8 + length;
+		}
+		return bytes.size();
+	}
+
+	// Turn current raw NST into the historical format by removing the optional
+	// queue chunk. Merely stripping the new wrapper would not exercise old NST.
+	void remove_audio_buffer_chunk(std::vector<uint8_t>& raw)
+	{
+		const size_t apu = find_chunk(raw, 8, raw.size(), "APU\0");
+		check(apu < raw.size(), "locate APU legacy fixture chunk");
+		if (apu == raw.size()) return;
+		const size_t buffer = find_chunk(raw, apu + 8, apu + 8 + get_le32(raw, apu + 4), "BFR\0");
+		if (buffer == raw.size()) return; // already a historical NST
+		const size_t removed = 8 + get_le32(raw, buffer + 4);
+		put_le(raw, apu + 4, get_le32(raw, apu + 4) - removed, 4);
+		put_le(raw, 4, get_le32(raw, 4) - removed, 4);
+		raw.erase(raw.begin() + buffer, raw.begin() + buffer + removed);
+	}
+
+	void refresh_state_crc(std::vector<uint8_t>& bytes)
+	{
+		put_le(bytes, 69, bytes.size() - 81, 8);
+		put_le(bytes, 77, flynes_state::crc32_bytes(bytes.data() + 81, bytes.size() - 81), 4);
+	}
+
+	bool same_pcm(const std::vector<int16_t>& actual, const std::vector<int16_t>& expected)
+	{
+		if (actual == expected) return true;
+		std::printf("  PCM mismatch: actual=%zu expected=%zu samples\n", actual.size(), expected.size());
+		for (size_t i = 0; i < actual.size() && i < expected.size(); ++i)
+		{
+			if (actual[i] != expected[i])
+			{
+				std::printf("  first PCM difference at %zu: actual=%d expected=%d\n",
+				            i, actual[i], expected[i]);
+				break;
+			}
+		}
+		return false;
+	}
+
+	std::vector<uint8_t> frame_bytes(nes_t* nes)
+	{
+		const nes_video_frame* frame = nes_get_video_frame(nes);
+		const auto* pixels = static_cast<const uint8_t*>(frame->pixels);
+		return {pixels, pixels + static_cast<size_t>(frame->pitch) * frame->height};
+	}
+
+	void test_canonical_allocation_history(const std::vector<uint8_t>& rom)
+	{
+		auto create_with_history = [](int fill) {
+			allocation_fill = fill;
+			nes_t* instance = nes_create(nullptr);
+			allocation_fill = -1;
+			return instance;
+		};
+		// Exercise a retired loaded instance as well as deterministic fresh
+		// storage patterns; allocator reuse alone is not a reliable regression.
+		nes_t* retired = create_with_history(0);
+		check(retired && nes_load_rom(retired, rom.data(), rom.size(), nullptr) >= 0,
+		      "load retired allocation-history core");
+		nes_destroy(retired);
+		nes_t* clean = create_with_history(0);
+		nes_t* reused = create_with_history(1);
+		check(clean && reused, "create cores with different allocation histories");
+		if (!clean || !reused) { nes_destroy(clean); nes_destroy(reused); return; }
+		check(nes_load_rom(clean, rom.data(), rom.size(), nullptr) >= 0 &&
+		      nes_load_rom(reused, rom.data(), rom.size(), nullptr) >= 0,
+		      "load allocation-history comparison cores");
+		for (unsigned frame = 0; frame < 12; ++frame)
+		{
+			for (unsigned port = 0; port < 4; ++port)
+			{
+				nes_set_input(clean, port, 1u << port);
+				nes_set_input(reused, port, 1u << port);
+			}
+			const auto expected_pcm = run_pcm(clean, 1);
+			const auto actual_pcm = run_pcm(reused, 1);
+			check(actual_pcm == expected_pcm, "allocation history preserves frame PCM");
+			check(frame_bytes(clean) == frame_bytes(reused), "allocation history preserves video");
+			check(canonical_bytes(clean) == canonical_bytes(reused),
+			      "allocation history preserves canonical core state");
+		}
+		nes_destroy(clean);
+		nes_destroy(reused);
+	}
+
+	void test_canonical_state(const std::vector<uint8_t>& rom)
+	{
+		nes_t* nes = nes_create(nullptr);
+		nes_t* peer = nes_create(nullptr);
+		check(nes && peer, "create canonical comparison cores");
+		if (!nes || !peer) { nes_destroy(nes); nes_destroy(peer); return; }
+		size_t written = 99, needed = 99;
+		uint8_t byte = 0xA5;
+		check(nes_copy_canonical_state(nullptr, nullptr, 0, &written, &needed) == NES_ERR_INVALID_PARAM,
+		      "canonical rejects null handle");
+		check(nes_copy_canonical_state(nes, nullptr, 1, &written, &needed) == NES_ERR_INVALID_PARAM,
+		      "canonical rejects null nonempty buffer");
+		check(nes_copy_canonical_state(nes, &byte, 1, nullptr, &needed) == NES_ERR_INVALID_PARAM
+		      && nes_copy_canonical_state(nes, &byte, 1, &written, nullptr) == NES_ERR_INVALID_PARAM,
+		      "canonical requires both output sizes");
+		check(nes_copy_canonical_state(nes, nullptr, 0, &written, &needed) == NES_ERR_NOT_READY
+		      && written == 0 && needed == 0, "canonical unloaded core reports not ready and zero sizes");
+
+		struct Reentry { nes_t* nes; unsigned calls = 0; bool rejected = true; } reentry{nes};
+		auto log = [](void* userdata, const char*, uint32_t) {
+			auto& probe = *static_cast<Reentry*>(userdata);
+			size_t written = 99, needed = 99;
+			++probe.calls;
+			probe.rejected &= nes_copy_canonical_state(probe.nes, nullptr, 0, &written, &needed)
+			    == NES_ERR_REENTRANT && written == 99 && needed == 99;
+		};
+		nes_set_log_callback(nes, log, &reentry);
+		check(nes_load_rom(nes, rom.data(), rom.size(), nullptr) >= 0, "load canonical core");
+		nes_set_log_callback(nes, nullptr, nullptr);
+		check(reentry.calls > 0 && reentry.rejected, "canonical export rejects callback reentry without touching outputs");
+		check(nes_load_rom(peer, rom.data(), rom.size(), nullptr) >= 0, "load untouched canonical control core");
+		run_pcm(nes, 61);
+		run_pcm(peer, 61);
+		const auto compressed = save_bytes(nes);
+		const auto canonical = canonical_bytes(nes);
+		check(canonical == canonical_bytes(nes), "repeated canonical exports are byte-identical");
+		check(save_bytes(nes) == compressed, "canonical export preserves ordinary compressed save bytes");
+		check(canonical.size() > 93 && canonical[8] == 2, "canonical state retains wrapper version 2");
+		check(canonical.size() > compressed.size(), "canonical state bypasses zlib compression");
+		if (canonical.size() > 93 && compressed.size() > 93)
+		{
+			const auto ram_chunk = [](const std::vector<uint8_t>& state) {
+				const size_t cpu = find_chunk(state, 101, state.size(), "CPU\0");
+				return cpu == state.size() ? cpu
+				    : find_chunk(state, cpu + 8, cpu + 8 + get_le32(state, cpu + 4), "RAM\0");
+			};
+			const size_t ram = ram_chunk(canonical), compressed_ram = ram_chunk(compressed);
+			check(ram < canonical.size() && get_le32(canonical, ram + 4) == 2049
+			      && canonical[ram + 8] == 0, "canonical CPU RAM uses raw NST encoding");
+			check(compressed_ram < compressed.size() && compressed[compressed_ram + 8] == 1,
+			      "ordinary CPU RAM still uses zlib NST encoding");
+			check(std::memcmp(canonical.data() + 28, compressed.data() + 28, 41) == 0
+			      && std::memcmp(canonical.data() + 81, compressed.data() + 81, 12) == 0,
+			      "canonical state preserves ROM identity and fractional audio clock");
+		}
+		std::vector<uint8_t> short_buffer(canonical.size() - 1, 0xA5);
+		const auto untouched = short_buffer;
+		written = needed = 99;
+		check(nes_copy_canonical_state(nes, short_buffer.data(), short_buffer.size(), &written, &needed)
+		      == NES_ERR_BUFFER_TOO_SMALL && written == 0 && needed == canonical.size()
+		      && short_buffer == untouched, "canonical short buffer reports size without partial writes");
+		const auto expected_pcm = run_pcm(peer, 1);
+		const auto expected_frame = frame_bytes(peer);
+		check(same_pcm(run_pcm(nes, 1), expected_pcm), "canonical export leaves next-frame PCM unchanged");
+		check(frame_bytes(nes) == expected_frame, "canonical export leaves next-frame video unchanged");
+		check(nes_load_state(nes, canonical.data(), canonical.size()) == NES_OK,
+		      "canonical state loads through the ordinary load API");
+		check(canonical_bytes(nes) == canonical, "canonical load restores complete serialized state");
+		check(same_pcm(run_pcm(nes, 1), expected_pcm), "canonical load restores exact PCM and sample cadence");
+		check(frame_bytes(nes) == expected_frame, "canonical load restores video pixels");
+		if (compressed.size() > 93)
+		{
+			auto zero = compressed;
+			put_le(zero, 81, 0, 8);
+			refresh_state_crc(zero);
+			check(nes_load_state(nes, zero.data(), zero.size()) == NES_OK, "load positive-zero clock");
+			const auto positive = canonical_bytes(nes);
+			put_le(zero, 81, UINT64_C(0x8000000000000000), 8);
+			refresh_state_crc(zero);
+			check(nes_load_state(nes, zero.data(), zero.size()) == NES_OK, "load negative-zero clock");
+			check(canonical_bytes(nes) == positive, "canonical clock normalizes equivalent signed zeros");
+			check(save_bytes(nes) == zero, "ordinary save preserves negative-zero clock encoding");
+		}
+		nes_destroy(peer);
+		nes_destroy(nes);
 	}
 
 	const char* err_str(int rc)
@@ -544,15 +793,15 @@ int main(int argc, char** argv)
 			check(rc == NES_ERR_INVALID_CRC, buf);
 		}
 
-		// f2. version: setting version (u32 LE at offset 8) to 2 must be
+		// f2. version: setting version (u32 LE at offset 8) to 3 must be
 		//     rejected as an unknown wrapper format.
 		{
 			std::vector<uint8_t> v2(buf1.begin(), buf1.begin() + written1);
-			v2[8] = 2; v2[9] = 0; v2[10] = 0; v2[11] = 0;
+			v2[8] = 3; v2[9] = 0; v2[10] = 0; v2[11] = 0;
 			const int rc = nes_load_state(nes, v2.data(), v2.size());
 			char buf[192];
 			std::snprintf(buf, sizeof(buf),
-			              "version=2 -> load fails (rc=%d %s, expected NES_ERR_UNSUPPORTED_VER)",
+			              "version=3 -> load fails (rc=%d %s, expected NES_ERR_UNSUPPORTED_VER)",
 			              rc, err_str(rc));
 			check(rc == NES_ERR_UNSUPPORTED_VER, buf);
 		}
@@ -576,13 +825,113 @@ int main(int argc, char** argv)
 		//     still load. Runs after the ROM is loaded, so the payload is
 		//     meaningful for the current machine.
 		{
-			std::vector<uint8_t> legacy(buf1.begin() + 81, buf1.begin() + written1);
+			const size_t raw_offset = buf1[8] == 2 ? 93 : 81;
+			std::vector<uint8_t> legacy(buf1.begin() + raw_offset, buf1.begin() + written1);
+			remove_audio_buffer_chunk(legacy);
 			const int rc = nes_load_state(nes, legacy.data(), legacy.size());
 			char buf[192];
 			std::snprintf(buf, sizeof(buf),
 			              "legacy raw NST (header stripped) loads (rc=%d %s, expected >= 0)",
 			              rc, err_str(rc));
 			check(rc >= 0, buf);
+			std::vector<uint8_t> v1(buf1.begin(), buf1.begin() + 81);
+			v1[8] = 1;
+			v1.insert(v1.end(), legacy.begin(), legacy.end());
+			refresh_state_crc(v1);
+			for (const auto& old : {legacy, v1})
+			{
+				std::vector<int16_t> expected;
+				for (int replay = 0; replay < 4; ++replay)
+				{
+					run_pcm(nes, replay + 1);
+					check(nes_load_state(nes, old.data(), old.size()) >= 0,
+					      "legacy raw/v1 checkpoint remains loadable");
+					const auto pcm = run_pcm(nes, 3);
+					if (replay == 0) expected = pcm;
+					check(same_pcm(pcm, expected), "legacy load resets cadence independently of previous history");
+				}
+			}
+		}
+		if (buf1[8] == 2)
+		{
+			const std::vector<uint8_t> valid(buf1.begin(), buf1.begin() + written1);
+			const auto rejects_unchanged = [&](const std::vector<uint8_t>& bad, int error) {
+				const auto before = save_bytes(nes);
+				check(nes_load_state(nes, bad.data(), bad.size()) == error,
+				      "malformed clock wrapper returns expected error");
+				check(save_bytes(nes) == before, "invalid wrapper leaves machine and clock untouched");
+			};
+			for (const size_t offset : {size_t(81), size_t(89), size_t(93)})
+			{
+				auto bad = valid;
+				bad[offset] ^= 1;
+				rejects_unchanged(bad, NES_ERR_INVALID_CRC);
+			}
+			for (const uint64_t bits : {UINT64_C(0x7ff8000000000000), // NaN
+			                            UINT64_C(0x7ff0000000000000), // infinity
+			                            UINT64_C(0xbfe0000000000000), // -0.5
+			                            UINT64_C(0x3ff0000000000000)}) // 1.0
+			{
+				auto bad = valid;
+				put_le(bad, 81, bits, 8);
+				refresh_state_crc(bad);
+				rejects_unchanged(bad, NES_ERR_CORRUPT_FILE);
+			}
+			auto bad = valid;
+			put_le(bad, 89, 3, 4);
+			refresh_state_crc(bad);
+			rejects_unchanged(bad, NES_ERR_CORRUPT_FILE);
+			bad = valid;
+			put_le(bad, 89, 0, 4);
+			put_le(bad, 81, UINT64_C(0x3fe0000000000000), 8);
+			refresh_state_crc(bad);
+			rejects_unchanged(bad, NES_ERR_CORRUPT_FILE);
+			bad = valid;
+			bad.resize(92);
+			refresh_state_crc(bad);
+			rejects_unchanged(bad, NES_ERR_CORRUPT_FILE);
+			bad = valid;
+			bad.pop_back();
+			rejects_unchanged(bad, NES_ERR_CORRUPT_FILE);
+			bad = valid;
+			bad[8] = 0;
+			rejects_unchanged(bad, NES_ERR_UNSUPPORTED_VER);
+
+			// CRC-valid malformed NST queue metadata reaches the NST parser and
+			// must fail; reload a valid state between negatives because upstream
+			// Machine::LoadState resets the machine on a raw NST parse failure.
+			const size_t apu = find_chunk(valid, 101, valid.size(), "APU\0");
+			check(apu < valid.size(), "locate APU for malformed queue cases");
+			if (apu < valid.size())
+			{
+				const size_t buffer = find_chunk(valid, apu + 8,
+				    apu + 8 + get_le32(valid, apu + 4), "BFR\0");
+				check(buffer < valid.size(), "save includes optional BFR audio queue chunk");
+				if (buffer < valid.size())
+				{
+					for (int failure = 0; failure < 4; ++failure)
+					{
+						bad = valid;
+						if (failure == 0) put_le(bad, buffer + 8, 2, 4);
+						if (failure == 1) put_le(bad, buffer + 12, 0x4000, 4);
+						if (failure == 2) put_le(bad, buffer + 4, 4, 4);
+						if (failure == 3)
+						{
+							const size_t length = 8 + get_le32(valid, buffer + 4);
+							bad.insert(bad.begin() + buffer, valid.begin() + buffer,
+							           valid.begin() + buffer + length);
+							put_le(bad, apu + 4, get_le32(valid, apu + 4) + length, 4);
+							put_le(bad, 97, get_le32(valid, 97) + length, 4);
+						}
+						refresh_state_crc(bad);
+						check(nes_load_state(nes, bad.data(), bad.size()) ==
+						      (failure == 0 ? NES_ERR_UNSUPPORTED_VER : NES_ERR_CORRUPT_FILE),
+						      "invalid BFR version/count/length/duplicate is rejected");
+						check(nes_load_state(nes, valid.data(), valid.size()) == NES_OK,
+						      "valid state loads after malformed NST queue");
+					}
+				}
+			}
 		}
 	}
 	else
@@ -806,7 +1155,65 @@ int main(int argc, char** argv)
 
 	nes_destroy(nes);
 
+	// Separate cores keep this replay test independent of the smoke test's
+	// input timing and process-global callback lifetime.
+	nes = nes_create(nullptr);
+	nes_t* peer = nes_create(nullptr);
+	check(nes && peer, "create two replay cores");
+	if (nes && peer)
+	{
+		check(nes_load_rom(nes, rom.data(), rom.size(), nullptr) >= 0 &&
+		      nes_load_rom(peer, rom.data(), rom.size(), nullptr) >= 0,
+		      "load two replay cores");
+		check(save_bytes(nes) == save_bytes(peer), "fresh cores serialize identically");
+		run_pcm(nes, 1);
+		const auto checkpoint = save_bytes(nes);
+		check(checkpoint.size() > 93 && checkpoint[8] == 2,
+		      "new saves use explicit clock-aware wrapper version 2");
+		run_pcm(peer, 7);
+		std::vector<int16_t> expected;
+		for (int replay = 0; replay < 8; ++replay)
+		{
+			nes_t* target = replay % 2 ? peer : nes;
+			check(nes_load_state(target, checkpoint.data(), checkpoint.size()) == NES_OK,
+			      "reload clock-aware checkpoint");
+			const auto pcm = run_pcm(target, 3);
+			if (replay == 0) expected = pcm;
+			check(same_pcm(pcm, expected), "checkpoint replays preserve every PCM sample and count");
+		}
+
+		// Cover several fractional cadence phases and audible gameplay. A
+		// replay must also match uninterrupted execution, not just another load.
+		bool heard_audio = false;
+		for (const uint32_t advance : {1u, 2u, 3u, 60u, 61u, 119u})
+		{
+			run_pcm(nes, advance);
+			const auto saved = save_bytes(nes);
+			const auto continuous_pcm = run_pcm(nes, 8);
+			for (const int16_t sample : continuous_pcm) heard_audio |= sample != 0;
+			const auto continuous_frame = frame_bytes(nes);
+			const auto continuous_state = save_bytes(nes);
+			for (nes_t* target : {nes, peer})
+			{
+				check(nes_load_state(target, saved.data(), saved.size()) == NES_OK,
+				      "load uninterrupted comparison checkpoint");
+				check(same_pcm(run_pcm(target, 8), continuous_pcm),
+				      "replay matches uninterrupted PCM sample-for-sample");
+				check(frame_bytes(target) == continuous_frame,
+				      "replay matches uninterrupted video pixels");
+				check(save_bytes(target) == continuous_state,
+				      "replay matches uninterrupted serialized state");
+			}
+		}
+		check(heard_audio, "uninterrupted replay coverage includes non-silent PCM");
+	}
+	nes_destroy(peer);
+	nes_destroy(nes);
+
 	// ---- summary ---------------------------------------------------------
+	test_canonical_state(rom);
+	test_canonical_allocation_history(rom);
+
 	std::printf("\n=== RESULT: %s (%d failure%s) ===\n",
 	            g_failures == 0 ? "PASS" : "FAIL",
 	            g_failures, g_failures == 1 ? "" : "s");

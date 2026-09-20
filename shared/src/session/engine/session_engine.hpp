@@ -50,6 +50,9 @@ public:
     fly_session_result_v2 deliver(const fly_session_port_event_v2& event);
     fly_session_result_v2 read_notice(fly_session_notice_v2& out_notice);
     fly_session_result_v2 acquire_view(fly_session_view_v2_t** out_view);
+    fly_session_result_v2 read_dual_start_ref(
+        const fly_session_approval_token_v2_t* start_approval,
+        fly_session_dual_start_ref_v2& out_ref);
     fly_session_result_v2 begin_shutdown(std::uint64_t request_id);
     bool can_destroy() const noexcept;
     void detach_handle() noexcept;
@@ -67,6 +70,8 @@ private:
 
     void complete_shutdown_locked() noexcept;
     void dispatch_retiring_quic_close() noexcept;
+    fly_session_result_v2 dual_start_inputs_locked(
+        dual::DualStartInputsV1& inputs) const noexcept;
     void publish_link_view_locked(std::uint32_t link_state);
     fly_session_op_token_v2 make_link_operation_token_locked();
     /*
@@ -124,6 +129,10 @@ private:
     bool start_session_signing_locked() noexcept;
     bool start_link_handshake_locked() noexcept;
     void ensure_dual_controller_locked() noexcept;
+    void drain_pending_config_confirms_locked() noexcept;
+    void drain_suspend_intents_locked() noexcept;
+    fly_session_result_v2 queue_dual_suspend_control_locked() noexcept;
+    void reserve_handshake_app_control_ids_locked() noexcept;
     void ensure_content_controller_locked() noexcept;
     void apply_dual_projection_locked(fly_session_view_v2_t* view) noexcept;
     void cancel_dual_locked() noexcept;

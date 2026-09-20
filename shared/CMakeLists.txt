@@ -294,6 +294,7 @@ set_target_properties(flynes_invite_code_route PROPERTIES CXX_EXTENSIONS NO POSI
 flynes_enable_strict_warnings(flynes_invite_code_route)
 
 add_library(flynes_session STATIC
+    src/product/dual_start_identity.cpp
     src/session/flynes_session.cpp
     src/session/flynes_session_v2.cpp
     src/session/engine/session_engine.cpp
@@ -375,27 +376,79 @@ endif()
 if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
     set(FLYNES_QUIC_PROVIDER_ROOT
         "${CMAKE_CURRENT_SOURCE_DIR}/nearby-quic-provider")
-    if(WIN32)
-        set(FLYNES_QUIC_PROVIDER_LIBRARY
-            "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/flynes_nearby_quic_provider.lib")
-    else()
-        set(FLYNES_QUIC_PROVIDER_LIBRARY
-            "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/libflynes_nearby_quic_provider.a")
-    endif()
-
+    set(FLYNES_QUIC_CARGO_ARGS build --release
+        --manifest-path "${FLYNES_QUIC_PROVIDER_ROOT}/Cargo.toml")
     file(GLOB_RECURSE FLYNES_QUIC_PROVIDER_SOURCES
         "${FLYNES_QUIC_PROVIDER_ROOT}/src/*.rs")
     list(APPEND FLYNES_QUIC_PROVIDER_SOURCES
         "${FLYNES_QUIC_PROVIDER_ROOT}/Cargo.toml")
-
-    add_custom_command(
-        OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
-        COMMAND "${FLYNES_CARGO_EXECUTABLE}" build --release
-            --manifest-path "${FLYNES_QUIC_PROVIDER_ROOT}/Cargo.toml"
-        WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
-        DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
-        COMMENT "cargo build --release (flynes nearby QUIC provider)"
-        VERBATIM)
+    if(ANDROID)
+        if(ANDROID_ABI STREQUAL "arm64-v8a")
+            set(FLYNES_QUIC_RUST_TARGET aarch64-linux-android)
+        elseif(ANDROID_ABI STREQUAL "x86_64")
+            set(FLYNES_QUIC_RUST_TARGET x86_64-linux-android)
+        else()
+            message(FATAL_ERROR
+                "nearby QUIC provider: unsupported ANDROID_ABI ${ANDROID_ABI}")
+        endif()
+        if(CMAKE_HOST_WIN32)
+            set(FLYNES_NDK_LLVM_HOST windows-x86_64)
+            set(FLYNES_NDK_CLANG_EXT ".cmd")
+        elseif(CMAKE_HOST_APPLE)
+            set(FLYNES_NDK_LLVM_HOST darwin-x86_64)
+            set(FLYNES_NDK_CLANG_EXT "")
+        else()
+            set(FLYNES_NDK_LLVM_HOST linux-x86_64)
+            set(FLYNES_NDK_CLANG_EXT "")
+        endif()
+        set(FLYNES_NDK_LLVM
+            "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${FLYNES_NDK_LLVM_HOST}/bin")
+        set(FLYNES_ANDROID_API "${ANDROID_NATIVE_API_LEVEL}")
+        string(REPLACE "android-" "" FLYNES_ANDROID_API "${FLYNES_ANDROID_API}")
+        set(FLYNES_NDK_CC
+            "${FLYNES_NDK_LLVM}/${FLYNES_QUIC_RUST_TARGET}${FLYNES_ANDROID_API}-clang${FLYNES_NDK_CLANG_EXT}")
+        set(FLYNES_NDK_AR "${FLYNES_NDK_LLVM}/llvm-ar.exe")
+        if(NOT CMAKE_HOST_WIN32)
+            set(FLYNES_NDK_AR "${FLYNES_NDK_LLVM}/llvm-ar")
+        endif()
+        string(REPLACE "-" "_" FLYNES_QUIC_TARGET_ENV "${FLYNES_QUIC_RUST_TARGET}")
+        string(TOUPPER "${FLYNES_QUIC_TARGET_ENV}" FLYNES_QUIC_TARGET_ENV)
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/${FLYNES_QUIC_RUST_TARGET}/release/libflynes_nearby_quic_provider.a")
+        list(APPEND FLYNES_QUIC_CARGO_ARGS --target "${FLYNES_QUIC_RUST_TARGET}")
+        add_custom_command(
+            OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+            COMMAND "${CMAKE_COMMAND}" -E env
+                "ANDROID_NDK_HOME=${CMAKE_ANDROID_NDK}"
+                "CC_${FLYNES_QUIC_RUST_TARGET}=${FLYNES_NDK_CC}"
+                "AR_${FLYNES_QUIC_RUST_TARGET}=${FLYNES_NDK_AR}"
+                "CARGO_TARGET_${FLYNES_QUIC_TARGET_ENV}_LINKER=${FLYNES_NDK_CC}"
+                "${FLYNES_CARGO_EXECUTABLE}" ${FLYNES_QUIC_CARGO_ARGS}
+            WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
+            DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
+            COMMENT "cargo build --release --target ${FLYNES_QUIC_RUST_TARGET} (nearby QUIC)"
+            VERBATIM)
+    elseif(WIN32)
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/flynes_nearby_quic_provider.lib")
+        add_custom_command(
+            OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+            COMMAND "${FLYNES_CARGO_EXECUTABLE}" ${FLYNES_QUIC_CARGO_ARGS}
+            WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
+            DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
+            COMMENT "cargo build --release (flynes nearby QUIC provider)"
+            VERBATIM)
+    else()
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/libflynes_nearby_quic_provider.a")
+        add_custom_command(
+            OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+            COMMAND "${FLYNES_CARGO_EXECUTABLE}" ${FLYNES_QUIC_CARGO_ARGS}
+            WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
+            DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
+            COMMENT "cargo build --release (flynes nearby QUIC provider)"
+            VERBATIM)
+    endif()
 
     add_custom_target(flynes_nearby_quic_provider_build
         DEPENDS "${FLYNES_QUIC_PROVIDER_LIBRARY}")
@@ -404,7 +457,10 @@ if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
     set_target_properties(flynes_nearby_quic_provider PROPERTIES
         IMPORTED_LOCATION "${FLYNES_QUIC_PROVIDER_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${FLYNES_QUIC_PROVIDER_ROOT}/include")
-    if(WIN32)
+    if(ANDROID)
+        set_property(TARGET flynes_nearby_quic_provider APPEND PROPERTY
+            INTERFACE_LINK_LIBRARIES log)
+    elseif(WIN32)
         # A Rust staticlib on MSVC still needs the platform libraries its
         # dependencies (ring, rustls, socket2, getrandom) reference.
         set_property(TARGET flynes_nearby_quic_provider APPEND PROPERTY
@@ -418,6 +474,46 @@ if(FLYNES_BUILD_TESTS)
     enable_language(C)
     enable_testing()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    # GNU-compatible ELF --wrap is test observation only, unavailable on Apple/MSVC.
+    if(UNIX AND NOT APPLE AND NOT ANDROID)
+        find_package(Threads REQUIRED)
+        add_executable(flynes_android_crypto_port_test
+            tests/nearby/integration/test_android_crypto_port.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby/crypto_port.cpp)
+        target_link_libraries(flynes_android_crypto_port_test PRIVATE flynes_session_ports Threads::Threads)
+        target_include_directories(flynes_android_crypto_port_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+            ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby)
+        target_compile_features(flynes_android_crypto_port_test PRIVATE cxx_std_17)
+        set_target_properties(flynes_android_crypto_port_test PROPERTIES CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_android_crypto_port_test)
+        target_link_options(flynes_android_crypto_port_test PRIVATE
+            -Wl,--wrap=fly_session_inbox_retain_v2 -Wl,--wrap=fly_session_inbox_release_v2
+            -Wl,--wrap=fly_session_deliver_v2)
+        add_test(NAME flynes_android_crypto_port COMMAND flynes_android_crypto_port_test)
+        set_tests_properties(flynes_android_crypto_port PROPERTIES TIMEOUT 60 LABELS "nearby_integration;nearby_contract")
+
+        add_executable(flynes_android_crypto_ownership_test
+            tests/nearby/integration/test_android_crypto_ownership.cpp
+            tests/nearby/harness/two_engine_loopback_fixture.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby/crypto_port.cpp)
+        target_link_libraries(flynes_android_crypto_ownership_test PRIVATE flynes_session Threads::Threads)
+        target_include_directories(flynes_android_crypto_ownership_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session/wire
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby/harness
+            ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby)
+        target_compile_features(flynes_android_crypto_ownership_test PRIVATE cxx_std_17)
+        set_target_properties(flynes_android_crypto_ownership_test PROPERTIES CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_android_crypto_ownership_test)
+        target_link_options(flynes_android_crypto_ownership_test PRIVATE
+            -Wl,--wrap=fly_session_create_v2 -Wl,--wrap=fly_session_deliver_v2)
+        add_test(NAME flynes_android_crypto_ownership COMMAND flynes_android_crypto_ownership_test)
+        set_tests_properties(flynes_android_crypto_ownership PROPERTIES TIMEOUT 60 LABELS "nearby_integration;nearby_contract")
+    endif()
 
     add_test(NAME flynes_game_title_data_check
         COMMAND ${Python3_EXECUTABLE}
@@ -433,8 +529,28 @@ if(FLYNES_BUILD_TESTS)
     endif()
     flynes_add_runtime_library()
 
+    add_executable(flynes_product_dual_runtime_port_test
+        tests/nearby/integration/test_product_dual_runtime_port.cpp)
+    target_link_libraries(flynes_product_dual_runtime_port_test PRIVATE flynes_product_dual_runtime)
+    target_include_directories(flynes_product_dual_runtime_port_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_product_dual_runtime_port_test PRIVATE cxx_std_17)
+    target_compile_definitions(flynes_product_dual_runtime_port_test PRIVATE
+        FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes"
+        FLYNES_RUNTIME_OTHER_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/twin_dragons.nes")
+    set_target_properties(flynes_product_dual_runtime_port_test PROPERTIES CXX_EXTENSIONS NO)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(flynes_product_dual_runtime_port_test PRIVATE FLYNES_TEST_WRAP_ALLOC)
+        target_link_options(flynes_product_dual_runtime_port_test PRIVATE
+            "-Wl,--wrap=calloc" "-Wl,--wrap=_Znwm" "-Wl,--wrap=nes_load_rom")
+    endif()
+    flynes_enable_strict_warnings(flynes_product_dual_runtime_port_test)
+    add_test(NAME flynes_product_dual_runtime_port COMMAND flynes_product_dual_runtime_port_test)
+    set_tests_properties(flynes_product_dual_runtime_port PROPERTIES LABELS "nearby_integration;runtime;product")
+
     add_executable(flynes_runtime_test
         tests/test_runtime.cpp
+        src/session/wire/sha256.cpp
     )
     target_link_libraries(flynes_runtime_test PRIVATE flynes_runtime)
     target_compile_features(flynes_runtime_test PRIVATE cxx_std_17)
@@ -443,6 +559,10 @@ if(FLYNES_BUILD_TESTS)
         FLYNES_RUNTIME_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/include/flynes/flynes_runtime.h"
     )
     set_target_properties(flynes_runtime_test PROPERTIES CXX_EXTENSIONS NO)
+    if(UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(flynes_runtime_test PRIVATE FLYNES_TEST_WRAP_SOURCE_INFO)
+        target_link_options(flynes_runtime_test PRIVATE "-Wl,--wrap=nes_get_rom_info")
+    endif()
     flynes_enable_strict_warnings(flynes_runtime_test)
     add_test(NAME flynes_runtime COMMAND flynes_runtime_test)
 
@@ -1170,6 +1290,8 @@ if(FLYNES_BUILD_TESTS)
         tests/nearby/contract/test_session_v2_contract.cpp
     )
     target_link_libraries(flynes_session_v2_contract_test PRIVATE flynes_session)
+    target_include_directories(flynes_session_v2_contract_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
     target_compile_features(flynes_session_v2_contract_test PRIVATE cxx_std_17)
     set_target_properties(flynes_session_v2_contract_test PROPERTIES CXX_EXTENSIONS NO)
     flynes_enable_strict_warnings(flynes_session_v2_contract_test)
@@ -1402,24 +1524,6 @@ if(FLYNES_BUILD_TESTS)
             COMMAND flynes_quic_provider_linkage_test)
         set_tests_properties(flynes_quic_provider_linkage PROPERTIES
             LABELS "nearby_protocol;nearby_ports")
-
-        add_executable(flynes_product_quic_wakeup_test
-            tests/nearby/integration/test_product_quic_wakeup.cpp)
-        target_link_libraries(flynes_product_quic_wakeup_test PRIVATE
-            flynes_session flynes_nearby_quic_provider)
-        add_dependencies(flynes_product_quic_wakeup_test
-            flynes_nearby_quic_provider_build)
-        target_include_directories(flynes_product_quic_wakeup_test PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/session
-            ${FLYNES_QUIC_PROVIDER_ROOT}/include)
-        target_compile_features(flynes_product_quic_wakeup_test PRIVATE cxx_std_17)
-        flynes_enable_strict_warnings(flynes_product_quic_wakeup_test)
-        if(UNIX)
-            target_link_libraries(flynes_product_quic_wakeup_test PRIVATE pthread dl m)
-        endif()
-        add_test(NAME flynes_product_quic_wakeup COMMAND flynes_product_quic_wakeup_test)
-        set_tests_properties(flynes_product_quic_wakeup PROPERTIES TIMEOUT 30)
     endif()
 
     add_executable(flynes_session_v2_fencing_test
@@ -1712,6 +1816,197 @@ if(FLYNES_BUILD_TESTS)
     set_tests_properties(flynes_two_engine_dual_mvp PROPERTIES
         LABELS "nearby_integration")
 
+    add_executable(flynes_game_config_consent_test
+        tests/nearby/integration/test_game_config_consent.cpp)
+    target_link_libraries(flynes_game_config_consent_test PRIVATE flynes_session)
+    target_include_directories(flynes_game_config_consent_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+    )
+    target_compile_features(flynes_game_config_consent_test PRIVATE cxx_std_17)
+    set_target_properties(flynes_game_config_consent_test PROPERTIES CXX_EXTENSIONS NO)
+    flynes_enable_strict_warnings(flynes_game_config_consent_test)
+    add_test(NAME flynes_game_config_consent
+             COMMAND flynes_game_config_consent_test)
+    set_tests_properties(flynes_game_config_consent PROPERTIES
+        LABELS "nearby_integration;nearby_contract")
+
+    if(TARGET flynes_runtime)
+        add_executable(flynes_two_nes_schedulers_test
+            tests/nearby/integration/test_two_nes_schedulers.cpp
+            ${FLYNES_W2_DUAL_SOURCES})
+        target_link_libraries(flynes_two_nes_schedulers_test PRIVATE flynes_runtime)
+        target_include_directories(flynes_two_nes_schedulers_test PRIVATE
+            ${FLYNES_W2_DUAL_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby)
+        target_compile_features(flynes_two_nes_schedulers_test PRIVATE cxx_std_17)
+        target_compile_definitions(flynes_two_nes_schedulers_test PRIVATE
+            FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes")
+        set_target_properties(flynes_two_nes_schedulers_test PROPERTIES CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_two_nes_schedulers_test)
+        add_test(NAME flynes_two_nes_schedulers COMMAND flynes_two_nes_schedulers_test)
+        set_tests_properties(flynes_two_nes_schedulers PROPERTIES
+            LABELS "nearby_integration")
+
+        add_executable(flynes_two_engine_nes_joint_test
+            tests/nearby/integration/test_two_engine_nes_joint.cpp
+            tests/nearby/harness/two_engine_loopback_fixture.cpp)
+        target_link_libraries(flynes_two_engine_nes_joint_test PRIVATE
+            flynes_session flynes_runtime)
+        target_include_directories(flynes_two_engine_nes_joint_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby)
+        target_compile_features(flynes_two_engine_nes_joint_test PRIVATE cxx_std_17)
+        target_compile_definitions(flynes_two_engine_nes_joint_test PRIVATE
+            FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes")
+        set_target_properties(flynes_two_engine_nes_joint_test PROPERTIES CXX_EXTENSIONS NO)
+        flynes_enable_strict_warnings(flynes_two_engine_nes_joint_test)
+        add_test(NAME flynes_two_engine_nes_joint
+                 COMMAND flynes_two_engine_nes_joint_test)
+        set_tests_properties(flynes_two_engine_nes_joint PROPERTIES
+            LABELS "nearby_integration")
+
+        if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+            add_executable(flynes_android_session_owner_test
+                tests/nearby/integration/test_android_session_owner.cpp
+                ../app/src/main/cpp/nearby/session_owner.cpp
+                ../app/src/main/cpp/nearby/prepared_content.cpp
+                ../app/src/main/cpp/nearby/content_port.cpp)
+            target_link_libraries(flynes_android_session_owner_test PRIVATE
+                flynes_session flynes_nearby_quic_provider flynes_product_dual_runtime)
+            add_dependencies(flynes_android_session_owner_test flynes_nearby_quic_provider_build)
+            target_include_directories(flynes_android_session_owner_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+                ${FLYNES_QUIC_PROVIDER_ROOT}/include)
+            target_compile_features(flynes_android_session_owner_test PRIVATE cxx_std_17)
+            target_compile_definitions(flynes_android_session_owner_test PRIVATE
+                FLYNES_ENABLE_RUST_QUIC_PROVIDER=1 FLYNES_SESSION_OWNER_TEST_OBSERVER=1)
+            flynes_enable_strict_warnings(flynes_android_session_owner_test)
+            if(UNIX)
+                target_link_libraries(flynes_android_session_owner_test PRIVATE pthread dl m)
+            endif()
+            add_test(NAME flynes_android_session_owner COMMAND flynes_android_session_owner_test)
+            set_tests_properties(flynes_android_session_owner PROPERTIES TIMEOUT 60)
+
+            add_executable(flynes_android_content_port_test
+                tests/nearby/integration/test_android_content_port.cpp
+                ../app/src/main/cpp/nearby/content_port.cpp)
+            target_include_directories(flynes_android_content_port_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+            target_link_libraries(flynes_android_content_port_test PRIVATE flynes_session)
+            target_compile_features(flynes_android_content_port_test PRIVATE cxx_std_17)
+            flynes_enable_strict_warnings(flynes_android_content_port_test)
+            add_test(NAME flynes_android_content_port COMMAND flynes_android_content_port_test)
+
+            add_executable(flynes_android_content_engine_test
+                tests/nearby/integration/test_android_content_engine.cpp
+                tests/nearby/integration/test_android_prepared_content.cpp
+                ../app/src/main/cpp/nearby/prepared_content.cpp
+                tests/nearby/harness/two_engine_loopback_fixture.cpp
+                ../app/src/main/cpp/nearby/session_owner.cpp
+                ../app/src/main/cpp/nearby/content_port.cpp)
+            target_include_directories(flynes_android_content_engine_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby)
+            target_link_libraries(flynes_android_content_engine_test PRIVATE flynes_session flynes_product_dual_runtime)
+            target_compile_features(flynes_android_content_engine_test PRIVATE cxx_std_17)
+            target_compile_definitions(flynes_android_content_engine_test PRIVATE FLYNES_SESSION_OWNER_PROJECTION_TEST=1
+                FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes")
+            if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_definitions(flynes_android_content_engine_test PRIVATE FLYNES_TEST_WRAP_ROM_LOAD=1)
+                target_link_options(flynes_android_content_engine_test PRIVATE "-Wl,--wrap=nes_load_rom")
+            endif()
+            flynes_enable_strict_warnings(flynes_android_content_engine_test)
+            add_test(NAME flynes_android_content_engine COMMAND flynes_android_content_engine_test)
+
+            add_executable(flynes_product_quic_facts_test
+                tests/nearby/contract/test_product_quic_facts.cpp)
+            target_link_libraries(flynes_product_quic_facts_test PRIVATE flynes_session)
+            target_include_directories(flynes_product_quic_facts_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+                ${FLYNES_QUIC_PROVIDER_ROOT}/include)
+            target_compile_features(flynes_product_quic_facts_test PRIVATE cxx_std_17)
+            flynes_enable_strict_warnings(flynes_product_quic_facts_test)
+            add_test(NAME flynes_product_quic_facts COMMAND flynes_product_quic_facts_test)
+            add_executable(flynes_product_quic_wakeup_test
+                tests/nearby/integration/test_product_quic_wakeup.cpp)
+            target_link_libraries(flynes_product_quic_wakeup_test PRIVATE
+                flynes_session flynes_nearby_quic_provider)
+            add_dependencies(flynes_product_quic_wakeup_test flynes_nearby_quic_provider_build)
+            target_include_directories(flynes_product_quic_wakeup_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/main/cpp/nearby
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+                ${FLYNES_QUIC_PROVIDER_ROOT}/include)
+            target_compile_features(flynes_product_quic_wakeup_test PRIVATE cxx_std_17)
+            flynes_enable_strict_warnings(flynes_product_quic_wakeup_test)
+            if(UNIX)
+                target_link_libraries(flynes_product_quic_wakeup_test PRIVATE pthread dl m)
+            endif()
+            add_test(NAME flynes_product_quic_wakeup COMMAND flynes_product_quic_wakeup_test)
+            set_tests_properties(flynes_product_quic_wakeup PROPERTIES TIMEOUT 30)
+
+            add_executable(flynes_two_engine_real_quic_test
+                tests/nearby/integration/test_two_engine_real_quic.cpp
+                tests/nearby/harness/two_engine_loopback_fixture.cpp)
+            target_link_libraries(flynes_two_engine_real_quic_test PRIVATE
+                flynes_session flynes_runtime flynes_nearby_quic_provider)
+            add_dependencies(flynes_two_engine_real_quic_test
+                flynes_nearby_quic_provider_build)
+            target_include_directories(flynes_two_engine_real_quic_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby
+                ${FLYNES_QUIC_PROVIDER_ROOT}/include)
+            target_compile_features(flynes_two_engine_real_quic_test PRIVATE cxx_std_17)
+            target_compile_definitions(flynes_two_engine_real_quic_test PRIVATE
+                FLYNES_ENABLE_RUST_QUIC_PROVIDER=1
+                FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes")
+            set_target_properties(flynes_two_engine_real_quic_test PROPERTIES CXX_EXTENSIONS NO)
+            flynes_enable_strict_warnings(flynes_two_engine_real_quic_test)
+            if(UNIX)
+                target_link_libraries(flynes_two_engine_real_quic_test PRIVATE
+                    pthread dl m)
+            endif()
+            add_test(NAME flynes_two_engine_real_quic
+                     COMMAND flynes_two_engine_real_quic_test)
+            set_tests_properties(flynes_two_engine_real_quic PROPERTIES
+                LABELS "nearby_integration"
+                TIMEOUT 300)
+            add_executable(flynes_two_engine_android_quic_test
+                tests/nearby/integration/test_two_engine_real_quic.cpp
+                tests/nearby/harness/two_engine_loopback_fixture.cpp)
+            target_link_libraries(flynes_two_engine_android_quic_test PRIVATE
+                flynes_session flynes_runtime flynes_nearby_quic_provider)
+            add_dependencies(flynes_two_engine_android_quic_test flynes_nearby_quic_provider_build)
+            target_include_directories(flynes_two_engine_android_quic_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/session/dual
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/nearby
+                ${FLYNES_QUIC_PROVIDER_ROOT}/include)
+            target_compile_features(flynes_two_engine_android_quic_test PRIVATE cxx_std_17)
+            target_compile_definitions(flynes_two_engine_android_quic_test PRIVATE
+                FLYNES_ENABLE_RUST_QUIC_PROVIDER=1 FLYNES_TEST_ANDROID_QUIC_ADAPTER=1
+                FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes")
+            flynes_enable_strict_warnings(flynes_two_engine_android_quic_test)
+            if(UNIX)
+                target_link_libraries(flynes_two_engine_android_quic_test PRIVATE pthread dl m)
+            endif()
+            add_test(NAME flynes_two_engine_android_quic COMMAND flynes_two_engine_android_quic_test)
+            set_tests_properties(flynes_two_engine_android_quic PROPERTIES
+                LABELS "nearby_integration" TIMEOUT 300)
+        endif()
+    endif()
+
     # ENG-01: receive W3 pair/link tamper negatives. LoopbackTransport is the
     # in-process fixture, not Quinn; a green matrix is L1 engine fail-closed
     # evidence only. Do not copy W3's older dual_run/recovery scenario binaries:
@@ -1819,3 +2114,15 @@ endif()
 # Android (and other consumers that add core first) get the runtime library
 # without pulling nestopia into catalog-only host tests.
 flynes_add_runtime_library()
+
+if(TARGET flynes_runtime)
+    add_library(flynes_product_dual_runtime STATIC
+        src/product/dual_runtime_port.cpp
+        src/session/wire/sha256.cpp)
+    target_include_directories(flynes_product_dual_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(flynes_product_dual_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_link_libraries(flynes_product_dual_runtime PUBLIC flynes_runtime)
+    target_compile_features(flynes_product_dual_runtime PUBLIC cxx_std_17)
+    set_target_properties(flynes_product_dual_runtime PROPERTIES CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+    flynes_enable_strict_warnings(flynes_product_dual_runtime)
+endif()

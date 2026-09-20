@@ -273,8 +273,11 @@ public:
         content.session_id = context_.session_id;
         content.branch_id = context_.branch_id;
         content.timeline_epoch = context_.timeline_epoch;
-        return scheduler_.begin(dual::DualModeV1::Dual, content, context_,
-                                owners_);
+        const auto began = scheduler_.begin(dual::DualModeV1::Dual, content, context_,
+                                            owners_);
+        if (began != FLY_SESSION_V2_OK)
+            return began;
+        return scheduler_.announce_running();
     }
 
     /* Stage the two seats' inputs for a frame and return the local seat mask. */
@@ -657,6 +660,37 @@ void stream_is_never_selectable()
           "the supported mode mask admits DUAL only");
 }
 
+void load_success_is_ready_until_both_ends_announce()
+{
+    DualFakeRuntimePortV1 port{};
+    dual::DualRunSchedulerV1 scheduler{port};
+    dual::DualContentRefV1 content{};
+    content.content_hash[0] = 1;
+    dual::DualInputKeyV1 context{};
+    context.session_id = id(0x11);
+    context.branch_id = id(0x22);
+    context.timeline_epoch = 1;
+    context.seat_revision = 1;
+    std::array<dual::DualOwnerKeyV1, dual::kDualPortCountV1> owners{};
+    owners[0] = {0, key_id(1)};
+    owners[1] = {1, key_id(2)};
+    owners[2] = {2, key_id(3)};
+    owners[3] = {3, key_id(4)};
+
+    check(scheduler.begin(dual::DualModeV1::Dual, content, context, owners) ==
+              FLY_SESSION_V2_OK,
+          "a successful load is accepted");
+    check(scheduler.state() == DualSimStateV1::Ready,
+          "load success is Ready, not Running");
+    check(scheduler.step_next_frame() == FLY_SESSION_V2_INVALID_STATE,
+          "Ready cannot step until both ends announce");
+    check(scheduler.announce_running() == FLY_SESSION_V2_OK &&
+              scheduler.state() == DualSimStateV1::Running,
+          "announce_running is the shared start barrier");
+    check(scheduler.announce_running() == FLY_SESSION_V2_INVALID_STATE,
+          "announce_running is idempotent only from Ready");
+}
+
 } // namespace
 
 int main()
@@ -667,6 +701,7 @@ int main()
     late_input_rewriting_verified_history_freezes();
     digest_mismatch_freezes_at_the_committed_frame();
     stream_is_never_selectable();
+    load_success_is_ready_until_both_ends_announce();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d dual run scheduler checks failed\n", failures);

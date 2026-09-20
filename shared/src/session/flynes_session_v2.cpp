@@ -633,6 +633,21 @@ extern "C" fly_session_result_v2 fly_session_acquire_view_v2(
     return engine->implementation->acquire_view(out_view);
 }
 
+extern "C" fly_session_result_v2 fly_session_read_dual_start_ref_v2(
+    fly_session_v2_t* engine,
+    const fly_session_approval_token_v2_t* start_approval,
+    fly_session_dual_start_ref_v2* out_ref)
+{
+    if (!engine || !start_approval || !out_ref)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    const auto prefix = validate_prefix(out_ref->struct_size,
+                                         FLY_SESSION_DUAL_START_REF_V2_SIZE,
+                                         out_ref->abi_version);
+    if (prefix != FLY_SESSION_V2_OK)
+        return prefix;
+    return engine->implementation->read_dual_start_ref(start_approval, *out_ref);
+}
+
 extern "C" fly_session_result_v2 fly_session_begin_shutdown_v2(
     fly_session_v2_t* engine,
     uint64_t request_id)

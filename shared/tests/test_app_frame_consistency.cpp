@@ -425,8 +425,8 @@ int main()
         expect(parse_hex_kind(kind_text, &kind), "kind " + kind_text + " parses as hex");
         schema_kinds.push_back(kind);
     }
-    expect(schema_kinds.size() == 61u,
-           "schema declares 61 kinds, found " + std::to_string(schema_kinds.size()));
+    expect(schema_kinds.size() == 62u,
+           "schema declares 62 kinds, found " + std::to_string(schema_kinds.size()));
 
     std::string messages_body;
     expect(array_body(schema, "messages", &messages_body), "schema messages array");

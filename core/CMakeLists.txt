@@ -16,7 +16,7 @@ target_include_directories(video_algorithms PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set(NESTOPIA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/nestopiaue/source/core)
 
 # --- nestopia: upstream emulator core (299 .cpp, C++17) ---
-file(GLOB_RECURSE NESTOPIA_SOURCES ${NESTOPIA_ROOT}/*.cpp)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyNestopiaPatches.cmake)
 add_library(nestopia STATIC ${NESTOPIA_SOURCES})
 target_include_directories(nestopia PUBLIC
     ${NESTOPIA_ROOT}

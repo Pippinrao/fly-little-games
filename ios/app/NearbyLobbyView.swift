@@ -14,15 +14,30 @@ struct NearbyLobbyView: View {
     private let primary = Color(red: 255 / 255, green: 107 / 255, blue: 94 / 255)
     private let onSurface = Color(red: 244 / 255, green: 239 / 255, blue: 230 / 255)
     private let muted = Color(red: 190 / 255, green: 184 / 255, blue: 174 / 255)
+    @State private var detailsOpen = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
-                ForEach(LobbyField.allCases.filter { $0 != .confirmInvalidated }) { field in
+                ForEach(LobbyField.firstScreen) { field in
                     LobbyFieldRow(field: field)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(raised, in: RoundedRectangle(cornerRadius: 8))
+                }
+                Button("nearby.diagnostics.title") {
+                    detailsOpen.toggle()
+                }
+                .nearbyRole(NearbyTypography.action)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .accessibilityIdentifier("nearby_lobby_details")
+                if detailsOpen {
+                    ForEach(LobbyField.details) { field in
+                        LobbyFieldRow(field: field)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(raised, in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
             }
             .padding(16)
@@ -34,6 +49,7 @@ struct NearbyLobbyView: View {
         }
         .navigationTitle("nearby.lobby.title")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
     }
 
     /// 双方确认 (spec §4, §10 D8): one primary 确认入局 control per side, bound
@@ -48,24 +64,28 @@ struct NearbyLobbyView: View {
     @ViewBuilder private var confirmSection: some View {
         VStack(alignment: .center, spacing: 8) {
             Text("nearby.lobby.confirm")
-                .fontWeight(.semibold)
+                .nearbyRole(NearbyTypography.primaryAction)
             Text("nearby.lobby.confirm.fingerprint")
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(muted)
             Text("nearby.lobby.confirm.no_fingerprint")
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(muted)
             Button("nearby.lobby.confirm") {}
                 .disabled(true)
-                .frame(minWidth: 200, maxWidth: 320, minHeight: 48)
+                .nearbyRole(NearbyTypography.primaryAction)
+                .frame(minWidth: 200, maxWidth: 320)
+                .nearbyMinTap()
                 .background(primary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
                 .foregroundStyle(onSurface)
+                .accessibilityIdentifier("nearby_lobby_confirm")
             Text("nearby.blocked.session_read")
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(muted)
+                .accessibilityIdentifier("nearby_lobby_confirm_reason")
             LobbyFieldRow(field: .confirmInvalidated)
             Text("nearby.lobby.confirm_invalidated.reason")
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(muted)
         }
         .frame(maxWidth: .infinity)
@@ -85,8 +105,9 @@ private struct DisabledActionRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Button(titleKey) {}
                 .disabled(true)
+                .nearbyRole(NearbyTypography.action)
             Text(reasonKey)
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
@@ -112,6 +133,32 @@ private enum LobbyField: String, CaseIterable, Identifiable {
     case confirmInvalidated
 
     var id: String { rawValue }
+
+    static let firstScreen: [LobbyField] = [.romIdentity, .networkOwner, .seat]
+    static var details: [LobbyField] {
+        allCases.filter { field in
+            field != .confirmInvalidated && !firstScreen.contains(field)
+        }
+    }
+
+    var accessibilityId: String {
+        switch self {
+        case .friendName: return "nearby_lobby_row_friend_name"
+        case .identityFingerprint: return "nearby_lobby_row_identity_fingerprint"
+        case .authorityCapability: return "nearby_lobby_row_authority_capability"
+        case .resourceRisk: return "nearby_lobby_row_resource_risk"
+        case .networkOwner: return "nearby_lobby_row_network_owner"
+        case .seat: return "nearby_lobby_row_seat"
+        case .romIdentity: return "nearby_lobby_row_rom_identity"
+        case .romLocalState: return "nearby_lobby_row_rom_local_state"
+        case .romTransferConfirm: return "nearby_lobby_row_rom_transfer_confirm"
+        case .romTransferProgress: return "nearby_lobby_row_rom_transfer_progress"
+        case .profileVerified: return "nearby_lobby_row_profile_verified"
+        case .modeExpected: return "nearby_lobby_row_mode_expected"
+        case .localAudio: return "nearby_lobby_row_local_audio"
+        case .confirmInvalidated: return "nearby_lobby_row_confirm_invalidated"
+        }
+    }
 
     var titleKey: LocalizedStringKey {
         switch self {
@@ -163,10 +210,13 @@ private struct LobbyFieldRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(field.titleKey)
+                .nearbyRole(NearbyTypography.body)
             Text(field.blockedKey)
-                .font(.footnote)
+                .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(field.accessibilityId)
     }
 }

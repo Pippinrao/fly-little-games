@@ -222,6 +222,31 @@
          id 与规格逐字一致，仅按 Android 资源名把 "." 换成 "_"。 -->
     <string name="nearby_title">附近联机</string>
     <string name="nearby_open">附近联机</string>
+    <string name="nearby_entry_kicker">PLAY TOGETHER</string>
+    <string name="nearby_entry_headline">和身边的人再来一局。</string>
+    <string name="nearby_entry_subtitle">一人创建，另一人加入。</string>
+    <string name="nearby_entry_stageHint">连接后再选游戏</string>
+    <string name="nearby_entry_footer">输入配对码 / 扫码 / 附近设备 → 接受请求 → 验证 → 游戏大厅</string>
+    <string name="nearby_invite_kicker">HOST · INVITE</string>
+    <string name="nearby_invite_headline">让朋友加入</string>
+    <string name="nearby_invite_subtitle">把配对码告诉朋友，或让朋友扫码。</string>
+    <string name="nearby_invite_qrHint">扫描房主二维码</string>
+    <string name="nearby_invite_hostMustAccept">朋友加入时，你仍需接受请求。</string>
+    <string name="nearby_invite_footer">正在等待朋友 · 尚未选择游戏</string>
+    <string name="nearby_join_kicker">JOIN WITH CODE</string>
+    <string name="nearby_join_headline">输入房主的配对码</string>
+    <string name="nearby_join_subtitle">请朋友打开「创建联机」，查看本次配对码。</string>
+    <string name="nearby_join_hint">配对码只用于找到本次邀请，之后还需房主接受和身份验证。</string>
+    <string name="nearby_join_footer">尚未认证</string>
+    <string name="nearby_join_placeholder">输入六位数字</string>
+    <string name="nearby_scan_kicker">SCAN TO JOIN</string>
+    <string name="nearby_scan_headline">扫描房主的二维码</string>
+    <string name="nearby_scan_subtitle">让朋友打开「创建联机」，出示本次邀请。</string>
+    <string name="nearby_scan_cameraHint">将二维码放入取景区域</string>
+    <string name="nearby_scan_cameraNote">仅在扫码时申请相机权限。</string>
+    <string name="nearby_scan_afterScan">扫描后等待房主接受，随后验证身份。</string>
+    <string name="nearby_scan_footer">无效、过期或已使用的二维码不能加入</string>
+    <string name="nearby_diagnostics_title">连接详情</string>
     <!-- 页面标题。§2 未给配对页与大厅页列标题，但下级页面顶着整个功能的名字是真实层级缺陷；
          附近设备 tab 也需要一个文案给 §4 唯一允许的"进入配对"入口。两条键，A1 补充。 -->
     <string name="nearby_pairing_title">配对</string>

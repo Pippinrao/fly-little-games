@@ -26,6 +26,26 @@ wire::PairRoleV1 mirror_role(wire::PairRoleV1 role) noexcept
                                                : wire::PairRoleV1::Initiator;
 }
 
+constexpr std::uint16_t kPendingConfigConfirmKind = 0x0218u;
+constexpr std::size_t kPendingConfigConfirmSize = 44u;
+constexpr std::uint16_t kSuspendIntentKind = 0x0210u;
+constexpr std::size_t kSuspendIntentSize = 240u;
+
+void store_u16be(std::uint8_t* bytes, std::uint16_t value) noexcept
+{
+    bytes[0] = static_cast<std::uint8_t>(value >> 8u);
+    bytes[1] = static_cast<std::uint8_t>(value);
+}
+
+void store_u64be(std::uint8_t* bytes, std::uint64_t value) noexcept
+{
+    for (int i = 7; i >= 0; --i)
+    {
+        bytes[i] = static_cast<std::uint8_t>(value);
+        value >>= 8u;
+    }
+}
+
 
 /* Maps a classified decode failure onto the public result. A generation
  * mismatch is a stale link that merely arrived late: it is reported as STALE
@@ -120,6 +140,10 @@ void LinkHandshakeScheduler::reset_attempt(
      * frame belong to the old link and must never leak into the new one. */
     control_stream_ = 0;
     control_read_accumulator_.clear();
+    app_control_writes_.clear();
+    routed_pending_confirms_.clear();
+    routed_suspend_intents_.clear();
+    sending_app_control_ = false;
     local_binding_bytes_.clear();
     awaiting_stage_ = LinkHandshakeStageV1::Empty;
     missing_inputs_ = false;
@@ -204,6 +228,10 @@ fly_session_result_v2 LinkHandshakeScheduler::fail(
     pending_peer_value_ = 0;
     pending_peer_preimage_.clear();
     pending_peer_hash_.fill(0);
+    app_control_writes_.clear();
+    routed_pending_confirms_.clear();
+    routed_suspend_intents_.clear();
+    sending_app_control_ = false;
     progress_.failed = true;
     stage_ = LinkHandshakeStageV1::Failed;
     record(LinkHandshakeStageV1::Failed);
@@ -442,10 +470,41 @@ fly_session_result_v2 LinkHandshakeScheduler::route_buffered_control_frame(
                             : FLY_SESSION_V2_PROTOCOL_VIOLATION;
         advanced = phase == link::LinkReadyPhaseV1::Ready ||
                    phase == link::LinkReadyPhaseV1::Ack;
+    } else if (frame.frame_type_tag == kPendingConfigConfirmKind) {
+        /* Empty CONFIRM travels on the same authenticated Control stream after
+         * LINK_READY. Before Connected it is a protocol violation, not a dual
+         * shortcut. */
+        if (!connected())
+            return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+        if (frame.object_size != kPendingConfigConfirmSize ||
+            frame.object_bytes == nullptr)
+            return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+        try {
+            std::array<std::uint8_t, kPendingConfigConfirmSize> object{};
+            std::memcpy(object.data(), frame.object_bytes,
+                        kPendingConfigConfirmSize);
+            routed_pending_confirms_.push_back(object);
+        } catch (const std::bad_alloc&) {
+            return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+        }
+        routed_result = FLY_SESSION_V2_OK;
+        advanced = false;
+    } else if (frame.frame_type_tag == kSuspendIntentKind) {
+        if (!connected())
+            return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+        if (frame.object_size != kSuspendIntentSize ||
+            frame.object_bytes == nullptr)
+            return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
+        try {
+            std::array<std::uint8_t, kSuspendIntentSize> object{};
+            std::memcpy(object.data(), frame.object_bytes, kSuspendIntentSize);
+            routed_suspend_intents_.push_back(object);
+        } catch (const std::bad_alloc&) {
+            return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+        }
+        routed_result = FLY_SESSION_V2_OK;
+        advanced = false;
     } else {
-        /* The allow-list admits 0x0210 on Control for another feature, but it
-         * does not belong on the link control plane: only the peer binding,
-         * HELLO and READY may travel here. */
         return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
     }
 
@@ -499,6 +558,137 @@ fly_session_result_v2 LinkHandshakeScheduler::request_control_read()
      */
     return issue_unjournaled(std::move(effect),
                              LinkHandshakeStageV1::ReadPeerControlBytes);
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::request_app_control_read()
+{
+    if (!connected() || progress_.failed)
+        return FLY_SESSION_V2_INVALID_STATE;
+    if (pending_)
+        return FLY_SESSION_V2_OK;
+    bool routed = false;
+    const auto drained = route_buffered_control_frame(&routed);
+    if (drained != FLY_SESSION_V2_OK)
+        return drained;
+    if (!app_control_writes_.empty())
+        return send_queued_app_control();
+    const auto inputs = require_inputs(control_stream_ != 0);
+    if (inputs != FLY_SESSION_V2_OK)
+        return inputs;
+    LinkHandshakeEffect effect{};
+    effect.kind = LinkHandshakeEffectKind::ReadControlBytes;
+    effect.token = token(next_operation_id_++);
+    effect.expected_payload_kind = FLY_SESSION_PROVIDER_QUIC_DATA_V2;
+    effect.resource = control_stream_;
+    effect.read_credit = kLinkControlReadCreditV1;
+    pending_ = std::move(effect);
+    return FLY_SESSION_V2_OK;
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::send_queued_app_control()
+{
+    if (!connected() || progress_.failed || app_control_writes_.empty())
+        return FLY_SESSION_V2_INVALID_STATE;
+    if (pending_)
+        return FLY_SESSION_V2_OK;
+    LinkHandshakeEffect effect{};
+    effect.kind = LinkHandshakeEffectKind::SendAck;
+    effect.token = token(next_operation_id_++);
+    effect.expected_payload_kind = FLY_SESSION_PROVIDER_QUIC_END_V2;
+    effect.resource = control_stream_;
+    effect.value = app_control_writes_.front();
+    sending_app_control_ = true;
+    return issue(std::move(effect), LinkHandshakeStageV1::Connected);
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::arm_app_control()
+{
+    return request_app_control_read();
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::queue_pending_config_confirm(
+    const std::uint8_t pending_config_id[32],
+    std::uint64_t pending_config_revision)
+{
+    if (!connected() || progress_.failed)
+        return FLY_SESSION_V2_INVALID_STATE;
+    if (pending_config_id == nullptr || pending_config_revision == 0)
+        return FLY_SESSION_V2_INVALID_ARGUMENT;
+    try {
+        std::uint8_t object[kPendingConfigConfirmSize]{};
+        store_u16be(object, 1u);
+        std::memcpy(object + 4, pending_config_id, 32u);
+        store_u64be(object + 36, pending_config_revision);
+        std::vector<std::uint8_t> framed(6u + kPendingConfigConfirmSize, 0);
+        std::size_t written = 0;
+        if (wire::encode_app_frame(kPendingConfigConfirmKind, object,
+                                   kPendingConfigConfirmSize, framed.data(),
+                                   framed.size(), &written) != wire::Status::Ok ||
+            written != framed.size())
+            return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+        app_control_writes_.push_back(std::move(framed));
+    } catch (const std::bad_alloc&) {
+        return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+    }
+    if (pending_)
+        return FLY_SESSION_V2_OK;
+    return send_queued_app_control();
+}
+
+bool LinkHandshakeScheduler::take_routed_pending_config_confirm(
+    std::uint8_t out[44]) noexcept
+{
+    if (out == nullptr || routed_pending_confirms_.empty())
+        return false;
+    std::memcpy(out, routed_pending_confirms_.front().data(),
+                kPendingConfigConfirmSize);
+    routed_pending_confirms_.pop_front();
+    return true;
+}
+
+fly_session_result_v2 LinkHandshakeScheduler::queue_suspend_intent()
+{
+    if (!connected() || progress_.failed)
+        return FLY_SESSION_V2_INVALID_STATE;
+    try {
+        std::uint8_t object[kSuspendIntentSize]{};
+        store_u16be(object, 1u);
+        std::vector<std::uint8_t> framed(6u + kSuspendIntentSize, 0);
+        std::size_t written = 0;
+        if (wire::encode_app_frame(kSuspendIntentKind, object, kSuspendIntentSize,
+                                   framed.data(), framed.size(), &written) !=
+                wire::Status::Ok ||
+            written != framed.size())
+            return fail(FLY_SESSION_V2_CONTRACT_VIOLATION);
+        app_control_writes_.push_back(std::move(framed));
+    } catch (const std::bad_alloc&) {
+        return fail(FLY_SESSION_V2_OUT_OF_MEMORY);
+    }
+    if (pending_)
+        return FLY_SESSION_V2_OK;
+    return send_queued_app_control();
+}
+
+bool LinkHandshakeScheduler::take_routed_suspend_intent(
+    std::uint8_t out[240]) noexcept
+{
+    if (out == nullptr || routed_suspend_intents_.empty())
+        return false;
+    std::memcpy(out, routed_suspend_intents_.front().data(), kSuspendIntentSize);
+    routed_suspend_intents_.pop_front();
+    return true;
+}
+
+void LinkHandshakeScheduler::drop_control_read_if_pending() noexcept
+{
+    if (pending_ && pending_->kind == LinkHandshakeEffectKind::ReadControlBytes)
+        pending_.reset();
+}
+
+void LinkHandshakeScheduler::adopt_operation_id(std::uint64_t first_id) noexcept
+{
+    if (first_id > next_operation_id_)
+        next_operation_id_ = first_id;
 }
 
 fly_session_result_v2 LinkHandshakeScheduler::send_bytes(
@@ -1107,6 +1297,8 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
             2u * (wire::absolute_max_object_bytes() + 6u))
             return fail(FLY_SESSION_V2_PROTOCOL_VIOLATION);
         pending_.reset();
+        if (connected())
+            return request_app_control_read();
         return request_control_read();
     }
 
@@ -1306,6 +1498,14 @@ fly_session_result_v2 LinkHandshakeScheduler::complete(
     }
     if (kind == LinkHandshakeEffectKind::SendAck) {
         pending_.reset();
+        if (sending_app_control_) {
+            sending_app_control_ = false;
+            if (!app_control_writes_.empty())
+                app_control_writes_.pop_front();
+            if (!app_control_writes_.empty())
+                return send_queued_app_control();
+            return request_app_control_read();
+        }
         awaiting_stage_ = LinkHandshakeStageV1::AwaitPeerAck;
         record(awaiting_stage_);
         return request_control_read();

@@ -5,6 +5,8 @@
 
 #include "flynes/product/nearby_ui_state.hpp"
 
+#include <flynes/flynes_session.h>
+
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -30,7 +32,10 @@ void check_key(std::string_view actual, std::string_view expected, const char* m
 using flynes::product::nearby::ActionId;
 using flynes::product::nearby::ConnectionStatus;
 using flynes::product::nearby::EntryStatus;
+using flynes::product::nearby::NearbyContainer;
 using flynes::product::nearby::NearbyLayout;
+using flynes::product::nearby::NearbyNavigation;
+using flynes::product::nearby::NearbyNavigationFacts;
 using flynes::product::nearby::PendingConfigFacts;
 using flynes::product::nearby::Permission;
 using flynes::product::nearby::ScreenContext;
@@ -39,6 +44,8 @@ using flynes::product::nearby::SessionFacts;
 using flynes::product::nearby::Stage;
 using flynes::product::nearby::StageProjection;
 using flynes::product::nearby::StageState;
+using flynes::product::nearby::apply_nearby_action;
+using flynes::product::nearby::apply_nearby_session;
 using flynes::product::nearby::available_actions;
 using flynes::product::nearby::config_start_allowed;
 using flynes::product::nearby::invalidate_on_config_change;
@@ -47,6 +54,7 @@ using flynes::product::nearby::project_entry;
 using flynes::product::nearby::project_layout;
 using flynes::product::nearby::project_stages;
 using flynes::product::nearby::screen_code;
+using flynes::product::nearby::session_action_kind;
 using flynes::product::nearby::stage_failure_key;
 using flynes::product::nearby::stage_label_zh;
 
@@ -319,6 +327,32 @@ void test_remaining_screen_actions()
     check(contains(connected, ActionId::Disconnect), "N08 offers 断开");
 }
 
+void test_n00_chrome_matches_approved_html_mockup()
+{
+    // Frozen to docs/superpowers/specs/assets/nearby-ui-parity-review.html nearby()
+    // and design U06/U07: left actions, right 附近设备/好友 tabs, 寻找设备 on the
+    // devices tab. Pairing stages belong on N07/N10, never on N00.
+    const auto left = flynes::product::nearby::n00_left_column_keys();
+    check(left.size() == 6, "N00 left column has kicker, headline, subtitle, then U07's three actions");
+    check_key(left[0], "nearby.entry.kicker", "N00 left[0] is PLAY TOGETHER kicker");
+    check_key(left[1], "nearby.entry.headline", "N00 left[1] is 和身边的人再来一局。");
+    check_key(left[2], "nearby.entry.subtitle", "N00 left[2] is 一人创建，另一人加入。");
+    check_key(left[3], "nearby.action.create", "N00 left[3] is 创建联机");
+    check_key(left[4], "nearby.action.enterCode", "N00 left[4] is 输入配对码");
+    check_key(left[5], "nearby.action.scanQr", "N00 left[5] is 扫码加入");
+
+    check(!flynes::product::nearby::n00_shows_stage_pipeline(),
+          "N00 must not render the pairing pipeline; that is N07/N10");
+    check(!flynes::product::nearby::n00_shows_scan_host_qr(),
+          "N00 must not add a fourth left action 扫描房主二维码");
+    check(!flynes::product::nearby::n00_shows_pairing_shortcut(),
+          "N00 must not add a 配对 page shortcut on the entry");
+    check(flynes::product::nearby::n00_tabs_on_right_column(),
+          "U06: 附近设备/好友 tabs sit on the right column, not above both columns");
+    check(flynes::product::nearby::n00_find_devices_on_devices_tab(),
+          "HTML: 寻找设备 is on the devices tab, not in the left action column");
+}
+
 void test_responsive_layout_contract()
 {
     const NearbyLayout narrow = project_layout(580.0);
@@ -337,6 +371,206 @@ void test_responsive_layout_contract()
     check(!invalid.valid, "negative available width is rejected");
 }
 
+void test_ux00s_pair_container_hosts_n01_through_n07()
+{
+    check(screen_container(ScreenId::NearbyEntry) == NearbyContainer::Entry, "N00 is ENTRY");
+    check(screen_container(ScreenId::InviteCode) == NearbyContainer::Pair, "N01 is PAIR");
+    check(screen_container(ScreenId::JoinByCode) == NearbyContainer::Pair, "N02 is PAIR");
+    check(screen_container(ScreenId::ScanQr) == NearbyContainer::Pair, "N03 is PAIR");
+    check(screen_container(ScreenId::WaitHost) == NearbyContainer::Pair, "N04 is PAIR");
+    check(screen_container(ScreenId::HostRequest) == NearbyContainer::Pair, "N05 is PAIR");
+    check(screen_container(ScreenId::SasConfirm) == NearbyContainer::Pair, "N06 is PAIR");
+    check(screen_container(ScreenId::Connecting) == NearbyContainer::Pair, "N07 is PAIR");
+    check(screen_container(ScreenId::ConnectedLobby) == NearbyContainer::Connected, "N08 is CONNECTED");
+    check(screen_container(ScreenId::GameCenter) == NearbyContainer::Home, "G00 is HOME");
+    check(screen_container(ScreenId::GameConfig) == NearbyContainer::Config, "N09 is CONFIG");
+    check(screen_container(ScreenId::Failure) == NearbyContainer::Failure, "N10 is FAILURE");
+}
+
+void test_ux00s_n00_actions_open_pair_screens()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::NearbyEntry;
+
+    const NearbyNavigation create = apply_nearby_action(facts, ActionId::CreateInvite);
+    check(create.screen == ScreenId::InviteCode, "N00.create → N01");
+    check(screen_container(create.screen) == NearbyContainer::Pair, "N01 stays on PAIR");
+    check(!create.terminate_attempt, "opening invite does not kill a session");
+
+    check(apply_nearby_action(facts, ActionId::EnterInviteCode).screen == ScreenId::JoinByCode,
+          "N00.enterCode → N02");
+    check(apply_nearby_action(facts, ActionId::ScanQr).screen == ScreenId::ScanQr,
+          "N00.scan → N03");
+}
+
+void test_ux00s_join_submit_waits_for_async_accept()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::JoinByCode;
+    const NearbyNavigation pending = apply_nearby_action(facts, ActionId::SubmitJoinCode);
+    check(pending.screen == ScreenId::JoinByCode,
+          "N02.submit before async accept must not skip to N04/N05");
+
+    facts.join_accepted = true;
+    facts.local_is_host = false;
+    check(apply_nearby_action(facts, ActionId::SubmitJoinCode).screen == ScreenId::WaitHost,
+          "N02.submit accepted → N04 joiner");
+
+    facts.local_is_host = true;
+    check(apply_nearby_action(facts, ActionId::SubmitJoinCode).screen == ScreenId::HostRequest,
+          "N02.submit accepted → N05 host");
+}
+
+void test_ux00s_unwired_qr_stays_on_n03()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::ScanQr;
+    facts.qr_capability_ready = false;
+    facts.join_accepted = true;
+    const NearbyNavigation stay = apply_nearby_action(facts, ActionId::SwitchToJoinCode);
+    check(stay.screen == ScreenId::JoinByCode, "switch to code still works without camera");
+
+    const NearbyNavigation scan = apply_nearby_session(facts);
+    check(scan.screen == ScreenId::ScanQr, "QR not wired: N03 stays independent");
+    check(scan.screen != ScreenId::WaitHost, "QR not wired must not enter N04");
+}
+
+void test_ux00s_host_accept_and_sas_waiting()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::HostRequest;
+    facts.qr_signed_path = false;
+    check(apply_nearby_action(facts, ActionId::AcceptRequest).screen == ScreenId::SasConfirm,
+          "N05.accept code/candidate → N06");
+
+    facts.qr_signed_path = true;
+    check(apply_nearby_action(facts, ActionId::AcceptRequest).screen == ScreenId::Connecting,
+          "N05.accept QR signed path → N07");
+
+    NearbyNavigationFacts sas;
+    sas.screen = ScreenId::SasConfirm;
+    sas.sas_peer_confirmed = false;
+    const NearbyNavigation waiting = apply_nearby_action(sas, ActionId::ConfirmSasMatch);
+    check(waiting.screen == ScreenId::SasConfirm, "N06.localConfirmOnly → N06 waiting");
+}
+
+void test_ux00s_link_ready_then_select_goes_to_config()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::SasConfirm;
+    facts.link_ready = true;
+    const NearbyNavigation connected = apply_nearby_session(facts);
+    check(connected.screen == ScreenId::ConnectedLobby,
+          "all link checks success → N08");
+
+    facts.screen = ScreenId::ConnectedLobby;
+    facts.session_connected = true;
+    check(apply_nearby_action(facts, ActionId::GoToGameCenter).screen == ScreenId::GameCenter,
+          "N08 → user 去大厅 → G00 connected");
+
+    NearbyNavigationFacts lobby;
+    lobby.screen = ScreenId::GameCenter;
+    lobby.session_connected = true;
+    const NearbyNavigation config = apply_nearby_action(lobby, ActionId::SelectGame);
+    check(config.screen == ScreenId::GameConfig, "G00.connected.select → N09");
+    check(config.screen != ScreenId::Connecting, "select is not GAME_RUNNING");
+}
+
+void test_ux00s_n09_back_clears_confirm_keeps_connection()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::GameConfig;
+    facts.session_connected = true;
+    const NearbyNavigation back = apply_nearby_action(facts, ActionId::BackToLobby);
+    check(back.screen == ScreenId::GameCenter, "N09.back → G00 connected");
+    check(back.clear_config_confirm, "N09.back clears this-game confirm");
+    check(!back.terminate_attempt, "back must not mix with CANCEL destroying the session");
+    check(!back.rebuild_connection, "connection is kept");
+}
+
+void test_ux00s_details_close_does_not_rebuild()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::Connecting;
+    facts.details_open = true;
+    const NearbyNavigation closed = apply_nearby_action(facts, ActionId::ViewDetails);
+    check(closed.screen == ScreenId::Connecting, "details.close → same screen");
+    check(!closed.details_open, "details overlay closes");
+    check(!closed.rebuild_invite, "details.close must not rebuild the invite");
+    check(!closed.rebuild_connection, "details.close must not rebuild the connection");
+}
+
+void test_ux00s_reject_and_cancel_terminate_attempt()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::HostRequest;
+    const NearbyNavigation reject = apply_nearby_action(facts, ActionId::RejectRequest);
+    check(reject.terminate_attempt, "reject terminates the attempt");
+
+    facts.screen = ScreenId::InviteCode;
+    check(apply_nearby_action(facts, ActionId::CancelInvite).terminate_attempt,
+          "cancel invite terminates the attempt");
+
+    facts.screen = ScreenId::JoinByCode;
+    check(apply_nearby_action(facts, ActionId::CancelRequest).terminate_attempt,
+          "cancel request terminates the attempt");
+
+    NearbyNavigationFacts failed;
+    failed.screen = ScreenId::Connecting;
+    failed.first_stage_failed = true;
+    failed.failure_reason_key = "nearby.stage.discovery.failed";
+    const NearbyNavigation n10 = apply_nearby_session(failed);
+    check(n10.screen == ScreenId::Failure, "first failed stage projects N10");
+    check_key(n10.failure_reason_key, "nearby.stage.discovery.failed",
+              "N10 carries the first failure reason");
+}
+
+void test_ux00s_normal_back_does_not_destroy_session()
+{
+    NearbyNavigationFacts facts;
+    facts.screen = ScreenId::ScanQr;
+    const NearbyNavigation back = apply_nearby_action(facts, ActionId::Cancel);
+    check(back.screen == ScreenId::NearbyEntry, "N03 cancel returns to N00");
+    check(!back.terminate_attempt, "leaving scan with no attempt is not session destroy");
+    check(!back.rebuild_invite, "onDisappear-style rebuild is forbidden on normal back");
+}
+
+void test_eng02_ux_actions_reuse_frozen_session_kinds()
+{
+    check(session_action_kind(ActionId::CreateInvite) ==
+              FLY_SESSION_ACTION_CREATE_INVITE_V2,
+          "createInvite → CREATE_INVITE");
+    check(session_action_kind(ActionId::FindDevices) ==
+              FLY_SESSION_ACTION_START_DISCOVERY_V2,
+          "findDevices → START_DISCOVERY");
+    check(session_action_kind(ActionId::SubmitJoinCode) ==
+              FLY_SESSION_ACTION_JOIN_CODE_V2,
+          "submitJoinCode → JOIN_CODE");
+    check(session_action_kind(ActionId::AcceptRequest) ==
+              FLY_SESSION_ACTION_ACCEPT_REQUEST_V2,
+          "acceptRequest → ACCEPT_REQUEST");
+    check(session_action_kind(ActionId::ConfirmSasMatch) ==
+              FLY_SESSION_ACTION_CONFIRM_SAS_V2,
+          "confirmSas → CONFIRM_SAS");
+    check(session_action_kind(ActionId::ConfirmConfig) ==
+              FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2,
+          "confirmConfig → CONFIRM_GAME_CONFIG");
+    check(session_action_kind(ActionId::BackToLobby) ==
+              FLY_SESSION_ACTION_RETURN_TO_LOBBY_V2,
+          "backToLobby → RETURN_TO_LOBBY");
+    check(session_action_kind(ActionId::SelectGame) ==
+              FLY_SESSION_ACTION_SELECT_CONTENT_V2,
+          "selectGame → SELECT_CONTENT, not START_DUAL");
+    check(session_action_kind(ActionId::SelectGame) !=
+              FLY_SESSION_ACTION_START_DUAL_V2,
+          "G00 select must not map to START_DUAL");
+    check(session_action_kind(ActionId::ConfirmConfig) !=
+              FLY_SESSION_ACTION_START_DUAL_V2,
+          "N09 confirm is not start; START_DUAL has no UX ActionId");
+    check(session_action_kind(ActionId::GoToGameCenter) == 0u,
+          "going to G00 is local routing; connection stays in the snapshot");
+}
+
 } // namespace
 
 int main()
@@ -351,7 +585,19 @@ int main()
     test_screen_codes_are_stable();
     test_config_invalidation();
     test_remaining_screen_actions();
+    test_n00_chrome_matches_approved_html_mockup();
     test_responsive_layout_contract();
+    test_ux00s_pair_container_hosts_n01_through_n07();
+    test_ux00s_n00_actions_open_pair_screens();
+    test_ux00s_join_submit_waits_for_async_accept();
+    test_ux00s_unwired_qr_stays_on_n03();
+    test_ux00s_host_accept_and_sas_waiting();
+    test_ux00s_link_ready_then_select_goes_to_config();
+    test_ux00s_n09_back_clears_confirm_keeps_connection();
+    test_ux00s_details_close_does_not_rebuild();
+    test_ux00s_reject_and_cancel_terminate_attempt();
+    test_ux00s_normal_back_does_not_destroy_session();
+    test_eng02_ux_actions_reuse_frozen_session_kinds();
 
     if (failures != 0)
     {

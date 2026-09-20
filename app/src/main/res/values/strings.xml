@@ -222,6 +222,31 @@
          Ids are verbatim from the spec with "." -> "_" (Android resource transform). -->
     <string name="nearby_title">Nearby multiplayer</string>
     <string name="nearby_open">Nearby</string>
+    <string name="nearby_entry_kicker">PLAY TOGETHER</string>
+    <string name="nearby_entry_headline">Play another round with someone nearby.</string>
+    <string name="nearby_entry_subtitle">One person creates. The other joins.</string>
+    <string name="nearby_entry_stageHint">Connect first, then pick a game</string>
+    <string name="nearby_entry_footer">Code / scan / nearby device → accept → verify → game hall</string>
+    <string name="nearby_invite_kicker">HOST · INVITE</string>
+    <string name="nearby_invite_headline">Let a friend join</string>
+    <string name="nearby_invite_subtitle">Tell your friend the code, or let them scan the QR.</string>
+    <string name="nearby_invite_qrHint">Scan the host QR</string>
+    <string name="nearby_invite_hostMustAccept">You still need to accept when a friend joins.</string>
+    <string name="nearby_invite_footer">Waiting for a friend · no game selected yet</string>
+    <string name="nearby_join_kicker">JOIN WITH CODE</string>
+    <string name="nearby_join_headline">Enter the host invite code</string>
+    <string name="nearby_join_subtitle">Ask your friend to open Create session and show this code.</string>
+    <string name="nearby_join_hint">The code only finds this invite; the host still has to accept and both of you verify identity.</string>
+    <string name="nearby_join_footer">Not verified yet</string>
+    <string name="nearby_join_placeholder">Enter six digits</string>
+    <string name="nearby_scan_kicker">SCAN TO JOIN</string>
+    <string name="nearby_scan_headline">Scan the host QR code</string>
+    <string name="nearby_scan_subtitle">Ask your friend to open Create session and show this invite.</string>
+    <string name="nearby_scan_cameraHint">Place the QR in the viewfinder</string>
+    <string name="nearby_scan_cameraNote">Camera permission is requested only when scanning.</string>
+    <string name="nearby_scan_afterScan">After a scan, wait for the host to accept, then verify identity.</string>
+    <string name="nearby_scan_footer">Invalid, expired, or already-used QR codes cannot join</string>
+    <string name="nearby_diagnostics_title">Connection details</string>
     <!-- Page titles. §2 lists no title for the 配对 and 大厅 pages, but a sub-page showing the
          feature's own name as its title is a real hierarchy defect, and the 附近设备 tab needs a
          label for the one navigation entry §4 permits into 配对. Two keys, A1 addition. -->
