@@ -35,7 +35,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)removeSourceUUID:(NSData *)sourceUUID scope:(uint32_t)scope
                   error:(NSError * _Nullable * _Nullable)error;
 - (NSArray<NSDictionary<NSString *, id> *> *)gameCenterFilteredGamesForCategory:(NSString *)category
-                                                                         query:(NSString *)query;
+                                                                          query:(NSString *)query;
+
+- (uint64_t)nearbyNextHostGeneration;
+- (uint64_t)nearbyNextJoinAttemptID;
+- (BOOL)nearbyHostPublishCode:(NSString *)code generation:(uint64_t)generation
+               nowNanoseconds:(uint64_t)nowNanoseconds;
+- (BOOL)nearbyHostRegenerateCode:(NSString *)code generation:(uint64_t)generation
+                  nowNanoseconds:(uint64_t)nowNanoseconds;
+- (BOOL)nearbyHostCancelGeneration:(uint64_t)generation;
+- (BOOL)nearbySubmitCode:(NSString *)code attemptID:(uint64_t)attemptID
+          nowNanoseconds:(uint64_t)nowNanoseconds;
+- (BOOL)nearbyCancelAttempt:(uint64_t)attemptID;
+- (void)nearbyTickNanoseconds:(uint64_t)nowNanoseconds;
+- (NSDictionary<NSString *, NSNumber *> *)nearbyInviteSnapshot;
 
 - (BOOL)scanBorrowedFd:(int)borrowedFd
           relativePath:(NSString *)relativePath

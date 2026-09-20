@@ -1,0 +1,173 @@
+#include <flynes/flynes_session.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+_Static_assert(sizeof(fly_session_result_v2) == 4, "result width");
+_Static_assert(offsetof(fly_session_config_v2, struct_size) == 0, "size prefix");
+_Static_assert(offsetof(fly_session_config_v2, abi_version) == 4, "version prefix");
+_Static_assert(FLY_SESSION_ABI_VERSION_2 == 2, "ABI version");
+_Static_assert(sizeof(fly_session_resource_handle_v2) == 8, "resource handle width");
+_Static_assert(FLY_SESSION_KEY_DEVICE_IDENTITY_V2 == 1, "identity purpose");
+_Static_assert(FLY_SESSION_KEY_SESSION_SIGNING_V2 == 2, "session signing purpose");
+_Static_assert(FLY_SESSION_KEY_PAIR_ECDH_V2 == 3, "pair ECDH purpose");
+_Static_assert(FLY_SESSION_KEY_TLS_V2 == 4, "TLS purpose");
+_Static_assert(FLY_SESSION_QUIC_REQUIRE_FULL_TLS13_V2 == 1, "full TLS policy");
+_Static_assert(FLY_SESSION_QUIC_FORBID_RESUMPTION_V2 == 1, "no resumption policy");
+_Static_assert(offsetof(fly_session_ports_v2, key) >
+                   offsetof(fly_session_ports_v2, camera),
+               "provider tables append after the R0 prefix");
+_Static_assert(offsetof(fly_session_ports_v2, object_store) >
+                   offsetof(fly_session_ports_v2, bearer),
+               "object store appends without changing earlier provider offsets");
+/* R3 tail append: exact-enough byte read-back of a durable immutable object. */
+_Static_assert(offsetof(fly_session_object_store_port_v2, read) >
+                   offsetof(fly_session_object_store_port_v2, cancel),
+               "object store read appends after the frozen R2 prefix");
+_Static_assert(FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE ==
+                   offsetof(fly_session_object_store_port_v2, read),
+               "the R2 prefix ends exactly where read begins");
+_Static_assert(FLY_SESSION_OBJECT_STORE_PORT_V2_SIZE >
+                   FLY_SESSION_OBJECT_STORE_PORT_V2_R2_SIZE,
+               "the R3 object store table is strictly larger than R2");
+_Static_assert(offsetof(fly_session_object_store_port_v2, struct_size) == 0,
+               "object store size prefix");
+_Static_assert(offsetof(fly_session_input_v2, struct_size) == 0,
+               "input size prefix");
+_Static_assert(offsetof(fly_session_input_v2, abi_version) == 4,
+               "input version prefix");
+_Static_assert(sizeof(((fly_session_input_v2*)0)->buttons) == 4,
+               "input buttons preserve the complete mask");
+
+/* DUAL tail appends, checked from a C consumer. */
+_Static_assert(FLY_SESSION_DUAL_PORT_COUNT_V2 == 4, "DUAL port count");
+_Static_assert(FLY_SESSION_INPUT_V2_R0_SIZE ==
+                   offsetof(fly_session_input_v2, port_mask),
+               "the input R0 prefix stops before the DUAL port mask");
+_Static_assert(FLY_SESSION_INPUT_V2_SIZE ==
+                   FLY_SESSION_INPUT_V2_R0_SIZE +
+                       FLY_SESSION_DUAL_PORT_COUNT_V2 * 4,
+               "the DUAL port mask is a pure tail append");
+_Static_assert(offsetof(fly_session_snapshot_v2, dual_mode) ==
+                   FLY_SESSION_SNAPSHOT_V2_R0_SIZE,
+               "the snapshot R0 prefix stops before the DUAL block");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE >
+                   FLY_SESSION_SNAPSHOT_V2_R0_SIZE,
+               "the DUAL snapshot block is appended");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R1_SIZE ==
+                   offsetof(fly_session_snapshot_v2, dual_state_digest),
+               "the snapshot R1 prefix stops before the DUAL digest block");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
+                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96,
+               "the DUAL digest block is a pure tail append");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R0_SIZE <=
+                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE,
+               "the prefixes stay ordered");
+_Static_assert(FLY_SESSION_PORTS_V2_R1_SIZE ==
+                   offsetof(fly_session_ports_v2, dual_runtime),
+               "the pre-DUAL provider table stops before the runtime slot");
+_Static_assert(FLY_SESSION_PORTS_V2_R2_SIZE ==
+                   offsetof(fly_session_ports_v2, content),
+               "the pre-content provider table stops before the content slot");
+_Static_assert(FLY_SESSION_PORTS_V2_SIZE ==
+                   FLY_SESSION_PORTS_V2_R2_SIZE + sizeof(const void*),
+               "the content slot is a pure tail append");
+_Static_assert(FLY_SESSION_PORTS_V2_R2_SIZE ==
+                   FLY_SESSION_PORTS_V2_R1_SIZE + sizeof(const void*),
+               "the provider table prefixes stay ordered");
+_Static_assert(offsetof(fly_session_content_port_v2, struct_size) == 0,
+               "content port size prefix");
+_Static_assert(offsetof(fly_session_content_port_v2, query) >
+                   offsetof(fly_session_content_port_v2, release),
+               "the content port keeps the provider retain/release prefix");
+_Static_assert(FLY_SESSION_PROVIDER_CONTENT_CHOICE_V2 == 290,
+               "content choice completions use the frozen hash payload kind");
+_Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_HEADER_SIZE == 56,
+               "the content choice header is frozen");
+_Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_START_TAIL_SIZE == 96,
+               "version 2 start conditions are a 96-byte tail after the name");
+_Static_assert(FLY_SESSION_CONTENT_CHOICE_V2_MAX_NAME == 64,
+               "the content choice name bound is frozen");
+_Static_assert(FLY_SESSION_PORTS_V2_SIZE > FLY_SESSION_PORTS_V2_R1_SIZE,
+               "the DUAL runtime slot is appended");
+_Static_assert(offsetof(fly_session_dual_runtime_port_v2, struct_size) == 0,
+               "DUAL runtime size prefix");
+_Static_assert(offsetof(fly_session_dual_runtime_port_v2, load) >
+                   offsetof(fly_session_dual_runtime_port_v2, release),
+               "the DUAL runtime keeps the provider retain/release prefix");
+_Static_assert(FLY_SESSION_DUAL_FREEZE_TRANSPORT_TERMINAL_V2 == 6,
+               "freeze vocabulary matches the frozen DUAL seam");
+_Static_assert(FLY_SESSION_DUAL_FREEZE_SEAT_OR_AUTHORITY_CHANGED_V2 == 9,
+               "freeze vocabulary matches the frozen DUAL seam");
+
+_Static_assert(FLY_SESSION_ACTION_ACCEPT_REQUEST_V2 == 15,
+               "N05 accept reuses ACCEPT_REQUEST");
+_Static_assert(FLY_SESSION_ACTION_CONFIRM_SAS_V2 == 17,
+               "N06 confirm reuses CONFIRM_SAS");
+_Static_assert(FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2 == 24,
+               "N09 confirm reuses CONFIRM_GAME_CONFIG");
+_Static_assert(FLY_SESSION_ACTION_RETURN_TO_LOBBY_V2 == 25,
+               "N09 back reuses RETURN_TO_LOBBY");
+_Static_assert(FLY_SESSION_ACTION_PAUSE_GAME_V2 == 32, "pause reuses PAUSE_GAME");
+_Static_assert(FLY_SESSION_ACTION_SAVE_AND_END_V2 == 36, "end reuses SAVE_AND_END");
+_Static_assert(FLY_SESSION_ACTION_SELECT_CONTENT_V2 == 42, "select content is 42");
+_Static_assert(FLY_SESSION_ACTION_START_DUAL_V2 == 43, "start dual is 43");
+_Static_assert(FLY_SESSION_ACTION_START_DUAL_V2 !=
+                   FLY_SESSION_ACTION_SELECT_CONTENT_V2,
+               "SELECT_CONTENT must not be START_DUAL");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
+                   offsetof(fly_session_snapshot_v2, pending_config_id),
+               "pending-config dual-confirm is a tail after the digest block");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_R2_SIZE ==
+                   FLY_SESSION_SNAPSHOT_V2_R1_SIZE + 96u,
+               "R2 starts where the previous snapshot size ended");
+_Static_assert(sizeof(((fly_session_snapshot_v2*)0)->pending_config_id) == 32,
+               "pending config id is a 32-byte fingerprint, not a UI hash");
+_Static_assert(offsetof(fly_session_snapshot_v2, pending_config_local_confirmed) >
+                   offsetof(fly_session_snapshot_v2, pending_config_id),
+               "local confirm follows the fingerprint");
+_Static_assert(offsetof(fly_session_snapshot_v2, pending_config_peer_confirmed) >
+                   offsetof(fly_session_snapshot_v2, pending_config_local_confirmed),
+               "peer confirm is a separate field; one-sided confirm is not start");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE ==
+                   FLY_SESSION_SNAPSHOT_V2_R2_SIZE + 48,
+               "the pending-config block is a 48-byte tail append");
+_Static_assert(FLY_SESSION_SNAPSHOT_V2_SIZE > FLY_SESSION_SNAPSHOT_V2_R2_SIZE,
+               "the pending-config block is appended");
+_Static_assert(offsetof(fly_session_pairing_v2, local_confirmed) <
+                   offsetof(fly_session_pairing_v2, peer_confirmed),
+               "SAS dual-confirm already has local/peer fields; do not invent a third");
+_Static_assert(FLY_SESSION_GAME_CHOICE_V2_R0_SIZE == 272,
+               "the published game-choice prefix stays 272 bytes");
+_Static_assert(FLY_SESSION_GAME_CHOICE_V2_SIZE ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE + 96,
+               "core/profile/options are a 96-byte tail append");
+_Static_assert(offsetof(fly_session_game_choice_v2, core_id) ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE,
+               "the R0 game-choice prefix stops where core_id begins");
+_Static_assert(offsetof(fly_session_game_choice_v2, profile_id) ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE + 32,
+               "profile_id follows core_id");
+_Static_assert(offsetof(fly_session_game_choice_v2, options_id) ==
+                   FLY_SESSION_GAME_CHOICE_V2_R0_SIZE + 64,
+               "options_id follows profile_id");
+
+int main(void)
+{
+    fly_session_v2_t* engine = NULL;
+    fly_session_inbox_v2_t* inbox = NULL;
+    fly_session_view_v2_t* view = NULL;
+    fly_session_approval_token_v2_t* token = NULL;
+    fly_session_key_port_v2 key = {0};
+    fly_session_crypto_port_v2 crypto = {0};
+    fly_session_tls_material_port_v2 tls = {0};
+    fly_session_secure_store_port_v2 secure_store = {0};
+    fly_session_object_store_port_v2 object_store = {0};
+    fly_session_quic_port_v2 quic = {0};
+    fly_session_input_v2 input = {0};
+    return engine != NULL || inbox != NULL || view != NULL || token != NULL ||
+           key.struct_size != 0 || crypto.struct_size != 0 ||
+           tls.struct_size != 0 || secure_store.struct_size != 0 ||
+           object_store.struct_size != 0 ||
+           quic.struct_size != 0 || input.struct_size != 0;
+}

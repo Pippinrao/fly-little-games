@@ -190,6 +190,43 @@ def check_contract(contract: dict, problems: Problems) -> None:
     if not contract["sas"]["singleSideConfirmInsufficient"]:
         problems.add("single-side SAS confirmation must be insufficient (C07)")
 
+    containers = contract.get("containers")
+    if not isinstance(containers, dict):
+        problems.add("UX-00.S containers table missing")
+    else:
+        expected_pair = ["N01", "N02", "N03", "N04", "N05", "N06", "N07"]
+        if containers.get("PAIR") != expected_pair:
+            problems.add("PAIR container must host N01–N07 and no other screens")
+        seen: list[str] = []
+        for name, screens in containers.items():
+            if not isinstance(screens, list):
+                problems.add(f"container {name} must list screens")
+                continue
+            seen.extend(screens)
+        if sorted(seen) != sorted(expected_screens):
+            problems.add(f"every N00–N12/G00 screen must belong to exactly one container, got {seen}")
+
+    navigation = contract.get("navigation")
+    if not isinstance(navigation, list) or not navigation:
+        problems.add("UX-00.S navigation table missing")
+    else:
+        required = {
+            ("N00", "createInvite", "N01"),
+            ("N00", "enterInviteCode", "N02"),
+            ("N00", "scanQr", "N03"),
+            ("G00", "selectGame", "N09"),
+            ("N09", "backToLobby", "G00"),
+        }
+        found = {(row.get("from"), row.get("action"), row.get("to")) for row in navigation}
+        for edge in required:
+            if edge not in found:
+                problems.add(f"UX-00.S missing navigation {edge[0]}.{edge[1]} → {edge[2]}")
+        for row in navigation:
+            if row.get("from") not in expected_screens or row.get("to") not in expected_screens:
+                problems.add(f"navigation row has unknown screen: {row}")
+            if row.get("action") not in contract["actions"]:
+                problems.add(f"navigation row has unknown action: {row.get('action')}")
+
     for name in ("camera", "nearbyDiscovery", "wifi"):
         permission = contract["permissions"].get(name)
         if permission is None:

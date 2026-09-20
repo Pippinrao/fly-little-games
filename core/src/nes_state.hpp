@@ -13,13 +13,18 @@
  *
  * 头布局 (全部小端):
  *   offset 0  : magic[8]        = "FLYNST1\0"
- *   offset 8  : version u32 LE  = 1
+ *   offset 8  : version u32 LE  = 2 (reader also accepts 1)
  *   offset 12 : core_version[16] = "1.53.2" NUL 填充
  *   offset 28 : rom_sha1[41]    = 40 hex + NUL (来自 Cartridge profile hash;
  *                                 无卡带时全 0)
- *   offset 69 : payload_len u64 LE
- *   offset 77 : payload_crc32 u32 LE (zlib crc32 over payload)
- *   offset 81 : payload        (raw NST bytes from Machine::SaveState)
+ *   offset 69 : payload_len u64 LE (metadata + raw NST for version 2)
+ *   offset 77 : payload_crc32 u32 LE (zlib crc32 over metadata + raw NST)
+ *   offset 81 : v2 remainder IEEE-754 binary64 bits, u64 LE
+ *   offset 89 : v2 clock mode u32 LE: 0 unset, 1 NTSC, 2 PAL
+ *   offset 93 : v2 raw NST bytes (v1 raw NST starts at offset 81)
+ *
+ * v2 remainder must be finite and in [0, 1); unset requires zero.
+ * v1/raw states have no clock metadata and restore the defined initial clock.
  *
  * 错误码复用 nes.h 的 ABI 枚举: NES_ERR_BUFFER_TOO_SMALL / NES_ERR_UNSUPPORTED_VER
  * / NES_ERR_INVALID_CRC / NES_ERR_CORRUPT_FILE / NES_ERR_STATE_ROM_MISMATCH。
@@ -32,20 +37,30 @@
 
 namespace flynes_state
 {
+	enum class AudioClockMode : uint32_t { Unset = 0, Ntsc = 1, Pal = 2 };
+	struct AudioClock
+	{
+		double remainder = 0.0;
+		AudioClockMode mode = AudioClockMode::Unset;
+	};
+
 	// Wrap raw NST bytes with the FLYNST1 header into out[0..cap).
-	// On success returns NES_OK, *written = 81 + raw_len. On cap < 81+raw_len:
-	// NES_ERR_BUFFER_TOO_SMALL with *needed = 81 + raw_len.
+	// Version 2 adds 12 bytes of CRC-protected audio clock metadata.
+	// On success *written = 93 + raw_len; short buffers return this in *needed.
 	int wrap(const uint8_t* raw, size_t raw_len, const char* sha1_hex /*40+NUL or all-zero*/,
+	         const AudioClock& clock,
 	         uint8_t* out, size_t cap, size_t* written, size_t* needed);
 
 	// Unwrap: validate magic/version/len/crc32/sha1.
 	// - magic mismatch → returns 0 with *is_wrapped=false (caller treats input as legacy raw NST)
-	// - version > 1 → NES_ERR_UNSUPPORTED_VER
+	// - version other than 1/2 → NES_ERR_UNSUPPORTED_VER
 	// - crc32 mismatch → NES_ERR_INVALID_CRC
 	// - sha1 not all-zero and != current_sha1_hex → NES_ERR_STATE_ROM_MISMATCH
-	// On success: *payload = in + 81, *payload_len, *is_wrapped=true, returns NES_OK.
+	// On success: *payload points to raw NST, *clock contains validated metadata
+	// (or the initial clock for version 1/raw), returns NES_OK.
 	int unwrap(const uint8_t* in, size_t size, const char* current_sha1_hex,
-	           const uint8_t** payload, size_t* payload_len, bool* is_wrapped);
+	           const uint8_t** payload, size_t* payload_len, bool* is_wrapped,
+	           AudioClock* clock);
 
 	// zlib crc32 helper (wraps ::crc32 from zlib.h — include <zlib.h>; link via nestopia's PUBLIC zlib)
 	uint32_t crc32_bytes(const uint8_t* p, size_t n);

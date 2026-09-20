@@ -1,0 +1,119 @@
+{
+  "hash_domain": "flynes-gatt-logical-v2",
+  "legacy_v1_types": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26
+  ],
+  "maximum_logical_bytes": 4096,
+  "messages": [
+    {
+      "body_length": 32,
+      "direction": "RESPONDER_TO_INITIATOR",
+      "fields": [
+        [
+          "version",
+          0,
+          2,
+          "u16be=2"
+        ],
+        [
+          "reserved_zero",
+          2,
+          6,
+          "zero"
+        ],
+        [
+          "code",
+          8,
+          6,
+          "ASCII_DIGITS"
+        ],
+        [
+          "reserved_zero_2",
+          14,
+          2,
+          "zero"
+        ],
+        [
+          "request_nonce",
+          16,
+          16,
+          "nonzero"
+        ]
+      ],
+      "logical_length": 72,
+      "name": "CODE_LOOKUP_REQUEST",
+      "type": 27
+    },
+    {
+      "body_length": 136,
+      "direction": "INITIATOR_TO_RESPONDER",
+      "fields": [
+        [
+          "version",
+          0,
+          2,
+          "u16be=2"
+        ],
+        [
+          "reserved_zero",
+          2,
+          6,
+          "zero"
+        ],
+        [
+          "echo_request_nonce",
+          8,
+          16,
+          "nonzero"
+        ],
+        [
+          "pair_context_v1",
+          24,
+          80,
+          "wire_major=2,route=BLE_ANONYMOUS"
+        ],
+        [
+          "pair_context_hash",
+          104,
+          32,
+          "flynes-pair-context-v1"
+        ]
+      ],
+      "logical_length": 176,
+      "name": "CODE_LOOKUP_MATCH",
+      "type": 28
+    }
+  ],
+  "outer_version": 2,
+  "rejected_types": [
+    0,
+    29
+  ],
+  "schema_id": "flynes_gatt_lookup_v2",
+  "wire_endian": "network"
+}

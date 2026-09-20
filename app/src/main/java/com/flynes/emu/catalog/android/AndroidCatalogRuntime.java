@@ -74,6 +74,8 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     private final File dataRoot;
     private final File cacheRoot;
 
+    public BuiltinGames builtinGames() { return builtinGames; }
+
     public AndroidCatalogRuntime(Context context) {
         this(context, defaultStateFile(context), true);
     }
@@ -260,6 +262,13 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     public AndroidCatalogStreamOpener streamOpener() {
         return new AndroidCatalogStreamOpener(
                 context, repository, permissions::hasPersistedRead);
+    }
+
+    /** Creates a read-only loader; its caller supplies the IO worker and later owner scope. */
+    public com.flynes.emu.nearby.NearbyExactContentLoader nearbyContentLoader() {
+        AndroidCatalogStreamOpener opener = streamOpener();
+        return new com.flynes.emu.nearby.NearbyExactContentLoader(
+                catalog, new com.flynes.emu.launch.ExactRomLoader(opener), opener::validateAccess);
     }
 
     private BootstrapResult bootstrapOnCatalogThread() throws Exception {

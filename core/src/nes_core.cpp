@@ -54,6 +54,12 @@ namespace
 {
 	constexpr uint32_t kScreenWidth  = 256;
 	constexpr uint32_t kScreenHeight = 240;
+	constexpr double kNtscSourceRate = static_cast<double>(NES_SOURCE_NTSC_RATE_NUMERATOR) /
+		NES_SOURCE_NTSC_RATE_DENOMINATOR;
+	constexpr double kPalSourceRate = static_cast<double>(NES_SOURCE_PAL_RATE_NUMERATOR) /
+		NES_SOURCE_PAL_RATE_DENOMINATOR;
+	static_assert(kNtscSourceRate == 60.0988 && kPalSourceRate == 50.0070,
+		"shared source ratios must preserve the existing double audio cadence");
 
 	uint64_t monotonic_now_ns()
 	{
@@ -192,8 +198,8 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
-	// 内部上下文。进程内单实例设计 (t2b §0 #7): Nestopia 回调全部是静态单例,
-	// userdata=ctx; 若宿主创建第二个实例, 静态回调被后者覆盖。
+	// 内部上下文。Nestopia 的 pad/file/log 回调仍是进程级单例; 多实例时由
+	// g_running_ctx 指向当前正在执行的 nes_ctx, 而不是最后一次 nes_create。
 	// ------------------------------------------------------------------
 	struct nes_ctx
 	{
@@ -285,13 +291,31 @@ namespace
 		}
 	};
 
+	thread_local nes_ctx* g_running_ctx = nullptr;
+
+	struct RunningScope
+	{
+		nes_ctx* const prev;
+		explicit RunningScope(nes_ctx* ctx) : prev(g_running_ctx)
+		{
+			g_running_ctx = ctx;
+		}
+		~RunningScope() { g_running_ctx = prev; }
+	};
+
+	nes_ctx* active_ctx(void* userdata)
+	{
+		(void)userdata;
+		return g_running_ctx;
+	}
+
 	// ------------------------------------------------------------------
 	// 静态回调 (Nestopia 单例, userdata = ctx)
 	// ------------------------------------------------------------------
 
 	void on_log(void* userdata, const char* text, ulong length)
 	{
-		nes_ctx* ctx = static_cast<nes_ctx*>(userdata);
+		nes_ctx* ctx = active_ctx(userdata);
 		if (!ctx || !ctx->log_cb)
 			return;
 		CallbackScope scope;
@@ -300,7 +324,7 @@ namespace
 
 	void on_event(void* userdata, Nes::Api::User::Event event, const void* context)
 	{
-		nes_ctx* ctx = static_cast<nes_ctx*>(userdata);
+		nes_ctx* ctx = active_ctx(userdata);
 		if (!ctx || !ctx->event_cb)
 			return;
 
@@ -319,7 +343,7 @@ namespace
 
 	Nes::Api::User::Answer on_question(void* userdata, Nes::Api::User::Question question)
 	{
-		nes_ctx* ctx = static_cast<nes_ctx*>(userdata);
+		nes_ctx* ctx = active_ctx(userdata);
 		if (!ctx || !ctx->question_cb)
 			return Nes::Api::User::ANSWER_DEFAULT;
 
@@ -351,7 +375,7 @@ namespace
 	 */
 	void on_file_io(void* userdata, Nes::Api::User::File& file)
 	{
-		nes_ctx* ctx = static_cast<nes_ctx*>(userdata);
+		nes_ctx* ctx = active_ctx(userdata);
 		if (!ctx)
 			return;
 
@@ -438,7 +462,7 @@ namespace
 	 */
 	bool on_pad_poll(void* userdata, Nes::Core::Input::Controllers::Pad& pad, uint index)
 	{
-		nes_ctx* ctx = static_cast<nes_ctx*>(userdata);
+		nes_ctx* ctx = active_ctx(userdata);
 		if (ctx && index < NES_PORT_MAX)
 		{
 			uint64_t before = 0;
@@ -459,6 +483,20 @@ namespace
 			ctx->sampled_input_monotonic_ns = monotonic_now_ns();
 		}
 		return true;
+	}
+
+	void ensure_dispatchers()
+	{
+		// The vendor owns process-global callback slots. Their lifetime must not
+		// depend on whichever instance was most recently created or destroyed.
+		static std::once_flag once;
+		std::call_once(once, [] {
+			Nes::Api::User::logCallback.Set(&on_log, nullptr);
+			Nes::Api::User::fileIoCallback.Set(&on_file_io, nullptr);
+			Nes::Api::User::eventCallback.Set(&on_event, nullptr);
+			Nes::Api::User::questionCallback.Set(&on_question, nullptr);
+			Nes::Core::Input::Controllers::Pad::callback.Set(&on_pad_poll, nullptr);
+		});
 	}
 
 	// ------------------------------------------------------------------
@@ -582,14 +620,20 @@ NES_API nes_t* nes_create(const nes_config* cfg)
 		return nullptr;
 
 	nes_ctx* ctx = nullptr;
+	// Constructors and partial-construction cleanup must never borrow a peer.
+	RunningScope constructing(nullptr);
 	try
 	{
+		ensure_dispatchers();
 		ctx = new nes_ctx();
 	}
 	catch (...)
 	{
 		return nullptr;
 	}
+	try
+	{
+	RunningScope configuring(ctx);
 
 	// 缺省配置: NTSC / 48000 / RGB565 (头文件注释)
 	ctx->cfg.favored_system = NES_FAVORED_NES_NTSC;
@@ -617,6 +661,7 @@ NES_API nes_t* nes_create(const nes_config* cfg)
 	ctx->framebuffers[1] = static_cast<uint8_t*>(std::calloc(1, ctx->framebuffer_size));
 	if (!ctx->framebuffers[0] || !ctx->framebuffers[1])
 	{
+		RunningScope destroying(nullptr);
 		delete ctx;
 		return nullptr;
 	}
@@ -625,14 +670,14 @@ NES_API nes_t* nes_create(const nes_config* cfg)
 	apply_render_state(ctx);
 	apply_audio_config(ctx);
 
-	// 注册静态回调 (进程级单例, userdata = ctx)
-	Nes::Api::User::logCallback.Set(&on_log, ctx);
-	Nes::Api::User::fileIoCallback.Set(&on_file_io, ctx);
-	Nes::Api::User::eventCallback.Set(&on_event, ctx);
-	Nes::Api::User::questionCallback.Set(&on_question, ctx);
-	Nes::Core::Input::Controllers::Pad::callback.Set(&on_pad_poll, ctx);
-
 	return reinterpret_cast<nes_t*>(ctx);
+	}
+	catch (...)
+	{
+		// No ROM has been loaded. Suppress dispatch during member destruction.
+		delete ctx;
+		return nullptr;
+	}
 }
 
 NES_API void nes_destroy(nes_t* nes)
@@ -644,40 +689,13 @@ NES_API void nes_destroy(nes_t* nes)
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
-	ctx->machine.Unload(); // 内部 PowerOff → 触发 SAVE_BATTERY → fileIoCallback
-
-	// 只注销仍指向本实例的静态回调 (单实例设计下正常只有一个 ctx)
 	{
-		Nes::Api::User::LogCallback fn = nullptr;
-		void* ud = nullptr;
-		Nes::Api::User::logCallback.Get(fn, ud);
-		if (ud == ctx) Nes::Api::User::logCallback.Unset();
+		RunningScope unloading(ctx);
+		ctx->machine.Unload(); // SAVE_BATTERY belongs to this instance.
 	}
-	{
-		Nes::Api::User::FileIoCallback fn = nullptr;
-		void* ud = nullptr;
-		Nes::Api::User::fileIoCallback.Get(fn, ud);
-		if (ud == ctx) Nes::Api::User::fileIoCallback.Unset();
-	}
-	{
-		Nes::Api::User::EventCallback fn = nullptr;
-		void* ud = nullptr;
-		Nes::Api::User::eventCallback.Get(fn, ud);
-		if (ud == ctx) Nes::Api::User::eventCallback.Unset();
-	}
-	{
-		Nes::Api::User::QuestionCallback fn = nullptr;
-		void* ud = nullptr;
-		Nes::Api::User::questionCallback.Get(fn, ud);
-		if (ud == ctx) Nes::Api::User::questionCallback.Unset();
-	}
-	{
-		Nes::Core::Input::Controllers::Pad::PollCallback fn = nullptr;
-		void* ud = nullptr;
-		Nes::Core::Input::Controllers::Pad::callback.Get(fn, ud);
-		if (ud == ctx) Nes::Core::Input::Controllers::Pad::callback.Unset();
-	}
-
+	// Emulator is the last member destroyed; callback fields/cache have already
+	// ended their lifetime then. Explicit Unload above performs their final I/O.
+	RunningScope destroying(nullptr);
 	delete ctx;
 }
 
@@ -727,6 +745,7 @@ NES_API int nes_load_database(nes_t* nes, const uint8_t* xml, size_t size)
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
 	// 内存字节 → std::istream → ImageDatabase::Load (供 load_rom 查 profile)
+	RunningScope running(ctx);
 	nes_stream::MemIStream stream(xml, size);
 	Nes::Api::Cartridge::Database db = ctx->cartridge.GetDatabase();
 	return static_cast<int>(db.Load(stream.stream()));
@@ -742,6 +761,7 @@ NES_API int nes_load_rom(nes_t* nes, const uint8_t* data, size_t size, nes_rom_i
 		return NES_ERR_INVALID_PARAM;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 
 	// 内存字节 → std::istream → Machine::Load (自动识别 iNES/UNIF/FDS/NSF/XML)
 	nes_stream::MemIStream stream(data, size);
@@ -755,6 +775,9 @@ NES_API int nes_load_rom(nes_t* nes, const uint8_t* data, size_t size, nes_rom_i
 
 	ctx->input.AutoSelectControllers();
 	ctx->input.AutoSelectAdapter();
+
+	// DUAL and replay require the same power-on RAM on every instance.
+	ctx->machine.SetRamPowerState(0);
 
 	// 上电 (内部触发 fileIoCallback LOAD_BATTERY → on_file_io)
 	result = ctx->machine.Power(true);
@@ -791,6 +814,7 @@ NES_API int nes_unload(nes_t* nes)
 		return NES_ERR_REENTRANT;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 
 	const Nes::Result r = ctx->machine.Power(false); // 触发 SAVE_BATTERY
 	ctx->machine.Unload();
@@ -805,6 +829,7 @@ NES_API int nes_power(nes_t* nes, int on)
 		return NES_ERR_REENTRANT;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 	// on=0 (PowerOff) 内部触发 SAVE_BATTERY
 	return static_cast<int>(ctx->machine.Power(on != 0));
 }
@@ -817,6 +842,7 @@ NES_API int nes_reset(nes_t* nes, int hard)
 		return NES_ERR_REENTRANT;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 	return static_cast<int>(ctx->machine.Reset(hard != 0));
 }
 
@@ -893,6 +919,7 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 		return NES_ERR_INVALID_PARAM;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 
 	if (frames_run)      *frames_run = 0;
 	if (samples_written) *samples_written = 0;
@@ -906,7 +933,7 @@ NES_API int nes_run_frames(nes_t* nes, uint32_t max_frames,
 		ctx->audio_sample_remainder = 0.0;
 	}
 	const double fps = (clock_mode == static_cast<int>(Nes::Api::Machine::PAL))
-	                 ? 50.0070 : 60.0988;
+	                 ? kPalSourceRate : kNtscSourceRate;
 
 	// 视频输出: 正 pitch、自顶向下; 每帧写入 back buffer，完成后原子发布。
 	const int scale = filter_scale(ctx->filter);
@@ -1003,6 +1030,7 @@ NES_API int nes_set_video_format(nes_t* nes, nes_pixfmt format, nes_video_filter
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
 	// 仅 RGB565 + NONE/HQ 系列 (NTSC 未实现); 非法组合返回 NOT_IMPLEMENTED
+	RunningScope running(ctx);
 	const int scale = filter_scale(filter);
 	if (format != NES_PIXFMT_RGB565 || filter_to_render(filter) < 0)
 		return NES_ERR_NOT_IMPLEMENTED;
@@ -1112,6 +1140,7 @@ NES_API int nes_set_audio_format(nes_t* nes, uint32_t sample_rate, int stereo)
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 
 	// phase0 仅 mono (t2b §3); stereo 返回 NOT_IMPLEMENTED
+	RunningScope running(ctx);
 	if (stereo != 0)
 		return NES_ERR_NOT_IMPLEMENTED;
 
@@ -1181,24 +1210,25 @@ NES_API int nes_get_last_input_sample(const nes_t* nes, nes_input_sample* sample
 }
 
 /*
- * nes_save_state — Machine::SaveState(ostream, USE_COMPRESSION) (t2b §2) + S1-2 包装。
+ * Shared state export — Machine::SaveState with caller-selected compression.
  * 先经 nes_stream::GrowableOStream 全量产出裸 NST 字节, 再套 FLYNST1 安全包装头
  * (magic+version+core_version+rom_sha1+payload_len+crc32) 拷进调用方 out[0..cap)。
  * GrowableOStream 与 MemOStream 一样实现 seekp (状态存档器在 NstState.cpp
  * Saver::End 里回填 chunk 长度, 没有 seek 的话首个 End() 就抛 CORRUPT_FILE)。
  *
  * 返回语义:
- *   - 成功: *written = *needed = 81 + 裸 NST 长度; 返回 NES_OK。
+ *   - 成功: *written = *needed = 93 + 裸 NST 长度; 返回 NES_OK。
  *   - 裸 NST 产出失败 (未上电等): 透传 SaveState 的 Result (与 nes_err 同值,
  *     负值或警告照原样返回), *written = *needed = 0。
- *   - cap 不足: NES_ERR_BUFFER_TOO_SMALL; *written = 0, *needed = 81 + 裸长度。
+ *   - cap 不足: NES_ERR_BUFFER_TOO_SMALL; *written = 0, *needed = 93 + 裸长度。
  *     由于包装前已全量产出, *needed 是精确大小 (旧版 MemOStream 直写调用方
  *     缓冲时只是下界), 宿主按 *needed 精确分配一次即可重试成功。
  *
  * 大小探测 (out==NULL && cap==0): 合法, 照常全量产出后返回 BUFFER_TOO_SMALL,
  * *needed 即精确大小 —— 比旧版「下界 + 加倍重试」更适合一次性分配。
  */
-NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed)
+static int copy_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed,
+                      Nes::Api::Machine::Compression compression)
 {
 	if (!nes)
 		return NES_ERR_INVALID_PARAM;
@@ -1210,10 +1240,11 @@ NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written
 		return NES_ERR_INVALID_PARAM;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 
 	// 1. 全量产出裸 NST 到可增长缓冲
 	nes_stream::GrowableOStream raw;
-	const Nes::Result result = ctx->machine.SaveState(raw.stream(), Nes::Api::Machine::USE_COMPRESSION);
+	const Nes::Result result = ctx->machine.SaveState(raw.stream(), compression);
 	if (result != Nes::RESULT_OK)
 	{
 		*written = 0;
@@ -1237,8 +1268,28 @@ NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written
 
 	// 3. 包装进调用方缓冲 (cap 不足 → BUFFER_TOO_SMALL + 精确 *needed)
 	const std::vector<uint8_t>& raw_data = raw.data();
+	flynes_state::AudioClock clock;
+	clock.remainder = ctx->audio_sample_remainder;
+	// Signed zeros have the same cadence. Normalize only the exported copy;
+	// ordinary saves preserve their historical representation and machine state.
+	if (compression == Nes::Api::Machine::NO_COMPRESSION && clock.remainder == 0.0)
+		clock.remainder = 0.0;
+	if (ctx->audio_clock_mode == static_cast<int>(Nes::Api::Machine::NTSC))
+		clock.mode = flynes_state::AudioClockMode::Ntsc;
+	else if (ctx->audio_clock_mode == static_cast<int>(Nes::Api::Machine::PAL))
+		clock.mode = flynes_state::AudioClockMode::Pal;
 	return flynes_state::wrap(raw_data.data(), raw_data.size(), sha1_hex,
-	                          out, cap, written, needed);
+	                          clock, out, cap, written, needed);
+}
+
+NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed)
+{
+	return copy_state(nes, out, cap, written, needed, Nes::Api::Machine::USE_COMPRESSION);
+}
+
+NES_API int nes_copy_canonical_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed)
+{
+	return copy_state(nes, out, cap, written, needed, Nes::Api::Machine::NO_COMPRESSION);
 }
 
 /*
@@ -1260,6 +1311,7 @@ NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size)
 		return NES_ERR_INVALID_PARAM;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 
 	// 当前 ROM SHA1 (profile 缺失 → 全 0 → unwrap 跳过 SHA1 校验)
 	char current_sha1[41];
@@ -1278,7 +1330,9 @@ NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size)
 	const uint8_t* payload = nullptr;
 	size_t payload_len = 0;
 	bool is_wrapped = false;
-	const int rc = flynes_state::unwrap(in, size, current_sha1, &payload, &payload_len, &is_wrapped);
+	flynes_state::AudioClock clock;
+	const int rc = flynes_state::unwrap(in, size, current_sha1, &payload, &payload_len,
+	                                   &is_wrapped, &clock);
 	if (rc != NES_OK)
 		return rc;
 
@@ -1288,6 +1342,14 @@ NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size)
 
 	nes_stream::MemIStream stream(data, len);
 	const Nes::Result result = ctx->machine.LoadState(stream.stream());
+	if (result >= Nes::RESULT_OK)
+	{
+		ctx->audio_sample_remainder = clock.remainder;
+		ctx->audio_clock_mode = clock.mode == flynes_state::AudioClockMode::Ntsc
+		    ? static_cast<int>(Nes::Api::Machine::NTSC)
+		    : clock.mode == flynes_state::AudioClockMode::Pal
+		        ? static_cast<int>(Nes::Api::Machine::PAL) : -1;
+	}
 	return static_cast<int>(result);
 }
 
@@ -1315,6 +1377,7 @@ NES_API int nes_cheat_add(nes_t* nes, uint16_t addr, uint8_t value, uint8_t comp
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
 	const Nes::Api::Cheats::Code code(addr, value, compare, use_compare != 0);
+	RunningScope running(ctx);
 	return static_cast<int>(ctx->cheats.SetCode(code));
 }
 
@@ -1326,6 +1389,7 @@ NES_API int nes_cheat_remove(nes_t* nes, uint32_t index)
 		return NES_ERR_REENTRANT;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 	return static_cast<int>(ctx->cheats.DeleteCode(index));
 }
 
@@ -1337,6 +1401,7 @@ NES_API int nes_cheat_clear(nes_t* nes)
 		return NES_ERR_REENTRANT;
 
 	nes_ctx* ctx = reinterpret_cast<nes_ctx*>(nes);
+	RunningScope running(ctx);
 	return static_cast<int>(ctx->cheats.ClearCodes());
 }
 

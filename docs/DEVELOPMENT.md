@@ -93,6 +93,35 @@ CI gate with the ABI check included:
 The runner is `SingleDeviceCertificationRunner`; tests wait on a real device or
 emulator, so always pin the serial:
 
+**Preserving an existing installation:** do not use `connectedDebugAndroidTest`
+on an emulator/device whose app data must survive. The current Gradle UTP
+configuration installs both APKs with `uninstall_after_test: true` and uninstalls
+the target app after the run (confirmed in the 2026-09-20 acceptance UTP logs).
+Use a disposable AVD for that task. For data-preserving acceptance, build only,
+replace-install the same-signature packages, and invoke the runner directly:
+
+```powershell
+$testSerial = 'emulator-5554' # verify this is the intended emulator first
+$testAdb = "$env:ANDROID_HOME/platform-tools/adb.exe"
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
+& $testAdb -s $testSerial install -r app/build/outputs/apk/debug/app-debug.apk
+& $testAdb -s $testSerial install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+& $testAdb -s $testSerial shell am instrument -w -r -e class `
+  com.flynes.emu.catalog.android.AndroidCatalogRuntimeTest `
+  com.flynes.emu.test/com.flynes.emu.test.SingleDeviceCertificationRunner
+```
+
+Check each command's exit status and the runner's actual assertion results;
+`am instrument` shell exit status alone is not proof of passing tests. Capture
+app-state evidence before and after. If replacement installation fails because
+of a signature mismatch, stop; do not uninstall or clear data to get past it.
+An absent app requires an explicitly recorded fresh baseline and cannot prove
+preservation of data from an earlier installation. The tests themselves must
+also isolate mutable preferences/files; direct instrumentation does not make
+destructive fixtures safe.
+
+On a **disposable test installation only**, the Gradle runner remains available:
+
 ```powershell
 $env:ANDROID_SERIAL = 'emulator-5570'
 .\gradlew.bat :app:connectedDebugAndroidTest
@@ -125,7 +154,9 @@ Notes that save time:
   canonical id.
 - The bundled catalog is scanned at every cold start; `bundled scan committed
   N game(s)` in logcat is the quickest proof the manifest was read.
-- `pm clear com.flynes.emu` resets catalog state between manual runs.
+- `pm clear com.flynes.emu` destroys app data. Do not use it during
+  data-preserving acceptance; only use an explicitly disposable test installation
+  or obtain user authorization for that reset.
 
 ## 5. iOS
 

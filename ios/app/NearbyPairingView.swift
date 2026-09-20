@@ -3,9 +3,9 @@ import SwiftUI
 /// 配对 — the 6-digit-code block and the Wi-Fi-path block, each capability
 /// rendered per spec §4.
 ///
-/// This page reads no session value: `FlyNesAppBridge` has no nearby/session
-/// method yet (spec §3), so its controls are shown disabled with a visible
-/// reason instead of pretending to act.
+/// Invitation lifecycle and join attempts are owned by the shared session
+/// route through `FlyNesAppBridge`; unsupported platform transport still
+/// reports the discovery reason and never fabricates a match.
 ///
 /// The anonymous-join control set (`nearby.join.request_anonymous` /
 /// `nearby.join.accept` / `nearby.join.reject`) is deliberately **not built**:
@@ -29,93 +29,449 @@ func normalizeInviteCode(_ raw: String) -> String? {
 }
 
 struct NearbyPairingView: View {
-    var mode: NearbyPairingMode = .create
+    @Environment(\.dismiss) private var dismiss
+    @State private var mode: NearbyPairingMode
     // N01 invite lifecycle: generation-bound code with the 60s continuous
     // clock; regeneration and cancellation kill the old generation (C16).
     @State private var inviteCode = ""
-    @State private var inviteGeneration = 0
-    @State private var inviteDeadline = Date()
+    @State private var inviteGeneration: UInt64 = 0
+    @State private var inviteDeadlineNanoseconds: UInt64 = 0
+    @State private var inviteRemainingSeconds = 0
     // N02 join form state: error only after a submit attempt, submit locked
     // while a request is in flight (C05/C16).
     @State private var joinInput = ""
     @State private var joinError = false
     @State private var joinSubmitted = false
+    @State private var joinFailed = false
+    @State private var nextJoinAttemptID: UInt64 = 1
+    private let ticker = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+    private let bridge = FlyNesAppBridge.sharedInstance()
+
+    init(mode: NearbyPairingMode = .create) {
+        _mode = State(initialValue: mode)
+    }
 
     var body: some View {
-        List {
-            if mode == .create {
-                createSection
+        GeometryReader { geometry in
+            let wide = geometry.size.width > 580
+            VStack(spacing: 0) {
+                ScrollView {
+                    if wide {
+                        HStack(alignment: .top, spacing: 18) {
+                            leftPane.frame(width: 224, alignment: .topLeading)
+                            rightPane
+                        }
+                        .padding(16)
+                    } else {
+                        VStack(alignment: .leading, spacing: 18) {
+                            leftPane
+                            rightPane
+                        }
+                        .padding(16)
+                    }
+                }
+                footer
             }
-            if mode == .joinCode || mode == .scan {
-                joinCodeSection
-            }
-            stagesSection
-            codeSection
-            wifiSection
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(pageBackground.ignoresSafeArea())
         }
-        .navigationTitle("nearby.pairing.title")
+        .navigationTitle(titleKey)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .onAppear {
+            if mode == .create && inviteCode.isEmpty {
+                let snapshot = bridge.nearbyInviteSnapshot()
+                let activeGeneration = snapshot["hostGeneration"]?.uint64Value ?? 0
+                if (snapshot["hostPhase"]?.uint32Value ?? 0) == 1 && activeGeneration != 0 {
+                    _ = bridge.nearbyHostCancelGeneration(activeGeneration)
+                }
+                publishInvite(regenerating: false)
+            }
+        }
+        .onDisappear { cancelOwnedRouteState() }
+        .onReceive(ticker) { _ in refreshInvite() }
     }
 
-    /// N01 创建联机: generation-bound six-digit code with the 60s clock.
-    @ViewBuilder private var createSection: some View {
-        Section("nearby.invite.codeLabel") {
+    private var pageBackground: Color {
+        Color(red: 18 / 255, green: 19 / 255, blue: 22 / 255)
+    }
+    private var surface: Color {
+        Color(red: 27 / 255, green: 29 / 255, blue: 34 / 255)
+    }
+    private var onSurface: Color {
+        Color(red: 244 / 255, green: 239 / 255, blue: 230 / 255)
+    }
+    private var muted: Color {
+        Color(red: 190 / 255, green: 184 / 255, blue: 174 / 255)
+    }
+    private var primary: Color {
+        Color(red: 255 / 255, green: 107 / 255, blue: 94 / 255)
+    }
+
+    private var titleKey: LocalizedStringKey {
+        switch mode {
+        case .joinCode: return "nearby.screen.joinCode"
+        case .scan: return "nearby.screen.scan"
+        case .create: return "nearby.screen.invite"
+        }
+    }
+
+    @ViewBuilder private var leftPane: some View {
+        switch mode {
+        case .create: inviteLeft
+        case .joinCode: joinLeft
+        case .scan: scanLeft
+        }
+    }
+
+    @ViewBuilder private var rightPane: some View {
+        switch mode {
+        case .create: inviteRight
+        case .joinCode: joinRight
+        case .scan: scanRight
+        }
+    }
+
+    @ViewBuilder private var inviteLeft: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("nearby.invite.kicker")
+                .nearbyRole(NearbyTypography.kicker)
+                .foregroundStyle(primary)
+            Text("nearby.invite.headline")
+                .nearbyRole(NearbyTypography.paneTitle)
+                .foregroundStyle(onSurface)
+                .accessibilityIdentifier("nearby_invite_headline")
+            Text("nearby.invite.subtitle")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+                .accessibilityIdentifier("nearby_invite_subtitle")
+            Text("nearby.invite.codeLabel")
+                .nearbyRole(NearbyTypography.body)
+                .foregroundStyle(onSurface)
             Text(inviteCode.isEmpty ? "· · · · · ·" : inviteCode)
+                .nearbyRole(NearbyTypography.inviteCode)
+                .foregroundStyle(onSurface)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Color(red: 41 / 255, green: 43 / 255, blue: 49 / 255))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .accessibilityIdentifier("nearby_invite_code_value")
             if !inviteCode.isEmpty {
-                 let seconds = Int((inviteDeadline.timeIntervalSinceNow).rounded(.up))
-                Text(String(format: "%ds", seconds))
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
+                Text("\(NSLocalizedString("nearby.invite.validFor", comment: "")) \(inviteRemainingSeconds)s")
+                    .nearbyRole(NearbyTypography.muted)
+                    .foregroundStyle(muted)
             }
             Button("nearby.action.regenerate") {
-                inviteCode = String(format: "%06d", Int.random(in: 0...999_999))
-                inviteGeneration += 1
-                inviteDeadline = Date().addingTimeInterval(60)
+                publishInvite(regenerating: true)
             }
+            .nearbyRole(NearbyTypography.action)
+            .frame(maxWidth: .infinity)
+            .nearbyMinTap()
             .accessibilityIdentifier("nearby_invite_regenerate")
-            Button("nearby.action.cancelInvite", role: .destructive) {
-                inviteCode = ""
-                inviteGeneration = 0
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var inviteRight: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                Color.white
+                Text("nearby.invite.qrLabel")
+                    .nearbyRole(NearbyTypography.muted)
+                    .foregroundStyle(muted)
             }
-            .accessibilityIdentifier("nearby_invite_cancel")
+            .frame(width: 170, height: 170)
+            Text("nearby.invite.qrHint")
+                .nearbyRole(NearbyTypography.sectionTitle)
+                .foregroundStyle(onSurface)
+            Text("nearby.invite.hostMustAccept")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private var joinLeft: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("nearby.join.kicker")
+                .nearbyRole(NearbyTypography.kicker)
+                .foregroundStyle(primary)
+            Text("nearby.join.headline")
+                .nearbyRole(NearbyTypography.paneTitle)
+                .foregroundStyle(onSurface)
+            Text("nearby.join.subtitle")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+            Button("nearby.action.switchToScan") {
+                mode = .scan
+            }
+            .nearbyRole(NearbyTypography.action)
+            .frame(maxWidth: .infinity)
+            .nearbyMinTap()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var joinRight: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("nearby.join.codeLabel")
+                .nearbyRole(NearbyTypography.body)
+                .foregroundStyle(onSurface)
+            TextField("nearby.join.placeholder", text: $joinInput)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.center)
+                .nearbyRole(NearbyTypography.codeInput)
+                .frame(minHeight: 60)
+                .disabled(joinSubmitted)
+                .accessibilityIdentifier("nearby_join_code_input")
+                .onChange(of: joinInput) { _ in
+                    if !joinSubmitted { joinError = false }
+                }
+            if joinError {
+                Text((joinSubmitted || joinFailed)
+                     ? "nearby.stage.discovery.reason"
+                     : "nearby.reason.code.invalidFormat")
+                    .nearbyRole(NearbyTypography.body)
+                    .foregroundStyle(Color(red: 231 / 255, green: 183 / 255, blue: 117 / 255))
+                    .accessibilityIdentifier("nearby_join_code_error")
+            }
+            Text("nearby.join.hint")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var scanLeft: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("nearby.scan.kicker")
+                .nearbyRole(NearbyTypography.kicker)
+                .foregroundStyle(primary)
+            Text("nearby.scan.headline")
+                .nearbyRole(NearbyTypography.paneTitle)
+                .foregroundStyle(onSurface)
+            Text("nearby.scan.subtitle")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+            Button("nearby.action.switchToJoinCode") {
+                mode = .joinCode
+            }
+            .nearbyRole(NearbyTypography.action)
+            .frame(maxWidth: .infinity)
+            .nearbyMinTap()
+            Text("nearby.scan.cameraNote")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var scanRight: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(spacing: 14) {
+                Text("nearby.scan.cameraHint")
+                    .nearbyRole(NearbyTypography.sectionTitle)
+                    .foregroundStyle(onSurface)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, minHeight: 206)
+            .padding(16)
+            .background(surface)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(style: StrokeStyle(lineWidth: 2, dash: [6]))
+                    .foregroundStyle(muted)
+            )
+            Text("nearby.scan.afterScan")
+                .nearbyRole(NearbyTypography.muted)
+                .foregroundStyle(muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var footer: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                footerCopyView
+                footerButton
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                footerCopyView
+                footerButton
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 58)
+        .background(pageBackground)
+    }
+
+    private var footerCopyView: some View {
+        Text(footerCopy)
+            .nearbyRole(NearbyTypography.muted)
+            .foregroundStyle(muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var footerButton: some View {
+        HStack(spacing: 10) {
+            if mode == .joinCode && (joinSubmitted || joinFailed) {
+                Button(action: cancelJoinAttempt) {
+                    Text("nearby.action.cancelRequest")
+                        .nearbyRole(NearbyTypography.action)
+                        .frame(minWidth: 120)
+                        .nearbyMinTap()
+                }
+                .accessibilityIdentifier("nearby_join_cancel")
+            }
+            Button(action: footerAction) {
+                Text(footerActionLabel)
+                    .nearbyRole(mode == .joinCode ? NearbyTypography.primaryAction : NearbyTypography.action)
+                    .frame(minWidth: 160)
+                    .nearbyMinTap()
+            }
+            .disabled(joinSubmitDisabled)
+            .accessibilityIdentifier(footerIdentifier)
         }
     }
 
-    /// N02 输入配对码: six digits, leading zeros kept, request never sent on
-    /// incomplete input, adjacent field error only after submit. With no
-    /// discovery bearer in this build the honest outcome is the
-    /// discovery-blocked reason - never a synthetic host approval.
-    @ViewBuilder private var joinCodeSection: some View {
-        Section("nearby.join.codeLabel") {
-            TextField("nearby.join.codeLabel", text: $joinInput)
-                .keyboardType(.numberPad)
-                .accessibilityIdentifier("nearby_join_code_input")
-                .onChange(of: joinInput) { _ in joinError = false }
-            if joinError {
-                Text(joinSubmitted
-                     ? "nearby.stage.discovery.reason"
-                     : "nearby.reason.code.invalidFormat")
-                    .font(.footnote)
-                    .foregroundColor(.red)
-                    .accessibilityIdentifier("nearby_join_code_error")
-            }
-            Button("nearby.action.submitJoinCode") {
-                if normalizeInviteCode(joinInput) == nil {
-                    joinError = true
-                    return
-                }
-                joinSubmitted = true
-                joinError = true
-            }
-            .disabled(normalizeInviteCode(joinInput) == nil || joinSubmitted)
-            .accessibilityIdentifier("nearby_join_submit")
-            Button("nearby.action.cancelRequest", role: .destructive) {
-                joinSubmitted = false
-                joinError = false
-            }
-            .accessibilityIdentifier("nearby_join_cancel")
+    private var joinSubmitDisabled: Bool {
+        guard mode == .joinCode else { return false }
+        return joinSubmitted || normalizeInviteCode(joinInput) == nil
+    }
+
+    private var footerCopy: LocalizedStringKey {
+        switch mode {
+        case .joinCode: return "nearby.join.footer"
+        case .scan: return "nearby.scan.footer"
+        case .create: return "nearby.invite.footer"
         }
+    }
+
+    private var footerActionLabel: LocalizedStringKey {
+        switch mode {
+        case .joinCode: return "nearby.action.submitJoinCode"
+        case .scan: return "nearby.action.cancel"
+        case .create: return "nearby.action.cancelInvite"
+        }
+    }
+
+    private var footerIdentifier: String {
+        switch mode {
+        case .joinCode: return "nearby_join_submit"
+        case .scan: return "nearby_action_cancel"
+        case .create: return "nearby_invite_cancel"
+        }
+    }
+
+    private func footerAction() {
+        switch mode {
+        case .joinCode:
+            submitJoin()
+        case .scan:
+            dismiss()
+        case .create:
+            if inviteGeneration != 0 {
+                _ = bridge.nearbyHostCancelGeneration(inviteGeneration)
+                clearInvite()
+            }
+            dismiss()
+        }
+    }
+
+    private func submitJoin() {
+        if joinSubmitted { return }
+        if normalizeInviteCode(joinInput) == nil {
+            joinError = true
+            return
+        }
+        let attemptID = bridge.nearbyNextJoinAttemptID()
+        guard attemptID != 0 else { joinError = true; return }
+        joinSubmitted = true
+        joinFailed = false
+        nextJoinAttemptID = attemptID &+ 1
+        _ = bridge.nearbySubmitCode(
+            joinInput,
+            attemptID: attemptID,
+            nowNanoseconds: monotonicNanoseconds()
+        )
+        joinError = true
+        DispatchQueue.main.async {
+            joinSubmitted = false
+            joinFailed = true
+        }
+    }
+
+    private func cancelJoinAttempt() {
+        if nextJoinAttemptID > 1 {
+            _ = bridge.nearbyCancelAttempt(nextJoinAttemptID - 1)
+        }
+        joinSubmitted = false
+        joinFailed = false
+        dismiss()
+    }
+
+    private func publishInvite(regenerating: Bool) {
+        let code = secureInviteCode()
+        let generation = bridge.nearbyNextHostGeneration()
+        guard generation != 0 else { clearInvite(); return }
+        let now = monotonicNanoseconds()
+        let snapshot = bridge.nearbyInviteSnapshot()
+        let hostIsOwnedAndActive = (snapshot["hostPhase"]?.uint32Value ?? 0) == 1
+            && (snapshot["hostGeneration"]?.uint64Value ?? 0) == inviteGeneration
+        let accepted = regenerating && hostIsOwnedAndActive
+            ? bridge.nearbyHostRegenerateCode(code, generation: generation, nowNanoseconds: now)
+            : bridge.nearbyHostPublishCode(code, generation: generation, nowNanoseconds: now)
+        guard accepted else { return }
+        inviteCode = code
+        inviteGeneration = generation
+        inviteDeadlineNanoseconds = now &+ 60_000_000_000
+        inviteRemainingSeconds = 60
+    }
+
+    private func refreshInvite() {
+        guard inviteGeneration != 0 else { return }
+        let now = monotonicNanoseconds()
+        bridge.nearbyTickNanoseconds(now)
+        let snapshot = bridge.nearbyInviteSnapshot()
+        let active = (snapshot["hostPhase"]?.uint32Value ?? 0) == 1
+            && (snapshot["hostGeneration"]?.uint64Value ?? 0) == inviteGeneration
+        guard active else {
+            clearInvite()
+            return
+        }
+        let remaining = inviteDeadlineNanoseconds > now
+            ? inviteDeadlineNanoseconds - now
+            : 0
+        inviteRemainingSeconds = Int((remaining + 999_999_999) / 1_000_000_000)
+    }
+
+    private func clearInvite() {
+        inviteCode = ""
+        inviteGeneration = 0
+        inviteDeadlineNanoseconds = 0
+        inviteRemainingSeconds = 0
+    }
+
+    private func cancelOwnedRouteState() {
+        if inviteGeneration != 0 {
+            _ = bridge.nearbyHostCancelGeneration(inviteGeneration)
+        }
+        if joinSubmitted && nextJoinAttemptID > 1 {
+            _ = bridge.nearbyCancelAttempt(nextJoinAttemptID - 1)
+        }
+        clearInvite()
+        joinSubmitted = false
+    }
+
+    private func monotonicNanoseconds() -> UInt64 {
+        UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
+    }
+
+    private func secureInviteCode() -> String {
+        var value = ""
+        for _ in 0..<6 { value += String(arc4random_uniform(10)) }
+        return value
     }
 
     /// The seven pairing stages in pipeline order; earlier stages are marked

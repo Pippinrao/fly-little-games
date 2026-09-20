@@ -1,41 +1,68 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { resolveTestFontSizeScale } from '../ui/NearbyTestFontScale';
 
 export default class EntryAbility extends UIAbility {
+  private testPage: string = 'pages/GameCenter';
+  private stage: window.WindowStage | undefined = undefined;
+
   onCreate(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
-    if (!this.context.applicationInfo.debug) {
-      return;
-    }
-    const rawScale: string | undefined = want.parameters?.['flynes.test.fontSizeScale'] as
-      string | undefined;
-    if (rawScale === undefined) {
-      return;
-    }
-    const scale: number = Number(rawScale);
-    if (scale === 1 || scale === 1.5 || scale === 2) {
-      this.context.getApplicationContext().setFontSizeScale(scale);
-      console.info(`FlyNES test fontSizeScale applied=${scale}`);
+    this.applyDebugWant(want);
+  }
+
+  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    if (this.applyDebugWant(want) && this.stage !== undefined) {
+      this.stage.loadContent(this.testPage);
     }
   }
 
+  private applyDebugWant(want: Want): boolean {
+    const debug = this.context.applicationInfo.debug;
+    const rawScale: string | undefined = want.parameters?.['flynes.test.fontSizeScale'] as
+      string | undefined;
+    const parsed = resolveTestFontSizeScale(rawScale, debug);
+    if (parsed.accepted) {
+      this.context.getApplicationContext().setFontSizeScale(parsed.scale);
+      console.info(`FlyNES test fontSizeScale applied=${parsed.scale}`);
+    } else if (parsed.rejection.length > 0) {
+      console.info(parsed.rejection);
+    }
+    if (!debug) {
+      return false;
+    }
+    const page: string | undefined = want.parameters?.['flynes.test.page'] as string | undefined;
+    if (page === 'nearby_friends') {
+      this.testPage = 'pages/NearbyFriends';
+    } else if (page === 'nearby_pairing') {
+      this.testPage = 'pages/NearbyPairing';
+    } else if (page === 'nearby_lobby') {
+      this.testPage = 'pages/NearbyLobby';
+    } else {
+      return false;
+    }
+    return true;
+  }
+
   onWindowStageCreate(windowStage: window.WindowStage): void {
+    this.stage = windowStage;
     console.info(`FlyNES UI configuration fontSizeScale=${this.context.config.fontSizeScale ?? -1}`);
     try {
       const win = windowStage.getMainWindowSync();
       win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_LANDSCAPE);
-      // Android parity: Theme.FlyNES sets windowFullscreen=true, so the app draws
-      // edge-to-edge with no system bars. Without this the page is laid out inside
-      // the bottom navigation-bar avoid area and a white strip shows in game.
       win.setWindowLayoutFullScreen(true);
       win.setWindowSystemBarEnable([]);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'orientation failed';
       console.error(`FlyNES landscape preference failed: ${detail}`);
     }
-    windowStage.loadContent('pages/GameCenter', (error) => {
+    windowStage.loadContent(this.testPage, (error) => {
       if (error.code !== 0) {
-        console.error(`FlyNES Game Center failed to load: ${error.code}`);
+        console.error(`FlyNES content failed to load: ${error.code}`);
       }
     });
+  }
+
+  onWindowStageDestroy(): void {
+    this.stage = undefined;
   }
 }

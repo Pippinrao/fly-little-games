@@ -9,10 +9,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * validity, and regenerate/cancel semantics - regeneration and cancellation
  * kill the previous generation immediately, and the old code never comes back.
  *
- * <p>This is UI-side state bound to one screen; it never announces a pairing,
- * never carries identity data, and is replaced by the shared session route
- * (flynes::session::InviteCodeHost through the ABI) as soon as the backend
- * track wires it. The code locates an invitation only; it is not a credential.
+ * <p>This is UI-side display state bound to one screen. Every lifecycle change
+ * must first be accepted by the shared session route through {@link Backend};
+ * a locally generated candidate is never displayed as an invitation by itself.
  */
 public final class NearbyInviteHostState {
     public static final long VALIDITY_MS = 60_000L;
@@ -21,23 +20,39 @@ public final class NearbyInviteHostState {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final AtomicLong NEXT_GENERATION = new AtomicLong(1L);
 
+    public interface Backend {
+        boolean publish(long generation, String code, long nowMs);
+        boolean regenerate(long generation, String code, long nowMs);
+        boolean cancel(long generation);
+        void tick(long nowMs);
+        boolean active(long generation);
+    }
+
+    private final Backend backend;
+
     private long generation;
     private String code = "";
     private long deadlineElapsedRealtime;
     private boolean active;
 
+    public NearbyInviteHostState(Backend backend) {
+        if (backend == null) throw new NullPointerException("backend");
+        this.backend = backend;
+    }
+
     public boolean create(long nowElapsedRealtime) {
         if (active) return false;
-        return activate(nowElapsedRealtime);
+        return activate(nowElapsedRealtime, false);
     }
 
     public boolean regenerate(long nowElapsedRealtime) {
         if (!active) return false;
-        return activate(nowElapsedRealtime);
+        return activate(nowElapsedRealtime, true);
     }
 
     public boolean cancel(long generation) {
         if (!active || this.generation != generation) return false;
+        if (!backend.cancel(generation)) return false;
         active = false;
         code = "";
         return true;
@@ -45,7 +60,8 @@ public final class NearbyInviteHostState {
 
     /** Expires the invitation at/after its deadline; backwards time is refused. */
     public void tick(long nowElapsedRealtime) {
-        if (active && nowElapsedRealtime >= deadlineElapsedRealtime) {
+        backend.tick(nowElapsedRealtime);
+        if (active && !backend.active(generation)) {
             active = false;
             code = "";
         }
@@ -58,13 +74,18 @@ public final class NearbyInviteHostState {
         return active ? Math.max(0L, deadlineElapsedRealtime - nowElapsedRealtime) : 0L;
     }
 
-    private boolean activate(long nowElapsedRealtime) {
+    private boolean activate(long nowElapsedRealtime, boolean regenerating) {
         long next = NEXT_GENERATION.getAndIncrement();
         if (next == 0L) next = NEXT_GENERATION.getAndIncrement();
         StringBuilder digits = new StringBuilder(CODE_LENGTH);
         for (int i = 0; i < CODE_LENGTH; i++) digits.append(RANDOM.nextInt(10));
+        String candidate = digits.toString();
+        boolean accepted = regenerating
+                ? backend.regenerate(next, candidate, nowElapsedRealtime)
+                : backend.publish(next, candidate, nowElapsedRealtime);
+        if (!accepted) return false;
         generation = next;
-        code = digits.toString();
+        code = candidate;
         deadlineElapsedRealtime = nowElapsedRealtime + VALIDITY_MS;
         active = true;
         return true;

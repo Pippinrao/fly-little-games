@@ -123,7 +123,7 @@ public final class GameCenterStateTest {
     private static final GameCenterItem DUAL_CART = new GameCenterItem(
             "dual-cart", "Battle City", "坦克大战", false, true, 0, "battle_city.nes");
     private static final GameCenterItem SOLO_BUILTIN = new GameCenterItem(
-            "solo-builtin", "From Below", "来自下方", true, true, 0, "from_below.nes");
+            "solo-builtin", "Solo Fixture", "单人测试", true, true, 0, "solo_fixture.nes");
     private static final GameCenterItem STALE_PROFILE = new GameCenterItem(
             "stale-profile", "Old Profile Game", "", false, true, 0, "old.nes");
     private static final GameCenterItem UNKNOWN_GAME = new GameCenterItem(

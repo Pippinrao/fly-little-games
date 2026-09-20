@@ -4,9 +4,71 @@
 
 #include "flynes/product/nearby_ui_state.hpp"
 
+#include <flynes/flynes_session.h>
+
+#include <cmath>
 #include <stdexcept>
 
 namespace flynes::product::nearby {
+
+NearbyLayout project_layout(double available_width) noexcept
+{
+    if (!std::isfinite(available_width) || available_width < 0.0)
+    {
+        return {};
+    }
+    NearbyLayout result;
+    result.valid = true;
+    result.split = available_width > kNearbySplitThreshold;
+    if (!result.split)
+    {
+        result.left_width = available_width;
+        result.right_width = available_width;
+        return result;
+    }
+    result.left_width = kNearbyLeftColumnWidth;
+    result.gutter = kNearbyColumnGutter;
+    result.right_width = available_width - result.left_width - result.gutter;
+    return result;
+}
+
+std::array<std::string_view, 6> n00_left_column_keys() noexcept
+{
+    return {
+        "nearby.entry.kicker",
+        "nearby.entry.headline",
+        "nearby.entry.subtitle",
+        "nearby.action.create",
+        "nearby.action.enterCode",
+        "nearby.action.scanQr",
+    };
+}
+
+bool n00_shows_stage_pipeline() noexcept
+{
+    return false;
+}
+
+bool n00_shows_scan_host_qr() noexcept
+{
+    return false;
+}
+
+bool n00_shows_pairing_shortcut() noexcept
+{
+    return false;
+}
+
+bool n00_tabs_on_right_column() noexcept
+{
+    return true;
+}
+
+bool n00_find_devices_on_devices_tab() noexcept
+{
+    return true;
+}
+
 namespace {
 
 constexpr std::array<std::string_view, 14> kScreenCodes{
@@ -354,6 +416,279 @@ PendingConfigFacts invalidate_on_config_change(const PendingConfigFacts& current
 bool config_start_allowed(const PendingConfigFacts& facts)
 {
     return facts.local_confirmed && facts.peer_confirmed && !facts.pending_config_id.empty();
+}
+
+NearbyContainer screen_container(ScreenId screen) noexcept
+{
+    switch (screen)
+    {
+    case ScreenId::NearbyEntry:
+        return NearbyContainer::Entry;
+    case ScreenId::InviteCode:
+    case ScreenId::JoinByCode:
+    case ScreenId::ScanQr:
+    case ScreenId::WaitHost:
+    case ScreenId::HostRequest:
+    case ScreenId::SasConfirm:
+    case ScreenId::Connecting:
+        return NearbyContainer::Pair;
+    case ScreenId::ConnectedLobby:
+        return NearbyContainer::Connected;
+    case ScreenId::GameCenter:
+        return NearbyContainer::Home;
+    case ScreenId::GameConfig:
+        return NearbyContainer::Config;
+    case ScreenId::Failure:
+        return NearbyContainer::Failure;
+    case ScreenId::ContentTransfer:
+        return NearbyContainer::Content;
+    case ScreenId::Friends:
+        return NearbyContainer::Friends;
+    }
+    return NearbyContainer::Entry;
+}
+
+namespace {
+
+NearbyNavigation stay(const NearbyNavigationFacts& facts)
+{
+    NearbyNavigation out;
+    out.screen = facts.screen;
+    out.details_open = facts.details_open;
+    out.failure_reason_key = facts.failure_reason_key;
+    return out;
+}
+
+NearbyNavigation go(const NearbyNavigationFacts& facts, ScreenId screen)
+{
+    NearbyNavigation out = stay(facts);
+    out.screen = screen;
+    out.details_open = false;
+    return out;
+}
+
+} // namespace
+
+NearbyNavigation apply_nearby_action(const NearbyNavigationFacts& facts, ActionId action)
+{
+    if (facts.details_open && action == ActionId::ViewDetails)
+    {
+        NearbyNavigation closed = stay(facts);
+        closed.details_open = false;
+        closed.rebuild_invite = false;
+        closed.rebuild_connection = false;
+        return closed;
+    }
+
+    switch (action)
+    {
+    case ActionId::CreateInvite:
+        if (facts.screen == ScreenId::NearbyEntry)
+        {
+            return go(facts, ScreenId::InviteCode);
+        }
+        break;
+    case ActionId::EnterInviteCode:
+        if (facts.screen == ScreenId::NearbyEntry)
+        {
+            return go(facts, ScreenId::JoinByCode);
+        }
+        break;
+    case ActionId::ScanQr:
+        if (facts.screen == ScreenId::NearbyEntry)
+        {
+            return go(facts, ScreenId::ScanQr);
+        }
+        break;
+    case ActionId::SwitchToScan:
+        if (facts.screen == ScreenId::JoinByCode)
+        {
+            return go(facts, ScreenId::ScanQr);
+        }
+        break;
+    case ActionId::SwitchToJoinCode:
+        if (facts.screen == ScreenId::ScanQr)
+        {
+            return go(facts, ScreenId::JoinByCode);
+        }
+        break;
+    case ActionId::SubmitJoinCode:
+        if (facts.screen == ScreenId::JoinByCode)
+        {
+            if (!facts.join_accepted)
+            {
+                return stay(facts);
+            }
+            return go(facts, facts.local_is_host ? ScreenId::HostRequest : ScreenId::WaitHost);
+        }
+        break;
+    case ActionId::AcceptRequest:
+        if (facts.screen == ScreenId::HostRequest)
+        {
+            return go(facts, facts.qr_signed_path ? ScreenId::Connecting : ScreenId::SasConfirm);
+        }
+        break;
+    case ActionId::ConfirmSasMatch:
+        if (facts.screen == ScreenId::SasConfirm)
+        {
+            return stay(facts);
+        }
+        break;
+    case ActionId::GoToGameCenter:
+        if (facts.screen == ScreenId::ConnectedLobby)
+        {
+            return go(facts, ScreenId::GameCenter);
+        }
+        break;
+    case ActionId::SelectGame:
+        if (facts.screen == ScreenId::GameCenter && facts.session_connected)
+        {
+            return go(facts, ScreenId::GameConfig);
+        }
+        break;
+    case ActionId::BackToLobby:
+        if (facts.screen == ScreenId::GameConfig)
+        {
+            NearbyNavigation back = go(facts, ScreenId::GameCenter);
+            back.clear_config_confirm = true;
+            back.terminate_attempt = false;
+            back.rebuild_connection = false;
+            return back;
+        }
+        break;
+    case ActionId::ViewDetails:
+        if (facts.screen == ScreenId::Connecting)
+        {
+            NearbyNavigation open = stay(facts);
+            open.details_open = true;
+            return open;
+        }
+        break;
+    case ActionId::RejectRequest:
+    case ActionId::CancelInvite:
+    case ActionId::CancelRequest:
+    case ActionId::ReportSasMismatch:
+    case ActionId::CancelConnecting:
+    case ActionId::Disconnect:
+    {
+        NearbyNavigation ended = go(facts, ScreenId::NearbyEntry);
+        ended.terminate_attempt = true;
+        return ended;
+    }
+    case ActionId::Cancel:
+        if (facts.screen == ScreenId::ScanQr)
+        {
+            NearbyNavigation back = go(facts, ScreenId::NearbyEntry);
+            back.terminate_attempt = false;
+            back.rebuild_invite = false;
+            return back;
+        }
+        break;
+    case ActionId::BackToGameCenter:
+        if (facts.screen == ScreenId::NearbyEntry)
+        {
+            NearbyNavigation home = go(facts, ScreenId::GameCenter);
+            home.terminate_attempt = false;
+            return home;
+        }
+        break;
+    default:
+        break;
+    }
+    return stay(facts);
+}
+
+NearbyNavigation apply_nearby_session(const NearbyNavigationFacts& facts)
+{
+    if (facts.first_stage_failed)
+    {
+        NearbyNavigation failed = go(facts, ScreenId::Failure);
+        failed.failure_reason_key = facts.failure_reason_key;
+        return failed;
+    }
+    if (facts.screen == ScreenId::ScanQr && !facts.qr_capability_ready)
+    {
+        return stay(facts);
+    }
+    if (facts.link_ready
+        && (facts.screen == ScreenId::SasConfirm || facts.screen == ScreenId::Connecting
+            || facts.screen == ScreenId::WaitHost || facts.screen == ScreenId::HostRequest))
+    {
+        return go(facts, ScreenId::ConnectedLobby);
+    }
+    return stay(facts);
+}
+
+uint32_t session_action_kind(ActionId action) noexcept
+{
+    switch (action)
+    {
+    case ActionId::CreateInvite:
+        return FLY_SESSION_ACTION_CREATE_INVITE_V2;
+    case ActionId::FindDevices:
+        return FLY_SESSION_ACTION_START_DISCOVERY_V2;
+    case ActionId::RegenerateInvite:
+        return FLY_SESSION_ACTION_REGENERATE_INVITE_V2;
+    case ActionId::CancelInvite:
+        return FLY_SESSION_ACTION_CANCEL_INVITE_V2;
+    case ActionId::CancelRequest:
+        return FLY_SESSION_ACTION_CANCEL_JOIN_V2;
+    case ActionId::SubmitJoinCode:
+        return FLY_SESSION_ACTION_JOIN_CODE_V2;
+    case ActionId::ScanQr:
+        return FLY_SESSION_ACTION_BEGIN_SCAN_V2;
+    case ActionId::AcceptRequest:
+        return FLY_SESSION_ACTION_ACCEPT_REQUEST_V2;
+    case ActionId::RejectRequest:
+        return FLY_SESSION_ACTION_REJECT_REQUEST_V2;
+    case ActionId::ConfirmSasMatch:
+        return FLY_SESSION_ACTION_CONFIRM_SAS_V2;
+    case ActionId::ReportSasMismatch:
+        return FLY_SESSION_ACTION_REJECT_SAS_V2;
+    case ActionId::CancelConnecting:
+        return FLY_SESSION_ACTION_CANCEL_CONNECT_V2;
+    case ActionId::Disconnect:
+        return FLY_SESSION_ACTION_DISCONNECT_LINK_V2;
+    case ActionId::SelectGame:
+        return FLY_SESSION_ACTION_SELECT_CONTENT_V2;
+    case ActionId::ConfirmConfig:
+        return FLY_SESSION_ACTION_CONFIRM_GAME_CONFIG_V2;
+    case ActionId::BackToLobby:
+        return FLY_SESSION_ACTION_RETURN_TO_LOBBY_V2;
+    case ActionId::GrantSend:
+        return FLY_SESSION_ACTION_APPROVE_SEND_V2;
+    case ActionId::GrantReceive:
+        return FLY_SESSION_ACTION_APPROVE_RECEIVE_V2;
+    case ActionId::CancelTransfer:
+        return FLY_SESSION_ACTION_CANCEL_CONTENT_V2;
+    case ActionId::ConfirmImport:
+        return FLY_SESSION_ACTION_APPROVE_IMPORT_V2;
+    case ActionId::Retry:
+        return FLY_SESSION_ACTION_RETRY_FAILURE_V2;
+    case ActionId::RenameFriend:
+        return FLY_SESSION_ACTION_RENAME_FRIEND_V2;
+    case ActionId::DeleteFriend:
+        return FLY_SESSION_ACTION_DELETE_FRIEND_V2;
+    case ActionId::BlockFriend:
+        return FLY_SESSION_ACTION_BLOCK_FRIEND_V2;
+    case ActionId::ResetIdentity:
+        return FLY_SESSION_ACTION_RESET_LOCAL_IDENTITY_V2;
+    case ActionId::EnterInviteCode:
+    case ActionId::OpenFriends:
+    case ActionId::BackToGameCenter:
+    case ActionId::SwitchToScan:
+    case ActionId::SwitchToJoinCode:
+    case ActionId::Cancel:
+    case ActionId::ViewDetails:
+    case ActionId::GoToGameCenter:
+    case ActionId::OpenNearby:
+    case ActionId::DisableMultiplayerFilter:
+    case ActionId::NewInvite:
+    case ActionId::BackToEntry:
+    case ActionId::Count:
+        return 0u;
+    }
+    return 0u;
 }
 
 } // namespace flynes::product::nearby

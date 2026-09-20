@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nearby-only TextAppearance roles from shared/schema/nearby_typography_v1.json.
+  Product Nearby layouts must reference these locally. Do not assign them as
+  app-wide textAppearanceHeadlineSmall / HeadlineMedium.
+-->
+<resources>
+    <style name="TextAppearance.FlyNes.Nearby.PageTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">18sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">23.4sp</item>
+        <item name="lineHeight">23.4sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.PaneTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">21sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">27.3sp</item>
+        <item name="lineHeight">27.3sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.SectionTitle" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">21.75sp</item>
+        <item name="lineHeight">21.75sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">20.3sp</item>
+        <item name="lineHeight">20.3sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.Muted" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">17.4sp</item>
+        <item name="lineHeight">17.4sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.Action" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">20.3sp</item>
+        <item name="lineHeight">20.3sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.PrimaryAction" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:lineHeight">20.3sp</item>
+        <item name="lineHeight">20.3sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.Kicker" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textSize">11sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:letterSpacing">0.13</item>
+        <item name="android:lineHeight">15.95sp</item>
+        <item name="lineHeight">15.95sp</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.InviteCode" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:textSize">29sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0.17</item>
+        <item name="android:lineHeight">40.6sp</item>
+        <item name="lineHeight">40.6sp</item>
+    </style>
+    <style name="TextAppearance.FlyNes.Nearby.CodeInput" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:textSize">28sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:letterSpacing">0.16</item>
+        <item name="android:lineHeight">40.6sp</item>
+        <item name="lineHeight">40.6sp</item>
+    </style>
+</resources>

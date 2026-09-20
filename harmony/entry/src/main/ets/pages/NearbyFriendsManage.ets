@@ -1,5 +1,9 @@
 import { router } from '@kit.ArkUI';
 import { NearbyManageAction, nearbyManageActions, nearbyString } from '../service/NearbyService';
+import {
+  NEARBY_MIN_TAP_HEIGHT_VP,
+  NEARBY_TYPE
+} from '../ui/NearbyTypography';
 
 // Android/game-center parity: the same shell colors as pages/NearbyFriends.ets.
 const COLOR_SURFACE: string = '#1B1F28';
@@ -15,19 +19,24 @@ struct NearbyFriendsManage {
       Scroll() {
         Column({ space: 12 }) {
           Text($r('app.string.nearby_friends_section'))
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
+            .fontSize(NEARBY_TYPE.sectionTitle.size)
+            .fontWeight(NEARBY_TYPE.sectionTitle.weight)
+            .lineHeight(NEARBY_TYPE.sectionTitle.lineHeight)
             .fontColor(COLOR_ON_SURFACE)
             .width('100%')
           // No friend can be proven to exist without the friend store, so the
           // list shows its empty state and never a sample row (§4).
           Text($r('app.string.nearby_friends_empty'))
-            .fontSize(16)
+            .fontSize(NEARBY_TYPE.body.size)
+            .fontWeight(NEARBY_TYPE.body.weight)
+            .lineHeight(NEARBY_TYPE.body.lineHeight)
             .fontColor(COLOR_ON_SURFACE)
             .width('100%')
             .textAlign(TextAlign.Center)
           Text($r('app.string.nearby_friends_saved_after_auth'))
-            .fontSize(13)
+            .fontSize(NEARBY_TYPE.muted.size)
+            .fontWeight(NEARBY_TYPE.muted.weight)
+            .lineHeight(NEARBY_TYPE.muted.lineHeight)
             .fontColor(COLOR_ON_SURFACE_MUTED)
             .width('100%')
             .textAlign(TextAlign.Center)
@@ -58,20 +67,20 @@ struct NearbyFriendsManage {
         .fontSize(26)
         .fontWeight(FontWeight.Bold)
         .fontColor(COLOR_ON_SURFACE)
-        .width(44)
-        .height(44)
+        .constraintSize({ minWidth: NEARBY_MIN_TAP_HEIGHT_VP, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
         .textAlign(TextAlign.Center)
         .onClick(() => {
           router.back();
         })
       Text($r('app.string.nearby_friends_manage'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
+        .fontSize(NEARBY_TYPE.pageTitle.size)
+        .fontWeight(NEARBY_TYPE.pageTitle.weight)
+        .lineHeight(NEARBY_TYPE.pageTitle.lineHeight)
         .fontColor(COLOR_ON_SURFACE)
         .layoutWeight(1)
     }
     .width('100%')
-    .height(56)
+    .constraintSize({ minHeight: 56 })
     .padding({ left: 4, right: 16 })
     .backgroundColor(COLOR_SURFACE)
   }
@@ -81,11 +90,14 @@ struct NearbyFriendsManage {
     Column({ space: 4 }) {
       Button(nearbyString(action.label))
         .width('100%')
-        .height(48)
-        .fontSize(16)
+        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
+        .fontSize(NEARBY_TYPE.action.size)
+        .fontWeight(NEARBY_TYPE.action.weight)
         .enabled(false)
       Text(nearbyString(action.blocked))
-        .fontSize(13)
+        .fontSize(NEARBY_TYPE.muted.size)
+        .fontWeight(NEARBY_TYPE.muted.weight)
+        .lineHeight(NEARBY_TYPE.muted.lineHeight)
         .fontColor(COLOR_ON_SURFACE_MUTED)
         .width('100%')
         .textAlign(TextAlign.Center)

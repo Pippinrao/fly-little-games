@@ -1,4 +1,41 @@
 import SwiftUI
+import UIKit
+
+private struct AccessibleNativeSwitch: UIViewRepresentable {
+    @Binding var isOn: Bool
+    let identifier: String
+    let label: String
+
+    final class Coordinator: NSObject {
+        var parent: AccessibleNativeSwitch
+
+        init(_ parent: AccessibleNativeSwitch) {
+            self.parent = parent
+        }
+
+        @objc func changed(_ sender: UISwitch) {
+            parent.isOn = sender.isOn
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UISwitch {
+        let control = UISwitch(frame: .zero)
+        control.accessibilityIdentifier = identifier
+        control.accessibilityLabel = label
+        control.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)),
+                          for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ control: UISwitch, context: Context) {
+        context.coordinator.parent = self
+        if control.isOn != isOn {
+            control.setOn(isOn, animated: false)
+        }
+    }
+}
 
 enum LibraryRoute: Hashable {
     /// The resolved ROM travels with the route, so reaching the run screen already
@@ -55,7 +92,27 @@ struct MultiplayerCapabilityRegistry {
 /// Populated by the ObjC++ bridge from the shared versioned profile projection
 /// (P6); never from local file inspection.
 enum MultiplayerCapabilitySource {
-    static var registry = MultiplayerCapabilityRegistry(profileVersion: 0)
+    static var registry: MultiplayerCapabilityRegistry = loadSharedRegistry()
+
+    static func reload() {
+        registry = loadSharedRegistry()
+    }
+
+    private static func loadSharedRegistry() -> MultiplayerCapabilityRegistry {
+        let games = FlyNesBuiltinGames.shared()
+        let version = UInt32(max(0, games.multiplayerProfileVersion))
+        var result = MultiplayerCapabilityRegistry(profileVersion: version)
+        for game in games.all() {
+            let eligibility: MultiplayerEligibility
+            switch game.multiplayerEligibility {
+            case "SUPPORTED": eligibility = .supported
+            case "UNSUPPORTED": eligibility = .unsupported
+            default: eligibility = .unknown
+            }
+            result.put(game.canonicalId, eligibility, UInt32(max(0, game.multiplayerProfileVersion)))
+        }
+        return result
+    }
 }
 
 /// Mirrors Android HomeActivity: selected detail on the left, two-row horizontal
@@ -131,7 +188,21 @@ struct CatalogLibraryView: View {
                                                   onLaunch: launch)
                                 .frame(width: max(0, (geometry.size.width - 8) * 0.3))
                             VStack(alignment: .leading, spacing: 4) {
-                                status.lineLimit(2).frame(minHeight: 32, alignment: .leading)
+                                HStack(alignment: .center, spacing: 12) {
+                                    status.lineLimit(2).frame(minHeight: 48, alignment: .leading)
+                                    Spacer(minLength: 0)
+                                    HStack(spacing: 8) {
+                                        Text("nearby.filter.multiplayerOnly")
+                                            .lineLimit(2)
+                                        AccessibleNativeSwitch(
+                                            isOn: $multiplayerOnly,
+                                            identifier: "nearby_multiplayer_filter",
+                                            label: FlyNesLocalizedString("nearby.filter.multiplayerOnly")
+                                        )
+                                        .fixedSize()
+                                    }
+                                    .frame(minHeight: 48)
+                                }
                                 ScrollView(.horizontal) {
                                     LazyHGrid(rows: Array(repeating: GridItem(.flexible(), spacing: 8),
                                                          count: largeText ? 1 : 2), spacing: 8) {
@@ -166,11 +237,13 @@ struct CatalogLibraryView: View {
             .onAppear {
                 searchOpen = !searchText.isEmpty
                 sources.initialize()
+                MultiplayerCapabilitySource.reload()
                 reloadSnapshot()
             }
             .onReceive(sources.$generation) { _ in reloadSnapshot() }
             .onChange(of: category) { _ in sourcesOpen = false; reloadSnapshot() }
             .onChange(of: searchText) { _ in reloadSnapshot() }
+            .onChange(of: multiplayerOnly) { _ in reloadSnapshot() }
             .onChange(of: locale) { _ in reprojectTitles() }
         }
     }
@@ -204,11 +277,22 @@ struct CatalogLibraryView: View {
             }
             icon("magnifyingglass", "library.search", "open_search") { searchOpen = true; sourcesOpen = false }
             icon("folder", "library.sources", "open_sources") { sourcesOpen = true }
-            // 附近联机 sits with the other header actions on every platform's game center.
-            icon("dot.radiowaves.left.and.right", "nearby.title", "open_nearby") {
-                sourcesOpen = false; searchOpen = false; path.append(LibraryRoute.nearby)
-            }
             icon("gearshape", "settings.title", "open_settings") { settingsOpen = true }
+            // HTML .fe-mode: visible 附近联机 text after the icon tools.
+            Button {
+                sourcesOpen = false
+                searchOpen = false
+                path.append(LibraryRoute.nearby)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                    Text("nearby.open")
+                        .lineLimit(1)
+                        .accessibilityIdentifier("nearby_entry_text")
+                }
+                .frame(minHeight: 48)
+            }
+            .accessibilityIdentifier("open_nearby")
         }.frame(height: largeText ? 80 : 64)
     }
 

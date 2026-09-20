@@ -1,0 +1,220 @@
+{
+  "contractId": "flynes-nearby-typography-v1",
+  "description": "Frozen nearby text roles from the approved HTML mockup docs/superpowers/specs/assets/nearby-ui-parity-review.html (SHA-256 C69FF8F5CC3A346071DBF2BC6E0F2291232ECB6732A8F38970FFCE1126577C16) and UX spec docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md. Numeric values are CSS target line boxes at default scale. This is not a native measurement record and does not claim screenshots exist.",
+  "authority": {
+    "html": "docs/superpowers/specs/assets/nearby-ui-parity-review.html",
+    "htmlSha256": "C69FF8F5CC3A346071DBF2BC6E0F2291232ECB6732A8F38970FFCE1126577C16",
+    "ux": "docs/superpowers/specs/2026-09-13-nearby-ui-parity-design.md"
+  },
+  "units": {
+    "size": "css-px-at-default-scale",
+    "lineHeight": "css-px-line-box",
+    "tracking": "em",
+    "notTheSamePhysicalUnit": [
+      "css-px",
+      "android-sp",
+      "harmony-fp",
+      "ios-pt"
+    ],
+    "note": "Do not treat CSS px, Android sp, Harmony fp, and iOS pt as the same physical unit. Do not globally scale all sizes. Platform helpers consume these CSS targets and apply each platform's own scale path."
+  },
+  "roles": {
+    "pageTitle": {
+      "size": 18,
+      "weight": 600,
+      "lineHeight": 23.4,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": [
+        "#fly-existing h2",
+        ".fn-header h2"
+      ],
+      "nodes": [
+        "Nearby h2"
+      ],
+      "appliesTo": "Nearby h2 (#fly-existing h2, .fn-header h2)"
+    },
+    "paneTitle": {
+      "size": 21,
+      "weight": 600,
+      "lineHeight": 27.3,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": "#fly-existing h3",
+      "nodes": [
+        "left pane h3"
+      ],
+      "appliesTo": "left pane h3 (#fly-existing h3)"
+    },
+    "sectionTitle": {
+      "size": 15,
+      "weight": 600,
+      "lineHeight": 21.75,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": "#fly-existing h4",
+      "nodes": [
+        "h4"
+      ],
+      "appliesTo": "h4 (#fly-existing h4)"
+    },
+    "body": {
+      "size": 14,
+      "weight": 400,
+      "lineHeight": 20.3,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": "#fly-existing",
+      "nodes": [
+        "ordinary labels/body"
+      ],
+      "appliesTo": "ordinary labels/body (#fly-existing root font:14px/1.45)"
+    },
+    "muted": {
+      "size": 12,
+      "weight": 400,
+      "lineHeight": 17.4,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": ".fe-muted",
+      "nodes": [
+        "helper copy",
+        "footer",
+        "reason"
+      ],
+      "appliesTo": "helper copy/footer/reason (.fe-muted)"
+    },
+    "action": {
+      "size": 14,
+      "weight": 400,
+      "lineHeight": 20.3,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": [
+        ".fe-button",
+        ".fn-tab"
+      ],
+      "nodes": [
+        "ordinary buttons/tabs"
+      ],
+      "appliesTo": "ordinary buttons/tabs (.fe-button, .fn-tab; button { font:inherit })"
+    },
+    "primaryAction": {
+      "size": 14,
+      "weight": 600,
+      "lineHeight": 20.3,
+      "tracking": 0,
+      "unit": "css-px",
+      "selector": ".fe-launch",
+      "nodes": [
+        "primary buttons"
+      ],
+      "appliesTo": "primary buttons (.fe-launch)"
+    },
+    "kicker": {
+      "size": 11,
+      "weight": 400,
+      "lineHeight": 15.95,
+      "tracking": ".13em",
+      "unit": "css-px",
+      "selector": ".fn-kicker",
+      "nodes": [
+        "small labels above pane title"
+      ],
+      "appliesTo": "small labels above pane title (.fn-kicker)"
+    },
+    "inviteCode": {
+      "size": 29,
+      "weight": 600,
+      "lineHeight": 40.6,
+      "tracking": ".17em",
+      "unit": "css-px",
+      "selector": ".fn-code",
+      "nodes": [
+        "invite code"
+      ],
+      "appliesTo": "invite code (.fn-code)"
+    },
+    "codeInput": {
+      "size": 28,
+      "weight": 400,
+      "lineHeight": 40.6,
+      "tracking": ".16em",
+      "unit": "css-px",
+      "selector": ".fn-code-input",
+      "nodes": [
+        "join-code input"
+      ],
+      "appliesTo": "join-code input (.fn-code-input)"
+    }
+  },
+  "overrides": {
+    "#fly-existing .fe-detail-title h3": {
+      "fontSize": 20,
+      "note": "G00 detail title; not paneTitle 21. Weight not guessed from the mockup."
+    },
+    "#fly-existing .fe-filter": {
+      "fontSize": 13,
+      "note": "Weight not guessed from the mockup."
+    },
+    "#fly-existing .fe-game-copy strong": {
+      "fontSize": 14,
+      "weight": 600
+    },
+    "#fly-existing .fe-game-copy small": {
+      "fontSize": 11,
+      "note": "Weight not guessed from the mockup."
+    },
+    "#fly-existing .fe-thumb": {
+      "fontSize": 11,
+      "weight": 600
+    },
+    "#fly-existing .fe-count": {
+      "fontSize": 12,
+      "note": "Weight not guessed from the mockup."
+    },
+    "#fly-existing .fe-list-hint": {
+      "fontSize": 11,
+      "note": "Weight not guessed from the mockup."
+    },
+    "#fly-existing .fe-search input": {
+      "fontSize": 16,
+      "note": "Search field, not a nearby action role. Weight not guessed from the mockup."
+    }
+  },
+  "measurementRecordShape": {
+    "note": "Schema only. This card does not produce native screenshots or claim native evidence exists. A record that copies these JSON constants without platform metadata, native bounds, and screenshotPath must FAIL.",
+    "required": [
+      "platform",
+      "scaleMode",
+      "requestedFontScale",
+      "appliedFontScale",
+      "effectiveFontSizeLogical",
+      "sourceFingerprint"
+    ],
+    "nativeRequired": [
+      "osVersion",
+      "density",
+      "displayScale",
+      "iosDynamicTypeCategory",
+      "packageHash",
+      "contentSize",
+      "safeArea",
+      "fontFamily",
+      "nativeBounds",
+      "screenshotPath"
+    ],
+    "suggestedExample": {
+      "elementId": "nearby_entry_subtitle",
+      "role": "muted",
+      "baseFontSize": 12,
+      "effectiveFontSizeLogical": 12,
+      "weight": 400,
+      "scaleMode": "system",
+      "requestedFontScale": 1,
+      "appliedFontScale": 1,
+      "clipped": false
+    },
+    "rejectCopiedConstants": true
+  }
+}

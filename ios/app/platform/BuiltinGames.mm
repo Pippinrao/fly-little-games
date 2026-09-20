@@ -13,7 +13,10 @@ static const NSInteger kFlyNesBuiltinGamesSupportedSchema = 1;
                         licenseFile:(NSString *)licenseFile
                         licenseSpdx:(NSString *)licenseSpdx
                    licenseSourceUrl:(NSString *)licenseSourceUrl
-                             mapper:(NSInteger)mapper {
+                             mapper:(NSInteger)mapper
+          multiplayerProfileVersion:(NSInteger)multiplayerProfileVersion
+             multiplayerEligibility:(NSString *)multiplayerEligibility
+              multiplayerMaxPlayers:(NSInteger)multiplayerMaxPlayers {
     if ((self = [super init])) {
         _canonicalId = [canonicalId copy];
         _assetFilename = [assetFilename copy];
@@ -24,6 +27,9 @@ static const NSInteger kFlyNesBuiltinGamesSupportedSchema = 1;
         _licenseSpdx = [licenseSpdx copy];
         _licenseSourceUrl = [licenseSourceUrl copy];
         _mapper = mapper;
+        _multiplayerProfileVersion = multiplayerProfileVersion;
+        _multiplayerEligibility = [multiplayerEligibility copy];
+        _multiplayerMaxPlayers = multiplayerMaxPlayers;
     }
     return self;
 }
@@ -32,6 +38,7 @@ static const NSInteger kFlyNesBuiltinGamesSupportedSchema = 1;
 
 @implementation FlyNesBuiltinGames {
     NSArray<FlyNesBuiltinGame *> *_games;
+    NSInteger _multiplayerProfileVersion;
 }
 
 + (NSString *)assetName {
@@ -75,12 +82,14 @@ static FlyNesBuiltinGames *gShared = nil;
 }
 
 + (instancetype)empty {
-    return [[self alloc] initWithGames:@[]];
+    return [[self alloc] initWithGames:@[] multiplayerProfileVersion:0];
 }
 
-- (instancetype)initWithGames:(NSArray<FlyNesBuiltinGame *> *)games {
+- (instancetype)initWithGames:(NSArray<FlyNesBuiltinGame *> *)games
+     multiplayerProfileVersion:(NSInteger)multiplayerProfileVersion {
     if ((self = [super init])) {
         _games = [games copy];
+        _multiplayerProfileVersion = multiplayerProfileVersion;
     }
     return self;
 }
@@ -113,6 +122,15 @@ static FlyNesBuiltinGames *gShared = nil;
         }
         return nil;
     }
+    NSNumber *profileVersion = root[@"multiplayerProfileVersion"];
+    if (![profileVersion isKindOfClass:NSNumber.class] || profileVersion.integerValue <= 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"FlyNESBuiltinGames" code:6 userInfo:@{
+                NSLocalizedDescriptionKey: [NSString stringWithFormat:
+                    @"%@ has no supported multiplayerProfileVersion", asset]}];
+        }
+        return nil;
+    }
 
     NSMutableArray<FlyNesBuiltinGame *> *games = [NSMutableArray arrayWithCapacity:rows.count];
     for (NSUInteger index = 0; index < rows.count; index++) {
@@ -136,6 +154,23 @@ static FlyNesBuiltinGames *gShared = nil;
             return nil;
         }
         NSDictionary *license = [row[@"license"] isKindOfClass:NSDictionary.class] ? row[@"license"] : @{};
+        NSDictionary *multiplayer = [row[@"multiplayerProfile"] isKindOfClass:NSDictionary.class]
+            ? row[@"multiplayerProfile"] : nil;
+        NSString *eligibility = [multiplayer[@"eligibility"] isKindOfClass:NSString.class]
+            ? multiplayer[@"eligibility"] : @"";
+        NSInteger maxPlayers = [multiplayer[@"maxPlayers"] isKindOfClass:NSNumber.class]
+            ? [multiplayer[@"maxPlayers"] integerValue] : 0;
+        NSSet<NSString *> *eligibilities = [NSSet setWithArray:@[@"SUPPORTED", @"UNSUPPORTED", @"UNKNOWN"]];
+        if (multiplayer == nil || ![multiplayer[@"version"] isEqual:profileVersion]
+            || ![eligibilities containsObject:eligibility]
+            || ([eligibility isEqualToString:@"SUPPORTED"] && maxPlayers != 2)) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"FlyNESBuiltinGames" code:7 userInfo:@{
+                    NSLocalizedDescriptionKey: [NSString stringWithFormat:
+                        @"%@ game %@ has an invalid multiplayerProfile", asset, canonicalId]}];
+            }
+            return nil;
+        }
         [games addObject:[[FlyNesBuiltinGame alloc]
             initWithCanonicalId:canonicalId
                   assetFilename:assetFilename
@@ -145,7 +180,10 @@ static FlyNesBuiltinGames *gShared = nil;
                     licenseFile:[license[@"file"] isKindOfClass:NSString.class] ? license[@"file"] : @""
                     licenseSpdx:[license[@"spdx"] isKindOfClass:NSString.class] ? license[@"spdx"] : @""
                licenseSourceUrl:[license[@"sourceUrl"] isKindOfClass:NSString.class] ? license[@"sourceUrl"] : @""
-                         mapper:[row[@"mapper"] isKindOfClass:NSNumber.class] ? [row[@"mapper"] integerValue] : 0]];
+                         mapper:[row[@"mapper"] isKindOfClass:NSNumber.class] ? [row[@"mapper"] integerValue] : 0
+      multiplayerProfileVersion:profileVersion.integerValue
+         multiplayerEligibility:eligibility
+          multiplayerMaxPlayers:maxPlayers]];
     }
     [games sortUsingComparator:^NSComparisonResult(FlyNesBuiltinGame *left, FlyNesBuiltinGame *right) {
         NSNumber *leftOrder = nil, *rightOrder = nil;
@@ -155,7 +193,7 @@ static FlyNesBuiltinGames *gShared = nil;
         }
         return [(leftOrder ?: @0) compare:(rightOrder ?: @0)];
     }];
-    return [[self alloc] initWithGames:games];
+    return [[self alloc] initWithGames:games multiplayerProfileVersion:profileVersion.integerValue];
 }
 
 - (NSArray<FlyNesBuiltinGame *> *)all {

@@ -11,6 +11,7 @@
 #include <flynes/flynes_session.h>
 
 #include "session_initial_plan.hpp"
+#include "nearby/harness/verified_pair_evidence.hpp"
 #include "session_invite_code.hpp"
 #include "wire/session_codec.hpp"
 #include "wire/sha256.hpp"
@@ -149,6 +150,8 @@ struct ReducerFixture
         pair.transcript = hash(1);
         pair.initiator_reveal = hash(2);
         pair.responder_reveal = hash(3);
+        pair.initiator_capability = hash(4);
+        pair.responder_capability = hash(5);
         auto& summary = pair.initiator_summary;
         summary[1] = 1;
         summary[8] = 1;
@@ -157,12 +160,15 @@ struct ReducerFixture
         summary[64] = 1;
         std::copy(selected.begin(), selected.end(), summary.begin() + 96);
         pair.responder_summary = summary;
+        pair = flynes::session::VerifiedPairEvidenceTestFactory::seal(pair);
         plan.generation = 7;
         plan.sender = PairRole::Initiator;
         plan.receiver = PairRole::Responder;
         plan.transcript = pair.transcript;
         plan.initiator_reveal = pair.initiator_reveal;
         plan.responder_reveal = pair.responder_reveal;
+        plan.initiator_capability = pair.initiator_capability;
+        plan.responder_capability = pair.responder_capability;
         plan.selected_plan = selected;
         plan.selected_plan_hash =
             wire::domain_hash("flynes-selected-bearer-plan-v1", selected.data(), selected.size());
@@ -508,6 +514,77 @@ void invite_route_regenerate_and_cancel_commands()
     fly_session_destroy(session);
 }
 
+void invite_route_is_reachable_through_public_actions()
+{
+    fly_session_t* session = create_session();
+    const auto* first = reinterpret_cast<const std::uint8_t*>("012345");
+    check(fly_session_invite_host_publish_v1(session, 41u, first, 6u, 1000u) ==
+              FLY_RESULT_OK,
+          "public host publish binds the displayed code to the shared route");
+    check(fly_session_invite_host_publish_v1(session, 42u, first, 5u, 1000u) ==
+              FLY_RESULT_INVALID_ARGUMENT,
+          "public host publish rejects truncated code bytes");
+
+    const fly_session_command advertise = poll_of(session);
+    check(advertise.kind == FLY_SESSION_COMMAND_INVITE_REGENERATE,
+          "public publish emits the adapter command");
+    fly_session_command_result result = result_of(advertise.command_id);
+    check(fly_session_complete_command(session, &result) == FLY_RESULT_OK,
+          "adapter acknowledges public publish");
+
+    const auto* replacement = reinterpret_cast<const std::uint8_t*>("987654");
+    check(fly_session_invite_host_regenerate_v1(session, 42u, replacement, 6u, 2000u) ==
+              FLY_RESULT_OK,
+          "public regenerate supersedes the old generation");
+    const fly_session_command regenerate = poll_of(session);
+    result = result_of(regenerate.command_id);
+    check(fly_session_complete_command(session, &result) == FLY_RESULT_OK,
+          "adapter acknowledges public regenerate");
+    check(fly_session_invite_host_cancel_v1(session, 41u) == FLY_RESULT_INVALID_STATE,
+          "stale public cancel cannot kill the replacement generation");
+    check(fly_session_invite_host_cancel_v1(session, 42u) == FLY_RESULT_OK,
+          "public cancel kills the live generation");
+    check(fly_session_invite_host_publish_v1(session, 42u, first, 6u, 2500u) ==
+              FLY_RESULT_INVALID_STATE,
+          "cancelled host generation cannot be reused");
+    check(fly_session_invite_host_publish_v1(session, 43u, first, 6u, 2500u) ==
+              FLY_RESULT_OK,
+          "a strictly newer generation can publish after cancellation");
+    const fly_session_command republish = poll_of(session);
+    result = result_of(republish.command_id);
+    check(fly_session_complete_command(session, &result) == FLY_RESULT_OK,
+          "adapter acknowledges the post-cancel publish");
+    check(fly_session_invite_host_cancel_v1(session, 43u) == FLY_RESULT_OK,
+          "post-cancel generation can be cancelled");
+
+    const auto* join_code = reinterpret_cast<const std::uint8_t*>("000123");
+    check(fly_session_invite_submit_code_v1(session, 7u, join_code, 6u, 3000u) ==
+              FLY_RESULT_OK,
+          "public join preserves leading zero bytes");
+    check(fly_session_invite_report_lookup_response_v1(
+              session, 7u, FLY_SESSION_INVITE_LOOKUP_MATCH_PENDING_HOST_APPROVAL,
+              99u, 4000u) == FLY_RESULT_OK,
+          "validated adapter response reaches the shared route");
+    check(fly_session_invite_report_host_accepted_v1(session, 7u) == FLY_RESULT_OK,
+          "host approval reaches the shared route");
+    check(fly_session_invite_confirm_local_sas_v1(session, 7u) == FLY_RESULT_OK,
+          "local SAS confirmation reaches the shared route");
+
+    fly_session_invite_snapshot_v1 snapshot{};
+    snapshot.struct_size = FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE;
+    snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+    check(fly_session_get_invite_snapshot(session, &snapshot) == FLY_RESULT_OK,
+          "public action snapshot reads");
+    check(snapshot.join_phase == 3u,
+          "one-sided SAS stays waiting and never fabricates authentication");
+    check(fly_session_invite_report_peer_sas_confirmed_v1(session, 7u) == FLY_RESULT_OK,
+          "peer SAS confirmation reaches the shared route");
+    check(fly_session_get_invite_snapshot(session, &snapshot) == FLY_RESULT_OK &&
+              snapshot.join_phase == 4u,
+          "both confirmations authenticate the shared route");
+    fly_session_destroy(session);
+}
+
 } // namespace
 
 static_assert(FLY_SESSION_UI_IDLE == 1, "UI_IDLE keeps its v1 value");
@@ -529,6 +606,7 @@ int main()
     invite_route_snapshot_contract();
     invite_route_poll_complete_round_trip();
     invite_route_regenerate_and_cancel_commands();
+    invite_route_is_reachable_through_public_actions();
     if (failures != 0)
     {
         std::fprintf(stderr, "flynes_session_public_path_test: %d failure(s)\n", failures);

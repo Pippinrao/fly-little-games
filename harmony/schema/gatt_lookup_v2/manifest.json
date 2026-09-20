@@ -1,0 +1,12 @@
+{
+  "match": {
+    "bytes": 176,
+    "file": "code_lookup_match.bin",
+    "sha256": "f93ec2658ec3715352b49edeea02a6d3ae5993239ff84c5c376eedf6fad22ac9"
+  },
+  "request": {
+    "bytes": 72,
+    "file": "code_lookup_request.bin",
+    "sha256": "5b0005b2bf7739e936ce0b15ed02a25c3c2e4f70b2b704ee795c850645fa236c"
+  }
+}

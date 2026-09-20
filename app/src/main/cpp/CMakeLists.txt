@@ -18,6 +18,12 @@ add_subdirectory(${FLYNES_SHARED_DIR} ${CMAKE_BINARY_DIR}/flynes_shared)
 add_library(nescore SHARED
     nes_jni.cpp
     flynes_app_jni.cpp
+    nearby/session_owner.cpp
+    nearby/content_port.cpp
+    nearby/prepared_content.cpp
+    nearby/content_jni.cpp
+    nearby/crypto_port.cpp
+    nearby/crypto_jni.cpp
     video/baseline_pipeline.cpp
     video/egl_presenter.cpp
     video/framebuffer_target.cpp
@@ -31,10 +37,17 @@ add_library(nescore SHARED
     video/spatial_offscreen_jni.cpp
     video/spatial_pipeline.cpp
     video/video_presenter_jni.cpp)
-target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include)
-target_link_libraries(nescore nes_abi nestopia video_algorithms flynes_app)
+target_include_directories(nescore PRIVATE ${NES_CORE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}
+    ${FLYNES_SHARED_DIR}/src/session)
+target_link_libraries(nescore nes_abi nestopia video_algorithms flynes_app flynes_session
+    flynes_session_codec)
 if(TARGET flynes_runtime)
-    target_link_libraries(nescore flynes_runtime)
+    target_link_libraries(nescore flynes_runtime flynes_product_dual_runtime)
+endif()
+if(TARGET flynes_nearby_quic_provider)
+    target_link_libraries(nescore flynes_nearby_quic_provider)
+    add_dependencies(nescore flynes_nearby_quic_provider_build)
+    target_compile_definitions(nescore PRIVATE FLYNES_ENABLE_RUST_QUIC_PROVIDER=1)
 endif()
 
 # Safety net: zlib is required by NstZlib.cpp (compressed save states).

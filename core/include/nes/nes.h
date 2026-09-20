@@ -30,6 +30,13 @@ extern "C" {
 #define NES_API_VERSION_PATCH 0u
 #define NES_STRUCT_VERSION 2u
 
+/* Current wrapper source cadence used for audio sample accumulation. These
+ * ratios encode the existing 60.0988 / 50.0070 values, not crystal measurements. */
+#define NES_SOURCE_NTSC_RATE_NUMERATOR UINT32_C(150247)
+#define NES_SOURCE_NTSC_RATE_DENOMINATOR UINT32_C(2500)
+#define NES_SOURCE_PAL_RATE_NUMERATOR UINT32_C(50007)
+#define NES_SOURCE_PAL_RATE_DENOMINATOR UINT32_C(1000)
+
 /* ---------------- 句柄 ---------------- */
 typedef struct nes nes_t;   /* 不透明句柄 */
 
@@ -279,6 +286,12 @@ NES_API int nes_get_last_input_sample(const nes_t* nes, nes_input_sample* sample
 
 /* ---------------- 即时存档 / 电池 ---------------- */
 NES_API int nes_save_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed);
+/* Uncompressed state for deterministic comparison across zlib implementations.
+ * Uses the same ROM/clock-aware format, load compatibility, errors and exact
+ * size-query contract as nes_save_state. Normalizes signed-zero audio cadence
+ * in the exported copy. Does not advance the machine.
+ * Call on the emulation thread, outside callbacks, with the same ROM/settings. */
+NES_API int nes_copy_canonical_state(nes_t* nes, uint8_t* out, size_t cap, size_t* written, size_t* needed);
 NES_API int nes_load_state(nes_t* nes, const uint8_t* in, size_t size);
 NES_API int nes_battery_flush(nes_t* nes);  /* 见 §2 说明: phase0 无干净内核 API */
 

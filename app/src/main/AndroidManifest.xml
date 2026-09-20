@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Nearby 扫码加入: declared here, requested only when the user opens the scan entry (design 2026-09-13 4.2). -->
     <uses-permission android:name="android.permission.CAMERA" />

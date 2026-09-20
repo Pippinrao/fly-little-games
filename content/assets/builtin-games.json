@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "multiplayerProfileVersion": 1,
   "note": "Single source of truth for the bundled homebrew games. Adding a game means editing this file and dropping its ROM plus license text into content/assets; no platform code may need to change. Every field is gated by content/tests/test_builtin_manifest_contract.py.",
   "games": [
     {
@@ -14,6 +15,7 @@
       "playNoteEn": "Two-player Smash-style fighting, built from the offline UNROM variant.",
       "playNoteZhHans": "双人对战（大乱斗风格），基于离线 UNROM 变体编译。",
       "coverEligible": false,
+      "multiplayerProfile": { "version": 1, "eligibility": "SUPPORTED", "maxPlayers": 2 },
       "license": {
         "spdx": "WTFPL",
         "file": "super_tilt_bro.txt",
@@ -31,6 +33,7 @@
       "credit": "Garydos (art by surt, music by Shiru and others)",
       "sortOrder": 20,
       "coverEligible": false,
+      "multiplayerProfile": { "version": 1, "eligibility": "UNKNOWN" },
       "license": {
         "spdx": "Zlib AND CC-BY-3.0 AND CC-BY-4.0 AND LicenseRef-PublicDomain",
         "file": "twin_dragons.txt",
@@ -50,6 +53,7 @@
       "playNoteEn": "Two-player real-time race to grab the furniture.",
       "playNoteZhHans": "双人实时抢家具对战。",
       "coverEligible": false,
+      "multiplayerProfile": { "version": 1, "eligibility": "SUPPORTED", "maxPlayers": 2 },
       "license": {
         "spdx": "FSFAP",
         "file": "rhde.txt",
@@ -69,6 +73,7 @@
       "playNoteEn": "Zapper light-gun test patterns plus two-player air hockey; the light-gun part needs a Zapper.",
       "playNoteZhHans": "光枪（Zapper）测试图案 + 双人空气曲棍球；光枪部分需要 Zapper。",
       "coverEligible": false,
+      "multiplayerProfile": { "version": 1, "eligibility": "SUPPORTED", "maxPlayers": 2 },
       "license": {
         "spdx": "FSFAP",
         "file": "zap_ruder.txt",
@@ -86,6 +91,7 @@
       "credit": "Damian Yerrick (Tepples)",
       "sortOrder": 50,
       "coverEligible": false,
+      "multiplayerProfile": { "version": 1, "eligibility": "UNKNOWN" },
       "license": {
         "spdx": "GPL-3.0-or-later",
         "file": "concentration_room.txt",
@@ -104,6 +110,7 @@
       "credit": "Damian Yerrick (Tepples)",
       "sortOrder": 60,
       "coverEligible": true,
+      "multiplayerProfile": { "version": 1, "eligibility": "UNKNOWN" },
       "license": {
         "spdx": "GPL-3.0-or-later",
         "file": "thwaite.txt",
@@ -122,6 +129,7 @@
       "credit": "NovaSquirrel",
       "sortOrder": 70,
       "coverEligible": false,
+      "multiplayerProfile": { "version": 1, "eligibility": "UNKNOWN" },
       "license": {
         "spdx": "Zlib",
         "file": "dabg.txt",

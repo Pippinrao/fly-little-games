@@ -36,6 +36,7 @@ import com.flynes.emu.catalog.persistence.SourceCatalogState;
 import com.flynes.emu.launch.ExactRomLoader;
 import com.flynes.emu.launch.LaunchCoordinator;
 import com.flynes.emu.launch.LaunchResult;
+import com.flynes.emu.nearby.NearbyExactContentLoader;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -82,6 +83,76 @@ public final class AndroidCatalogLaunchRegressionTest {
     @Rule public final ProviderTestRule provider = new ProviderTestRule.Builder(
             RomTreeProvider.class, AUTHORITY).build();
 
+    @Test public void readonlyAccessValidationMatchesOpenFailuresWithoutProviderIo() throws Exception {
+        Context context = new ProviderContext(
+                ApplicationProvider.getApplicationContext(), provider.getResolver());
+        CatalogRepository repository = new CatalogRepository(
+                coldStartProjection(), new MemoryStateStore(), new GameCatalog());
+        java.util.concurrent.atomic.AtomicBoolean granted = new java.util.concurrent.atomic.AtomicBoolean(true);
+        AndroidCatalogStreamOpener opener = new AndroidCatalogStreamOpener(
+                context, repository, ignored -> granted.get());
+        int opens = RomTreeProvider.openCount;
+        opener.validateAccess(SOURCE_ID, DERIVED_LOCATOR);
+        assertEquals(opens, RomTreeProvider.openCount);
+        assertAccessFailure(opener, "missing", DERIVED_LOCATOR,
+                AndroidCatalogStreamOpener.FailureCode.SOURCE_UNKNOWN);
+        assertAccessFailure(opener, SOURCE_ID, "content://launchregression/document/unknown",
+                AndroidCatalogStreamOpener.FailureCode.LOCATOR_UNKNOWN);
+        granted.set(false);
+        assertAccessFailure(opener, SOURCE_ID, DERIVED_LOCATOR,
+                AndroidCatalogStreamOpener.FailureCode.PERMISSION_LOST);
+        granted.set(true);
+        repository.reauthorizeSource(repository.state().sources().get(SOURCE_ID).source());
+        assertAccessFailure(opener, SOURCE_ID, DERIVED_LOCATOR,
+                AndroidCatalogStreamOpener.FailureCode.SOURCE_STALE);
+        repository.removeSource(SOURCE_ID);
+        assertAccessFailure(opener, SOURCE_ID, DERIVED_LOCATOR,
+                AndroidCatalogStreamOpener.FailureCode.SOURCE_UNKNOWN);
+        assertEquals(opens, RomTreeProvider.openCount);
+
+        CatalogRepository malformed = new CatalogRepository(
+                withLocator(coldStartProjection(), CRASH_LOCATOR), new MemoryStateStore(), new GameCatalog());
+        assertAccessFailure(new AndroidCatalogStreamOpener(context, malformed, ignored -> true),
+                SOURCE_ID, CRASH_LOCATOR, AndroidCatalogStreamOpener.FailureCode.LOCATOR_INVALID);
+        assertEquals(opens, RomTreeProvider.openCount);
+    }
+
+    @Test public void nearbyRechecksRealOpenerReadGrantAfterProviderStreamCloses() throws Exception {
+        Context context = new ProviderContext(
+                ApplicationProvider.getApplicationContext(), provider.getResolver());
+        GameCatalog catalog = new GameCatalog();
+        CatalogRepository repository = new CatalogRepository(
+                coldStartProjection(), new MemoryStateStore(), catalog);
+        CatalogState before = repository.state();
+        java.util.concurrent.atomic.AtomicBoolean granted = new java.util.concurrent.atomic.AtomicBoolean(true);
+        AndroidCatalogStreamOpener opener = new AndroidCatalogStreamOpener(
+                context, repository, ignored -> granted.get());
+        int opens = RomTreeProvider.openCount;
+        NearbyExactContentLoader loader = new NearbyExactContentLoader(catalog,
+                new ExactRomLoader((source, locator) -> new java.io.FilterInputStream(opener.open(source, locator)) {
+                    @Override public void close() throws IOException {
+                        super.close();
+                        granted.set(false);
+                    }
+                }), opener::validateAccess);
+        NearbyExactContentLoader.ContentException failure = assertThrows(
+                NearbyExactContentLoader.ContentException.class, () -> loader.load(VARIANT_ID));
+        assertEquals(NearbyExactContentLoader.FailureCode.SOURCE_ACCESS_DENIED, failure.code());
+        assertEquals(AndroidCatalogStreamOpener.FailureCode.PERMISSION_LOST,
+                ((AndroidCatalogStreamOpener.SourceOpenException) failure.getCause()).code());
+        assertEquals(opens + 1, RomTreeProvider.openCount);
+        org.junit.Assert.assertSame(before, repository.state());
+        assertEquals(0, catalog.canonicalEntries().get(0).playCount());
+    }
+
+    private static void assertAccessFailure(AndroidCatalogStreamOpener opener,
+            String source, String locator, AndroidCatalogStreamOpener.FailureCode expected) {
+        assertEquals(expected, assertThrows(AndroidCatalogStreamOpener.SourceOpenException.class,
+                () -> opener.validateAccess(source, locator)).code());
+        assertEquals(expected, assertThrows(AndroidCatalogStreamOpener.SourceOpenException.class,
+                () -> opener.open(source, locator)).code());
+    }
+
     @Test
     public void nativeZipScanReopensANonFirstEntryAfterRestart() throws Exception {
         File root = new File(ApplicationProvider.<Context>getApplicationContext().getCacheDir(),
@@ -111,7 +182,9 @@ public final class AndroidCatalogLaunchRegressionTest {
             map.put(uuid(), TREE_LOCATOR);
             CatalogState state = NativeCatalogProjector.project(restarted.catalogEntries(),
                     restarted.sourceStatuses(), Map.of(), 0, map, new AndroidPackageLocatorMap(),
-                    AndroidDocumentLocators::documentUriFor);
+                    AndroidDocumentLocators::documentUriFor,
+                    // This projection only carries the user-directory row created above.
+                    com.flynes.emu.catalog.BuiltinGames.empty());
             GameCatalog catalog = new GameCatalog();
             new CatalogRepository(state, new MemoryStateStore(), catalog);
             var variant = catalog.canonicalEntries().get(0).variants().get(0);
@@ -347,6 +420,7 @@ public final class AndroidCatalogLaunchRegressionTest {
      * document ID can be opened, and {@link DocumentsContract#getDocumentId} is the judge.
      */
     public static final class RomTreeProvider extends ContentProvider {
+        static int openCount;
         private File rom;
 
         @Override public boolean onCreate() {
@@ -364,6 +438,7 @@ public final class AndroidCatalogLaunchRegressionTest {
 
         @Override public ParcelFileDescriptor openFile(Uri uri, String mode)
                 throws FileNotFoundException {
+            openCount++;
             String documentId;
             try {
                 documentId = DocumentsContract.getDocumentId(uri);

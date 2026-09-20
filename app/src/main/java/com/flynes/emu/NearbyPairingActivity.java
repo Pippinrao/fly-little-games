@@ -8,6 +8,8 @@ import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -39,11 +41,12 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     public static final String MODE_SCAN = "scan";
     private static final String EXTRA_MODE = "nearby_mode";
 
-    private final NearbyInviteHostState invite = new NearbyInviteHostState();
+    private NearbyInviteHostState invite;
+    private NearbySession nearbySession;
     private final Handler ticker = new Handler(Looper.getMainLooper());
     private String mode = "";
-    private boolean requestInFlight;
-    private String requestGeneration = "";
+    private final NearbyJoinSubmitState joinSubmit = new NearbyJoinSubmitState();
+    private long requestGeneration;
 
     public static void start(@NonNull Context context, @NonNull String mode) {
         context.startActivity(intentFor(context, mode));
@@ -62,6 +65,8 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(R.layout.activity_nearby_pairing);
+        nearbySession = ((FlyNesApplication) getApplication()).nearbySession();
+        invite = new NearbyInviteHostState(nearbySession);
 
         MaterialToolbar toolbar = findViewById(R.id.nearby_pairing_toolbar);
         toolbar.setNavigationOnClickListener(view -> finish());
@@ -76,27 +81,82 @@ public final class NearbyPairingActivity extends AppCompatActivity {
         });
         root.requestApplyInsets();
 
-        NearbyStagePipeline.render(this, firstFailingStage());
-
-        // A disabled control still has to say why it cannot act: the confirm
-        // button repeats its reason to accessibility services.
-        MaterialButton confirm = findViewById(R.id.nearby_code_confirm);
-        TextView confirmReason = findViewById(R.id.nearby_code_confirm_reason);
-        confirm.setContentDescription(confirm.getText() + ", " + confirmReason.getText());
-
         mode = getIntent() == null || getIntent().getStringExtra(EXTRA_MODE) == null
                 ? "" : getIntent().getStringExtra(EXTRA_MODE);
         if (MODE_CREATE.equals(mode)) {
             showCreateBlock();
         } else if (MODE_JOIN_CODE.equals(mode)) {
             showJoinBlock();
+        } else if (MODE_SCAN.equals(mode)) {
+            showScanBlock();
         }
-        // MODE_SCAN needs a live camera stream; until that adapter lands the
-        // page shows the same blocked-stage treatment as before plus the
-        // switch-to-code entry the design requires (N03).
-        if (MODE_SCAN.equals(mode)) {
-            findViewById(R.id.nearby_join_block).setVisibility(View.VISIBLE);
-            findViewById(R.id.nearby_create_block).setVisibility(View.GONE);
+        applyResponsiveColumns();
+    }
+
+    private void applyResponsiveColumns() {
+        View root = findViewById(R.id.nearby_pairing_root);
+        root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight,
+                                        oldBottom) -> {
+            if (right - left != oldRight - oldLeft) {
+                layoutPairingColumns();
+            }
+        });
+        root.post(this::layoutPairingColumns);
+    }
+
+    private void layoutPairingColumns() {
+        View root = findViewById(R.id.nearby_pairing_root);
+        LinearLayout columns = findViewById(R.id.nearby_pairing_columns);
+        if (root.getWidth() == 0 || columns == null) return;
+        float density = getResources().getDisplayMetrics().density;
+        float contentAfterInsets = (root.getWidth() - root.getPaddingLeft()
+                - root.getPaddingRight()) / density;
+        boolean split = contentAfterInsets > 580f;
+        columns.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+
+        int leftWidth = split ? Math.round(224f * density) : ViewGroup.LayoutParams.MATCH_PARENT;
+        setBlockWidth(R.id.nearby_create_block, leftWidth);
+        setBlockWidth(R.id.nearby_join_block, leftWidth);
+        setBlockWidth(R.id.nearby_scan_block, leftWidth);
+
+        LinearLayout right = findViewById(R.id.nearby_pairing_right);
+        LinearLayout.LayoutParams rightParams = (LinearLayout.LayoutParams) right.getLayoutParams();
+        rightParams.width = split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT;
+        rightParams.weight = split ? 1f : 0f;
+        rightParams.leftMargin = split ? Math.round(18f * density) : 0;
+        rightParams.topMargin = split ? 0 : Math.round(18f * density);
+        right.setLayoutParams(rightParams);
+        layoutPairingFooter(split);
+    }
+
+    private void setBlockWidth(int id, int width) {
+        View block = findViewById(id);
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) block.getLayoutParams();
+        params.width = width;
+        block.setLayoutParams(params);
+    }
+
+    private void layoutPairingFooter(boolean split) {
+        LinearLayout footer = findViewById(R.id.nearby_pairing_footer);
+        footer.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        TextView copy = findViewById(R.id.nearby_pairing_footer_copy);
+        LinearLayout.LayoutParams copyParams = (LinearLayout.LayoutParams) copy.getLayoutParams();
+        copyParams.width = split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT;
+        copyParams.weight = split ? 1f : 0f;
+        copy.setLayoutParams(copyParams);
+        int[] buttons = {
+                R.id.nearby_invite_cancel,
+                R.id.nearby_join_submit,
+                R.id.nearby_join_cancel,
+                R.id.nearby_scan_cancel
+        };
+        for (int id : buttons) {
+            View button = findViewById(id);
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) button.getLayoutParams();
+            params.width = split ? ViewGroup.LayoutParams.WRAP_CONTENT
+                    : ViewGroup.LayoutParams.MATCH_PARENT;
+            params.weight = 0f;
+            button.setLayoutParams(params);
         }
     }
 
@@ -106,7 +166,20 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     }
 
     private void showCreateBlock() {
+        toolbar().setTitle(R.string.nearby_screen_invite);
         findViewById(R.id.nearby_create_block).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_invite_qr_wrap).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_invite_cancel).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_join_submit).setVisibility(View.GONE);
+        findViewById(R.id.nearby_join_cancel).setVisibility(View.GONE);
+        findViewById(R.id.nearby_scan_cancel).setVisibility(View.GONE);
+        TextView footer = findViewById(R.id.nearby_pairing_footer_copy);
+        footer.setText(R.string.nearby_invite_footer);
+        // The session is process-scoped while this display state belongs to
+        // one Activity. If the prior display owner disappeared, its code is no
+        // longer recoverable; cancel that generation before publishing a new
+        // one so reopening the page cannot be blocked by invisible stale UI.
+        nearbySession.cancelActiveHost();
         if (!invite.active()) {
             invite.create(android.os.SystemClock.elapsedRealtime());
         }
@@ -117,7 +190,7 @@ public final class NearbyPairingActivity extends AppCompatActivity {
         });
         findViewById(R.id.nearby_invite_cancel).setOnClickListener(view -> {
             invite.cancel(invite.generation());
-            renderInvite();
+            finish();
         });
         startTicker();
     }
@@ -125,6 +198,7 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     private void startTicker() {
         ticker.postDelayed(new Runnable() {
             @Override public void run() {
+                NearbyInviteTicker.tick(invite, android.os.SystemClock.elapsedRealtime());
                 if (invite.active()) {
                     renderValidity();
                     ticker.postDelayed(this, 250L);
@@ -152,71 +226,106 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     }
 
     private void showJoinBlock() {
+        toolbar().setTitle(R.string.nearby_screen_joinCode);
         findViewById(R.id.nearby_join_block).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_join_right).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_invite_cancel).setVisibility(View.GONE);
+        findViewById(R.id.nearby_join_submit).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_join_cancel).setVisibility(View.GONE);
+        findViewById(R.id.nearby_scan_cancel).setVisibility(View.GONE);
+        TextView footer = findViewById(R.id.nearby_pairing_footer_copy);
+        footer.setText(R.string.nearby_join_footer);
         TextInputEditText input = findViewById(R.id.nearby_join_code_input);
         MaterialButton submit = findViewById(R.id.nearby_join_submit);
         TextView error = findViewById(R.id.nearby_join_code_error);
         MaterialButton switchToScan = findViewById(R.id.nearby_join_switch_to_scan);
         switchToScan.setOnClickListener(view -> {
-            // The camera is requested on use by the friends page scan entry;
-            // this switch only moves between entry forms (N03).
+            start(this, MODE_SCAN);
             finish();
         });
         input.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (requestInFlight) return;
-                submit.setEnabled(isComplete(s.toString()));
+                if (joinSubmit.inputLocked()) return;
                 error.setVisibility(View.GONE);
+                renderJoinControls();
             }
             @Override public void afterTextChanged(Editable s) {}
         });
         submit.setOnClickListener(view -> onSubmit());
         findViewById(R.id.nearby_join_cancel).setOnClickListener(view -> {
-            requestInFlight = false;
-            requestGeneration = "";
-            submit.setEnabled(false);
+            if (requestGeneration != 0L) nearbySession.cancelCode(requestGeneration);
+            requestGeneration = 0L;
+            joinSubmit.cancel();
+            renderJoinControls();
             error.setVisibility(View.GONE);
+            finish();
         });
+        renderJoinControls();
+    }
+
+    private void renderJoinControls() {
+        TextInputEditText input = findViewById(R.id.nearby_join_code_input);
+        MaterialButton submit = findViewById(R.id.nearby_join_submit);
+        View cancel = findViewById(R.id.nearby_join_cancel);
+        String raw = input.getText() == null ? "" : input.getText().toString();
+        submit.setEnabled(joinSubmit.submitEnabled(raw));
+        cancel.setVisibility(joinSubmit.cancelVisible() ? View.VISIBLE : View.GONE);
+        input.setEnabled(!joinSubmit.inputLocked());
     }
 
     private void onSubmit() {
         TextInputEditText input = findViewById(R.id.nearby_join_code_input);
         TextView error = findViewById(R.id.nearby_join_code_error);
         MaterialButton submit = findViewById(R.id.nearby_join_submit);
-        String code = NearbyInviteCode.normalize(input.getText() == null
-                ? "" : input.getText().toString());
+        String raw = input.getText() == null ? "" : input.getText().toString();
+        String code = NearbyInviteCode.normalize(raw);
         if (code == null) {
             // Never a request: invalid input only surfaces the field error
             // after a submit attempt (C05).
+            error.setText(R.string.nearby_reason_code_invalidFormat);
             error.setVisibility(View.VISIBLE);
             return;
         }
-        if (requestInFlight) return;
-        requestInFlight = true;
-        requestGeneration = code + "@" + android.os.SystemClock.elapsedRealtime();
-        submit.setEnabled(false);
+        if (!joinSubmit.submit(raw)) {
+            renderJoinControls();
+            return;
+        }
+        long generation = nearbySession.nextJoinAttemptId();
+        requestGeneration = generation;
+        renderJoinControls();
         // There is no discovery bearer in this build, so the lookup request
         // cannot go out: the honest outcome is the discovery-blocked reason,
-        // never a synthetic host approval. The backend track replaces this
-        // with the real route command through the session ABI.
+        // never a synthetic host approval. Restore after this frame so a
+        // synchronous double-click is still one attempt, then the same page
+        // can edit, retry, or cancel.
+        nearbySession.submitCode(generation, code, android.os.SystemClock.elapsedRealtime());
         error.setText(R.string.nearby_stage_discovery_reason);
         error.setVisibility(View.VISIBLE);
-        requestInFlight = false;
-        requestGeneration = "";
+        submit.post(() -> {
+            joinSubmit.onFailure();
+            renderJoinControls();
+        });
     }
 
-    private static boolean isComplete(String raw) {
-        return NearbyInviteCode.normalize(raw) != null;
+    private void showScanBlock() {
+        toolbar().setTitle(R.string.nearby_screen_scan);
+        findViewById(R.id.nearby_scan_block).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_scan_right).setVisibility(View.VISIBLE);
+        findViewById(R.id.nearby_invite_cancel).setVisibility(View.GONE);
+        findViewById(R.id.nearby_join_submit).setVisibility(View.GONE);
+        findViewById(R.id.nearby_join_cancel).setVisibility(View.GONE);
+        findViewById(R.id.nearby_scan_cancel).setVisibility(View.VISIBLE);
+        TextView footer = findViewById(R.id.nearby_pairing_footer_copy);
+        footer.setText(R.string.nearby_scan_footer);
+        findViewById(R.id.nearby_scan_switch_to_code).setOnClickListener(view -> {
+            start(this, MODE_JOIN_CODE);
+            finish();
+        });
+        findViewById(R.id.nearby_scan_cancel).setOnClickListener(view -> finish());
     }
 
-    /**
-     * Index in §2.1's order of the first failing pairing stage. This build declares no nearby
-     * permission, so the 权限 stage is truthfully the first failure. Once the session ABI reports
-     * the current stage this method must read it rather than return a constant — it is the single
-     * source for every row's status, so nothing else needs to change.
-     */
-    private int firstFailingStage() {
-        return NearbyStagePipeline.PERMISSION;
+    private MaterialToolbar toolbar() {
+        return findViewById(R.id.nearby_pairing_toolbar);
     }
 }

@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import os
+import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
+from unittest import mock
 
 
 SOURCE_GENERATOR = Path(sys.argv.pop(1)).resolve()
@@ -56,6 +59,71 @@ class ZipPayloadFixtureGeneratorTest(unittest.TestCase):
         self.generate()
         result = self.run_generator("--check")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_frozen_corpus_survives_alternate_compression_for_pinned_payloads(self) -> None:
+        generator = runpy.run_path(str(self.generator))
+        original = generator["raw_deflate"]
+        pinned_payloads = {
+            bytes((index * 73 + 19) & 0xFF for index in range(9001)),
+            b"directory entries are selected like files",
+            b"truncated raw deflate",
+        }
+
+        def alternate_deflate(payload: bytes) -> bytes:
+            if payload not in pinned_payloads:
+                return original(payload)
+            compressor = zlib.compressobj(level=0, wbits=-15)
+            return compressor.compress(payload) + compressor.flush()
+
+        with mock.patch.dict(generator["fixtures"].__globals__, raw_deflate=alternate_deflate):
+            corpus = generator["expected_corpus"]()
+        frozen = SOURCE_GENERATOR.parent / "v1"
+        self.assertEqual({path.name for path in frozen.iterdir()}, set(corpus))
+        for name, contents in corpus.items():
+            with self.subTest(name=name):
+                self.assertEqual((frozen / name).read_bytes(), contents)
+
+    def test_pinned_success_streams_decode_to_declared_payloads(self) -> None:
+        generator = runpy.run_path(str(self.generator))
+        original = generator["build_zip"]
+        entries = {}
+
+        def capture_entries(specs):
+            entries.update((entry.raw_name, entry) for entry in specs)
+            return original(specs)
+
+        with mock.patch.dict(generator["fixtures"].__globals__, build_zip=capture_entries):
+            generator["fixtures"]()
+        for name in (b"large-deflate.nes", b"folder/"):
+            with self.subTest(name=name):
+                entry = entries[name]
+                self.assertIsNotNone(entry.compressed_payload)
+                decoder = zlib.decompressobj(wbits=-15)
+                self.assertEqual(entry.payload, decoder.decompress(entry.compressed_payload))
+                self.assertTrue(decoder.eof)
+                self.assertEqual(b"", decoder.unused_data)
+
+    def test_pinned_truncated_stream_is_full_stream_without_final_byte(self) -> None:
+        generator = runpy.run_path(str(self.generator))
+        full_stream = generator.get("TRUNCATED_RAW_DEFLATE")
+        self.assertIsNotNone(full_stream)
+        self.assertEqual(b"truncated raw deflate", zlib.decompress(full_stream, wbits=-15))
+        original = generator["build_zip"]
+        entries = {}
+
+        def capture_entries(specs):
+            entries.update((entry.raw_name, entry) for entry in specs)
+            return original(specs)
+
+        with mock.patch.dict(generator["fixtures"].__globals__, build_zip=capture_entries):
+            fixtures = generator["fixtures"]()
+        self.assertEqual(full_stream[:-1], entries[b"truncated.nes"].compressed_payload)
+        decoder = zlib.decompressobj(wbits=-15)
+        decoder.decompress(entries[b"truncated.nes"].compressed_payload)
+        self.assertFalse(decoder.eof)
+        fixture = next(item for item in fixtures if item.case_id == "truncated_deflate_incomplete")
+        self.assertEqual("INVALID_ZIP", fixture.error_code)
+        self.assertEqual("ZIP deflate stream ended before completion", fixture.error_message)
 
     def test_check_is_read_only_for_missing_changed_and_unexpected_files(self) -> None:
         corpus = self.generate()

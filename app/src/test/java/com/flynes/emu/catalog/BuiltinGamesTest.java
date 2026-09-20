@@ -13,6 +13,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import com.flynes.emu.gamecenter.BuiltinMultiplayerCapabilities;
+import com.flynes.emu.gamecenter.GameCenterState;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -89,6 +92,24 @@ public class BuiltinGamesTest {
             assertTrue("sortOrder must be ascending",
                     games.get(index - 1).sortOrder < games.get(index).sortOrder);
         }
+    }
+
+    @Test public void readsVersionedMultiplayerProfilesWithoutTitleGuessing() throws IOException {
+        BuiltinGames games = BuiltinGames.parse(manifestStream());
+        int supported = 0;
+        GameCenterState.MultiplayerCapabilityRegistry registry =
+                BuiltinMultiplayerCapabilities.from(games);
+        for (BuiltinGames.Entry game : games.all()) {
+            assertEquals(1L, game.multiplayerProfileVersion);
+            assertNotNull(game.multiplayerEligibility);
+            if (game.multiplayerEligibility == BuiltinGames.MultiplayerEligibility.SUPPORTED) {
+                assertEquals(2, game.multiplayerMaxPlayers);
+                assertEquals(GameCenterState.MultiplayerEligibility.SUPPORTED,
+                        registry.eligibilityFor(game.canonicalId));
+                supported++;
+            }
+        }
+        assertTrue("shared manifest must expose a real supported set", supported > 0);
     }
 
     @Test public void rejectsAManifestWithNoGames() {

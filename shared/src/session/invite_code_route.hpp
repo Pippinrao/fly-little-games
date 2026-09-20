@@ -167,6 +167,9 @@ private:
 
     InviteHostPhase phase_ = InviteHostPhase::Idle;
     std::uint64_t generation_ = 0;
+    // Burned generation fence: cancellation/expiry clears the active value but
+    // never permits a caller to reuse an old generation in this session.
+    std::uint64_t highest_generation_ = 0;
     InviteCodeDigits code_{};
     std::uint64_t deadline_ns_ = 0;
     unsigned attempts_left_ = kInviteLookupAttemptsPerInvitation;

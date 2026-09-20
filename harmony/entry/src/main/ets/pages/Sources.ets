@@ -45,6 +45,8 @@ struct Sources {
           .fontWeight(FontWeight.Bold)
           .fontColor('#F2F4F7')
           .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
         Button($r('app.string.sources_add_games'))
           .height(48)
           .enabled(!this.busy)
@@ -69,6 +71,7 @@ struct Sources {
         }
       }
       .width('100%')
+      .constraintSize({ minHeight: 48 })
 
       if (this.status.length > 0) {
         Text(this.status)
@@ -94,6 +97,7 @@ struct Sources {
               void this.cleanupDebugSideload();
             })
         }
+        .width('100%')
       }
 
       if (this.rows.length === 0) {

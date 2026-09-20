@@ -13,19 +13,30 @@ using PlanHash = std::array<std::uint8_t, 32>;
 using CapabilitySummary = std::array<std::uint8_t, 512>;
 enum class PairRole : std::uint8_t { Initiator = 1, Responder = 2 };
 
-// INTERNAL TRUST BOUNDARY: caller has verified the full PairTranscript's two
-// signatures, current route/KNOWN policy, both human approvals and KEY_CONFIRM,
-// both reveal envelopes, contribution summary commitments, and certification
-// eligibility of the exact records. Raw network input must NEVER construct this
-// evidence directly. This reducer implements neither crypto nor those gates.
+class PairAuthenticationReducer;
+struct VerifiedPairEvidenceTestFactory;
+
+// Authenticated evidence is sealed only by PairAuthenticationReducer after its
+// complete provider/user chain. Public fields remain inspectable for immutable
+// plan binding, but mutation invalidates the private seal.
 struct VerifiedPairEvidence {
     PairRole local_role{};
     std::uint64_t generation = 0;
     PlanHash transcript{};
     PlanHash initiator_reveal{};
     PlanHash responder_reveal{};
+    PlanHash initiator_capability{};
+    PlanHash responder_capability{};
     CapabilitySummary initiator_summary{};
     CapabilitySummary responder_summary{};
+
+    [[nodiscard]] bool authenticated() const noexcept;
+
+private:
+    void seal_for_authenticated_pipeline() noexcept;
+    PlanHash authentication_seal_{};
+    friend class PairAuthenticationReducer;
+    friend struct VerifiedPairEvidenceTestFactory;
 };
 
 // Each logical hash is an immutable content-addressed reference to the complete
@@ -45,6 +56,8 @@ struct VerifiedPlanEvidence {
     PlanHash transcript{};
     PlanHash initiator_reveal{};
     PlanHash responder_reveal{};
+    PlanHash initiator_capability{};
+    PlanHash responder_capability{};
     wire::BearerPlanBytes selected_plan{};
     PlanHash selected_plan_hash{};
     PlanHash plan_logical_hash{};

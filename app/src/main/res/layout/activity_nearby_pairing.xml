@@ -1,69 +1,167 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
-  配对 — the page a user reaches when they are pairing with a device they already found.
-
-  Only the two entry paths the approved design names are laid out here: the six-digit code that
-  accompanies BLE discovery, and the Wi-Fi direct path that the session will build once discovery
-  and authentication have succeeded. Each is shown in full with the exact reason it cannot act yet,
-  because a stage that is missing from the page is a stage the user cannot be told about.
-
-  Deliberately absent: an anonymous join request with accept / reject controls. Design §22.2 names
-  an anonymous join request only for the QR path and a six-digit code only for the BLE path, so a
-  generic request / accept / reject control set is not required by the approved design and its
-  building is pending centralised §30 review (spec §4). The i18n keys for it exist; the control set
-  does not, and it must not be added here without that review.
-
-  The stage pipeline at the bottom is the shared element, identical to the one on 好友/附近设备
-  (see view_nearby_stage_pipeline.xml). It renders all seven stages in §2.1 order with exactly one
-  marked, so this page and that page can never disagree about which stage is current.
+  N01/N02/N03 from docs/superpowers/specs/assets/nearby-ui-parity-review.html.
+  Pairing stages belong on N07/N10/diagnostics, not these entry pages.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/nearby_pairing_root" android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="@color/fly_background" android:orientation="vertical">
-    <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_pairing_toolbar"
-        android:layout_width="match_parent" android:layout_height="64dp" android:background="@color/fly_surface"
-        android:minHeight="48dp" app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
-        app:title="@string/nearby_pairing_title" app:titleTextColor="@color/fly_on_surface" />
-    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/fly_space_4">
-            <!--
-              N01 创建联机: the invitation lifecycle. The code is bound to a
-              generation with the 60 s continuous clock; 重新生成 and 取消作废邀请
-              kill the previous generation and its QR together, and a cancelled or
-              expired invitation is never revived (C16).
-            -->
-            <LinearLayout android:id="@+id/nearby_create_block" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
-                <TextView android:id="@+id/nearby_invite_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_invite_codeLabel" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-                <TextView android:id="@+id/nearby_invite_code_value" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:letterSpacing="0.3" android:textAppearance="?attr/textAppearanceHeadlineMedium" android:textColor="@color/fly_on_surface" />
-                <TextView android:id="@+id/nearby_invite_valid_for" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_invite_validFor" android:textColor="@color/fly_on_surface_muted" />
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:baselineAligned="false" android:orientation="horizontal">
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_invite_regenerate" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:text="@string/nearby_action_regenerate" android:textColor="@color/fly_on_surface" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_invite_cancel" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:text="@string/nearby_action_cancelInvite" android:textColor="@color/fly_on_surface" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="64dp" android:gravity="center_vertical" android:orientation="horizontal">
+        <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_pairing_toolbar"
+            android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
+            android:background="@color/fly_background" android:minHeight="48dp"
+            app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
+            app:title="@string/nearby_screen_invite" app:titleTextAppearance="@style/TextAppearance.FlyNes.Nearby.PageTitle"
+            app:titleTextColor="@color/fly_on_surface" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center_vertical"
+            android:includeFontPadding="false" android:minHeight="48dp" android:paddingEnd="8dp"
+            android:text="@string/nearby_entry_stageHint" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+            android:textColor="@color/fly_on_surface_muted" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_diagnostics" style="@style/Widget.Material3.Button.IconButton"
+            android:layout_width="48dp" android:layout_height="48dp" android:contentDescription="@string/nearby_diagnostics_title"
+            app:icon="@drawable/ic_stage_not_reached" app:iconTint="@color/fly_on_surface" />
+    </LinearLayout>
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="true" android:fillViewport="true">
+        <LinearLayout android:id="@+id/nearby_pairing_columns" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:baselineAligned="false" android:orientation="horizontal" android:padding="16dp">
+            <LinearLayout android:id="@+id/nearby_create_block" android:layout_width="224dp" android:layout_height="wrap_content"
+                android:minWidth="0dp" android:orientation="vertical" android:visibility="gone">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:includeFontPadding="false"
+                    android:text="@string/nearby_invite_kicker" android:textAllCaps="true"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Kicker" android:textColor="@color/fly_primary" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_invite_headline"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PaneTitle" android:textColor="@color/fly_on_surface" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_invite_subtitle"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                <TextView android:id="@+id/nearby_invite_code_label" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp" android:includeFontPadding="false" android:text="@string/nearby_invite_codeLabel"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body" android:textColor="@color/fly_on_surface" />
+                <TextView android:id="@+id/nearby_invite_code_value" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:background="@color/fly_surface_variant" android:gravity="center"
+                    android:includeFontPadding="false" android:maxLines="1" android:padding="10dp"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.InviteCode" android:textColor="@color/fly_on_surface" />
+                <TextView android:id="@+id/nearby_invite_valid_for" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_invite_validFor"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_invite_regenerate" style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                    android:minHeight="48dp" android:text="@string/nearby_action_regenerate"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
+                    />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/nearby_join_block" android:layout_width="224dp" android:layout_height="wrap_content"
+                android:minWidth="0dp" android:orientation="vertical" android:visibility="gone">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:includeFontPadding="false"
+                    android:text="@string/nearby_join_kicker" android:textAllCaps="true"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Kicker" android:textColor="@color/fly_primary" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_join_headline"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PaneTitle" android:textColor="@color/fly_on_surface" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_join_subtitle"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_switch_to_scan" style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                    android:minHeight="48dp" android:text="@string/nearby_action_switchToScan"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
+                    />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/nearby_scan_block" android:layout_width="224dp" android:layout_height="wrap_content"
+                android:minWidth="0dp" android:orientation="vertical" android:visibility="gone">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:includeFontPadding="false"
+                    android:text="@string/nearby_scan_kicker" android:textAllCaps="true"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Kicker" android:textColor="@color/fly_primary" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_scan_headline"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PaneTitle" android:textColor="@color/fly_on_surface" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_scan_subtitle"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_scan_switch_to_code" style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                    android:minHeight="48dp" android:text="@string/nearby_action_switchToJoinCode"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
+                    />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:includeFontPadding="false" android:text="@string/nearby_scan_cameraNote"
+                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/nearby_pairing_right" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_marginStart="18dp" android:layout_weight="1" android:gravity="center_horizontal"
+                android:minWidth="0dp" android:orientation="vertical">
+                <LinearLayout android:id="@+id/nearby_invite_qr_wrap" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:gravity="center_horizontal" android:orientation="vertical" android:visibility="gone">
+                    <FrameLayout android:id="@+id/nearby_invite_qr" android:layout_width="170dp" android:layout_height="170dp" android:background="#FFFFFF">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center"
+                            android:includeFontPadding="false" android:text="@string/nearby_invite_qrLabel"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                    </FrameLayout>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                        android:includeFontPadding="false" android:text="@string/nearby_invite_qrHint"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.SectionTitle" android:textColor="@color/fly_on_surface" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                        android:gravity="center" android:includeFontPadding="false" android:text="@string/nearby_invite_hostMustAccept"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                </LinearLayout>
+                <LinearLayout android:id="@+id/nearby_join_right" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:visibility="gone">
+                    <TextView android:id="@+id/nearby_join_code_label" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:includeFontPadding="false" android:text="@string/nearby_join_codeLabel"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body" android:textColor="@color/fly_on_surface" />
+                    <com.google.android.material.textfield.TextInputEditText android:id="@+id/nearby_join_code_input"
+                        android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                        android:gravity="center" android:hint="@string/nearby_join_placeholder" android:includeFontPadding="false"
+                        android:inputType="number" android:minHeight="60dp"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.CodeInput"
+                        android:textColor="@color/fly_on_surface" android:textColorHint="@color/fly_on_surface_muted" />
+                    <TextView android:id="@+id/nearby_join_code_error" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_reason_code_invalidFormat"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_error" android:visibility="gone" />
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                        android:includeFontPadding="false" android:text="@string/nearby_join_hint"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+                </LinearLayout>
+                <LinearLayout android:id="@+id/nearby_scan_right" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:gravity="center_horizontal" android:orientation="vertical" android:visibility="gone">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="206dp" android:background="@color/fly_surface"
+                        android:gravity="center" android:orientation="vertical" android:padding="16dp">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center"
+                            android:includeFontPadding="false" android:text="@string/nearby_scan_cameraHint"
+                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.SectionTitle" android:textColor="@color/fly_on_surface" />
+                    </LinearLayout>
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                        android:includeFontPadding="false" android:text="@string/nearby_scan_afterScan"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
                 </LinearLayout>
             </LinearLayout>
-            <!--
-              N02 输入配对码: exactly six ASCII digits with the leading-zero rule;
-              the request is never sent on incomplete input, submit is locked while
-              a request for the current generation is in flight, and the field
-              error sits directly under the input (C05/C16).
-            -->
-            <LinearLayout android:id="@+id/nearby_join_block" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
-                <TextView android:id="@+id/nearby_join_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_join_codeLabel" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-                <com.google.android.material.textfield.TextInputEditText android:id="@+id/nearby_join_code_input" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:digits="0123456789" android:hint="@string/nearby_join_codeLabel" android:inputType="number" android:maxLength="6" android:textColor="@color/fly_on_surface" android:textColorHint="@color/fly_on_surface_muted" />
-                <TextView android:id="@+id/nearby_join_code_error" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_reason_code_invalidFormat" android:textColor="@color/fly_error" android:visibility="gone" />
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:baselineAligned="false" android:orientation="horizontal">
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_submit" style="@style/Widget.Material3.Button" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:enabled="false" android:text="@string/nearby_action_submitJoinCode" android:textColor="@color/fly_on_primary" app:backgroundTint="@color/fly_primary" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_cancel" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="48dp" android:layout_marginStart="@dimen/fly_space_2" android:layout_weight="1" android:text="@string/nearby_action_cancelRequest" android:textColor="@color/fly_on_surface" />
-                </LinearLayout>
-                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_switch_to_scan" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_1" android:minWidth="48dp" android:text="@string/nearby_action_switchToScan" android:textColor="@color/fly_on_surface" />
-            </LinearLayout>
-            <TextView android:id="@+id/nearby_code_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/nearby_code_label" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-            <TextView android:id="@+id/nearby_code_confirm_reason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_blocked_auth" android:textColor="@color/fly_error" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/nearby_code_confirm" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="@dimen/fly_space_2" android:enabled="false" android:text="@string/nearby_code_confirm" />
-            <TextView android:id="@+id/nearby_wifi_path_building" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" android:text="@string/nearby_wifi_path_building" android:textAppearance="?attr/textAppearanceTitleMedium" android:textColor="@color/fly_on_surface" />
-            <TextView android:id="@+id/nearby_wifi_system_confirm_once" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_1" android:text="@string/nearby_wifi_system_confirm_once" android:textColor="@color/fly_on_surface_muted" />
-            <TextView android:id="@+id/nearby_wifi_blocked" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_2" android:text="@string/nearby_blocked_wifi" android:textColor="@color/fly_error" />
-            <include layout="@layout/view_nearby_stage_pipeline" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/fly_space_6" />
         </LinearLayout>
     </ScrollView>
+    <LinearLayout android:id="@+id/nearby_pairing_footer" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:background="@color/fly_background" android:gravity="center_vertical" android:minHeight="58dp"
+        android:orientation="horizontal" android:padding="8dp">
+        <TextView android:id="@+id/nearby_pairing_footer_copy" android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:includeFontPadding="false" android:text="@string/nearby_invite_footer"
+            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_invite_cancel" style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="160dp"
+            android:text="@string/nearby_action_cancelInvite" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
+            android:textColor="@color/fly_on_surface" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_submit" style="@style/Widget.Material3.Button"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="160dp"
+            android:text="@string/nearby_action_submitJoinCode" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PrimaryAction"
+            android:textColor="@color/fly_on_primary" android:visibility="gone" android:enabled="false" app:backgroundTint="@color/fly_primary"
+            />
+        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_join_cancel" style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="160dp"
+            android:text="@string/nearby_action_cancelRequest" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
+            android:textColor="@color/fly_on_surface" android:visibility="gone"
+            />
+        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_scan_cancel" style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="160dp"
+            android:text="@string/nearby_action_cancel" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
+            android:textColor="@color/fly_on_surface" android:visibility="gone"
+            />
+    </LinearLayout>
 </LinearLayout>

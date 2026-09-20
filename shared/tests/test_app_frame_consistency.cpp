@@ -425,8 +425,8 @@ int main()
         expect(parse_hex_kind(kind_text, &kind), "kind " + kind_text + " parses as hex");
         schema_kinds.push_back(kind);
     }
-    expect(schema_kinds.size() == 61u,
-           "schema declares 61 kinds, found " + std::to_string(schema_kinds.size()));
+    expect(schema_kinds.size() == 62u,
+           "schema declares 62 kinds, found " + std::to_string(schema_kinds.size()));
 
     std::string messages_body;
     expect(array_body(schema, "messages", &messages_body), "schema messages array");
@@ -437,8 +437,8 @@ int main()
         expect(top_level_string(element, "name", &name), "message entry has a name field");
         schema_messages.push_back(name);
     }
-    expect(schema_messages.size() == 6u,
-           "schema declares 6 messages, found " + std::to_string(schema_messages.size()));
+    expect(schema_messages.size() == 8u,
+           "schema declares 8 messages, found " + std::to_string(schema_messages.size()));
 
     // ---- table: ObjectKind namespace exactly equals the schema kinds -------
     std::vector<std::uint16_t> table_kinds;

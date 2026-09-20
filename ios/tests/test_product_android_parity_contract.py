@@ -273,6 +273,36 @@ def main() -> int:
     require("RECENT" in library and "FAVORITES" in library and "ALL" in library
             and "BUILTIN" in library,
             "Game Center categories must be the shared RECENT/FAVORITES/ALL/BUILTIN names")
+    native_toggle = ('Toggle("nearby.filter.multiplayerOnly"' in library
+                     and 'accessibilityIdentifier("nearby_multiplayer_filter")' in library)
+    native_switch = ("AccessibleNativeSwitch(" in library
+                     and "isOn: $multiplayerOnly" in library
+                     and 'identifier: "nearby_multiplayer_filter"' in library)
+    require(native_toggle or native_switch,
+            "Game Center must expose the independent two-player filter as an operable control")
+    require('Text("nearby.open")' in library
+            and 'accessibilityIdentifier("nearby_entry_text")' in library,
+            "the nearby entry must render visible connection-status text, not only an icon label")
+
+    nearby_friends = read("ios/app/NearbyFriendsView.swift")
+    require("GeometryReader" in nearby_friends and "> 580" in nearby_friends,
+            "Nearby must switch to the shared two-column layout only above 580pt")
+    require("HStack(spacing: 18)" in nearby_friends and ".frame(width: 224)" in nearby_friends,
+            "wide Nearby layout must use the shared 224pt action pane and 18pt gap")
+    require('accessibilityIdentifier("nearby_action_pane")' in nearby_friends
+            and 'accessibilityIdentifier("nearby_status_pane")' in nearby_friends,
+            "Nearby responsive panes must expose stable geometry identifiers")
+    require(nearby_friends.find("nearbyActions") < nearby_friends.find("switch tab"),
+            "the three primary actions must remain visible when switching Nearby tabs")
+
+    nearby_pairing = read("ios/app/NearbyPairingView.swift")
+    require("nearbyHostPublish" in bridge and "nearbyHostRegenerate" in bridge
+            and "nearbyInviteSnapshot" in bridge,
+            "the iOS bridge must expose the shared invitation route and snapshot")
+    require("FlyNesAppBridge.sharedInstance()" in nearby_pairing,
+            "the pairing page must submit invitation actions to the shared bridge")
+    require("Int.random" not in nearby_pairing,
+            "the iOS pairing page must not fabricate a local-only invitation")
 
     app = read("ios/app/FlyNESApp.swift")
     require("CatalogLibraryView" in app, "cold start must open Game Center")

@@ -35,6 +35,30 @@ public final class AndroidCatalogStreamOpener implements ExactRomLoader.StreamOp
 
     @Override
     public InputStream open(String sourceId, String sourceUri) throws IOException {
+        RomSource source = validatedSource(sourceId, sourceUri);
+        if (source.type() == RomSource.Type.BUILTIN) {
+            return context.getAssets().open(sourceUri.substring("asset:///".length()));
+        }
+        InputStream opened;
+        try {
+            opened = context.getContentResolver().openInputStream(Uri.parse(sourceUri));
+        } catch (IllegalArgumentException malformed) {
+            // Storage providers answer a non-document URI with IllegalArgumentException
+            // ("Invalid URI"), not IOException; unwrapped it kills the launch thread.
+            throw failure(FailureCode.LOCATOR_INVALID, malformed);
+        } catch (SecurityException denied) {
+            throw failure(FailureCode.PERMISSION_LOST, denied);
+        }
+        if (opened == null) throw new FileNotFoundException("provider returned null stream");
+        return opened;
+    }
+
+    /** Rechecks current catalog source and persisted read access without opening or reading it. */
+    public void validateAccess(String sourceId, String sourceUri) {
+        validatedSource(sourceId, sourceUri);
+    }
+
+    private RomSource validatedSource(String sourceId, String sourceUri) {
         SourceCatalogState source = repository.state().sources().get(sourceId);
         if (source == null) throw failure(FailureCode.SOURCE_UNKNOWN);
         CatalogPackage exact = null;
@@ -57,7 +81,7 @@ public final class AndroidCatalogStreamOpener implements ExactRomLoader.StreamOp
                     || sourceUri.length() <= root.length()) {
                 throw failure(FailureCode.LOCATOR_UNKNOWN);
             }
-            return context.getAssets().open(sourceUri.substring("asset:///".length()));
+            return source.source();
         }
         if (!persistedRead.test(source.source().uri())) {
             throw failure(FailureCode.PERMISSION_LOST, null);
@@ -65,18 +89,7 @@ public final class AndroidCatalogStreamOpener implements ExactRomLoader.StreamOp
         if (!DocumentLocatorShape.isOpenableDocumentLocator(sourceUri)) {
             throw failure(FailureCode.LOCATOR_INVALID, null);
         }
-        InputStream opened;
-        try {
-            opened = context.getContentResolver().openInputStream(Uri.parse(sourceUri));
-        } catch (IllegalArgumentException malformed) {
-            // Storage providers answer a non-document URI with IllegalArgumentException
-            // ("Invalid URI"), not IOException; unwrapped it kills the launch thread.
-            throw failure(FailureCode.LOCATOR_INVALID, malformed);
-        } catch (SecurityException denied) {
-            throw failure(FailureCode.PERMISSION_LOST, denied);
-        }
-        if (opened == null) throw new FileNotFoundException("provider returned null stream");
-        return opened;
+        return source.source();
     }
 
     private static SourceOpenException failure(FailureCode code) {

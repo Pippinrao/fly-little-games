@@ -8,6 +8,7 @@
 #include "scan_job_queue.hpp"
 
 #include <flynes/flynes_app.h>
+#include <flynes/flynes_session.h>
 #include "flynes/product/game_center_state.hpp"
 
 #include "napi/native_api.h"
@@ -26,6 +27,26 @@
 #include <unistd.h>
 
 namespace {
+
+[[maybe_unused]] void verify_nearby_v2_composition_contract()
+{
+    fly_session_clock_port_v2 clock{};
+    clock.struct_size = FLY_SESSION_CLOCK_PORT_V2_SIZE;
+    clock.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_executor_port_v2 executor{};
+    executor.struct_size = FLY_SESSION_EXECUTOR_PORT_V2_SIZE;
+    executor.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_platform_state_port_v2 platform_state{};
+    platform_state.struct_size = FLY_SESSION_PLATFORM_STATE_PORT_V2_SIZE;
+    platform_state.abi_version = FLY_SESSION_ABI_VERSION_2;
+    fly_session_ports_v2 ports{};
+    ports.struct_size = FLY_SESSION_PORTS_V2_SIZE;
+    ports.abi_version = FLY_SESSION_ABI_VERSION_2;
+    ports.clock = &clock;
+    ports.executor = &executor;
+    ports.platform_state = &platform_state;
+    (void)ports;
+}
 
 class NapiCallError final : public std::runtime_error
 {
@@ -139,6 +160,14 @@ struct ScanDeleter final
     }
 };
 
+struct SessionDeleter final
+{
+    void operator()(fly_session_t* session) const noexcept
+    {
+        fly_session_destroy(session);
+    }
+};
+
 struct SnapshotDeleter final
 {
     void operator()(fly_catalog_snapshot_t* snapshot) const noexcept
@@ -150,6 +179,9 @@ struct SnapshotDeleter final
 std::unique_ptr<fly_app_t, AppDeleter> g_app;
 std::unique_ptr<fly_scan_t, ScanDeleter> g_scan;
 std::unique_ptr<flynes::harmony::ScanJobQueue> g_scan_jobs;
+std::unique_ptr<fly_session_t, SessionDeleter> g_nearby_session;
+std::uint64_t g_nearby_next_host_generation = 1u;
+std::uint64_t g_nearby_next_join_attempt_id = 1u;
 
 class FlyCallError final : public std::runtime_error
 {
@@ -176,6 +208,73 @@ fly_app_t& require_app()
         throw NapiTypeError("app is not open");
     }
     return *g_app;
+}
+
+std::int64_t read_int64(napi_env env, napi_value value, const char* argument_name);
+
+fly_session_t& require_nearby_session()
+{
+    if (g_nearby_session == nullptr)
+    {
+        const fly_session_config config{
+            FLY_SESSION_CONFIG_V1_SIZE,
+            FLY_SESSION_CONFIG_VERSION_1,
+            0u,
+            0u,
+        };
+        fly_session_t* raw_session = nullptr;
+        require_fly(fly_session_create(&config, &raw_session), "fly_session_create");
+        if (raw_session == nullptr)
+        {
+            throw FlyCallError("fly_session_create invariant", FLY_RESULT_INTERNAL_ERROR);
+        }
+        g_nearby_session.reset(raw_session);
+    }
+    return *g_nearby_session;
+}
+
+std::uint64_t invite_id(napi_env env, napi_value value, const char* argument_name)
+{
+    const std::int64_t parsed = read_int64(env, value, argument_name);
+    if (parsed <= 0)
+    {
+        throw NapiTypeError(std::string(argument_name) + " must be positive");
+    }
+    return static_cast<std::uint64_t>(parsed);
+}
+
+std::uint64_t uptime_ns(napi_env env, napi_value value)
+{
+    const std::int64_t milliseconds = read_int64(env, value, "nowMs");
+    constexpr std::uint64_t kNanosecondsPerMillisecond = UINT64_C(1000000);
+    if (milliseconds < 0 || static_cast<std::uint64_t>(milliseconds) >
+            std::numeric_limits<std::uint64_t>::max() / kNanosecondsPerMillisecond)
+    {
+        throw NapiTypeError("nowMs is outside the supported monotonic range");
+    }
+    return static_cast<std::uint64_t>(milliseconds) * kNanosecondsPerMillisecond;
+}
+
+void resolve_pending_invite_command(fly_session_t& session, bool success)
+{
+    fly_session_command command{};
+    command.struct_size = FLY_SESSION_COMMAND_V1_SIZE;
+    command.version = FLY_SESSION_COMMAND_VERSION_1;
+    require_fly(fly_session_poll_command(&session, &command), "fly_session_poll_command");
+    if (command.command_id == 0u)
+    {
+        throw NapiTypeError("shared invite action did not issue a command");
+    }
+    const fly_session_command_result result{
+        FLY_SESSION_COMMAND_RESULT_V1_SIZE,
+        FLY_SESSION_COMMAND_RESULT_VERSION_1,
+        command.command_id,
+        0u,
+        success ? FLY_RESULT_OK : FLY_RESULT_INVALID_STATE,
+        0u,
+    };
+    require_fly(fly_session_complete_command(&session, &result),
+                "fly_session_complete_command");
 }
 
 int hex_nibble(char value)
@@ -1576,6 +1675,9 @@ napi_value AppClose(napi_env env, napi_callback_info info)
         g_play.reset();
         g_scan.reset();
         g_app.reset();
+        g_nearby_session.reset();
+        g_nearby_next_host_generation = 1u;
+        g_nearby_next_join_attempt_id = 1u;
         napi_value undefined = nullptr;
         require_napi(napi_get_undefined(env, &undefined), "appClose undefined");
         return undefined;
@@ -2519,6 +2621,207 @@ napi_value CatalogUserStateGet(napi_env env, napi_callback_info info)
     }
 }
 
+template <typename Operation>
+napi_value nearby_call(napi_env env, const char* name, Operation&& operation)
+{
+    try
+    {
+        return operation();
+    }
+    catch (const NapiTypeError& error)
+    {
+        return report_error(env, error.what(), true);
+    }
+    catch (const std::exception& error)
+    {
+        return report_error(env, error.what(), false);
+    }
+    catch (...)
+    {
+        const std::string message = std::string(name) + " failed: unknown native error";
+        return report_error(env, message.c_str(), false);
+    }
+}
+
+void nearby_arguments(napi_env env, napi_callback_info info, std::size_t expected,
+                      napi_value* arguments, const char* name)
+{
+    std::size_t argument_count = expected;
+    require_napi(napi_get_cb_info(env, info, &argument_count, arguments, nullptr, nullptr),
+                 "read nearby invite arguments");
+    if (argument_count < expected)
+    {
+        throw NapiTypeError(std::string(name) + " requires " + std::to_string(expected) +
+                            " arguments");
+    }
+}
+
+napi_value NearbyInviteHostPublish(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteHostPublish", [&]() {
+        napi_value arguments[3] = {nullptr, nullptr, nullptr};
+        nearby_arguments(env, info, 3u, arguments, "nearbyInviteHostPublish");
+        fly_session_t& session = require_nearby_session();
+        const std::uint64_t generation = invite_id(env, arguments[0], "generation");
+        const std::string code = read_utf8_string(env, arguments[1], "code");
+        const fly_result result = fly_session_invite_host_publish_v1(
+            &session, generation, reinterpret_cast<const std::uint8_t*>(code.data()),
+            code.size(), uptime_ns(env, arguments[2]));
+        if (result == FLY_RESULT_OK)
+        {
+            // This adapter has changed the displayed generation. A real bearer
+            // is still absent, but the shared command must not remain pending.
+            resolve_pending_invite_command(session, true);
+        }
+        return create_bool(env, result == FLY_RESULT_OK, "create host publish result");
+    });
+}
+
+napi_value NearbyInviteNextHostGeneration(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteNextHostGeneration", [&]() {
+        (void)info;
+        if (g_nearby_next_host_generation == 0u ||
+            g_nearby_next_host_generation >
+                static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        {
+            throw NapiTypeError("nearby host generation exhausted");
+        }
+        return create_int64(env, static_cast<std::int64_t>(g_nearby_next_host_generation++),
+                            "create host generation");
+    });
+}
+
+napi_value NearbyInviteNextJoinAttemptId(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteNextJoinAttemptId", [&]() {
+        (void)info;
+        if (g_nearby_next_join_attempt_id == 0u ||
+            g_nearby_next_join_attempt_id >
+                static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        {
+            throw NapiTypeError("nearby join attempt id exhausted");
+        }
+        return create_int64(env, static_cast<std::int64_t>(g_nearby_next_join_attempt_id++),
+                            "create join attempt id");
+    });
+}
+
+napi_value NearbyInviteHostRegenerate(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteHostRegenerate", [&]() {
+        napi_value arguments[3] = {nullptr, nullptr, nullptr};
+        nearby_arguments(env, info, 3u, arguments, "nearbyInviteHostRegenerate");
+        fly_session_t& session = require_nearby_session();
+        const std::uint64_t generation = invite_id(env, arguments[0], "generation");
+        const std::string code = read_utf8_string(env, arguments[1], "code");
+        const fly_result result = fly_session_invite_host_regenerate_v1(
+            &session, generation, reinterpret_cast<const std::uint8_t*>(code.data()),
+            code.size(), uptime_ns(env, arguments[2]));
+        if (result == FLY_RESULT_OK)
+        {
+            resolve_pending_invite_command(session, true);
+        }
+        return create_bool(env, result == FLY_RESULT_OK, "create host regenerate result");
+    });
+}
+
+napi_value NearbyInviteHostCancel(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteHostCancel", [&]() {
+        napi_value arguments[1] = {nullptr};
+        nearby_arguments(env, info, 1u, arguments, "nearbyInviteHostCancel");
+        const fly_result result = fly_session_invite_host_cancel_v1(
+            &require_nearby_session(), invite_id(env, arguments[0], "generation"));
+        return create_bool(env, result == FLY_RESULT_OK, "create host cancel result");
+    });
+}
+
+napi_value NearbyInviteSubmitCode(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteSubmitCode", [&]() {
+        napi_value arguments[3] = {nullptr, nullptr, nullptr};
+        nearby_arguments(env, info, 3u, arguments, "nearbyInviteSubmitCode");
+        fly_session_t& session = require_nearby_session();
+        const std::string code = read_utf8_string(env, arguments[1], "code");
+        const fly_result result = fly_session_invite_submit_code_v1(
+            &session, invite_id(env, arguments[0], "attemptId"),
+            reinterpret_cast<const std::uint8_t*>(code.data()), code.size(),
+            uptime_ns(env, arguments[2]));
+        if (result == FLY_RESULT_OK)
+        {
+            // No Harmony discovery executor exists yet. Fail the real command
+            // closed so an unsent request cannot remain live or revive later.
+            resolve_pending_invite_command(session, false);
+        }
+        return create_bool(env, false, "create submit result");
+    });
+}
+
+napi_value NearbyInviteCancelCode(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteCancelCode", [&]() {
+        napi_value arguments[1] = {nullptr};
+        nearby_arguments(env, info, 1u, arguments, "nearbyInviteCancelCode");
+        fly_session_t& session = require_nearby_session();
+        const fly_result result = fly_session_invite_cancel_code_v1(
+            &session, invite_id(env, arguments[0], "attemptId"));
+        if (result == FLY_RESULT_OK)
+        {
+            resolve_pending_invite_command(session, false);
+        }
+        return create_bool(env, result == FLY_RESULT_OK, "create cancel result");
+    });
+}
+
+napi_value NearbyInviteTick(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteTick", [&]() {
+        napi_value arguments[1] = {nullptr};
+        nearby_arguments(env, info, 1u, arguments, "nearbyInviteTick");
+        const fly_result result = fly_session_tick(
+            &require_nearby_session(), uptime_ns(env, arguments[0]));
+        return create_bool(env, result == FLY_RESULT_OK, "create tick result");
+    });
+}
+
+napi_value NearbyInviteSnapshot(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyInviteSnapshot", [&]() {
+        (void)info;
+        fly_session_invite_snapshot_v1 snapshot{};
+        snapshot.struct_size = FLY_SESSION_INVITE_SNAPSHOT_V1_SIZE;
+        snapshot.version = FLY_SESSION_INVITE_SNAPSHOT_VERSION_1;
+        require_fly(fly_session_get_invite_snapshot(&require_nearby_session(), &snapshot),
+                    "fly_session_get_invite_snapshot");
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create nearby invite snapshot");
+        require_napi(napi_set_named_property(
+                         env, result, "joinPhase",
+                         create_uint32(env, snapshot.join_phase, "joinPhase")),
+                     "set joinPhase");
+        require_napi(napi_set_named_property(
+                         env, result, "hostPhase",
+                         create_uint32(env, snapshot.host_phase, "hostPhase")),
+                     "set hostPhase");
+        require_napi(napi_set_named_property(
+                         env, result, "joinAttemptId",
+                         create_int64(env, static_cast<std::int64_t>(snapshot.join_attempt_id),
+                                      "joinAttemptId")),
+                     "set joinAttemptId");
+        require_napi(napi_set_named_property(
+                         env, result, "hostGeneration",
+                         create_int64(env, static_cast<std::int64_t>(snapshot.host_generation),
+                                      "hostGeneration")),
+                     "set hostGeneration");
+        require_napi(napi_set_named_property(
+                         env, result, "hostAttemptsLeft",
+                         create_uint32(env, snapshot.host_attempts_left, "hostAttemptsLeft")),
+                     "set hostAttemptsLeft");
+        return result;
+    });
+}
+
 napi_value Init(napi_env env, napi_value exports)
 {
     try
@@ -2532,6 +2835,24 @@ napi_value Init(napi_env env, napi_value exports)
             {"catalogMarkPlayed", nullptr, CatalogMarkPlayed, nullptr, nullptr, nullptr,
              napi_default, nullptr},
             {"catalogUserStateGet", nullptr, CatalogUserStateGet, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyInviteHostPublish", nullptr, NearbyInviteHostPublish, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyInviteNextHostGeneration", nullptr, NearbyInviteNextHostGeneration, nullptr,
+             nullptr, nullptr, napi_default, nullptr},
+            {"nearbyInviteNextJoinAttemptId", nullptr, NearbyInviteNextJoinAttemptId, nullptr,
+             nullptr, nullptr, napi_default, nullptr},
+            {"nearbyInviteHostRegenerate", nullptr, NearbyInviteHostRegenerate, nullptr, nullptr,
+             nullptr, napi_default, nullptr},
+            {"nearbyInviteHostCancel", nullptr, NearbyInviteHostCancel, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyInviteSubmitCode", nullptr, NearbyInviteSubmitCode, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyInviteCancelCode", nullptr, NearbyInviteCancelCode, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyInviteTick", nullptr, NearbyInviteTick, nullptr, nullptr, nullptr, napi_default,
+             nullptr},
+            {"nearbyInviteSnapshot", nullptr, NearbyInviteSnapshot, nullptr, nullptr, nullptr,
              napi_default, nullptr},
             {"gameCenterFilter", nullptr, GameCenterFilter, nullptr, nullptr, nullptr, napi_default,
              nullptr},

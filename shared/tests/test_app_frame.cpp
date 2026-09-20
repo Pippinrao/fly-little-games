@@ -433,8 +433,8 @@ void identifies_by_tag_only()
            "message tag 0xFF05 is ChannelResumeSummaryV1");
 
     // Table introspection used by the consistency guard.
-    expect(flynes::session::wire::frame_tag_count() == 67u,
-           "61 schema kinds plus 6 schema messages");
+    expect(flynes::session::wire::frame_tag_count() == 70u,
+           "62 schema kinds plus 8 schema messages");
     FrameTagInfo info{};
     expect(flynes::session::wire::frame_tag_info(0x0201u, &info), "0x0201 is in the table");
     expect(info.type_namespace == FrameTypeNamespace::ObjectKind, "0x0201 namespace");
@@ -464,6 +464,24 @@ void enforces_channel_allow_list()
     expect_status(flynes::session::wire::parse_app_frame(QuicChannel::Control, suspend_frame.data(),
                                                          suspend_frame.size(), &parsed),
                   Status::Ok, "SuspendIntentV1 is a Control object");
+
+    std::vector<std::uint8_t> confirm(44u, 0u);
+    confirm[1] = 1u;
+    confirm[4] = 0xA1u;
+    confirm[43] = 1u;
+    const std::vector<std::uint8_t> confirm_frame = raw_frame_of(0x0218u, confirm);
+    expect_status(flynes::session::wire::parse_app_frame(QuicChannel::Control, confirm_frame.data(),
+                                                         confirm_frame.size(), &parsed),
+                  Status::Ok, "PendingConfigConfirmV1 is a Control object");
+    for (QuicChannel channel : kAllChannels)
+    {
+        if (channel == QuicChannel::Control)
+            continue;
+        expect_status(flynes::session::wire::parse_app_frame(channel, confirm_frame.data(),
+                                                             confirm_frame.size(), &parsed),
+                      Status::InvalidField,
+                      std::string("PendingConfigConfirmV1 rejected on ") + channel_name(channel));
+    }
 
     const std::vector<std::uint8_t> reservation_frame = frame_of(0x0203u, reservation);
     expect_status(flynes::session::wire::parse_app_frame(QuicChannel::StateCommit,

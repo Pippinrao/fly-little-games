@@ -33,7 +33,7 @@ void put_be32(std::uint8_t* p, std::uint32_t value) noexcept
 // schema `kinds` array exactly, and the Message rows must equal the schema
 // `messages` array order exactly.
 //
-// ObjectKind rows carry every one of the 59 schema kinds. The 30 kinds that have
+// ObjectKind rows carry every one of the 61 schema kinds. The 30 kinds that have
 // no body validator in this slice are identified here and then fail closed in
 // check() with Status::UnknownKind; they are deliberately NOT dropped, so a
 // future validator only has to be added in session_codec.cpp.
@@ -101,8 +101,9 @@ constexpr FrameTagEntry kFrameTags[] = {
     {0x0211u, FrameTypeNamespace::ObjectKind, "0x0211"},
     {0x0212u, FrameTypeNamespace::ObjectKind, "0x0212"},
     {0x0213u, FrameTypeNamespace::ObjectKind, "0x0213"},
-    {0x0214u, FrameTypeNamespace::ObjectKind, "0x0214"},
-    {0x0215u, FrameTypeNamespace::ObjectKind, "0x0215"},
+    {0x0216u, FrameTypeNamespace::ObjectKind, "0x0216"},
+    {0x0217u, FrameTypeNamespace::ObjectKind, "0x0217"},
+    {0x0218u, FrameTypeNamespace::ObjectKind, "0x0218"},
     {0x0301u, FrameTypeNamespace::ObjectKind, "0x0301"},
     {0x0302u, FrameTypeNamespace::ObjectKind, "0x0302"},
     {0x0303u, FrameTypeNamespace::ObjectKind, "0x0303"},
@@ -119,6 +120,8 @@ constexpr FrameTagEntry kFrameTags[] = {
     {0xFF03u, FrameTypeNamespace::Message, "ChannelBindV1"},
     {0xFF04u, FrameTypeNamespace::Message, "ChannelBindProofV1"},
     {0xFF05u, FrameTypeNamespace::Message, "ChannelResumeSummaryV1"},
+    {0xFF06u, FrameTypeNamespace::Message, "LinkHelloV1"},
+    {0xFF07u, FrameTypeNamespace::Message, "LinkReadyV1"},
 };
 
 constexpr std::size_t kFrameTagCount = sizeof(kFrameTags) / sizeof(kFrameTags[0]);
@@ -144,6 +147,11 @@ const char* const kControlTypes[] = {
     "0x0210", // SuspendIntentV1 — design:458 lists pause/resume on Control.
     "0x0212", // SessionSigningKeyBindingV1 — spec:468 makes it mandatory in the
               // first app-level reliable message (HELLO) on Control.
+    "0x0216", // LinkHelloV1 — the link control plane's own object; the spec makes
+              // HELLO the first reliable Control message.
+    "0x0217", // LinkReadyV1 — READY/ACK closure on the same Control channel.
+    "0x0218", // PendingConfigConfirmV1 — empty CONFIRM on the verified Control
+              // stream after LINK_READY. Not Input, StateCommit, or ROM.
 };
 
 const char* const kStateCommitTypes[] = {
@@ -238,8 +246,8 @@ constexpr std::size_t kMaxObjectBytesCount = sizeof(kMaxObjectBytes) / sizeof(kM
 static_assert(kMaxObjectBytesCount == kChannelAllowListCount + 1u,
               "one maximum per QUIC application channel");
 static_assert(kFrameTags[0].tag == 0x0001u, "the type table starts at 0x0001");
-static_assert(kFrameTags[61].tag == message_tag_base, "message rows start at message_tag_base");
-static_assert(kFrameTagCount == 67u, "61 schema kinds plus 6 schema messages");
+static_assert(kFrameTags[62].tag == message_tag_base, "message rows start at message_tag_base");
+static_assert(kFrameTagCount == 70u, "62 schema kinds plus 8 schema messages");
 
 const ChannelAllowList* allow_list_for(QuicChannel channel) noexcept
 {

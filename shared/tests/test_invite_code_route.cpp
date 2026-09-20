@@ -1,8 +1,7 @@
 // Invite-code lookup route tests (plan P2; cases C05/C06/C07/C08/C16).
 // The eight vectors are quoted verbatim from the implementation plan. Wire
-// constraints for kinds 0x0214/0x0215 are asserted through the shared codec;
-// the golden negatives (truncate/trailing/reserved/enum) run in
-// test_session_codec from the generated manifest.
+// The superseded V1 object-kind amendment is rejected. The authoritative
+// network lookup codec is GATT logical V2 type 27/28 and has its own golden.
 
 #include "invite_code_route.hpp"
 #include "wire/session_codec.hpp"
@@ -252,6 +251,11 @@ void test_host_gates()
     check(host.active_generation() == 0, "no active generation after cancel");
     check(host.on_lookup(digits("987654"), kT0 + 3) == InviteLookupStatus::NoMatch,
           "C16: lookups for a cancelled invitation answer NoMatch");
+    check(!host.publish(5, "123456", kT0 + 4),
+          "C16: cancelled generation is permanently burned");
+    check(host.publish(7, "123456", kT0 + 4),
+          "C16: returning to the page may publish a newer generation");
+    check(host.cancel(7), "newer generation can be cancelled normally");
 
     InviteCodeHost expiring;
     check(expiring.publish(7, "987654", kT0), "publish accepted");
@@ -263,57 +267,26 @@ void test_host_gates()
     expiring.tick(kT0 + kFull + 1);
     check(expiring.phase() == flynes::session::InviteHostPhase::Idle,
           "expired invitation frees the host slot");
+    check(!expiring.publish(7, "123456", kT0 + kFull + 2),
+          "C16: expired generation is permanently burned");
+    check(expiring.publish(8, "123456", kT0 + kFull + 2),
+          "C16: expiry permits a strictly newer invitation");
 }
 
-// --- Wire constraints (kinds 0x0214/0x0215) via the shared codec ------------
+// --- Superseded V1 object-kind amendment is not an active registry ----------
 
 void test_wire_constraints()
 {
     using flynes::session::wire::Status;
     std::uint8_t hash[32];
 
-    std::uint8_t request[32] = {};
-    request[0] = 0x00;
-    request[1] = 0x01;
-    request[8] = '0';
-    request[9] = '1';
-    request[10] = '2';
-    request[11] = '3';
-    request[12] = '4';
-    request[13] = '5';
-    check(flynes::session::wire::check("0x0214", request, sizeof(request), hash) == Status::Ok,
-          "0x0214: six-digit request validates");
-
-    std::uint8_t bad_request[32] = {};
-    bad_request[0] = 0x00;
-    bad_request[1] = 0x01;
-    bad_request[8] = '1';
-    bad_request[9] = 'a';
-    bad_request[10] = '2';
-    bad_request[11] = '3';
-    bad_request[12] = '4';
-    bad_request[13] = '5';
-    check(flynes::session::wire::check("0x0214", bad_request, sizeof(bad_request), hash) ==
-              Status::InvalidField,
-          "C05: non-digit code byte is InvalidField on the wire");
-
-    std::uint8_t response[24] = {};
-    response[0] = 0x00;
-    response[1] = 0x01;
-    response[8] = 2;  // NO_MATCH
-    check(flynes::session::wire::check("0x0215", response, sizeof(response), hash) == Status::Ok,
-          "0x0215: zero-generation NoMatch validates");
-
-    response[16] = 0xAB;  // nonzero generation with a non-match status
-    check(flynes::session::wire::check("0x0215", response, sizeof(response), hash) ==
-              Status::InvalidField,
-          "0x0215: generation revealed only on match");
-
-    response[8] = 9;  // unknown status
-    response[16] = 0;
-    check(flynes::session::wire::check("0x0215", response, sizeof(response), hash) ==
-              Status::UnknownEnum,
-          "0x0215: unknown status rejects");
+    const std::uint8_t bytes[32]{};
+    check(flynes::session::wire::check("0x0214", bytes, sizeof(bytes), hash) ==
+              Status::UnknownKind,
+          "0x0214 superseded candidate is rejected");
+    check(flynes::session::wire::check("0x0215", bytes, sizeof(bytes), hash) ==
+              Status::UnknownKind,
+          "0x0215 superseded candidate is rejected");
 }
 
 } // namespace
