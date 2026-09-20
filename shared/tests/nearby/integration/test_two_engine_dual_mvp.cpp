@@ -751,14 +751,42 @@ void shutdown_waits_for_quic_close_terminal()
 }
 
 void shutdown_retains_cancelled_quic_read_until_terminal(
-    int target_stream_count, bool success_data = false)
+    int target_stream_count, bool success_data = false,
+    bool during_submit = false)
 {
-    std::puts(target_stream_count == 1
+    std::puts(during_submit
+        ? "dual mvp: shutdown during Control read port call"
+        : target_stream_count == 1
         ? "dual mvp: shutdown retains cancelled bind read"
         : success_data
             ? "dual mvp: retired Control read accepts racing data"
             : "dual mvp: shutdown retains cancelled Control read");
     LobbyPair pair(false, false);
+    struct Probe final
+    {
+        EngineFixture* fixture = nullptr;
+        int stream_threshold = 0;
+        bool fired = false;
+        fly_session_result_v2 shutdown_result = FLY_SESSION_V2_INVALID_STATE;
+    } probe{&pair.inviter, target_stream_count};
+    if (during_submit)
+    {
+        pair.inviter.quic.before_read_accept_context = &probe;
+        pair.inviter.quic.before_read_accept = [](
+            void* context, const fly_session_op_token_v2*) {
+            auto& value = *static_cast<Probe*>(context);
+            auto& fixture = *value.fixture;
+            if (fixture.quic.opened_bidi + fixture.quic.accepted_bidi <
+                value.stream_threshold) return;
+            value.fired = true;
+            fixture.quic.before_read_accept = nullptr;
+            fixture.quic.cancel_result = FLY_SESSION_V2_OK;
+            fixture.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+            value.shutdown_result = fly_session_begin_shutdown_v2(
+                fixture.engine, 9904);
+            fixture.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+        };
+    }
     pair.inviter.platform.ready();
     pair.joiner.platform.ready();
     pair.inviter.executor.run_all();
@@ -817,6 +845,9 @@ void shutdown_retains_cancelled_quic_read_until_terminal(
             break;
     }
     const auto read_token = pair.inviter.quic.last_read_token;
+    if (during_submit)
+        check(probe.fired && probe.shutdown_result == FLY_SESSION_V2_ACCEPTED,
+              "shutdown crossed Control read submit before admission returned");
     check(pair.inviter.quic.opened_bidi + pair.inviter.quic.accepted_bidi >=
               target_stream_count &&
               read_token.operation_id != 0 &&
@@ -830,11 +861,27 @@ void shutdown_retains_cancelled_quic_read_until_terminal(
         shutdown_pair(pair);
         return;
     }
-    pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
-    pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
-    check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9904) ==
-              FLY_SESSION_V2_ACCEPTED, "shutdown accepted with Control read");
+    if (!during_submit)
+    {
+        pair.inviter.quic.cancel_result = FLY_SESSION_V2_ACCEPTED;
+        pair.inviter.quic.close_result = FLY_SESSION_V2_ACCEPTED;
+        check(fly_session_begin_shutdown_v2(pair.inviter.engine, 9904) ==
+                  FLY_SESSION_V2_ACCEPTED,
+              "shutdown accepted with Control read");
+    }
     pair.inviter.executor.run_all();
+    if (during_submit && pair.inviter.quic.closes != 0)
+    {
+        check(false, "Control read submission must block connection close");
+        flynes::session::loopback::deliver_provider_end(
+            pair.inviter.quic.inbox, pair.inviter.quic.close_token,
+            FLY_SESSION_PROVIDER_QUIC_END_V2);
+        pair.inviter.executor.run_all();
+        if (fly_session_destroy_v2(pair.inviter.engine) == FLY_SESSION_V2_OK)
+            pair.inviter.engine = nullptr;
+        shutdown_engine_with_the_pump(pair.joiner, pair.joiner_pump, pair.limits);
+        return;
+    }
     check(pair.inviter.quic.cancels > 0 &&
               pair.inviter.quic.cancelled_token.operation_id == read_token.operation_id,
           "the old QUIC read is cancelled under its original token");
@@ -1355,6 +1402,7 @@ int main()
     shutdown_retains_cancelled_quic_read_until_terminal(2);
     shutdown_retains_cancelled_quic_read_until_terminal(1);
     shutdown_retains_cancelled_quic_read_until_terminal(2, true);
+    shutdown_retains_cancelled_quic_read_until_terminal(2, false, true);
     shutdown_closes_connection_created_after_cancel();
     shutdown_closes_connection_created_after_cancel(true);
     shutdown_retains_cancelled_dual_read_until_terminal();

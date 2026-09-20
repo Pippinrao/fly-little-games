@@ -653,7 +653,11 @@ void SessionEngine::cancel_link_handshake_locked() noexcept
          * operations on the same port, so they cancel through it too. */
         case LinkHandshakeEffectKind::OpenControlStream:
         case LinkHandshakeEffectKind::ReadControlBytes:
-            result = ports_.cancel_quic(&effect->token);
+            if (link_handshake_submit_inflight_)
+                retired_control_quic_ = RetiredQuicOperation{
+                    effect->token, link_handshake_expected_kind_};
+            else
+                result = ports_.cancel_quic(&effect->token);
             break;
         }
         if (result == FLY_SESSION_V2_ACCEPTED &&
@@ -4231,6 +4235,7 @@ void SessionEngine::run_work() noexcept
                     link_handshake_expected_kind_ =
                         link_handshake_payload_kind(effect->kind);
                     link_handshake_active_ = true;
+                    link_handshake_submit_inflight_ = true;
                     dispatch_link_handshake = true;
                 }
             }
@@ -4378,16 +4383,42 @@ void SessionEngine::run_work() noexcept
                 break;
             }
             }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                link_handshake_submit_inflight_ = false;
+                if (retired_control_quic_ && same_token(
+                        retired_control_quic_->token,
+                        link_handshake_effect.token))
+                {
+                    if (result == FLY_SESSION_V2_ACCEPTED)
+                    {
+                        const auto cancelled = ports_.cancel_quic(
+                            &link_handshake_effect.token);
+                        if (cancelled == FLY_SESSION_V2_OK ||
+                            cancelled == FLY_SESSION_V2_CANCELLED ||
+                            cancelled == FLY_SESSION_V2_DUPLICATE)
+                            retired_control_quic_.reset();
+                    }
+                    else
+                        retired_control_quic_.reset();
+                    if (shutdown_requested_) complete_shutdown_locked();
+                }
+            }
             if (result != FLY_SESSION_V2_ACCEPTED && result != FLY_SESSION_V2_OK)
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                link_handshake_active_ = false;
-                link_handshake_dispatch_pending_ = false;
-                cancel_link_handshake_locked();
-                cancel_pair_material_locked();
-                release_pair_material_locked();
-                discovery_disconnect_pending_ = discovery_connection_ != 0;
-                publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                if (!shutdown_requested_ && link_handshake_ &&
+                    link_handshake_active_ && same_token(
+                        link_handshake_token_, link_handshake_effect.token))
+                {
+                    link_handshake_active_ = false;
+                    link_handshake_dispatch_pending_ = false;
+                    cancel_link_handshake_locked();
+                    cancel_pair_material_locked();
+                    release_pair_material_locked();
+                    discovery_disconnect_pending_ = discovery_connection_ != 0;
+                    publish_link_view_locked(FLY_SESSION_LINK_FAILED_V2);
+                }
             }
             continue;
         }

@@ -243,6 +243,7 @@ private:
     std::optional<RetiredQuicOperation> retired_content_quic_{};
     fly_session_op_token_v2 session_signing_token_{};
     fly_session_op_token_v2 link_handshake_token_{};
+    bool link_handshake_submit_inflight_ = false;
     fly_session_op_token_v2 gatt_write_token_{};
     /*
      * The engine-wide operation-id high-water mark. It is only ever advanced:
