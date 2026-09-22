@@ -63,9 +63,9 @@
   明确等待 `nearbySessionSnapshotV2` 的未实现测试，不在本次 LAN MVP 同步范围。
 - 详细命令与边界见 [验证记录](../verification/2026-09-23-nearby-three-platform-sync.md)。
 
-## 本 worktree 待完成
+## 本 worktree 收尾
 
-- 完成提交并推送目标分支；不合并回 main。
+- 已提交并推送 `codex/nearby-three-platform-bidirectional`；未合并回 main。
 - 六个有向跨端组合、异常后重建边界和真机体验作为后续验收，不在本次同步中补做完整功能。
 - Android/iOS 尚未接入真实相机取景，只验证平台扫码结果进入共享邀请解析器；新增的
   Harmony 房主与 iOS 方向目前只选择双方已有的合格内置游戏，导入 ROM/新方向换游戏后续再做。
