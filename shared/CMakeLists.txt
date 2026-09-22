@@ -460,6 +460,28 @@ if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
             DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
             COMMENT "cargo build --release --target ${FLYNES_QUIC_RUST_TARGET} (nearby QUIC)"
             VERBATIM)
+    elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        if(CMAKE_OSX_SYSROOT MATCHES "iPhoneSimulator")
+            if(CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+                set(FLYNES_QUIC_RUST_TARGET x86_64-apple-ios)
+            elseif(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+                set(FLYNES_QUIC_RUST_TARGET aarch64-apple-ios-sim)
+            else()
+                message(FATAL_ERROR "nearby QUIC provider: unsupported iOS simulator architecture ${CMAKE_OSX_ARCHITECTURES}")
+            endif()
+        else()
+            set(FLYNES_QUIC_RUST_TARGET aarch64-apple-ios)
+        endif()
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/${FLYNES_QUIC_RUST_TARGET}/release/libflynes_nearby_quic_provider.a")
+        list(APPEND FLYNES_QUIC_CARGO_ARGS --target "${FLYNES_QUIC_RUST_TARGET}")
+        add_custom_command(
+            OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+            COMMAND "${FLYNES_CARGO_EXECUTABLE}" ${FLYNES_QUIC_CARGO_ARGS}
+            WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
+            DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
+            COMMENT "cargo build --release --target ${FLYNES_QUIC_RUST_TARGET} (nearby QUIC)"
+            VERBATIM)
     elseif(WIN32)
         set(FLYNES_QUIC_PROVIDER_LIBRARY
             "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/flynes_nearby_quic_provider.lib")

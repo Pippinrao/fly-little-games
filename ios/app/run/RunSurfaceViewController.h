@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *gameTitle;
 // Canonical ROM bytes resolved by the app bridge before presenting this controller.
 @property(nonatomic, copy, nullable) NSData *romData;
+@property(nonatomic) BOOL nearbySession;
 @property(nonatomic, copy, nullable) void (^onPauseCommand)(NSString *commandId);
 
 - (void)reloadProductSettings;

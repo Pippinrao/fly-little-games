@@ -154,7 +154,7 @@
 "nearby.blocked.friend_store" = "当前构建尚未接入好友存储，无法列出任何已保存身份。";
 "nearby.blocked.discovery" = "当前构建尚未接入设备发现。";
 "nearby.stage.permission" = "权限";
-"nearby.stage.permission.reason_ios" = "尚未申请：当前构建未声明蓝牙、相机或本地网络用途，因此无法报告权限状态。";
+"nearby.stage.permission.reason_ios" = "附近联机已声明本地网络用途；当前构建不申请蓝牙或相机权限。";
 "nearby.stage.discovery" = "发现";
 "nearby.stage.discovery.reason" = "尚未接入发现承载通道，无法发现或验证任何设备。";
 "nearby.stage.auth" = "认证";
@@ -188,7 +188,7 @@
 "nearby.friends.delete" = "删除";
 "nearby.friends.block" = "屏蔽";
 "nearby.friends.identity_reset" = "重置本机身份";
-"nearby.blocked.permissions" = "当前构建未声明蓝牙、相机或本地网络用途，无法申请或报告权限状态。";
+"nearby.blocked.permissions" = "当前构建已为附近联机声明本地网络用途；不申请蓝牙或相机权限。";
 "nearby.blocked.auth" = "当前构建尚未接入认证通道。";
 "nearby.blocked.wifi" = "当前构建尚未接入 Wi-Fi 通路协商。";
 "nearby.blocked.quic" = "当前构建尚未接入 QUIC 传输。";

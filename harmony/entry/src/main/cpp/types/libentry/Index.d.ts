@@ -222,8 +222,11 @@ export interface NearbyMvpStepResult {
   pcm: ArrayBuffer;
 }
 export const nearbyMvpJoin: (qrText: string) => boolean;
+export const nearbyMvpHost: (token: Uint8Array | ArrayBuffer) => boolean;
+export const nearbyMvpInvite: () => string;
 export const nearbyMvpSnapshot: () => NearbyMvpSnapshotDto;
 export const nearbyMvpSelectRom: (rom: Uint8Array | ArrayBuffer) => boolean;
+export const nearbyMvpSelectGame: (rom: Uint8Array | ArrayBuffer, gameKey: string) => boolean;
 export const nearbyMvpConfirm: () => boolean;
 export const nearbyMvpStep: (buttons: number) => NearbyMvpStepResult;
 export const nearbyMvpCancel: () => boolean;

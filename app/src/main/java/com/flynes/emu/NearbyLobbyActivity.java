@@ -122,22 +122,7 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
         mvpOwner = app.nearbyMvpOwner();
         if (mvpOwner != null && mvpOwner.active()) {
             mvpSession = mvpOwner.session();
-            findViewById(R.id.nearby_lobby_row_rom_identity).setOnClickListener(view -> {
-                if (mvpSession.returnLobby()) startActivity(new Intent(this, HomeActivity.class)
-                        .putExtra("nearby_choose_game", true));
-            });
-            try {
-                if (mvpOwner.gameTitle().isEmpty() && mvpSession.snapshot()[0] == NearbyMvpSession.LOBBY) {
-                NearbyMvpGame.Selection selection = NearbyMvpGame.load(this);
-                if (!mvpSession.selectGame(selection.rom, selection.entry.canonicalId)) throw new IOException("ROM rejected");
-                mvpOwner.gameTitle(java.util.Locale.getDefault().getLanguage().equals("zh")
-                                    ? selection.entry.titleZhHans : selection.entry.titleEn);
-                }
-            } catch (IOException failure) {
-                confirm.setEnabled(false);
-                confirmReason.setText(R.string.nearby_blocked_rom_transfer);
-                confirmReason.setVisibility(View.VISIBLE);
-            }
+            configureLocalGameIfNeeded();
             bindSnapshot();
             return;
         }
@@ -173,14 +158,30 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
         if (mvpSession != null) {
             int[] snapshot = mvpSession.snapshot();
             if (snapshot == null || snapshot.length < 9) return;
+            configureLocalGameIfNeeded();
             boundLinkState = snapshot[0];
             LinearLayout gameRow = findViewById(R.id.nearby_lobby_row_rom_identity);
-            ((TextView) gameRow.getChildAt(1)).setText(mvpOwner.gameTitle() + " · " + getString(R.string.nearby_choose_game));
-            gameRow.setContentDescription(getString(R.string.nearby_choose_game));
+            boolean localHost = snapshot[4] == 1;
+            String gameTitle = mvpOwner.gameTitle();
+            ((TextView) gameRow.getChildAt(1)).setText(localHost
+                    ? gameTitle + " · " + getString(R.string.nearby_choose_game)
+                    : gameTitle);
+            gameRow.setContentDescription(localHost
+                    ? gameTitle + ", " + getString(R.string.nearby_choose_game)
+                    : gameTitle);
+            if (localHost) {
+                gameRow.setOnClickListener(view -> {
+                    if (mvpSession.returnLobby()) startActivity(new Intent(this, HomeActivity.class)
+                            .putExtra("nearby_choose_game", true));
+                });
+            } else {
+                gameRow.setOnClickListener(null);
+                gameRow.setClickable(false);
+            }
             LinearLayout hostRow = findViewById(R.id.nearby_lobby_row_network_owner);
-            ((TextView) hostRow.getChildAt(1)).setText("Android · P1");
+            ((TextView) hostRow.getChildAt(1)).setText(localHost ? "Android · P1" : "P1");
             LinearLayout seatRow = findViewById(R.id.nearby_lobby_row_seat);
-            ((TextView) seatRow.getChildAt(1)).setText("P1 ↔ P2");
+            ((TextView) seatRow.getChildAt(1)).setText(localHost ? "Android · P1" : "Android · P2");
             confirm.setEnabled(snapshot[0] == NearbyMvpSession.CONFIGURING && snapshot[5] != 0 && snapshot[6] != 0 && snapshot[7] == 0);
             confirm.setText(snapshot[7] != 0
                     ? R.string.nearby_config_confirmed : R.string.nearby_lobby_confirm);
@@ -230,6 +231,38 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
             confirmReason.setVisibility(View.VISIBLE);
         }
         confirm.setContentDescription(confirm.getText() + ", " + confirmReason.getText());
+    }
+
+    private void configureLocalGameIfNeeded() {
+        if (mvpSession == null) return;
+        int[] snapshot = mvpSession.snapshot();
+        if (snapshot == null || snapshot.length < 9 || snapshot[5] != 0) return;
+        try {
+            boolean localHost = snapshot[4] == 1;
+            NearbyMvpGame.Selection selection;
+            boolean selected;
+            if (localHost && snapshot[0] == NearbyMvpSession.LOBBY) {
+                // A retained title means the host deliberately returned to the existing
+                // game picker; do not race that choice by auto-selecting the default.
+                if (!mvpOwner.gameTitle().isEmpty()) return;
+                selection = NearbyMvpGame.load(this);
+                selected = mvpSession.selectGame(selection.rom, selection.entry.canonicalId);
+            } else if (!localHost && snapshot[0] == NearbyMvpSession.CONFIGURING) {
+                String key = mvpSession.peerGameKey();
+                if (key.isEmpty()) return;
+                selection = NearbyMvpGame.load(this, key);
+                selected = mvpSession.selectRom(selection.rom);
+            } else {
+                return;
+            }
+            if (!selected) throw new IOException("ROM rejected");
+            mvpOwner.gameTitle(java.util.Locale.getDefault().getLanguage().equals("zh")
+                    ? selection.entry.titleZhHans : selection.entry.titleEn);
+        } catch (IOException failure) {
+            confirm.setEnabled(false);
+            confirmReason.setText(R.string.nearby_blocked_rom_transfer);
+            confirmReason.setVisibility(View.VISIBLE);
+        }
     }
 
     private void showDetail(int index) {

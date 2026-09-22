@@ -37,6 +37,24 @@ Java_com_flynes_emu_NearbyMvpSession_nativeHost(JNIEnv* env, jclass, jlong handl
     return result == 1 ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_flynes_emu_NearbyMvpSession_nativeJoin(JNIEnv* env, jclass, jlong handle,
+                                                 jstring local_ipv4, jstring invite) {
+    if (handle == 0 || local_ipv4 == nullptr || invite == nullptr) return JNI_FALSE;
+    const char* local = env->GetStringUTFChars(local_ipv4, nullptr);
+    const char* qr = env->GetStringUTFChars(invite, nullptr);
+    if (local == nullptr || qr == nullptr) {
+        if (local != nullptr) env->ReleaseStringUTFChars(local_ipv4, local);
+        if (qr != nullptr) env->ReleaseStringUTFChars(invite, qr);
+        return JNI_FALSE;
+    }
+    const auto size = static_cast<std::size_t>(env->GetStringUTFLength(invite));
+    const int result = fly_lan_mvp_join(session_from(handle), local, qr, size);
+    env->ReleaseStringUTFChars(invite, qr);
+    env->ReleaseStringUTFChars(local_ipv4, local);
+    return result == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_flynes_emu_NearbyMvpSession_nativeInvite(JNIEnv* env, jclass, jlong handle) {
     if (handle == 0) return nullptr;
@@ -82,6 +100,14 @@ Java_com_flynes_emu_NearbyMvpSession_nativeSessionId(JNIEnv* env, jclass, jlong 
                 reinterpret_cast<const jbyte*>(snapshot.session_id));
     }
     return result;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_flynes_emu_NearbyMvpSession_nativePeerGameKey(JNIEnv* env, jclass, jlong handle) {
+    fly_lan_mvp_snapshot snapshot{};
+    if (handle == 0 || !fly_lan_mvp_snapshot_read(session_from(handle), &snapshot))
+        return env->NewStringUTF("");
+    return env->NewStringUTF(snapshot.peer_game_key);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

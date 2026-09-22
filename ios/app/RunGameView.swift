@@ -5,6 +5,7 @@ struct RunGameView: UIViewControllerRepresentable {
     let canonicalId: String
     let romData: Data
     var gameTitle: String = ""
+    var nearbySession: Bool = false
     var onPauseCommand: (String) -> Void = { _ in }
     var overlayReloadGeneration: Int = 0
 
@@ -17,6 +18,7 @@ struct RunGameView: UIViewControllerRepresentable {
         controller.canonicalId = canonicalId
         controller.romData = romData
         controller.gameTitle = gameTitle
+        controller.nearbySession = nearbySession
         controller.onPauseCommand = { command in
             context.coordinator.onPauseCommand(command)
         }
@@ -26,6 +28,7 @@ struct RunGameView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: RunSurfaceViewController, context: Context) {
         uiViewController.canonicalId = canonicalId
         uiViewController.gameTitle = gameTitle
+        uiViewController.nearbySession = nearbySession
         context.coordinator.onPauseCommand = onPauseCommand
         uiViewController.onPauseCommand = { command in
             context.coordinator.onPauseCommand(command)

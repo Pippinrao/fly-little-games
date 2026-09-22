@@ -5,7 +5,7 @@ import { i18n } from '@kit.LocalizationKit';
 import { localizedGameTitle } from '../service/CatalogProductService';
 import { vibrator } from '@kit.SensorServiceKit';
 import { batteryInfo, BusinessError, thermal } from '@kit.BasicServicesKit';
-import nativePlay, { PlayRuntimeStatusDto, PlayStepResult, RenderStatusDto, SettingsDto } from 'libentry.so';
+import nativePlay, { NearbyMvpSnapshotDto, PlayRuntimeStatusDto, PlayStepResult, RenderStatusDto, SettingsDto } from 'libentry.so';
 import { GamepadOverlay } from '../overlay/GamepadOverlay';
 import { PlayService, rememberRomOpenError, RomLaunchLocator } from '../service/PlayService';
 import { CoverStore } from '../service/CoverStore';
@@ -476,7 +476,7 @@ struct RunGame {
   private tick(): void {
     try {
       if (this.nearby) {
-        const state = nativePlay.nearbyMvpSnapshot();
+        const state: NearbyMvpSnapshotDto = nativePlay.nearbyMvpSnapshot();
         if (state.state !== 6) {
           if (!this.returningToLobby) {
             this.returningToLobby = true;

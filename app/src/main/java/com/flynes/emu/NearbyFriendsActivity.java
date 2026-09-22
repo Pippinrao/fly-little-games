@@ -92,7 +92,7 @@ public final class NearbyFriendsActivity extends AppCompatActivity
         findViewById(R.id.nearby_action_create).setOnClickListener(view ->
                 NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_CREATE));
         findViewById(R.id.nearby_action_enter_code).setOnClickListener(view -> unsupported());
-        findViewById(R.id.nearby_action_scan_qr).setOnClickListener(view -> unsupported());
+        findViewById(R.id.nearby_action_scan_qr).setOnClickListener(view -> onScanClicked());
         findViewById(R.id.nearby_find_devices).setOnClickListener(view -> unsupported());
 
         findViewById(R.id.nearby_friends_manage).setOnClickListener(view ->

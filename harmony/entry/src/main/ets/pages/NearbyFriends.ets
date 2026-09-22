@@ -60,7 +60,7 @@ struct NearbyFriends {
           }
           Blank()
           this.action($r('app.string.nearby_action_create'), 'nearby_action_create', false,
-            () => this.unsupported())
+            () => { void router.pushUrl({ url: 'pages/NearbyPairing', params: { mode: 'create' } }); })
           this.action($r('app.string.nearby_action_enterCode'), 'nearby_action_enterCode', false,
             () => this.unsupported())
           this.action($r('app.string.nearby_action_scanQr'), 'nearby_action_scanQr', true,

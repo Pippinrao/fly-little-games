@@ -4,8 +4,10 @@ import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
+import static androidx.test.espresso.matcher.ViewMatchers.isClickable;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static org.hamcrest.Matchers.not;
 
 import android.widget.ImageView;
 import android.widget.FrameLayout;
@@ -307,6 +309,54 @@ public final class NearbyPairingTest {
                     guest.sessionId(), hostSessionId.get());
             org.junit.Assert.assertTrue("Host UI did not render the connected state",
                     hostUiConnected.get());
+        }
+    }
+
+    @Test
+    public void scanPageConsumesARealInviteAsGuestP2() throws Exception {
+        Class<?> addressClass = Class.forName("com.flynes.emu.NearbyMvpLanAddress");
+        Method currentAddress = addressClass.getDeclaredMethod("current");
+        currentAddress.setAccessible(true);
+        String localIpv4 = (String) currentAddress.invoke(null);
+        org.junit.Assert.assertNotNull("Emulator has no private IPv4", localIpv4);
+
+        try (NearbyMvpPeerTestBridge host = new NearbyMvpPeerTestBridge()) {
+            org.junit.Assert.assertTrue("Test host did not start", host.host(localIpv4));
+            String invite = host.invite();
+            org.junit.Assert.assertNotNull("Test host did not publish an invite", invite);
+            Intent intent = NearbyPairingActivity.scanIntent(
+                    ApplicationProvider.getApplicationContext());
+            intent.putExtra("nearby_mvp_scanned_invite", invite);
+            try (ActivityScenario<NearbyPairingActivity> scenario = ActivityScenario.launch(intent)) {
+                long deadline = SystemClock.elapsedRealtime() + 12_000L;
+                AtomicReference<int[]> product = new AtomicReference<>();
+                while (SystemClock.elapsedRealtime() < deadline) {
+                    Object app = ApplicationProvider.getApplicationContext();
+                    Method ownerMethod = app.getClass().getDeclaredMethod("nearbyMvpOwner");
+                    ownerMethod.setAccessible(true);
+                    Object owner = ownerMethod.invoke(app);
+                    Method sessionMethod = owner.getClass().getDeclaredMethod("session");
+                    sessionMethod.setAccessible(true);
+                    Object session = sessionMethod.invoke(owner);
+                    if (session != null) {
+                        Method snapshot = session.getClass().getDeclaredMethod("snapshot");
+                        snapshot.setAccessible(true);
+                        product.set((int[]) snapshot.invoke(session));
+                    }
+                    int[] value = product.get();
+                    int[] hostValue = host.snapshot();
+                    if (value != null && value.length > 4 && value[0] == NearbyMvpPeerTestBridge.LOBBY
+                            && hostValue != null && hostValue[0] == NearbyMvpPeerTestBridge.LOBBY) break;
+                    SystemClock.sleep(50L);
+                }
+                org.junit.Assert.assertNotNull("Product guest did not create a session", product.get());
+                org.junit.Assert.assertEquals("Product guest did not enter LOBBY",
+                        NearbyMvpPeerTestBridge.LOBBY, product.get()[0]);
+                org.junit.Assert.assertEquals("Android join role must be guest/P2",
+                        NearbyMvpPeerTestBridge.GUEST_P2, product.get()[4]);
+                onView(withId(R.id.nearby_lobby_row_rom_identity))
+                        .check(matches(not(isClickable())));
+            }
         }
     }
 

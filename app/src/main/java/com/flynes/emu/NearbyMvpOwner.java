@@ -1,6 +1,6 @@
 package com.flynes.emu;
 
-/** Process scoped owner for the one Android-host/Harmony-guest MVP session. */
+/** Process scoped owner for the one LAN MVP session, in either fixed host/P1 or guest/P2 role. */
 public final class NearbyMvpOwner implements AutoCloseable {
     private NearbyMvpSession session;
     private String gameTitle = "";
@@ -14,6 +14,18 @@ public final class NearbyMvpOwner implements AutoCloseable {
         if (ipv4 == null) return false;
         NearbyMvpSession replacement = new NearbyMvpSession();
         if (!replacement.host(ipv4)) {
+            replacement.close();
+            return false;
+        }
+        session = replacement;
+        return true;
+    }
+
+    public synchronized boolean startGuest(String localIpv4, String invite) {
+        close();
+        if (localIpv4 == null || invite == null) return false;
+        NearbyMvpSession replacement = new NearbyMvpSession();
+        if (!replacement.join(localIpv4, invite)) {
             replacement.close();
             return false;
         }

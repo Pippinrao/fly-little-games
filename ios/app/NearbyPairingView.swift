@@ -1,4 +1,6 @@
 import SwiftUI
+import CoreImage.CIFilterBuiltins
+import UIKit
 
 /// 配对 — the 6-digit-code block and the Wi-Fi-path block, each capability
 /// rendered per spec §4.
@@ -44,6 +46,9 @@ struct NearbyPairingView: View {
     @State private var joinSubmitted = false
     @State private var joinFailed = false
     @State private var nextJoinAttemptID: UInt64 = 1
+    @State private var mvpInvite = ""
+    @State private var mvpStarted = false
+    @State private var showLobby = false
     private let ticker = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
     private let bridge = FlyNesAppBridge.sharedInstance()
 
@@ -80,16 +85,25 @@ struct NearbyPairingView: View {
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
             if mode == .create && inviteCode.isEmpty {
+                do {
+                    try FlyNesNearbyBridge.sharedInstance.startHost()
+                    mvpStarted = true
+                } catch {
+                    mvpStarted = false
+                }
                 let snapshot = bridge.nearbyInviteSnapshot()
                 let activeGeneration = snapshot["hostGeneration"]?.uint64Value ?? 0
                 if (snapshot["hostPhase"]?.uint32Value ?? 0) == 1 && activeGeneration != 0 {
                     _ = bridge.nearbyHostCancelGeneration(activeGeneration)
                 }
                 publishInvite(regenerating: false)
+            } else if mode == .scan {
+                joinInjectedInviteIfPresent()
             }
         }
         .onDisappear { cancelOwnedRouteState() }
-        .onReceive(ticker) { _ in refreshInvite() }
+        .onReceive(ticker) { _ in refreshNearby() }
+        .navigationDestination(isPresented: $showLobby) { NearbyLobbyView() }
     }
 
     private var pageBackground: Color {
@@ -176,9 +190,13 @@ struct NearbyPairingView: View {
         VStack(spacing: 10) {
             ZStack {
                 Color.white
-                Text("nearby.invite.qrLabel")
-                    .nearbyRole(NearbyTypography.muted)
-                    .foregroundStyle(muted)
+                if let image = qrImage(mvpInvite) {
+                    Image(uiImage: image).interpolation(.none).resizable().scaledToFit().padding(8)
+                } else {
+                    Text("nearby.invite.qrLabel")
+                        .nearbyRole(NearbyTypography.muted)
+                        .foregroundStyle(muted)
+                }
             }
             .frame(width: 170, height: 170)
             Text("nearby.invite.qrHint")
@@ -283,6 +301,8 @@ struct NearbyPairingView: View {
                     .stroke(style: StrokeStyle(lineWidth: 2, dash: [6]))
                     .foregroundStyle(muted)
             )
+            .contentShape(Rectangle())
+            .onTapGesture { joinScannedInvite(UIPasteboard.general.string) }
             Text("nearby.scan.afterScan")
                 .nearbyRole(NearbyTypography.muted)
                 .foregroundStyle(muted)
@@ -446,6 +466,41 @@ struct NearbyPairingView: View {
         inviteRemainingSeconds = Int((remaining + 999_999_999) / 1_000_000_000)
     }
 
+    private func refreshNearby() {
+        refreshInvite()
+        let nearby = FlyNesNearbyBridge.sharedInstance
+        if mode == .create && mvpStarted { mvpInvite = nearby.inviteText() ?? "" }
+        let state = (nearby.snapshot()["state"] as? NSNumber)?.uint32Value ?? 0
+        if state == 3 || state == 5 { showLobby = true }
+    }
+
+    private func joinInjectedInviteIfPresent() {
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-flynes.nearby.invite"), index + 1 < arguments.count {
+            joinScannedInvite(arguments[index + 1])
+        }
+    }
+
+    private func joinScannedInvite(_ invite: String?) {
+        guard let invite, invite.hasPrefix("flynes-lan-v1:") else { return }
+        do {
+            try FlyNesNearbyBridge.sharedInstance.joinInvite(invite)
+            mvpStarted = true
+        } catch {
+            mvpStarted = false
+        }
+        joinFailed = !mvpStarted
+    }
+
+    private func qrImage(_ text: String) -> UIImage? {
+        guard !text.isEmpty else { return nil }
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        return UIImage(ciImage: output.transformed(by: CGAffineTransform(scaleX: 8, y: 8)))
+    }
+
     private func clearInvite() {
         inviteCode = ""
         inviteGeneration = 0
@@ -462,6 +517,7 @@ struct NearbyPairingView: View {
         }
         clearInvite()
         joinSubmitted = false
+        if !showLobby && mvpStarted { FlyNesNearbyBridge.sharedInstance.cancel() }
     }
 
     private func monotonicNanoseconds() -> UInt64 {

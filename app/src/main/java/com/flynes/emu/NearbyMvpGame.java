@@ -35,5 +35,26 @@ final class NearbyMvpGame {
         throw new IOException("No two-player game is declared by the content manifest");
     }
 
+    static Selection load(Context context, String canonicalId) throws IOException {
+        if (canonicalId == null || canonicalId.isEmpty()) throw new IOException("Missing game identity");
+        BuiltinGames games = BuiltinGames.fromAssets(context);
+        for (BuiltinGames.Entry entry : games.all()) {
+            if (!canonicalId.equals(entry.canonicalId)) continue;
+            if (entry.multiplayerEligibility != BuiltinGames.MultiplayerEligibility.SUPPORTED ||
+                    entry.multiplayerMaxPlayers != 2) throw new IOException("Game is not eligible for nearby play");
+            try (InputStream input = context.getAssets().open(entry.assetPath());
+                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    if (count > 0) output.write(buffer, 0, count);
+                    if (output.size() > 4 * 1024 * 1024) throw new IOException("MVP ROM is too large");
+                }
+                return new Selection(entry, output.toByteArray());
+            }
+        }
+        throw new IOException("The host-selected game is not available locally");
+    }
+
     private NearbyMvpGame() {}
 }

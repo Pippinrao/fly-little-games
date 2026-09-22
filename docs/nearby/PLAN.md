@@ -1,5 +1,52 @@
 # 附近联机最小可玩执行计划
 
+## 2026-09-23：三端双向同步增量
+
+基线：`origin/main@612f76d`，版本线由版本化 worktree 预留为 `1.9.x`。本增量不重做
+下文已经完成的 Android 房主 → HarmonyOS 客机功能，也不改变 UX；只把同一 LAN MVP
+owner 同步到三端两个角色。
+
+### T0 — 文档与不可变契约
+
+- [x] 更新 README、DESIGN、PLAN、STATUS，明确三端双向仅是现有最小可玩的同步。
+- [x] 用共享层回归锁定邀请/线协议不变、host=P1、guest=P2，以及反向选择游戏、暂停、
+  回大厅、同连接换游戏、错误和重连边界。
+- [x] 保留 Android 房主 → HarmonyOS 客机已有门禁，不修改现有二维码和消息格式。
+
+### T1 — Android 与 Harmony 补齐缺失角色
+
+- [x] Android `NearbyMvpOwner`/JNI 增加 guest 启动；已有扫码页消费真实邀请并进入原大厅，
+  大厅和游戏页从 snapshot role 决定本地座位与房主权限。
+- [x] Harmony `NearbyService`/N-API 增加 host 启动与邀请读取；已有创建页显示二维码并进入
+  原大厅，客机路径保持兼容；大厅和游戏页从 snapshot role 决定座位与房主权限。
+- [x] Android instrumentation 已完成红绿；Harmony 新增 N-API host Hypium 断言，但完整
+  ohosTest 仍被既有测试文件的 ArkTS 严格类型错误阻塞，见 STATUS 与验证记录。
+
+### T2 — iOS 接入同一 owner
+
+- [x] iOS 构建把 Rust QUIC provider 交叉编译为所选 iPhoneSimulator/iPhoneOS 架构，
+  `FlyNES` 链接 `flynes_lan_mvp`；不复制协议实现。
+- [x] 新增薄 ObjC++ bridge 管理一个进程级 session，向 Swift 暴露 host/join、invite、snapshot、
+  选 ROM/确认、输入、帧、PCM、暂停、回大厅、取消。
+- [x] 现有 Nearby 创建/扫码/大厅/游戏页接到该 bridge；不改变页面层级、按钮集合或暂停 UX。
+- [x] iOS 邀请格式断言完成红绿；官方脚本产品构建、定向 Runtime、Nearby UI 与安装启动通过。
+
+### T3 — 后续组合验收（不扩入本次同步提交）
+
+- [ ] 使用真实三端 App、真实 QUIC、真实 ROM/核心验证 A→H、H→A、A→I、I→A、H→I、I→H。
+- [ ] 每个组合覆盖同 ROM、P1/P2 输入；每个平台至少一次完整覆盖暂停/继续、回大厅、
+  同连接换游戏、主动退出、网络错误后旧会话不复活及重新建房/加入。
+- [x] 完成当前改动可运行的 host CTest、Android 单元与 emulator instrumentation、Harmony
+  host CTest、iOS Simulator Runtime/UI，并记录阻塞与证据；不把未运行的 Hypium/跨端组合写成通过。
+- [ ] 仅把摄像头实际取景、真实热点、物理触控/扬声器、功耗温度与物理端到端延迟留给真机。
+
+### T4 — 提交与推送
+
+- [ ] 检查内容/版本/ABI 门禁与 tracked tree，确认没有签名材料、凭据、私有 ROM 或生成包。
+- [ ] 提交并推送 `codex/nearby-three-platform-bidirectional`，不合并 `main`。
+
+以下章节保留 2026-09-22 已完成工作的原始计划与证据，作为回归基线而非新增范围。
+
 更新：2026-09-22。设计：[DESIGN.md](DESIGN.md)。当前基线：`main@8b071ad` 加工作区中的 P1 接线与 UX 修复。
 目标：Android 房主/P1 开个人热点，HarmonyOS 客机/P2 手动加入后扫码，在两个 App 中玩一款真实游戏。
 

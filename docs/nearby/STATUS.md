@@ -1,9 +1,18 @@
 # 最小可玩状态
 
-更新：2026-09-23。当前工作区为 `main`；本页所述实现已进入集成提交。
-目标：Android 房主/P1 → HarmonyOS 客机/P2；先修基本可玩，不扩散范围。
+更新：2026-09-23。当前实现 worktree 为 `codex/nearby-three-platform-bidirectional`，
+基线 `origin/main@612f76d`，预留版本线 `1.9.x`。
+目标：把现有最小可玩同步到 Android、HarmonyOS NEXT、iOS，三端均可作为房主/P1
+或客机/P2；不改变 UX，不扩展为完整 Nearby 功能。
 
 ## 当前结论
+
+- 已有共享 LAN MVP 协议与 runtime 本身按 host/guest 工作，且 host=P1、guest=P2。当前
+  worktree 已补齐 Android guest、Harmony host，并把 iOS 接到同一个 LAN MVP owner。
+- 本增量保留现有三端 Nearby 页面、游戏页和暂停交互。不会增加好友、六码发现、ROM
+  传输、自动组网/恢复、STREAM、预测回滚或新的 UX。
+- 对称性目标为 A→H、H→A、A→I、I→A、H→I、I→H。尚未产生的新组合证据不得
+  从共享 ABI、主机双实例或构建成功推断。
 
 - 真实热点连接和一次摄像头扫码已进入双方 RUNNING；旧版存在操作页不一致、输入积压及鸿蒙音频未播放的问题，不能据此前画面同步记录为可玩完成。
 - 当前两端改用原有单机页面：Android `MainActivity`、Harmony `RunGame`。复用手柄、暂停按钮、暂停抽屉。
@@ -40,7 +49,29 @@
 - 本轮软件修复先在两个模拟器验证。最新可玩改动尚未通过真机触屏、扬声器、十分钟试玩及物理延迟验收。
 - 目前 ADB/HDC 列表只有模拟器；不再反复要求用户扫码。
 
+## 2026-09-23 本次同步证据
+
+- 共享 LAN MVP CTest：11/11；Rust QUIC provider：30/30；内容单一来源门禁通过。
+- Android：`testDebugUnitTest`、产品/测试 APK 构建通过；排除需要外部 Harmony 对端的
+  专用驱动后，Nearby pairing instrumentation 41/41，通过真实本机 host 邀请验证 guest=P2，
+  并验证客机不能进入房主游戏选择。
+- Harmony：产品 HAP 构建通过，host CTest 14/14；新增 N-API host Hypium 用例已编写。
+  完整 ohosTest 打包被既有测试中的 29 处 ArkTS 严格类型错误阻塞，因此未声明 Hypium 通过；
+  当前工程也未配置签名，未安装本次 HAP。
+- iOS：官方脚本产品构建通过；新增 bridge Runtime 用例通过；Nearby/UX 定向 UI 14/14；
+  产品已安装并启动于 iOS Simulator。完整 Runtime 52 条中 51 条通过，唯一红灯是仓库已有、
+  明确等待 `nearbySessionSnapshotV2` 的未实现测试，不在本次 LAN MVP 同步范围。
+- 详细命令与边界见 [验证记录](../verification/2026-09-23-nearby-three-platform-sync.md)。
+
+## 本 worktree 待完成
+
+- 完成提交并推送目标分支；不合并回 main。
+- 六个有向跨端组合、异常后重建边界和真机体验作为后续验收，不在本次同步中补做完整功能。
+- Android/iOS 尚未接入真实相机取景，只验证平台扫码结果进入共享邀请解析器；新增的
+  Harmony 房主与 iOS 方向目前只选择双方已有的合格内置游戏，导入 ROM/新方向换游戏后续再做。
+
 ## 后续范围
 
-iOS、反向建房、自动组网/恢复、ROM 传输、STREAM、预测回滚、全 ROM 兼容、功耗温度和硬件刷新率认证仍是后续事项。
+自动组网/恢复、ROM 传输、STREAM、预测回滚、换座、真实相机接线、新方向的导入 ROM/
+换游戏、全 ROM 兼容、功耗温度和硬件刷新率认证仍是后续事项。
 历史软件门槛见 [早期模拟器记录](../verification/2026-09-22-nearby-simulator-gate.md)，不能替代本轮产品交互验证。

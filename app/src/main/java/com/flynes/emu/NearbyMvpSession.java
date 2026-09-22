@@ -32,6 +32,11 @@ final class NearbyMvpSession implements AutoCloseable {
         }
     }
 
+    synchronized boolean join(String localIpv4, String invite) {
+        return handle != 0 && localIpv4 != null && invite != null
+                && nativeJoin(handle, localIpv4, invite);
+    }
+
     synchronized String invite() {
         return handle == 0 ? null : nativeInvite(handle);
     }
@@ -42,6 +47,10 @@ final class NearbyMvpSession implements AutoCloseable {
 
     synchronized byte[] sessionId() {
         return handle == 0 ? null : nativeSessionId(handle);
+    }
+
+    synchronized String peerGameKey() {
+        return handle == 0 ? "" : nativePeerGameKey(handle);
     }
 
     synchronized boolean selectRom(byte[] rom) {
@@ -80,9 +89,11 @@ final class NearbyMvpSession implements AutoCloseable {
 
     private static native long nativeCreate();
     private static native boolean nativeHost(long handle, String ipv4, byte[] token);
+    private static native boolean nativeJoin(long handle, String localIpv4, String invite);
     private static native String nativeInvite(long handle);
     private static native int[] nativeSnapshot(long handle);
     private static native byte[] nativeSessionId(long handle);
+    private static native String nativePeerGameKey(long handle);
     private static native boolean nativeSelectRom(long handle, byte[] rom);
     private static native boolean nativeSelectGame(long handle, byte[] rom, String key);
     private static native boolean nativeConfirm(long handle);

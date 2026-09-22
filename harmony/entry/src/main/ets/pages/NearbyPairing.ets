@@ -50,6 +50,7 @@ struct NearbyPairing {
   @State private mvpState: number = 0;
   @State private mvpReason: number = 0;
   @State private mvpScanActive: boolean = false;
+  @State private mvpInvite: string = '';
   private loggedMvpState: number = -1;
   private mvpLobbyOpened: boolean = false;
   private readonly mvpFlow: NearbyMvpScanFlow = new NearbyMvpScanFlow(new NativeMvpPort());
@@ -67,8 +68,15 @@ struct NearbyPairing {
       if (snapshot.hostPhase === 1 && snapshot.hostGeneration > 0) {
         nativeSession.nearbyInviteHostCancel(snapshot.hostGeneration);
       }
-      this.publishInvite(false);
-      this.startInviteTimer();
+      nativeSession.nearbyMvpCancel();
+      const token = cryptoFramework.createRandom().generateRandomSync(16).data;
+      if (nativeSession.nearbyMvpHost(token)) {
+        this.mvpFlow.appear();
+        this.startMvpTimer();
+      } else {
+        this.mvpState = 4;
+        this.mvpReason = 2;
+      }
     } else if (this.mode === 'scan') {
       this.mvpFlow.appear();
       this.startMvpTimer();
@@ -82,7 +90,7 @@ struct NearbyPairing {
     // Scan Kit temporarily hides this page. Keep the guest owner alive across
     // that UI extension; explicit cancel/back calls leave() below.
     if (this.mode === 'scan') this.mvpFlow.hideForScanner();
-    else nativeSession.nearbyMvpCancel();
+    else if (!this.mvpLobbyOpened) nativeSession.nearbyMvpCancel();
     if (this.inviteGeneration > 0) {
       nativeSession.nearbyInviteHostCancel(this.inviteGeneration);
     }
@@ -105,6 +113,7 @@ struct NearbyPairing {
       }
       this.mvpState = snapshot.state;
       this.mvpReason = snapshot.reason;
+      if (this.mode === 'create') this.mvpInvite = nativeSession.nearbyMvpInvite();
       if (snapshot.state === 3 && !this.mvpLobbyOpened) {
         this.mvpLobbyOpened = true;
         this.stopMvpTimer();
@@ -142,6 +151,7 @@ struct NearbyPairing {
 
   private mvpStatusText(): Resource {
     if (this.mvpState === 3) return $r('app.string.nearby_mvp_connected');
+    if (this.mvpState === 1) return $r('app.string.nearby_invite_footer');
     if (this.mvpState === 2) return $r('app.string.nearby_mvp_joining');
     if (this.mvpState === 4 && this.mvpReason === 4) return $r('app.string.nearby_mvp_expired');
     if (this.mvpState === 4) return $r('app.string.nearby_mvp_failed');
@@ -180,7 +190,7 @@ struct NearbyPairing {
   private publishInvite(regenerate: boolean): void {
     // N01: the shared reducer owns the generation fence and 60-second expiry.
     const nowMs = this.monotonicNowMs();
-    const generation = nativeSession.nearbyInviteNextHostGeneration();
+    const generation: number = nativeSession.nearbyInviteNextHostGeneration();
     const code = this.secureInviteCode();
     const accepted: boolean = regenerate
       ? nativeSession.nearbyInviteHostRegenerate(generation, code, nowMs)
@@ -313,9 +323,14 @@ struct NearbyPairing {
         }.width('44%').height('100%').justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Start)
         Column({ space: 12 }) {
-          Text(this.mode === 'scan' ? this.mvpStatusText() : $r('app.string.nearby_not_supported'))
+          Text(this.mode === 'scan' || this.mode === 'create'
+            ? this.mvpStatusText() : $r('app.string.nearby_not_supported'))
             .id('nearby_pairing_status').fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.body.size)
             .fontColor(COLOR_ON_SURFACE).width('100%')
+          if (this.mode === 'create' && this.mvpInvite.length > 0) {
+            QRCode(this.mvpInvite).id('nearby_invite_qr').width(180).height(180)
+              .color(Color.Black).backgroundColor(Color.White)
+          }
           if (this.mode === 'scan') {
             this.action($r('app.string.nearby_action_switchToJoinCode'),
               'nearby_scan_switch_to_code', false, () => {

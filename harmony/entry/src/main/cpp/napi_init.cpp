@@ -2726,6 +2726,41 @@ napi_value NearbyMvpJoin(napi_env env, napi_callback_info info)
     });
 }
 
+napi_value NearbyMvpHost(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyMvpHost", [&]() {
+        napi_value argument = nullptr;
+        nearby_arguments(env, info, 1u, &argument, "nearbyMvpHost");
+        const std::vector<std::uint8_t> token = read_buffer(env, argument, "token");
+        if (token.size() != 16u) throw NapiTypeError("token must contain 16 bytes");
+        const std::string local = nearby_local_ipv4();
+        if (local.empty()) return create_bool(env, false, "no LAN address");
+        g_play.reset();
+        g_mvp_session.reset(fly_lan_mvp_create());
+        if (!g_mvp_session) return create_bool(env, false, "create LAN session");
+        fly_lan_mvp_set_diagnostic_sink(g_mvp_session.get(), mvp_diagnostic, nullptr);
+        const bool started = fly_lan_mvp_host(
+            g_mvp_session.get(), local.c_str(), token.data()) == 1;
+        if (!started) g_mvp_session.reset();
+        return create_bool(env, started, "host LAN session");
+    });
+}
+
+napi_value NearbyMvpInvite(napi_env env, napi_callback_info)
+{
+    return nearby_call(env, "nearbyMvpInvite", [&]() {
+        if (!g_mvp_session) return create_string(env, "", "empty LAN invite");
+        fly_lan_mvp_snapshot snapshot{};
+        (void)fly_lan_mvp_snapshot_read(g_mvp_session.get(), &snapshot);
+        const std::size_t size = fly_lan_mvp_copy_invite(g_mvp_session.get(), nullptr, 0);
+        if (size == 0u || size > 256u) return create_string(env, "", "pending LAN invite");
+        std::string value(size, '\0');
+        if (fly_lan_mvp_copy_invite(g_mvp_session.get(), value.data(), value.size()) != size)
+            return create_string(env, "", "unavailable LAN invite");
+        return create_string(env, value.c_str(), "LAN invite");
+    });
+}
+
 napi_value NearbyMvpSnapshot(napi_env env, napi_callback_info)
 {
     return nearby_call(env, "nearbyMvpSnapshot", [&]() {
@@ -2782,6 +2817,20 @@ napi_value NearbyMvpSelectRom(napi_env env, napi_callback_info info)
         g_mvp_timing = flynes::harmony::detect_source_timing(rom.data(), rom.size());
         return create_bool(env, fly_lan_mvp_select_rom(
             g_mvp_session.get(), rom.data(), rom.size()) == 1, "select LAN ROM");
+    });
+}
+
+napi_value NearbyMvpSelectGame(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyMvpSelectGame", [&]() {
+        napi_value arguments[2] = {nullptr, nullptr};
+        nearby_arguments(env, info, 2u, arguments, "nearbyMvpSelectGame");
+        if (!g_mvp_session) return create_bool(env, false, "no LAN session");
+        const std::vector<std::uint8_t> rom = read_buffer(env, arguments[0], "rom");
+        const std::string game_key = read_utf8_string(env, arguments[1], "gameKey");
+        g_mvp_timing = flynes::harmony::detect_source_timing(rom.data(), rom.size());
+        return create_bool(env, fly_lan_mvp_select_game(g_mvp_session.get(), rom.data(),
+            rom.size(), game_key.c_str()) == 1, "select LAN game");
     });
 }
 
@@ -3123,9 +3172,15 @@ napi_value Init(napi_env env, napi_value exports)
              napi_default, nullptr},
             {"nearbyMvpJoin", nullptr, NearbyMvpJoin, nullptr, nullptr, nullptr,
              napi_default, nullptr},
+            {"nearbyMvpHost", nullptr, NearbyMvpHost, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpInvite", nullptr, NearbyMvpInvite, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
             {"nearbyMvpSnapshot", nullptr, NearbyMvpSnapshot, nullptr, nullptr, nullptr,
              napi_default, nullptr},
             {"nearbyMvpSelectRom", nullptr, NearbyMvpSelectRom, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpSelectGame", nullptr, NearbyMvpSelectGame, nullptr, nullptr, nullptr,
              napi_default, nullptr},
             {"nearbyMvpConfirm", nullptr, NearbyMvpConfirm, nullptr, nullptr, nullptr,
              napi_default, nullptr},

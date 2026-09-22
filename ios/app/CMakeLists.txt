@@ -75,6 +75,7 @@ set(FLYNES_PRODUCT_SWIFT
 )
 set(FLYNES_PRODUCT_OBJCXX
     bridge/FlyNesAppBridge.mm
+    bridge/FlyNesNearbyBridge.mm
     bridge/FlyNesRuntimeBridge.mm
     platform/FlyNesBookmarkStore.mm
     platform/CatalogScanCoordinator.mm
@@ -122,6 +123,7 @@ add_executable(FlyNES MACOSX_BUNDLE
     ${FLYNES_PRODUCT_OBJCXX}
     ${FLYNES_PRODUCT_METAL}
     bridge/FlyNes-Bridging-Header.h
+    bridge/FlyNesNearbyBridge.h
     metal/FALLBACK.md
     en.lproj/Localizable.strings
     zh-Hans.lproj/Localizable.strings
@@ -197,6 +199,7 @@ target_link_libraries(FlyNES PRIVATE
     flynes_runtime
     flynes_product
     flynes_session
+    flynes_lan_mvp
     nes_abi
     "-framework Foundation"
     "-framework UIKit"
@@ -208,6 +211,7 @@ target_link_libraries(FlyNES PRIVATE
     "-framework CoreGraphics"
     "-framework ImageIO"
     "-framework AVFoundation"
+    "-framework Security"
 )
 target_link_options(FlyNES PRIVATE
     "-Wl,-dead_strip"
@@ -282,6 +286,7 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
     xctest_add_bundle(FlyNESRuntimeTests FlyNES
         ../tests/PlaybackRuntimeBridgeTests.mm
         ../tests/NearbySessionV2BridgeTests.mm
+        ../tests/NearbyMvpBridgeTests.mm
         ../tests/GamepadOverlayTests.mm
         ../tests/PlaybackAudioPlayerTests.mm
         ../tests/CatalogTitleCoverTests.mm
@@ -289,7 +294,7 @@ if(FLYNES_IOS_IS_SIMULATOR AND FLYNES_IOS_BUILD_XCTESTS)
         ../tests/MetalPixelParityTests.mm
         ../tests/PlaybackSoakTests.mm)
     target_include_directories(FlyNESRuntimeTests PRIVATE bridge run platform "../../shared/include" "../../core/include")
-    target_link_libraries(FlyNESRuntimeTests PRIVATE flynes_runtime "-framework UIKit" "-framework AVFoundation" "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
+    target_link_libraries(FlyNESRuntimeTests PRIVATE flynes_runtime flynes_lan_mvp "-framework UIKit" "-framework AVFoundation" "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore" "-framework Security")
     target_compile_features(FlyNESRuntimeTests PRIVATE cxx_std_17)
     set_target_properties(FlyNESRuntimeTests PROPERTIES
         XCODE_GENERATE_SCHEME YES

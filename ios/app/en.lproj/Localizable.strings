@@ -154,7 +154,7 @@
 "nearby.blocked.friend_store" = "This build has no friend store, so no saved identity can be listed.";
 "nearby.blocked.discovery" = "This build has no device discovery connected.";
 "nearby.stage.permission" = "Permission";
-"nearby.stage.permission.reason_ios" = "Not requested yet: this build declares no Bluetooth, camera or local-network usage, so no permission state can be reported.";
+"nearby.stage.permission.reason_ios" = "Local-network access is declared for Nearby Play; Bluetooth and camera access are not requested in this build.";
 "nearby.stage.discovery" = "Discovery";
 "nearby.stage.discovery.reason" = "No discovery bearer is connected, so no device can be found or verified.";
 "nearby.stage.auth" = "Authentication";
@@ -189,7 +189,7 @@
 "nearby.friends.delete" = "Delete";
 "nearby.friends.block" = "Block";
 "nearby.friends.identity_reset" = "Reset this device identity";
-"nearby.blocked.permissions" = "This build declares no Bluetooth, camera or local-network usage, so no permission state can be requested or reported.";
+"nearby.blocked.permissions" = "This build declares local-network access for Nearby Play; Bluetooth and camera access are not requested.";
 "nearby.blocked.auth" = "This build has no authentication channel connected.";
 "nearby.blocked.wifi" = "This build has no Wi-Fi path negotiation connected.";
 "nearby.blocked.quic" = "This build has no QUIC transport connected.";

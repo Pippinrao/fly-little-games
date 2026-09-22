@@ -48,6 +48,7 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     public static final String MODE_JOIN_CODE = "join_code";
     public static final String MODE_SCAN = "scan";
     private static final String EXTRA_MODE = "nearby_mode";
+    static final String EXTRA_SCANNED_INVITE = "nearby_mvp_scanned_invite";
 
     private NearbyInviteHostState invite;
     private NearbySession nearbySession;
@@ -105,6 +106,8 @@ public final class NearbyPairingActivity extends AppCompatActivity {
             nearbySession = ((FlyNesApplication) getApplication()).nearbySession();
             invite = new NearbyInviteHostState(nearbySession);
             showScanBlock();
+            String scannedInvite = getIntent().getStringExtra(EXTRA_SCANNED_INVITE);
+            if (scannedInvite != null) consumeScannedInvite(scannedInvite);
         }
         applyResponsiveColumns();
     }
@@ -393,6 +396,42 @@ public final class NearbyPairingActivity extends AppCompatActivity {
             finish();
         });
         findViewById(R.id.nearby_scan_cancel).setOnClickListener(view -> finish());
+    }
+
+    /** Shared result-consumption seam used by the camera scanner and simulator injection. */
+    void consumeScannedInvite(@NonNull String inviteText) {
+        if (!MODE_SCAN.equals(mode) || handoffStarted) return;
+        String localIpv4 = NearbyMvpLanAddress.current();
+        TextView status = findViewById(R.id.nearby_pairing_footer_copy);
+        if (localIpv4 == null || mvpOwner == null ||
+                !mvpOwner.startGuest(localIpv4, inviteText)) {
+            status.setText(localIpv4 == null ? R.string.nearby_mvp_no_lan
+                    : R.string.nearby_mvp_connection_failed);
+            return;
+        }
+        mvpSession = mvpOwner.session();
+        status.setText(R.string.nearby_screen_connecting);
+        ticker.post(new Runnable() {
+            @Override public void run() {
+                if (isFinishing() || isDestroyed() || mvpSession == null) return;
+                int[] snapshot = mvpSession.snapshot();
+                if (snapshot != null && snapshot.length >= 2 &&
+                        snapshot[0] == NearbyMvpSession.LOBBY) {
+                    handoffStarted = true;
+                    startActivity(new Intent(NearbyPairingActivity.this,
+                            NearbyLobbyActivity.class));
+                    finish();
+                    return;
+                }
+                if (snapshot != null && snapshot.length >= 2 &&
+                        snapshot[0] == NearbyMvpSession.ENDED) {
+                    status.setText(snapshot[1] == 4 ? R.string.nearby_mvp_expired
+                            : R.string.nearby_mvp_connection_failed);
+                    return;
+                }
+                ticker.postDelayed(this, 50L);
+            }
+        });
     }
 
     private MaterialToolbar toolbar() {

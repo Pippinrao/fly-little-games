@@ -1,9 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { router, promptAction } from '@kit.ArkUI';
-import nativeSession, { NearbyMvpSnapshotDto } from 'libentry.so';
+import nativeSession, { GameCenterRow, NearbyMvpSnapshotDto } from 'libentry.so';
 import { NEARBY_TYPE } from '../ui/NearbyTypography';
 import { NearbyLobbyRow, nearbyLobbyDetailRows, nearbyLobbyFirstScreenRows, nearbyString } from '../service/NearbyService';
-import { BuiltinGames } from '../service/BuiltinGames';
+import { BuiltinGame, BuiltinGames } from '../service/BuiltinGames';
 import { PlayService, RomLaunchLocator } from '../service/PlayService';
 
 @Entry
@@ -16,6 +16,7 @@ struct NearbyLobby {
   @State private mvpReason: number = 0;
   @State private localReady: number = 0;
   @State private peerReady: number = 0;
+  @State private role: number = 0;
   @State private gameTitle: string = '';
   @State private gameError: boolean = false;
   private loadingGame: string = '';
@@ -24,7 +25,7 @@ struct NearbyLobby {
   private playOpened: boolean = false;
 
   aboutToAppear(): void {
-    const snapshot = nativeSession.nearbyMvpSnapshot();
+    const snapshot: NearbyMvpSnapshotDto = nativeSession.nearbyMvpSnapshot();
     this.mvpActive = snapshot.state === 3 || snapshot.state === 5 || snapshot.state === 6 || snapshot.state === 7;
     if (!this.mvpActive) return;
     this.updateMvp(snapshot);
@@ -36,7 +37,19 @@ struct NearbyLobby {
     this.timerId = -1;
   }
 
-  private async selectHostGame(key: string): Promise<void> {
+  private defaultHostGame(): string {
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined) return '';
+    const games: BuiltinGame[] = BuiltinGames.loadSync(hostContext as common.UIAbilityContext).all();
+    for (let index = 0; index < games.length; index++) {
+      if (games[index].multiplayerEligibility === 'SUPPORTED' && games[index].multiplayerMaxPlayers === 2) {
+        return games[index].canonicalId;
+      }
+    }
+    return '';
+  }
+
+  private async selectLocalGame(key: string, publishKey: boolean): Promise<void> {
     if (key.length === 0 || this.loadingGame === key || this.selectedGame === key) return;
     this.loadingGame = key;
     this.gameError = false;
@@ -50,7 +63,8 @@ struct NearbyLobby {
       if (builtin !== undefined) {
         this.gameTitle = builtin.titleZhHans || builtin.titleEn;
       } else {
-        const row = nativeSession.catalogSnapshot().find((row) => row.canonicalId === key);
+        const row: GameCenterRow | undefined = nativeSession.catalogSnapshot()
+          .find((row: GameCenterRow) => row.canonicalId === key);
         if (row === undefined) throw new Error('Local game missing');
         locator.sourceUuidHex = row.sourceUuidHex;
         locator.sourceRelativePath = row.sourceRelativePath;
@@ -59,9 +73,12 @@ struct NearbyLobby {
         this.gameTitle = row.titleZhHans || row.titleEn || row.originalFilename;
       }
       const rom = await new PlayService().readRom(context, locator);
-      const latest = nativeSession.nearbyMvpSnapshot();
-      if (latest.peerGameKey !== key || latest.state !== 5) return;
-      if (!nativeSession.nearbyMvpSelectRom(rom)) throw new Error('Local ROM does not match');
+      const latest: NearbyMvpSnapshotDto = nativeSession.nearbyMvpSnapshot();
+      if (!publishKey && (latest.peerGameKey !== key || latest.state !== 5)) return;
+      const selected: boolean = publishKey
+        ? nativeSession.nearbyMvpSelectGame(rom, key)
+        : nativeSession.nearbyMvpSelectRom(rom);
+      if (!selected) throw new Error('Local ROM does not match');
       this.selectedGame = key;
     } catch (_) {
       this.gameError = true;
@@ -72,15 +89,20 @@ struct NearbyLobby {
   }
 
   private pollMvp(): void {
-    const snapshot = nativeSession.nearbyMvpSnapshot();
+    const snapshot: NearbyMvpSnapshotDto = nativeSession.nearbyMvpSnapshot();
     this.updateMvp(snapshot);
     if (snapshot.state === 3 || snapshot.state === 7) {
       this.selectedGame = '';
       this.gameTitle = '';
       this.gameError = false;
     }
-    if (snapshot.state === 5 && snapshot.localConfigured === 0 && !this.gameError)
-      void this.selectHostGame(snapshot.peerGameKey);
+    if (snapshot.localConfigured === 0 && !this.gameError) {
+      if (snapshot.role === 1 && snapshot.state === 3) {
+        void this.selectLocalGame(this.defaultHostGame(), true);
+      } else if (snapshot.role === 2 && snapshot.state === 5) {
+        void this.selectLocalGame(snapshot.peerGameKey, false);
+      }
+    }
     if (snapshot.state === 6 && !this.playOpened) {
       this.playOpened = true;
       if (this.timerId !== -1) clearInterval(this.timerId);
@@ -94,6 +116,7 @@ struct NearbyLobby {
     this.mvpReason = snapshot.reason;
     this.localReady = snapshot.localReady;
     this.peerReady = snapshot.peerReady;
+    this.role = snapshot.role;
   }
 
   private leave(): void {
@@ -130,8 +153,8 @@ struct NearbyLobby {
         }
       }.width('100%').layoutWeight(1).padding(16)
       if (this.mvpActive) {
-        Text(`P2 · ${this.mvpState === 6 ? 'RUNNING' :
-          this.localReady === 1 ? (this.peerReady === 1 ? 'READY' : 'WAITING FOR P1') : 'CONFIGURED'}`)
+        Text(`P${this.role === 1 ? '1' : '2'} · ${this.mvpState === 6 ? 'RUNNING' :
+          this.localReady === 1 ? (this.peerReady === 1 ? 'READY' : `WAITING FOR P${this.role === 1 ? '2' : '1'}`) : 'CONFIGURED'}`)
           .id('nearby_lobby_mvp_status').fontFamily('HarmonyOS Sans')
           .fontSize(NEARBY_TYPE.muted.size).fontColor(this.mvpReason === 0 ? '#BEB8AE' : '#FF6B5E')
           .width('100%').padding({ left: 16, right: 16 })
@@ -166,8 +189,8 @@ struct NearbyLobby {
       if (this.gameError) return $r('app.string.nearby_local_game_missing');
       return this.gameTitle || $r('app.string.nearby_wait_host_game');
     }
-    if (row.label === 'nearby_lobby_network_owner') return 'Android · P1';
-    return 'HarmonyOS · P2';
+    if (row.label === 'nearby_lobby_network_owner') return this.role === 1 ? 'HarmonyOS · P1' : 'P1';
+    return this.role === 1 ? 'HarmonyOS · P1' : 'HarmonyOS · P2';
   }
 
   @Builder
