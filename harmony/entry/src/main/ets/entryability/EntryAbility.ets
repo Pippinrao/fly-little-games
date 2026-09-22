@@ -1,4 +1,5 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { resolveTestFontSizeScale } from '../ui/NearbyTestFontScale';
 
@@ -61,6 +62,10 @@ export default class EntryAbility extends UIAbility {
       }
     });
   }
+
+  onForeground(): void { hilog.info(0, 'FlyNesNearby', 'event=ability_foreground'); }
+
+  onBackground(): void { hilog.info(0, 'FlyNesNearby', 'event=ability_background'); }
 
   onWindowStageDestroy(): void {
     this.stage = undefined;

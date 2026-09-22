@@ -60,25 +60,14 @@ export class PlayService {
   private audioMuted: boolean = false;
   private outputPaused: boolean = false;
   private opened: boolean = false;
+  private nearby: boolean = false;
   private checkpointStore: CheckpointStore | undefined = undefined;
   private checkpointId: string = '';
 
   async open(context: common.UIAbilityContext, locator: RomLaunchLocator,
     restoreCheckpoint: boolean = true): Promise<void> {
     lastRomOpenError = '';
-    let rom: Uint8Array | ArrayBuffer;
-    const games = builtinGamesSync(context);
-    const bundled = games.byCanonicalId(locator.canonicalId);
-    if (bundled !== undefined) {
-      try {
-        rom = context.resourceManager.getRawFileContentSync(bundled.assetPath());
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : 'Failed to read ROM rawfile';
-        throw new Error(detail);
-      }
-    } else {
-      rom = await this.loadUserRom(context, locator);
-    }
+    const rom = await this.readRom(context, locator);
     nativePlay.playOpen(rom);
     this.opened = true;
     this.checkpointStore = new CheckpointStore(context.filesDir);
@@ -99,9 +88,33 @@ export class PlayService {
     nativePlay.playSetAudioMuted(this.audioMuted);
   }
 
+  async readRom(context: common.UIAbilityContext, locator: RomLaunchLocator): Promise<Uint8Array | ArrayBuffer> {
+    let rom: Uint8Array | ArrayBuffer;
+    const games = builtinGamesSync(context);
+    const bundled = games.byCanonicalId(locator.canonicalId);
+    if (bundled !== undefined) {
+      try {
+        rom = context.resourceManager.getRawFileContentSync(bundled.assetPath());
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Failed to read ROM rawfile';
+        throw new Error(detail);
+      }
+    } else {
+      rom = await this.loadUserRom(context, locator);
+    }
+    return rom;
+  }
+
   setButtons(mask: number): void {
     this.buttons = mask;
     nativePlay.playSetButtons(this.buttons);
+  }
+
+  openNearby(): void {
+    if (!nativePlay.nearbyMvpOpenPlay()) throw new Error('LAN session is not running');
+    this.nearby = true;
+    this.opened = true;
+    nativePlay.playSetAudioMuted(this.audioMuted);
   }
 
   /** Settings parity: audio.enabled=0 mutes output while the game keeps running. */
@@ -149,6 +162,7 @@ export class PlayService {
       }
     } finally {
       this.opened = false;
+      this.nearby = false;
       this.checkpointStore = undefined;
       this.checkpointId = '';
       this.outputPaused = false;

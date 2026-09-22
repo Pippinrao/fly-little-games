@@ -32,6 +32,8 @@ struct RunGame {
   private readonly play: PlayService = new PlayService();
   private timerId: number = -1;
   private started: boolean = false;
+  private nearby: boolean = false;
+  private returningToLobby: boolean = false;
   @State private canonicalId: string = '';
   private readonly locator: RomLaunchLocator = new RomLaunchLocator();
   @State private frame: image.PixelMap | undefined = undefined;
@@ -75,6 +77,7 @@ struct RunGame {
 
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, Object>;
+    this.nearby = params !== undefined && params['nearby'] === true;
     this.gameTitle = parsePauseTitle(params, 'Game paused');
     this.titleEn = params !== undefined && typeof params['titleEn'] === 'string' ? params['titleEn'] as string : '';
     this.titleZhHans = params !== undefined && typeof params['titleZhHans'] === 'string' ? params['titleZhHans'] as string : '';
@@ -96,7 +99,7 @@ struct RunGame {
         this.locator.zipEntryName = params['zipEntryName'] as string;
       }
     }
-    this.pauseIds = nativePlay.pauseCommands();
+    this.pauseIds = nativePlay.pauseCommands().filter((id: string) => !this.nearby || id !== 'settings');
     this.readDisplayMetrics();
     const hostContext = this.getUIContext().getHostContext();
     if (hostContext === undefined) {
@@ -128,6 +131,7 @@ struct RunGame {
   }
 
   onPageHide(): void {
+    if (this.nearby) { this.play.setButtons(0); nativePlay.nearbyMvpSetPaused(true); }
     this.stopLoop();
     nativePlay.renderSetPaused(true);
   }
@@ -138,6 +142,12 @@ struct RunGame {
     this.frame?.release();
     this.frame = undefined;
     this.started = false;
+  }
+
+  onBackPress(): boolean {
+    if (!this.nearby) return false;
+    this.openPause();
+    return true;
   }
 
   build() {
@@ -413,7 +423,8 @@ struct RunGame {
 
   private async start(context: common.UIAbilityContext): Promise<void> {
     try {
-      await this.play.open(context, this.locator, this.autosaveEnabled);
+      if (this.nearby) this.play.openNearby();
+      else await this.play.open(context, this.locator, this.autosaveEnabled);
       this.started = true;
       // onPageShow can run before the asynchronous ROM open completes. Clear
       // any pause retained by an earlier surface only after this session owns
@@ -464,6 +475,17 @@ struct RunGame {
 
   private tick(): void {
     try {
+      if (this.nearby) {
+        const state = nativePlay.nearbyMvpSnapshot();
+        if (state.state !== 6) {
+          if (!this.returningToLobby) {
+            this.returningToLobby = true;
+            this.stopLoop();
+            void router.replaceUrl({ url: 'pages/NearbyLobby' });
+          }
+          return;
+        }
+      }
       if (this.renderEvidenceFrames % 120 === 0) {
         this.updatePlatformProtection();
       }
@@ -545,6 +567,7 @@ struct RunGame {
     const rising = bits & ~this.pressedBits;
     this.pressedBits = bits;
     this.play.setButtons(bits);
+    if (this.nearby) console.info(`FlyNesNearby event=touch buttons=${bits}`);
     if (rising !== 0) {
       this.fireHaptic(rising);
     }
@@ -552,6 +575,13 @@ struct RunGame {
 
   private openPause(): void {
     if (this.drawerOpen) {
+      return;
+    }
+    if (this.nearby) {
+      this.play.setButtons(0);
+      this.pressedBits = 0;
+      nativePlay.nearbyMvpSetPaused(true);
+      this.drawerOpen = true;
       return;
     }
     if (!this.paused) {
@@ -578,6 +608,7 @@ struct RunGame {
 
   private resumePlay(): void {
     this.drawerOpen = false;
+    if (this.nearby) { nativePlay.nearbyMvpSetPaused(false); return; }
     if (!this.paused) {
       return;
     }
@@ -595,6 +626,13 @@ struct RunGame {
       return;
     }
     if (id === 'game_center') {
+      if (this.nearby) {
+        nativePlay.nearbyMvpReturnLobby();
+        this.returningToLobby = true;
+        this.stopLoop();
+        void router.replaceUrl({ url: 'pages/NearbyLobby' });
+        return;
+      }
       this.drawerOpen = false;
       this.stopLoop();
       this.play.close();
@@ -604,6 +642,7 @@ struct RunGame {
       return;
     }
     if (id === 'settings') {
+      if (this.nearby) return;
       this.drawerOpen = false;
       this.paused = true;
       this.resumeAfterSettings = true;
@@ -616,7 +655,7 @@ struct RunGame {
       return $r('app.string.pause_resume');
     }
     if (id === 'game_center') {
-      return $r('app.string.pause_game_center');
+      return this.nearby ? $r('app.string.nearby_lobby_title') : $r('app.string.pause_game_center');
     }
     return $r('app.string.pause_settings');
   }

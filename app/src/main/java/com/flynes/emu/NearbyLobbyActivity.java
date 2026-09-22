@@ -6,6 +6,9 @@ import android.os.Looper;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.content.Intent;
+
+import java.io.IOException;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -13,27 +16,16 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
 
 /**
- * 大厅 — every field design §22.3 requires both ends to see, each rendered with the exact reason it
- * cannot be shown yet (spec §8 A1a-3).
- *
- * <p>The mockup first screen is game / host / seat plus the footer confirm. Technical §22.3
- * fields stay behind the details control. {@link #FIRST_SCREEN} and
- * {@link #DETAILS} are the tables of "field label → why this field is unavailable", and
- * {@link #buildRow} turns one entry into one accessibility node.
- *
- * <p>Why the reasons differ per field instead of all saying "no session": the spec's §3 table maps
- * each lobby field to the capability it actually waits on, so 座位 and 预计模式 wait on the mode gate
- * (no {@code FLY_SESSION_MODE_*} values exist), the ROM rows wait on ROM identity and transfer,
- * MultiplayerProfile waits on profile verification, and the rest wait on the session snapshot. A user
- * reading one generic reason could not tell which part of the design is missing.
- *
- * <p>D8 binds the one primary confirmation action to the displayed pending configuration. The
- * session engine owns both confirmation flags; this page never starts a run or confirms a peer.
+ * Fixed landscape game / host / seat summary with paged technical details.
+ * The existing session owner retains the pending-configuration confirmation guard.
  */
 public final class NearbyLobbyActivity extends AppCompatActivity {
 
     private int boundLinkState;
     private NearbySessionOwner owner;
+    private NearbyMvpOwner mvpOwner;
+    private NearbyMvpSession mvpSession;
+    private boolean playStarted;
     private MaterialButton confirm;
     private TextView confirmReason;
     private NearbySessionOwner.Snapshot displayedSnapshot;
@@ -41,7 +33,7 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             bindSnapshot();
-            if (owner != null) refreshHandler.postDelayed(this, 250L);
+            if (owner != null || mvpSession != null) refreshHandler.postDelayed(this, 250L);
         }
     };
 
@@ -85,7 +77,10 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
         setContentView(R.layout.activity_nearby_lobby);
 
         MaterialToolbar toolbar = findViewById(R.id.nearby_lobby_toolbar);
-        toolbar.setNavigationOnClickListener(view -> finish());
+        toolbar.setNavigationOnClickListener(view -> {
+            if (mvpOwner != null) mvpOwner.close();
+            finish();
+        });
 
         View root = findViewById(R.id.nearby_lobby_root);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -101,37 +96,56 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
         for (int[] field : FIRST_SCREEN) {
             rows.addView(buildRow(field, rows));
         }
-        MaterialButton details = new MaterialButton(this, null,
-                com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        details.setId(R.id.nearby_lobby_details);
-        details.setText(R.string.nearby_diagnostics_title);
-        details.setMinHeight(getResources().getDimensionPixelSize(R.dimen.fly_touch_min));
-        LinearLayout detailsRows = new LinearLayout(this);
-        detailsRows.setId(R.id.nearby_lobby_details_rows);
-        detailsRows.setOrientation(LinearLayout.VERTICAL);
-        detailsRows.setVisibility(View.GONE);
-        for (int[] field : DETAILS) {
-            detailsRows.addView(buildRow(field, detailsRows));
-        }
-        details.setOnClickListener(view -> detailsRows.setVisibility(
-                detailsRows.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-        rows.addView(details);
-        rows.addView(detailsRows);
+        findViewById(R.id.nearby_lobby_details).setOnClickListener(view -> showDetail(0));
 
         confirm = findViewById(R.id.nearby_lobby_confirm);
         confirmReason = findViewById(R.id.nearby_lobby_confirm_reason);
         confirm.setOnClickListener(view -> {
+            if (mvpSession != null) {
+                if (!mvpSession.confirm()) {
+                    android.widget.Toast.makeText(this, R.string.nearby_not_supported,
+                            android.widget.Toast.LENGTH_SHORT).show();
+                }
+                bindSnapshot();
+                return;
+            }
             NearbySessionOwner.Snapshot displayed = displayedSnapshot;
-            if (owner == null || displayed == null || !displayed.canConfirmGameConfig()) return;
+            if (owner == null || displayed == null || !displayed.canConfirmGameConfig()) {
+                android.widget.Toast.makeText(this, R.string.nearby_not_supported,
+                        android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
             owner.confirmGameConfig(displayed.pendingConfigId(), displayed.pendingConfigRevision);
             bindSnapshot();
         });
         FlyNesApplication app = (FlyNesApplication) getApplication();
+        mvpOwner = app.nearbyMvpOwner();
+        if (mvpOwner != null && mvpOwner.active()) {
+            mvpSession = mvpOwner.session();
+            findViewById(R.id.nearby_lobby_row_rom_identity).setOnClickListener(view -> {
+                if (mvpSession.returnLobby()) startActivity(new Intent(this, HomeActivity.class)
+                        .putExtra("nearby_choose_game", true));
+            });
+            try {
+                if (mvpOwner.gameTitle().isEmpty() && mvpSession.snapshot()[0] == NearbyMvpSession.LOBBY) {
+                NearbyMvpGame.Selection selection = NearbyMvpGame.load(this);
+                if (!mvpSession.selectGame(selection.rom, selection.entry.canonicalId)) throw new IOException("ROM rejected");
+                mvpOwner.gameTitle(java.util.Locale.getDefault().getLanguage().equals("zh")
+                                    ? selection.entry.titleZhHans : selection.entry.titleEn);
+                }
+            } catch (IOException failure) {
+                confirm.setEnabled(false);
+                confirmReason.setText(R.string.nearby_blocked_rom_transfer);
+                confirmReason.setVisibility(View.VISIBLE);
+            }
+            bindSnapshot();
+            return;
+        }
         NearbyAvailability.Status nearby = app.ensureNearby();
         owner = app.nearbySessionOwner();
         if (!nearby.ready() || owner == null) {
             boundLinkState = NearbySessionOwner.LINK_UNAVAILABLE;
-            confirm.setEnabled(false);
+            confirm.setEnabled(true);
             if (nearby.reasonKey() != null) {
                 int reasonId = getResources().getIdentifier(
                         nearby.reasonKey(), "string", getPackageName());
@@ -147,7 +161,7 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
     @Override protected void onStart() {
         super.onStart();
         refreshHandler.removeCallbacks(refresh);
-        if (owner != null) refreshHandler.post(refresh);
+        if (owner != null || mvpSession != null) refreshHandler.post(refresh);
     }
 
     @Override protected void onStop() {
@@ -156,11 +170,43 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
     }
 
     private void bindSnapshot() {
+        if (mvpSession != null) {
+            int[] snapshot = mvpSession.snapshot();
+            if (snapshot == null || snapshot.length < 9) return;
+            boundLinkState = snapshot[0];
+            LinearLayout gameRow = findViewById(R.id.nearby_lobby_row_rom_identity);
+            ((TextView) gameRow.getChildAt(1)).setText(mvpOwner.gameTitle() + " · " + getString(R.string.nearby_choose_game));
+            gameRow.setContentDescription(getString(R.string.nearby_choose_game));
+            LinearLayout hostRow = findViewById(R.id.nearby_lobby_row_network_owner);
+            ((TextView) hostRow.getChildAt(1)).setText("Android · P1");
+            LinearLayout seatRow = findViewById(R.id.nearby_lobby_row_seat);
+            ((TextView) seatRow.getChildAt(1)).setText("P1 ↔ P2");
+            confirm.setEnabled(snapshot[0] == NearbyMvpSession.CONFIGURING && snapshot[5] != 0 && snapshot[6] != 0 && snapshot[7] == 0);
+            confirm.setText(snapshot[7] != 0
+                    ? R.string.nearby_config_confirmed : R.string.nearby_lobby_confirm);
+            if (snapshot[0] == NearbyMvpSession.ENDED) {
+                confirmReason.setText(R.string.nearby_mvp_connection_failed);
+            } else if (snapshot[7] != 0 && snapshot[8] == 0) {
+                confirmReason.setText(R.string.nearby_config_waitingConfirm);
+            } else if (snapshot[5] != 0 && snapshot[6] != 0) {
+                confirmReason.setText(R.string.nearby_config_waitingConfirm);
+            } else {
+                confirmReason.setText(R.string.nearby_screen_connecting);
+            }
+            confirmReason.setVisibility(View.VISIBLE);
+            confirm.setContentDescription(confirm.getText() + ", " + confirmReason.getText());
+            if (snapshot[0] == NearbyMvpSession.RUNNING && !playStarted) {
+                playStarted = true;
+                startActivity(new Intent(this, MainActivity.class).putExtra("nearby_mvp", true));
+                finish();
+            }
+            return;
+        }
         if (owner == null) return;
         try {
             displayedSnapshot = owner.snapshot();
             boundLinkState = displayedSnapshot.linkState;
-            confirm.setEnabled(displayedSnapshot.canConfirmGameConfig());
+            confirm.setEnabled(displayedSnapshot.pendingConfigLocalConfirmed == 0);
             String reasonKey = displayedSnapshot.primaryReasonKey;
             int reasonId = reasonKey.isEmpty() ? 0 : getResources().getIdentifier(
                     reasonKey.replace('.', '_'), "string", getPackageName());
@@ -171,13 +217,33 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
             else if (displayedSnapshot.canConfirmGameConfig())
                 confirmReason.setText(R.string.nearby_config_waitingConfirm);
             else confirmReason.setText(R.string.nearby_blocked_session_read);
+            boolean hasStatus = displayedSnapshot.canConfirmGameConfig()
+                    || displayedSnapshot.pendingConfigLocalConfirmed != 0 || !reasonKey.isEmpty();
+            confirmReason.setVisibility(hasStatus ? View.VISIBLE : View.GONE);
+            confirm.setText(displayedSnapshot.pendingConfigLocalConfirmed != 0
+                    ? R.string.nearby_config_confirmed : R.string.nearby_lobby_confirm);
         } catch (IllegalStateException unavailable) {
             displayedSnapshot = null;
             boundLinkState = NearbySessionOwner.LINK_UNAVAILABLE;
-            confirm.setEnabled(false);
+            confirm.setEnabled(true);
             confirmReason.setText(R.string.nearby_blocked_session_read);
+            confirmReason.setVisibility(View.VISIBLE);
         }
         confirm.setContentDescription(confirm.getText() + ", " + confirmReason.getText());
+    }
+
+    private void showDetail(int index) {
+        int[] field = DETAILS[index];
+        com.google.android.material.dialog.MaterialAlertDialogBuilder dialog =
+                new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle(getString(field[1]) + "  " + (index + 1) + "/" + DETAILS.length)
+                .setMessage(field[2])
+                .setNeutralButton(R.string.nearby_action_cancel, null);
+        if (index > 0) dialog.setNegativeButton(R.string.nearby_details_previous,
+                (which, action) -> showDetail(index - 1));
+        if (index + 1 < DETAILS.length) dialog.setPositiveButton(R.string.nearby_details_next,
+                (which, action) -> showDetail(index + 1));
+        dialog.show();
     }
 
     public int boundLinkState() {
@@ -193,15 +259,17 @@ public final class NearbyLobbyActivity extends AppCompatActivity {
         LinearLayout row = (LinearLayout) getLayoutInflater()
                 .inflate(R.layout.view_nearby_lobby_row, parent, false);
         row.setId(field[0]);
-        if (parent.getChildCount() > 0) {
-            ((LinearLayout.LayoutParams) row.getLayoutParams()).topMargin =
-                    getResources().getDimensionPixelSize(R.dimen.fly_space_3);
-        }
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        params.setMarginStart(parent.getChildCount() == 0 ? 0 : Math.round(
+                16 * getResources().getDisplayMetrics().density));
+        row.setLayoutParams(params);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
         TextView label = (TextView) row.getChildAt(0);
         TextView reason = (TextView) row.getChildAt(1);
         label.setText(field[1]);
-        reason.setText(field[2]);
+        reason.setText(R.string.nearby_not_supported);
 
         // Label first, then the reason it is unavailable: one stop per field, and the reason can
         // never be announced before the field it belongs to (spec §2.3, `color-not-only`).

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -32,6 +33,9 @@ class PlaySession final
 {
 public:
     static std::unique_ptr<PlaySession> open(const std::uint8_t* rom, std::size_t size);
+    // Reuse the normal renderer/audio runtime with an already running session.
+    static std::unique_ptr<PlaySession> from_frame_source(
+        std::function<PlayStepResult(std::uint32_t)> source);
 
     PlaySession(const PlaySession&) = delete;
     PlaySession& operator=(const PlaySession&) = delete;

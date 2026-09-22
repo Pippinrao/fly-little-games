@@ -834,15 +834,15 @@
     },
     {
       "name": "nearby_lobby_network_owner",
-      "value": "Current network owner"
+      "value": "Host"
     },
     {
       "name": "nearby_lobby_seat",
-      "value": "Seat (P1 / P2)"
+      "value": "Seat"
     },
     {
       "name": "nearby_lobby_rom_identity",
-      "value": "ROM identity"
+      "value": "Game"
     },
     {
       "name": "nearby_lobby_rom_local_state",
@@ -1459,6 +1459,54 @@
     {
       "name": "nearby_open_entry",
       "value": "Nearby Play"
+    },
+    {
+      "name": "nearby_mvp_scan_action",
+      "value": "Scan to join"
+    },
+    {
+      "name": "nearby_mvp_scan_prompt",
+      "value": "Connect to the same Wi-Fi and scan your friend's invitation."
+    },
+    {
+      "name": "nearby_mvp_joining",
+      "value": "Connecting to player 1"
+    },
+    {
+      "name": "nearby_mvp_connected",
+      "value": "Connected to player 1"
+    },
+    {
+      "name": "nearby_mvp_expired",
+      "value": "Invite expired. Ask the host to create a new room."
+    },
+    {
+      "name": "nearby_mvp_failed",
+      "value": "Could not join. Check Wi-Fi and scan a fresh QR."
+    },
+    {
+      "name": "nearby_not_supported",
+      "value": "Not supported yet"
+    },
+    {
+      "name": "nearby_details_previous",
+      "value": "Previous"
+    },
+    {
+      "name": "nearby_details_next",
+      "value": "Next"
+    },
+    {
+      "name": "nearby_back",
+      "value": "Back"
+    },
+    {
+      "name": "nearby_local_game_missing",
+      "value": "The host game is missing or different on this device. Import the same ROM."
+    },
+    {
+      "name": "nearby_wait_host_game",
+      "value": "Waiting for the host to choose a game"
     }
   ]
 }

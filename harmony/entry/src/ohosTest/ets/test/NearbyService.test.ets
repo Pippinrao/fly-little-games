@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
+import nativeSession from 'libentry.so';
 import {
   NEARBY_BANNER_AUTHORITY_TIMEOUT,
   NEARBY_BANNER_FROZEN,
@@ -28,6 +29,12 @@ import {
 } from '../../../main/ets/service/NearbyService';
 
 export default function nearbyServiceTest() {
+    it('mvp_scan_bridge_rejects_invalid_qr_without_creating_lobby', 0, () => {
+      nativeSession.nearbyMvpCancel();
+      expect(nativeSession.nearbyMvpSnapshot().state).assertEqual(0);
+      expect(nativeSession.nearbyMvpJoin('invalid qr')).assertFalse();
+      expect(nativeSession.nearbyMvpSnapshot().state).assertEqual(0);
+    });
     // 2026-09-13 UI parity: entry status rule (C01/C09/C14) and code input rule (C05).
     it('projects_entry_status_from_real_facts_only', 0, () => {
       const clean: NearbyEntryFacts = {

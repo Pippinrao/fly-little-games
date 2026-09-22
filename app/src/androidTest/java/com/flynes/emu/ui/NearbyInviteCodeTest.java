@@ -16,7 +16,6 @@ import org.junit.runner.RunWith;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.replaceText;
-import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.action.ViewActions.typeText;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
@@ -71,14 +70,14 @@ public final class NearbyInviteCodeTest {
 
     @Test public void incompleteCodeNeverEnablesTheRequest() {
         try (ActivityScenario<NearbyPairingActivity> ignored = launchJoin()) {
-            onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), typeText("12345"));
+            onView(withId(R.id.nearby_join_code_input)).perform(typeText("12345"));
             onView(withId(R.id.nearby_join_submit)).check(matches(not(isEnabled())));
         }
     }
 
     @Test public void sixDigitsWithLeadingZeroEnableTheRequest() {
         try (ActivityScenario<NearbyPairingActivity> ignored = launchJoin()) {
-            onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), typeText("012345"));
+            onView(withId(R.id.nearby_join_code_input)).perform(typeText("012345"));
             // Leading zero survives the input (C05).
             onView(withId(R.id.nearby_join_code_input)).check(matches(withText("012345")));
             onView(withId(R.id.nearby_join_submit)).check(matches(isEnabled()));
@@ -88,7 +87,7 @@ public final class NearbyInviteCodeTest {
     @Test public void sevenDigitsArePreservedAndRejectedWithoutSilentTruncation() {
         try (ActivityScenario<NearbyPairingActivity> ignored = launchJoin()) {
             onView(withId(R.id.nearby_join_code_input))
-                    .perform(scrollTo(), replaceText("0123456"));
+                    .perform(replaceText("0123456"));
             onView(withId(R.id.nearby_join_code_input)).check(matches(withText("0123456")));
             onView(withId(R.id.nearby_join_submit)).check(matches(not(isEnabled())));
         }
@@ -99,7 +98,7 @@ public final class NearbyInviteCodeTest {
             long before = consumeJoinAttemptFence();
             long attemptBefore = snapshotJoinAttemptId();
             onView(withId(R.id.nearby_join_code_input))
-                    .perform(scrollTo(), replaceText("1234567"),
+                    .perform(replaceText("1234567"),
                             androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
             onView(withId(R.id.nearby_join_code_input)).check(matches(withText("1234567")));
             onView(withId(R.id.nearby_join_submit)).check(matches(not(isEnabled())));
@@ -124,7 +123,7 @@ public final class NearbyInviteCodeTest {
     @Test public void sixDigitsSubmitTwiceIsOneAttempt() {
         try (ActivityScenario<NearbyPairingActivity> scenario = launchJoin()) {
             long before = consumeJoinAttemptFence();
-            onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), replaceText("123456"),
+            onView(withId(R.id.nearby_join_code_input)).perform(replaceText("123456"),
                     androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
             onView(withId(R.id.nearby_join_code_input)).check(matches(withText("123456")));
             onView(withId(R.id.nearby_join_submit)).check(matches(isEnabled()));
@@ -140,14 +139,14 @@ public final class NearbyInviteCodeTest {
     @Test public void submitFailureAllowsModifyRetryAndCancelOnSamePage() {
         try (ActivityScenario<NearbyPairingActivity> scenario = launchJoin()) {
             long before = consumeJoinAttemptFence();
-            onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), replaceText("123456"),
+            onView(withId(R.id.nearby_join_code_input)).perform(replaceText("123456"),
                     androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
             onView(withId(R.id.nearby_join_submit)).perform(click());
             onView(withId(R.id.nearby_join_code_error))
                     .check(matches(withText(R.string.nearby_stage_discovery_reason)));
             onView(withId(R.id.nearby_join_submit)).check(matches(isEnabled()));
             onView(withId(R.id.nearby_join_cancel)).check(matches(isDisplayed()));
-            onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), replaceText("654321"),
+            onView(withId(R.id.nearby_join_code_input)).perform(replaceText("654321"),
                     androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
             onView(withId(R.id.nearby_join_submit)).perform(click());
             org.junit.Assert.assertEquals("failed attempt then edit must send a second lookup",
@@ -161,7 +160,7 @@ public final class NearbyInviteCodeTest {
             ActivityScenario<NearbyPairingActivity> scenario, String raw) {
         long before = consumeJoinAttemptFence();
         long attemptBefore = snapshotJoinAttemptId();
-        onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), replaceText(raw),
+        onView(withId(R.id.nearby_join_code_input)).perform(replaceText(raw),
                 androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
         onView(withId(R.id.nearby_join_code_input)).check(matches(withText(raw)));
         onView(withId(R.id.nearby_join_submit)).check(matches(not(isEnabled())));
@@ -201,7 +200,7 @@ public final class NearbyInviteCodeTest {
 
     @Test public void submitWithoutBearerShowsTheDiscoveryReasonNeverSuccess() {
         try (ActivityScenario<NearbyPairingActivity> ignored = launchJoin()) {
-            onView(withId(R.id.nearby_join_code_input)).perform(scrollTo(), typeText("012345"),
+            onView(withId(R.id.nearby_join_code_input)).perform(typeText("012345"),
                     androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
             onView(withId(R.id.nearby_join_submit)).perform(click());
             // No discovery bearer exists in this build: the honest outcome is the
@@ -212,33 +211,52 @@ public final class NearbyInviteCodeTest {
         }
     }
 
-    @Test public void createModeShowsAnInviteLifecycleThatRegeneratesAndCancels() {
+    @Test public void createModeShowsLanQrLifecycleThatRegeneratesAndCancels() {
         Intent intent = new Intent(
                 androidx.test.core.app.ApplicationProvider.getApplicationContext(),
                 NearbyPairingActivity.class);
         intent.putExtra("nearby_mode", NearbyPairingActivity.MODE_CREATE);
-        try (ActivityScenario<NearbyPairingActivity> ignored = ActivityScenario.launch(intent)) {
-
-            final String[] firstCode = new String[1];
+        try (ActivityScenario<NearbyPairingActivity> scenario = ActivityScenario.launch(intent)) {
             onView(withId(R.id.nearby_create_block)).check(matches(isDisplayed()));
-            onView(withId(R.id.nearby_invite_code_value)).check((view, noViewFoundException) -> {
-                org.junit.Assert.assertNull(noViewFoundException);
-                firstCode[0] = ((android.widget.TextView) view).getText().toString();
-            });
-            org.junit.Assert.assertEquals(6, firstCode[0].length());
-
-            onView(withId(R.id.nearby_invite_regenerate)).perform(scrollTo(), click());
-            final String[] secondCode = new String[1];
-            onView(withId(R.id.nearby_invite_code_value)).check((view, noViewFoundException) -> {
-                secondCode[0] = ((android.widget.TextView) view).getText().toString();
-            });
-            org.junit.Assert.assertEquals(6, secondCode[0].length());
-            // Regeneration produced a different code for a new generation (C16).
-            org.junit.Assert.assertNotEquals(firstCode[0], secondCode[0]);
+            Object firstQr = waitForQrChild(scenario);
+            onView(withId(R.id.nearby_invite_regenerate)).perform(click());
+            Object secondQr = waitForDifferentQrChild(scenario, firstQr);
+            org.junit.Assert.assertNotSame("Regeneration must replace the rendered invitation",
+                    firstQr, secondQr);
 
             onView(withId(R.id.nearby_invite_cancel)).perform(click());
             // Cancel finishes this page so the killed generation cannot stay on screen.
-            assertFinished(ignored);
+            assertFinished(scenario);
         }
+    }
+
+    private static Object waitForQrChild(ActivityScenario<NearbyPairingActivity> scenario) {
+        final Object[] child = new Object[1];
+        long deadline = android.os.SystemClock.elapsedRealtime() + 8000L;
+        while (child[0] == null && android.os.SystemClock.elapsedRealtime() < deadline) {
+            scenario.onActivity(activity -> {
+                android.widget.FrameLayout frame = activity.findViewById(R.id.nearby_invite_qr);
+                if (frame.getChildCount() == 1) child[0] = frame.getChildAt(0);
+            });
+            if (child[0] == null) android.os.SystemClock.sleep(50L);
+        }
+        org.junit.Assert.assertNotNull("Host did not publish a QR", child[0]);
+        return child[0];
+    }
+
+    private static Object waitForDifferentQrChild(
+            ActivityScenario<NearbyPairingActivity> scenario, Object previous) {
+        final Object[] child = new Object[1];
+        long deadline = android.os.SystemClock.elapsedRealtime() + 8000L;
+        while ((child[0] == null || child[0] == previous)
+                && android.os.SystemClock.elapsedRealtime() < deadline) {
+            scenario.onActivity(activity -> {
+                android.widget.FrameLayout frame = activity.findViewById(R.id.nearby_invite_qr);
+                child[0] = frame.getChildCount() == 1 ? frame.getChildAt(0) : null;
+            });
+            if (child[0] == null || child[0] == previous) android.os.SystemClock.sleep(50L);
+        }
+        org.junit.Assert.assertNotNull("Replacement QR was not published", child[0]);
+        return child[0];
     }
 }

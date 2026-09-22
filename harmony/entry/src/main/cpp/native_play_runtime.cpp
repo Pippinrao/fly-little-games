@@ -66,8 +66,14 @@ std::unique_ptr<NativePlayRuntime> NativePlayRuntime::open(
     const std::uint8_t* rom, std::size_t size)
 {
     SourceTiming timing = detect_source_timing(rom, size);
+    return open_session(PlaySession::open(rom, size), std::move(timing));
+}
+
+std::unique_ptr<NativePlayRuntime> NativePlayRuntime::open_session(
+    std::unique_ptr<PlaySession> session, SourceTiming timing)
+{
     auto result = std::unique_ptr<NativePlayRuntime>(
-        new NativePlayRuntime(PlaySession::open(rom, size), std::move(timing)));
+        new NativePlayRuntime(std::move(session), std::move(timing)));
     result->audio_thread_ = std::thread([runtime = result.get()] { runtime->run_audio(); });
     result->running_.store(true, std::memory_order_release);
     result->thread_ = std::thread([runtime = result.get()] { runtime->run(); });

@@ -1,8 +1,12 @@
-import { router } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { router, promptAction } from '@kit.ArkUI';
 import { systemDateTime } from '@kit.BasicServicesKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { scanBarcode } from '@kit.ScanKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import nativeSession, { NearbyInviteSnapshotDto } from 'libentry.so';
 import { normalizeInviteCode } from '../service/NearbyService';
+import { NearbyMvpPort, NearbyMvpScanFlow, NearbyMvpSnapshot } from '../service/NearbyMvpScanFlow';
 import {
   NEARBY_MIN_TAP_HEIGHT_VP,
   NEARBY_TYPE,
@@ -20,6 +24,12 @@ const COLOR_ON_PRIMARY: string = '#121316';
 const COLOR_LINE: string = '#393B40';
 const COLOR_AMBER: string = '#E7B775';
 
+class NativeMvpPort implements NearbyMvpPort {
+  join(qrText: string): boolean { return nativeSession.nearbyMvpJoin(qrText); }
+  snapshot(): NearbyMvpSnapshot { return nativeSession.nearbyMvpSnapshot(); }
+  cancel(): boolean { return nativeSession.nearbyMvpCancel(); }
+}
+
 @Entry
 @Component
 struct NearbyPairing {
@@ -36,8 +46,20 @@ struct NearbyPairing {
   @State private availableWidth: number = 0;
   private joinAttemptId: number = 0;
   private inviteTimerId: number = -1;
+  private mvpTimerId: number = -1;
+  @State private mvpState: number = 0;
+  @State private mvpReason: number = 0;
+  @State private mvpScanActive: boolean = false;
+  private loggedMvpState: number = -1;
+  private mvpLobbyOpened: boolean = false;
+  private readonly mvpFlow: NearbyMvpScanFlow = new NearbyMvpScanFlow(new NativeMvpPort());
+
+  onPageShow(): void { hilog.info(0, 'FlyNesNearby', 'event=page_show'); }
+
+  onPageHide(): void { hilog.info(0, 'FlyNesNearby', 'event=page_hide'); }
 
   aboutToAppear(): void {
+    hilog.info(0, 'FlyNesNearby', 'event=page_appear');
     const params = router.getParams() as Record<string, string> | undefined;
     this.mode = params && params['mode'] ? params['mode'] : '';
     if (this.mode === 'create') {
@@ -47,17 +69,83 @@ struct NearbyPairing {
       }
       this.publishInvite(false);
       this.startInviteTimer();
+    } else if (this.mode === 'scan') {
+      this.mvpFlow.appear();
+      this.startMvpTimer();
     }
   }
 
   aboutToDisappear(): void {
+    hilog.info(0, 'FlyNesNearby', 'event=page_disappear scanning=%{public}s', String(this.mvpScanActive));
     this.stopInviteTimer();
+    this.stopMvpTimer();
+    // Scan Kit temporarily hides this page. Keep the guest owner alive across
+    // that UI extension; explicit cancel/back calls leave() below.
+    if (this.mode === 'scan') this.mvpFlow.hideForScanner();
+    else nativeSession.nearbyMvpCancel();
     if (this.inviteGeneration > 0) {
       nativeSession.nearbyInviteHostCancel(this.inviteGeneration);
     }
     if (this.joinAttemptId > 0) {
       nativeSession.nearbyInviteCancelCode(this.joinAttemptId);
     }
+  }
+
+  private startMvpTimer(): void {
+    if (this.mvpTimerId !== -1) return;
+    this.mvpTimerId = setInterval(() => {
+      this.mvpFlow.poll();
+      const snapshot = this.mvpFlow.snapshot();
+      if (snapshot.state === 0 && this.mvpState === 4) return;
+      if (snapshot.state !== this.loggedMvpState) {
+        this.loggedMvpState = snapshot.state;
+        hilog.info(0x0000, 'FlyNesNearby',
+          'LAN state=%{public}d reason=%{public}d transportResult=%{public}d transportOperation=%{public}d',
+          snapshot.state, snapshot.reason, snapshot.transportResult, snapshot.transportOperation);
+      }
+      this.mvpState = snapshot.state;
+      this.mvpReason = snapshot.reason;
+      if (snapshot.state === 3 && !this.mvpLobbyOpened) {
+        this.mvpLobbyOpened = true;
+        this.stopMvpTimer();
+        router.replaceUrl({ url: 'pages/NearbyLobby' });
+      }
+    }, 250);
+  }
+
+  private stopMvpTimer(): void {
+    if (this.mvpTimerId === -1) return;
+    clearInterval(this.mvpTimerId);
+    this.mvpTimerId = -1;
+  }
+
+  private async scanMvpQr(): Promise<void> {
+    hilog.info(0, 'FlyNesNearby', 'event=scan_begin');
+    const pending = this.mvpFlow.scan(async (): Promise<string> => {
+      try {
+        const scanned = await scanBarcode.startScanForResult(getContext(this));
+        hilog.info(0, 'FlyNesNearby', 'event=scan_return length=%{public}d', scanned.originalValue.length);
+        return scanned.originalValue;
+      } catch (error) {
+        hilog.error(0, 'FlyNesNearby', 'event=scan_error code=%{public}d', (error as BusinessError).code ?? -1);
+        throw error as Error;
+      }
+    });
+    this.mvpScanActive = this.mvpFlow.isScanning();
+    const joined = await pending;
+    hilog.info(0, 'FlyNesNearby', 'event=scan_complete joined=%{public}s', String(joined));
+    this.mvpScanActive = this.mvpFlow.isScanning();
+    const snapshot = this.mvpFlow.snapshot();
+    this.mvpState = snapshot.state;
+    this.mvpReason = snapshot.reason;
+  }
+
+  private mvpStatusText(): Resource {
+    if (this.mvpState === 3) return $r('app.string.nearby_mvp_connected');
+    if (this.mvpState === 2) return $r('app.string.nearby_mvp_joining');
+    if (this.mvpState === 4 && this.mvpReason === 4) return $r('app.string.nearby_mvp_expired');
+    if (this.mvpState === 4) return $r('app.string.nearby_mvp_failed');
+    return $r('app.string.nearby_mvp_scan_prompt');
   }
 
   private remainingInviteSeconds(): number {
@@ -199,399 +287,75 @@ struct NearbyPairing {
 
   build() {
     Column() {
-      this.topBar()
-      Scroll() {
-        if (this.availableWidth > 580) {
-          Row({ space: 18 }) {
-            this.leftPane()
-            this.rightPane()
+      Row({ space: 8 }) {
+        Button('‹', { type: ButtonType.Normal })
+          .id('nearby_back').width(48).height(48).fontFamily('HarmonyOS Sans').fontSize('26vp')
+          .fontColor(COLOR_ON_SURFACE).backgroundColor(Color.Transparent)
+          .accessibilityText($r('app.string.nearby_back'))
+          .onClick(() => {
+            if (this.mode === 'scan') this.mvpFlow.leave();
+            router.back();
+          })
+        Text(this.pageTitle()).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.pageTitle.size)
+          .fontWeight(FontWeight.Medium).fontColor(COLOR_ON_SURFACE).layoutWeight(1)
+      }.width('100%').constraintSize({ minHeight: 48 })
+      Row({ space: 18 }) {
+        Column({ space: 8 }) {
+          Text(this.mode === 'scan' ? $r('app.string.nearby_scan_headline')
+            : this.mode === 'join_code' ? $r('app.string.nearby_join_headline')
+            : $r('app.string.nearby_invite_headline'))
+            .id('nearby_invite_headline').fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.paneTitle.size)
+            .fontWeight(FontWeight.Medium).fontColor(COLOR_ON_SURFACE).width('100%')
+          Text(this.mode === 'scan' ? $r('app.string.nearby_scan_subtitle')
+            : this.mode === 'join_code' ? $r('app.string.nearby_join_subtitle')
+            : $r('app.string.nearby_invite_subtitle'))
+            .fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.muted.size).fontColor(COLOR_ON_SURFACE_MUTED).width('100%')
+        }.width('44%').height('100%').justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Start)
+        Column({ space: 12 }) {
+          Text(this.mode === 'scan' ? this.mvpStatusText() : $r('app.string.nearby_not_supported'))
+            .id('nearby_pairing_status').fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.body.size)
+            .fontColor(COLOR_ON_SURFACE).width('100%')
+          if (this.mode === 'scan') {
+            this.action($r('app.string.nearby_action_switchToJoinCode'),
+              'nearby_scan_switch_to_code', false, () => {
+                promptAction.showToast({ message: $r('app.string.nearby_not_supported') });
+              })
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Top)
+        }.layoutWeight(1).height('100%').justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Start).padding(16).backgroundColor(COLOR_SURFACE).borderRadius(12)
+      }.width('100%').layoutWeight(1).padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      Row({ space: 16 }) {
+        this.action($r('app.string.nearby_action_cancel'), 'nearby_action_cancel', false,
+          () => {
+            if (this.mode === 'join_code') this.cancelJoinAttempt();
+            else this.footerAction();
+          })
+        Blank()
+        if (this.mode === 'scan') {
+          this.action($r('app.string.nearby_mvp_scan_action'), 'nearby_mvp_scan_action', true,
+            () => { void this.scanMvpQr(); })
         } else {
-          Column({ space: 18 }) {
-            this.leftPane()
-            this.rightPane()
-          }
-          .width('100%')
+          this.action($r('app.string.nearby_action_submitJoinCode'), 'nearby_join_submit', true,
+            () => { promptAction.showToast({ message: $r('app.string.nearby_not_supported') }); })
         }
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-      .align(Alignment.TopStart)
-      .clip(true)
-      this.footer()
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(COLOR_BACKGROUND)
-    .onAreaChange((_old: Area, area: Area) => {
-      this.availableWidth = Number(area.width);
-    })
+      }.width('100%').padding({ left: 16, right: 16, top: 8, bottom: 8 })
+        .border({ width: { top: 1 }, color: COLOR_LINE })
+    }.id('nearby_page').width('100%').height('100%').backgroundColor(COLOR_BACKGROUND)
   }
 
   @Builder
-  topBar() {
-    Row({ space: 10 }) {
-      Text('‹')
-        .id('nearby_back')
-        .fontSize(26)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(COLOR_ON_SURFACE)
-        .constraintSize({ minWidth: NEARBY_MIN_TAP_HEIGHT_VP, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          router.back();
-        })
-      Text(this.pageTitle())
-        .fontSize(NEARBY_TYPE.pageTitle.size)
-        .fontWeight(NEARBY_TYPE.pageTitle.weight)
-        .lineHeight(NEARBY_TYPE.pageTitle.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text($r('app.string.nearby_entry_stageHint'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-      Button() {
-        Text('i')
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_ON_SURFACE)
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor('#00000000')
+  action(label: Resource, id: string, primary: boolean, action: () => void) {
+    Button(label, { type: ButtonType.Normal })
+      .id(id).constraintSize({ minWidth: 120, minHeight: 48, maxWidth: id === 'nearby_scan_switch_to_code' ? '100%' : '48%' })
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 }).borderRadius(12)
+      .labelStyle({ maxLines: 2 }).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.action.size).fontWeight(primary ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(primary ? COLOR_ON_PRIMARY : COLOR_ON_SURFACE)
+      .backgroundColor(primary ? COLOR_PRIMARY : COLOR_SURFACE)
+      .border({ width: 1, color: primary ? COLOR_PRIMARY : COLOR_LINE })
       .borderRadius(12)
-      .accessibilityText($r('app.string.nearby_diagnostics_title'))
-    }
-    .width('100%')
-    .constraintSize({ minHeight: 64 })
-    .padding({ left: 4, right: 8 })
-    .backgroundColor(COLOR_BACKGROUND)
-  }
-
-  @Builder
-  leftPane() {
-    if (this.mode === 'join_code') {
-      this.joinLeft()
-    } else if (this.mode === 'scan') {
-      this.scanLeft()
-    } else {
-      this.inviteLeft()
-    }
-  }
-
-  @Builder
-  rightPane() {
-    if (this.mode === 'join_code') {
-      this.joinRight()
-    } else if (this.mode === 'scan') {
-      this.scanRight()
-    } else {
-      this.inviteRight()
-    }
-  }
-
-  @Builder
-  inviteLeft() {
-    Column({ space: 10 }) {
-      Text($r('app.string.nearby_invite_kicker'))
-        .fontSize(NEARBY_TYPE.kicker.size)
-        .fontWeight(NEARBY_TYPE.kicker.weight)
-        .lineHeight(NEARBY_TYPE.kicker.lineHeight)
-        .fontColor(COLOR_PRIMARY)
-        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.kicker))
-        .width('100%')
-      Text($r('app.string.nearby_invite_headline'))
-        .id('nearby_invite_headline')
-        .fontSize(NEARBY_TYPE.paneTitle.size)
-        .fontWeight(NEARBY_TYPE.paneTitle.weight)
-        .lineHeight(NEARBY_TYPE.paneTitle.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      Text($r('app.string.nearby_invite_subtitle'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-      Text($r('app.string.nearby_invite_codeLabel'))
-        .fontSize(NEARBY_TYPE.body.size)
-        .fontWeight(NEARBY_TYPE.body.weight)
-        .lineHeight(NEARBY_TYPE.body.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      Text(this.inviteCode === '' ? '· · · · · ·' : this.inviteCode)
-        .fontSize(NEARBY_TYPE.inviteCode.size)
-        .fontWeight(NEARBY_TYPE.inviteCode.weight)
-        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.inviteCode))
-        .lineHeight(NEARBY_TYPE.inviteCode.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-        .maxLines(1)
-        .textAlign(TextAlign.Center)
-        .padding({ top: 10, bottom: 10 })
-        .backgroundColor(COLOR_FIELD)
-        .borderRadius(10)
-      Row({ space: 4 }) {
-        Text($r('app.string.nearby_invite_validFor'))
-          .fontSize(NEARBY_TYPE.muted.size)
-          .fontWeight(NEARBY_TYPE.muted.weight)
-          .lineHeight(NEARBY_TYPE.muted.lineHeight)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-        Text(`${this.remainingInviteSeconds()}s`)
-          .fontSize(NEARBY_TYPE.muted.size)
-          .fontWeight(NEARBY_TYPE.muted.weight)
-          .lineHeight(NEARBY_TYPE.muted.lineHeight)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-      }
-      .width('100%')
-      Button($r('app.string.nearby_action_regenerate'))
-        .width('100%')
-        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .fontSize(NEARBY_TYPE.action.size)
-        .fontWeight(NEARBY_TYPE.action.weight)
-        .backgroundColor(COLOR_SURFACE)
-        .fontColor(COLOR_ON_SURFACE)
-        .onClick(() => this.regenerateInvite())
-    }
-    .width(this.availableWidth > 580 ? 224 : '100%')
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  inviteRight() {
-    Column({ space: 10 }) {
-      Column() {
-        Text($r('app.string.nearby_invite_qrLabel'))
-          .fontSize(NEARBY_TYPE.muted.size)
-          .fontWeight(NEARBY_TYPE.muted.weight)
-          .lineHeight(NEARBY_TYPE.muted.lineHeight)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-      }
-      .width(170)
-      .height(170)
-      .flexShrink(0)
-      .backgroundColor('#FFFFFF')
-      .justifyContent(FlexAlign.Center)
-      Text($r('app.string.nearby_invite_qrHint'))
-        .fontSize(NEARBY_TYPE.sectionTitle.size)
-        .fontWeight(NEARBY_TYPE.sectionTitle.weight)
-        .lineHeight(NEARBY_TYPE.sectionTitle.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-      Text($r('app.string.nearby_invite_hostMustAccept'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .textAlign(TextAlign.Center)
-    }
-    .width('100%')
-    .layoutWeight(this.availableWidth > 580 ? 1 : 0)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  joinLeft() {
-    Column({ space: 10 }) {
-      Text($r('app.string.nearby_join_kicker'))
-        .fontSize(NEARBY_TYPE.kicker.size)
-        .fontWeight(NEARBY_TYPE.kicker.weight)
-        .lineHeight(NEARBY_TYPE.kicker.lineHeight)
-        .fontColor(COLOR_PRIMARY)
-        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.kicker))
-        .width('100%')
-      Text($r('app.string.nearby_join_headline'))
-        .fontSize(NEARBY_TYPE.paneTitle.size)
-        .fontWeight(NEARBY_TYPE.paneTitle.weight)
-        .lineHeight(NEARBY_TYPE.paneTitle.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      Text($r('app.string.nearby_join_subtitle'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-      Button($r('app.string.nearby_action_switchToScan'))
-        .width('100%')
-        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .fontSize(NEARBY_TYPE.action.size)
-        .fontWeight(NEARBY_TYPE.action.weight)
-        .backgroundColor(COLOR_SURFACE)
-        .fontColor(COLOR_ON_SURFACE)
-        .onClick(() => {
-          this.mode = 'scan';
-        })
-    }
-    .width(this.availableWidth > 580 ? 224 : '100%')
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  joinRight() {
-    Column({ space: 12 }) {
-      Text($r('app.string.nearby_join_codeLabel'))
-        .fontSize(NEARBY_TYPE.body.size)
-        .fontWeight(NEARBY_TYPE.body.weight)
-        .lineHeight(NEARBY_TYPE.body.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      TextInput({ text: this.joinInput, placeholder: $r('app.string.nearby_join_placeholder') })
-        .id('nearby_join_code_input')
-        .type(InputType.Number)
-        .maxLength(6)
-        .constraintSize({ minHeight: 60 })
-        .width('100%')
-        .fontSize(NEARBY_TYPE.codeInput.size)
-        .fontWeight(NEARBY_TYPE.codeInput.weight)
-        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.codeInput))
-        .textAlign(TextAlign.Center)
-        .fontColor(COLOR_ON_SURFACE)
-        .placeholderColor(COLOR_ON_SURFACE_MUTED)
-        .backgroundColor(COLOR_SURFACE)
-        .enabled(!this.joinSubmitted)
-        .onChange((value: string) => this.joinInputChanged(value))
-      if (this.joinError) {
-        Text(this.joinSubmitted || this.joinFailed
-          ? $r('app.string.nearby_stage_discovery_reason')
-          : $r('app.string.nearby_reason_code_invalidFormat'))
-          .fontSize(NEARBY_TYPE.body.size)
-          .fontWeight(NEARBY_TYPE.body.weight)
-          .lineHeight(NEARBY_TYPE.body.lineHeight)
-          .fontColor(COLOR_AMBER)
-          .width('100%')
-      }
-      Text($r('app.string.nearby_join_hint'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-    }
-    .width('100%')
-    .layoutWeight(this.availableWidth > 580 ? 1 : 0)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  scanLeft() {
-    Column({ space: 10 }) {
-      Text($r('app.string.nearby_scan_kicker'))
-        .fontSize(NEARBY_TYPE.kicker.size)
-        .fontWeight(NEARBY_TYPE.kicker.weight)
-        .lineHeight(NEARBY_TYPE.kicker.lineHeight)
-        .fontColor(COLOR_PRIMARY)
-        .letterSpacing(nearbyLetterSpacingFp(NEARBY_TYPE.kicker))
-        .width('100%')
-      Text($r('app.string.nearby_scan_headline'))
-        .fontSize(NEARBY_TYPE.paneTitle.size)
-        .fontWeight(NEARBY_TYPE.paneTitle.weight)
-        .lineHeight(NEARBY_TYPE.paneTitle.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .width('100%')
-      Text($r('app.string.nearby_scan_subtitle'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-      Button($r('app.string.nearby_action_switchToJoinCode'))
-        .width('100%')
-        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .fontSize(NEARBY_TYPE.action.size)
-        .fontWeight(NEARBY_TYPE.action.weight)
-        .backgroundColor(COLOR_SURFACE)
-        .fontColor(COLOR_ON_SURFACE)
-        .onClick(() => {
-          this.mode = 'join_code';
-        })
-      Text($r('app.string.nearby_scan_cameraNote'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-    }
-    .width(this.availableWidth > 580 ? 224 : '100%')
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  scanRight() {
-    Column({ space: 10 }) {
-      Column({ space: 14 }) {
-        Text('▣')
-          .fontSize(44)
-          .fontColor(COLOR_ON_SURFACE_MUTED)
-        Text($r('app.string.nearby_scan_cameraHint'))
-          .fontSize(NEARBY_TYPE.sectionTitle.size)
-          .fontWeight(NEARBY_TYPE.sectionTitle.weight)
-          .lineHeight(NEARBY_TYPE.sectionTitle.lineHeight)
-          .fontColor(COLOR_ON_SURFACE)
-          .textAlign(TextAlign.Center)
-      }
-      .width('100%')
-      .constraintSize({ minHeight: 206 })
-      .padding(16)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .border({ width: 2, color: COLOR_ON_SURFACE_MUTED, style: BorderStyle.Dashed })
-      .borderRadius(16)
-      .backgroundColor(COLOR_SURFACE)
-      Text($r('app.string.nearby_scan_afterScan'))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-    }
-    .width('100%')
-    .layoutWeight(this.availableWidth > 580 ? 1 : 0)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  footer() {
-    Row({ space: 10 }) {
-      Text(this.footerCopy())
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .layoutWeight(1)
-      if (this.mode === 'join_code' && (this.joinSubmitted || this.joinFailed)) {
-        Button($r('app.string.nearby_action_cancelRequest'))
-          .id('nearby_join_cancel')
-          .constraintSize({ minWidth: 120, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-          .fontSize(NEARBY_TYPE.action.size)
-          .fontWeight(NEARBY_TYPE.action.weight)
-          .backgroundColor(COLOR_SURFACE)
-          .fontColor(COLOR_ON_SURFACE)
-          .onClick(() => this.cancelJoinAttempt())
-      }
-      Button(this.footerActionLabel())
-        .id(this.mode === 'join_code' ? 'nearby_join_submit'
-          : (this.mode === 'scan' ? 'nearby_action_cancel' : 'nearby_invite_cancel'))
-        .constraintSize({ minWidth: 160, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .fontSize(this.mode === 'join_code' ? NEARBY_TYPE.primaryAction.size : NEARBY_TYPE.action.size)
-        .fontWeight(this.mode === 'join_code' ? NEARBY_TYPE.primaryAction.weight : NEARBY_TYPE.action.weight)
-        .backgroundColor(this.mode === 'join_code' ? COLOR_PRIMARY : COLOR_SURFACE)
-        .fontColor(this.mode === 'join_code' ? COLOR_ON_PRIMARY : COLOR_ON_SURFACE)
-        .enabled(!(this.mode === 'join_code' && this.joinSubmitted))
-        .onClick(() => this.footerAction())
-    }
-    .width('100%')
-    .constraintSize({ minHeight: 58 })
-    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .border({ width: { top: 1 }, color: COLOR_LINE })
-    .backgroundColor(COLOR_BACKGROUND)
+      .enabled(id !== 'nearby_mvp_scan_action' || !this.mvpScanActive)
+      .onClick(action)
   }
 
   private footerCopy(): Resource {
@@ -620,6 +384,7 @@ struct NearbyPairing {
       return;
     }
     if (this.mode === 'scan') {
+      this.mvpFlow.leave();
       router.back();
       return;
     }

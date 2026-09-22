@@ -2,6 +2,7 @@ package com.flynes.emu;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -10,7 +11,10 @@ import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -18,6 +22,10 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
 
 /**
  * 配对 — the three entry-mode flows of the approved design (N01/N02/N03):
@@ -43,6 +51,11 @@ public final class NearbyPairingActivity extends AppCompatActivity {
 
     private NearbyInviteHostState invite;
     private NearbySession nearbySession;
+    private NearbyMvpSession mvpSession;
+    private NearbyMvpOwner mvpOwner;
+    private boolean handoffStarted;
+    private String shownMvpQr;
+    private int loggedMvpState = -1;
     private final Handler ticker = new Handler(Looper.getMainLooper());
     private String mode = "";
     private final NearbyJoinSubmitState joinSubmit = new NearbyJoinSubmitState();
@@ -65,8 +78,6 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(R.layout.activity_nearby_pairing);
-        nearbySession = ((FlyNesApplication) getApplication()).nearbySession();
-        invite = new NearbyInviteHostState(nearbySession);
 
         MaterialToolbar toolbar = findViewById(R.id.nearby_pairing_toolbar);
         toolbar.setNavigationOnClickListener(view -> finish());
@@ -83,11 +94,16 @@ public final class NearbyPairingActivity extends AppCompatActivity {
 
         mode = getIntent() == null || getIntent().getStringExtra(EXTRA_MODE) == null
                 ? "" : getIntent().getStringExtra(EXTRA_MODE);
+        mvpOwner = ((FlyNesApplication) getApplication()).nearbyMvpOwner();
         if (MODE_CREATE.equals(mode)) {
             showCreateBlock();
         } else if (MODE_JOIN_CODE.equals(mode)) {
+            nearbySession = ((FlyNesApplication) getApplication()).nearbySession();
+            invite = new NearbyInviteHostState(nearbySession);
             showJoinBlock();
         } else if (MODE_SCAN.equals(mode)) {
+            nearbySession = ((FlyNesApplication) getApplication()).nearbySession();
+            invite = new NearbyInviteHostState(nearbySession);
             showScanBlock();
         }
         applyResponsiveColumns();
@@ -105,63 +121,41 @@ public final class NearbyPairingActivity extends AppCompatActivity {
     }
 
     private void layoutPairingColumns() {
-        View root = findViewById(R.id.nearby_pairing_root);
-        LinearLayout columns = findViewById(R.id.nearby_pairing_columns);
-        if (root.getWidth() == 0 || columns == null) return;
-        float density = getResources().getDisplayMetrics().density;
-        float contentAfterInsets = (root.getWidth() - root.getPaddingLeft()
-                - root.getPaddingRight()) / density;
-        boolean split = contentAfterInsets > 580f;
-        columns.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-
-        int leftWidth = split ? Math.round(224f * density) : ViewGroup.LayoutParams.MATCH_PARENT;
-        setBlockWidth(R.id.nearby_create_block, leftWidth);
-        setBlockWidth(R.id.nearby_join_block, leftWidth);
-        setBlockWidth(R.id.nearby_scan_block, leftWidth);
-
-        LinearLayout right = findViewById(R.id.nearby_pairing_right);
-        LinearLayout.LayoutParams rightParams = (LinearLayout.LayoutParams) right.getLayoutParams();
-        rightParams.width = split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT;
-        rightParams.weight = split ? 1f : 0f;
-        rightParams.leftMargin = split ? Math.round(18f * density) : 0;
-        rightParams.topMargin = split ? 0 : Math.round(18f * density);
-        right.setLayoutParams(rightParams);
-        layoutPairingFooter(split);
-    }
-
-    private void setBlockWidth(int id, int width) {
-        View block = findViewById(id);
-        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) block.getLayoutParams();
-        params.width = width;
-        block.setLayoutParams(params);
-    }
-
-    private void layoutPairingFooter(boolean split) {
-        LinearLayout footer = findViewById(R.id.nearby_pairing_footer);
-        footer.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        TextView copy = findViewById(R.id.nearby_pairing_footer_copy);
-        LinearLayout.LayoutParams copyParams = (LinearLayout.LayoutParams) copy.getLayoutParams();
-        copyParams.width = split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT;
-        copyParams.weight = split ? 1f : 0f;
-        copy.setLayoutParams(copyParams);
-        int[] buttons = {
-                R.id.nearby_invite_cancel,
-                R.id.nearby_join_submit,
-                R.id.nearby_join_cancel,
-                R.id.nearby_scan_cancel
-        };
-        for (int id : buttons) {
-            View button = findViewById(id);
-            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) button.getLayoutParams();
-            params.width = split ? ViewGroup.LayoutParams.WRAP_CONTENT
-                    : ViewGroup.LayoutParams.MATCH_PARENT;
-            params.weight = 0f;
-            button.setLayoutParams(params);
+        // Body and action rail are independently measured; the body never scrolls.
+        int[] blocks = {R.id.nearby_create_block, R.id.nearby_join_block, R.id.nearby_scan_block};
+        for (int id : blocks) {
+            findViewById(id).setLayoutParams(new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 0.45f));
         }
+        LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.55f);
+        right.setMarginStart(Math.round(18 * getResources().getDisplayMetrics().density));
+        findViewById(R.id.nearby_pairing_right).setLayoutParams(right);
+        findViewById(R.id.nearby_invite_regenerate).setVisibility(
+                MODE_CREATE.equals(mode) ? View.VISIBLE : View.GONE);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        Log.i("FlyNesNearby", "event=onResume");
+    }
+
+    @Override protected void onPause() {
+        Log.i("FlyNesNearby", "event=onPause");
+        super.onPause();
+    }
+
+    @Override protected void onStop() {
+        Log.i("FlyNesNearby", "event=onStop");
+        super.onStop();
     }
 
     @Override protected void onDestroy() {
+        Log.i("FlyNesNearby", "event=onDestroy");
         ticker.removeCallbacksAndMessages(null);
+        if (!handoffStarted && mvpOwner != null) mvpOwner.close();
+        mvpSession = null;
+        shownMvpQr = null;
         super.onDestroy();
     }
 
@@ -175,24 +169,100 @@ public final class NearbyPairingActivity extends AppCompatActivity {
         findViewById(R.id.nearby_scan_cancel).setVisibility(View.GONE);
         TextView footer = findViewById(R.id.nearby_pairing_footer_copy);
         footer.setText(R.string.nearby_invite_footer);
-        // The session is process-scoped while this display state belongs to
-        // one Activity. If the prior display owner disappeared, its code is no
-        // longer recoverable; cancel that generation before publishing a new
-        // one so reopening the page cannot be blocked by invisible stale UI.
-        nearbySession.cancelActiveHost();
-        if (!invite.active()) {
-            invite.create(android.os.SystemClock.elapsedRealtime());
+        ((TextView) findViewById(R.id.nearby_invite_code_label)).setText(R.string.nearby_mvp_status_label);
+        findViewById(R.id.nearby_invite_regenerate).setOnClickListener(view -> startMvpHost());
+        findViewById(R.id.nearby_invite_cancel).setOnClickListener(view -> finish());
+        startMvpHost();
+        ticker.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (isFinishing() || isDestroyed()) return;
+                renderMvpHost();
+                ticker.postDelayed(this, 250L);
+            }
+        }, 250L);
+    }
+
+    private void startMvpHost() {
+        if (mvpOwner != null) mvpOwner.close();
+        mvpSession = null;
+        shownMvpQr = null;
+        ((FrameLayout) findViewById(R.id.nearby_invite_qr)).removeAllViews();
+        String ipv4 = NearbyMvpLanAddress.current();
+        if (ipv4 == null) {
+            ((TextView) findViewById(R.id.nearby_invite_code_value))
+                    .setText(R.string.nearby_mvp_no_lan);
+            return;
         }
-        renderInvite();
-        findViewById(R.id.nearby_invite_regenerate).setOnClickListener(view -> {
-            invite.regenerate(android.os.SystemClock.elapsedRealtime());
-            renderInvite();
-        });
-        findViewById(R.id.nearby_invite_cancel).setOnClickListener(view -> {
-            invite.cancel(invite.generation());
-            finish();
-        });
-        startTicker();
+        try {
+            if (mvpOwner == null || !mvpOwner.startHost(ipv4)) {
+                ((TextView) findViewById(R.id.nearby_invite_code_value))
+                        .setText(R.string.nearby_mvp_connection_failed);
+                return;
+            }
+            mvpSession = mvpOwner.session();
+            ((TextView) findViewById(R.id.nearby_invite_code_value))
+                    .setText(R.string.nearby_screen_connecting);
+        } catch (IllegalStateException error) {
+            ((TextView) findViewById(R.id.nearby_invite_code_value))
+                    .setText(R.string.nearby_mvp_connection_failed);
+        }
+    }
+
+    private void renderMvpHost() {
+        if (mvpSession == null) return;
+        int[] snapshot = mvpSession.snapshot();
+        if (snapshot == null || snapshot.length < 2) return;
+        if (snapshot[0] != loggedMvpState) {
+            loggedMvpState = snapshot[0];
+            Log.i("FlyNesNearby", "LAN state=" + snapshot[0] + " reason=" + snapshot[1]
+                    + " transportResult=" + (snapshot.length > 2 ? snapshot[2] : 0)
+                    + " transportOperation=" + (snapshot.length > 3 ? snapshot[3] : 0));
+        }
+        TextView status = findViewById(R.id.nearby_invite_code_value);
+        if (snapshot[0] == NearbyMvpSession.LOBBY) {
+            ((FrameLayout) findViewById(R.id.nearby_invite_qr)).removeAllViews();
+            shownMvpQr = null;
+            status.setText(R.string.nearby_mvp_connected);
+            if (!handoffStarted) {
+                handoffStarted = true;
+                ticker.postDelayed(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    startActivity(new Intent(this, NearbyLobbyActivity.class));
+                    finish();
+                }, 750L);
+            }
+            return;
+        }
+        if (snapshot[0] == NearbyMvpSession.ENDED) {
+            ((FrameLayout) findViewById(R.id.nearby_invite_qr)).removeAllViews();
+            shownMvpQr = null;
+            status.setText(snapshot[1] == 4 ? R.string.nearby_mvp_expired :
+                    R.string.nearby_mvp_connection_failed);
+            return;
+        }
+        String qr = mvpSession.invite();
+        if (qr == null || qr.equals(shownMvpQr)) return;
+        try {
+            BitMatrix matrix = new QRCodeWriter().encode(qr, BarcodeFormat.QR_CODE, 512, 512);
+            Bitmap bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888);
+            for (int y = 0; y < 512; y++) {
+                for (int x = 0; x < 512; x++) {
+                    bitmap.setPixel(x, y, matrix.get(x, y) ? 0xff000000 : 0xffffffff);
+                }
+            }
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(bitmap);
+            image.setContentDescription(getString(R.string.nearby_invite_qrLabel));
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            FrameLayout frame = findViewById(R.id.nearby_invite_qr);
+            frame.removeAllViews();
+            frame.addView(image, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            shownMvpQr = qr;
+            status.setText(R.string.nearby_mvp_waiting);
+        } catch (WriterException error) {
+            status.setText(R.string.nearby_mvp_connection_failed);
+        }
     }
 
     private void startTicker() {

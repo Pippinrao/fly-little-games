@@ -17,6 +17,8 @@ extern "C" {
 typedef struct FlynesQuicProvider FlynesQuicProvider;
 typedef void (*FlynesContextRetain)(void*);
 typedef void (*FlynesContextRelease)(void*);
+/* On failure, bytes may contain a bounded diagnostic category (not payload or
+ * arbitrary peer text): timeout/tls/closed/reset/io/transport. */
 typedef void (*FlynesQuicCompletion)(void*, uint64_t, int32_t, uint32_t,
     uint64_t, const uint8_t*, size_t);
 typedef size_t (*FlynesTlsSign)(void*, const uint8_t*, size_t, uint8_t*, size_t);

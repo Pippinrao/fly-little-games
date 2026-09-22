@@ -12,6 +12,7 @@ public final class FlyNesApplication extends Application {
     private AndroidGameLaunchService gameLaunchService;
     private NearbyAvailability<NearbySessionOwner> nearbyAvailability;
     private NearbySession nearbySession;
+    private NearbyMvpOwner nearbyMvpOwner;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -19,6 +20,7 @@ public final class FlyNesApplication extends Application {
         gameLaunchService = new AndroidGameLaunchService(catalogRuntime);
         nearbyAvailability = new NearbyAvailability<>(NearbyAvailability.fromIllegalState(
                 () -> NearbySessionOwner.create(catalogRuntime), "nearby_blocked_session_read"));
+        nearbyMvpOwner = new NearbyMvpOwner();
     }
 
     public AndroidCatalogRuntime catalogRuntime() { return catalogRuntime; }
@@ -41,6 +43,8 @@ public final class FlyNesApplication extends Application {
     public NearbySessionOwner nearbySessionOwner() {
         return nearbyAvailability == null ? null : nearbyAvailability.ownerOrNull();
     }
+
+    public NearbyMvpOwner nearbyMvpOwner() { return nearbyMvpOwner; }
 
     public NearbyAvailability.Status nearbyStatus() {
         if (nearbyAvailability == null) {

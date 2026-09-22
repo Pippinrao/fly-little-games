@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="nearby_choose_game">Choose game</string>
     <string name="app_name">FlyNES</string>
     <string name="open_pause">Pause game</string>
     <string name="pause_title">Game paused</string>
@@ -229,8 +230,8 @@
     <string name="nearby_entry_footer">Code / scan / nearby device → accept → verify → game hall</string>
     <string name="nearby_invite_kicker">HOST · INVITE</string>
     <string name="nearby_invite_headline">Let a friend join</string>
-    <string name="nearby_invite_subtitle">Tell your friend the code, or let them scan the QR.</string>
-    <string name="nearby_invite_qrHint">Scan the host QR</string>
+    <string name="nearby_invite_subtitle">Connect to the same Wi-Fi and invite a friend to scan.</string>
+    <string name="nearby_invite_qrHint">Invitation QR code</string>
     <string name="nearby_invite_hostMustAccept">You still need to accept when a friend joins.</string>
     <string name="nearby_invite_footer">Waiting for a friend · no game selected yet</string>
     <string name="nearby_join_kicker">JOIN WITH CODE</string>
@@ -289,9 +290,9 @@
     <string name="nearby_lobby_identity_fingerprint">Identity fingerprint</string>
     <string name="nearby_lobby_authority_capability">Authority candidate capability</string>
     <string name="nearby_lobby_resource_risk">Resource risk</string>
-    <string name="nearby_lobby_network_owner">Current network owner</string>
-    <string name="nearby_lobby_seat">Seat (P1/P2)</string>
-    <string name="nearby_lobby_rom_identity">ROM identity</string>
+    <string name="nearby_lobby_network_owner">Host</string>
+    <string name="nearby_lobby_seat">Seat</string>
+    <string name="nearby_lobby_rom_identity">Game</string>
     <string name="nearby_lobby_rom_local_state">Whether each end already has this ROM</string>
     <string name="nearby_lobby_rom_transfer_confirm">ROM transfer confirmation</string>
     <string name="nearby_lobby_rom_transfer_progress">ROM transfer progress</string>
@@ -398,6 +399,12 @@
     <string name="nearby_action_resetIdentity">Reset Local Identity</string>
     <string name="nearby_invite_codeLabel">Six-digit pairing code</string>
     <string name="nearby_invite_qrLabel">Invite QR code</string>
+    <string name="nearby_mvp_status_label">Connection status</string>
+    <string name="nearby_mvp_no_lan">Connect to the same Wi-Fi or enable a hotspot</string>
+    <string name="nearby_mvp_connection_failed">Connection failed. Create a new room.</string>
+    <string name="nearby_mvp_connected">Connected to player 2</string>
+    <string name="nearby_mvp_expired">Invite expired. Create a new room.</string>
+    <string name="nearby_mvp_waiting">Ask your friend to scan to join</string>
     <string name="nearby_invite_validFor">Time remaining</string>
     <string name="nearby_join_codeLabel">Six-digit pairing code</string>
     <string name="nearby_wait_anonymousNote">Request sent, waiting for the host to accept</string>
@@ -446,4 +453,8 @@
     <string name="nearby_reason_config_changed">Match setup changed; both players must confirm again</string>
     <string name="nearby_reason_content_sendDenied">The other side did not allow sending files</string>
     <string name="nearby_reason_content_receiveDenied">The other side did not allow receiving files</string>
+    <string name="nearby_not_supported">Not supported yet</string>
+    <string name="nearby_qr_unavailable">No active invite</string>
+    <string name="nearby_details_previous">Previous</string>
+    <string name="nearby_details_next">Next</string>
 </resources>

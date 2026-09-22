@@ -802,15 +802,15 @@
     },
     {
       "name": "nearby_lobby_network_owner",
-      "value": "当前网络 owner"
+      "value": "房主"
     },
     {
       "name": "nearby_lobby_seat",
-      "value": "P1/P2 seat"
+      "value": "玩家席位"
     },
     {
       "name": "nearby_lobby_rom_identity",
-      "value": "ROM 身份"
+      "value": "游戏"
     },
     {
       "name": "nearby_lobby_rom_local_state",
@@ -1427,6 +1427,54 @@
     {
       "name": "nearby_open_entry",
       "value": "附近联机"
+    },
+    {
+      "name": "nearby_mvp_scan_action",
+      "value": "扫码加入"
+    },
+    {
+      "name": "nearby_mvp_scan_prompt",
+      "value": "连接同一 Wi-Fi，扫描朋友的邀请二维码。"
+    },
+    {
+      "name": "nearby_mvp_joining",
+      "value": "正在连接玩家 1"
+    },
+    {
+      "name": "nearby_mvp_connected",
+      "value": "已连接玩家 1"
+    },
+    {
+      "name": "nearby_mvp_expired",
+      "value": "邀请已过期，请房主重新建房"
+    },
+    {
+      "name": "nearby_mvp_failed",
+      "value": "加入失败，请检查 Wi-Fi 并扫描新二维码"
+    },
+    {
+      "name": "nearby_not_supported",
+      "value": "暂不支持"
+    },
+    {
+      "name": "nearby_details_previous",
+      "value": "上一项"
+    },
+    {
+      "name": "nearby_details_next",
+      "value": "下一项"
+    },
+    {
+      "name": "nearby_back",
+      "value": "返回"
+    },
+    {
+      "name": "nearby_local_game_missing",
+      "value": "本机缺少房主选择的游戏或版本不同，请导入同一 ROM"
+    },
+    {
+      "name": "nearby_wait_host_game",
+      "value": "等待房主选择游戏"
     }
   ]
 }

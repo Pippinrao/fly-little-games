@@ -428,6 +428,38 @@ if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
             DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
             COMMENT "cargo build --release --target ${FLYNES_QUIC_RUST_TARGET} (nearby QUIC)"
             VERBATIM)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+        if(OHOS_ARCH STREQUAL "arm64-v8a")
+            set(FLYNES_QUIC_RUST_TARGET aarch64-unknown-linux-ohos)
+            set(FLYNES_QUIC_CLANG_TARGET aarch64-linux-ohos)
+        elseif(OHOS_ARCH STREQUAL "x86_64")
+            set(FLYNES_QUIC_RUST_TARGET x86_64-unknown-linux-ohos)
+            set(FLYNES_QUIC_CLANG_TARGET x86_64-linux-ohos)
+        else()
+            message(FATAL_ERROR "nearby QUIC provider: unsupported OHOS_ARCH ${OHOS_ARCH}")
+        endif()
+        if(NOT EXISTS "${OHOS_SDK_NATIVE}/llvm/bin/clang.exe")
+            message(FATAL_ERROR "nearby QUIC provider: OHOS clang is missing")
+        endif()
+        string(REPLACE "-" "_" FLYNES_QUIC_TARGET_ENV "${FLYNES_QUIC_RUST_TARGET}")
+        string(TOUPPER "${FLYNES_QUIC_TARGET_ENV}" FLYNES_QUIC_TARGET_ENV_UPPER)
+        file(TO_CMAKE_PATH "${OHOS_SDK_NATIVE}" FLYNES_QUIC_OHOS_SDK_PATH)
+        set(FLYNES_QUIC_PROVIDER_LIBRARY
+            "${FLYNES_QUIC_PROVIDER_ROOT}/target/${FLYNES_QUIC_RUST_TARGET}/release/libflynes_nearby_quic_provider.a")
+        add_custom_command(
+            OUTPUT "${FLYNES_QUIC_PROVIDER_LIBRARY}"
+            COMMAND "${CMAKE_COMMAND}" -E env
+                "CC_${FLYNES_QUIC_TARGET_ENV}=${OHOS_SDK_NATIVE}/llvm/bin/clang.exe"
+                "AR_${FLYNES_QUIC_TARGET_ENV}=${OHOS_SDK_NATIVE}/llvm/bin/llvm-ar.exe"
+                "CC_SHELL_ESCAPED_FLAGS=1"
+                "CFLAGS_${FLYNES_QUIC_TARGET_ENV}=-target ${FLYNES_QUIC_CLANG_TARGET} --sysroot=\"${FLYNES_QUIC_OHOS_SDK_PATH}/sysroot\" -D__MUSL__"
+                "CARGO_TARGET_${FLYNES_QUIC_TARGET_ENV_UPPER}_LINKER=${OHOS_SDK_NATIVE}/llvm/bin/clang.exe"
+                "${FLYNES_CARGO_EXECUTABLE}" ${FLYNES_QUIC_CARGO_ARGS}
+                    --target "${FLYNES_QUIC_RUST_TARGET}"
+            WORKING_DIRECTORY "${FLYNES_QUIC_PROVIDER_ROOT}"
+            DEPENDS ${FLYNES_QUIC_PROVIDER_SOURCES}
+            COMMENT "cargo build --release --target ${FLYNES_QUIC_RUST_TARGET} (nearby QUIC)"
+            VERBATIM)
     elseif(WIN32)
         set(FLYNES_QUIC_PROVIDER_LIBRARY
             "${FLYNES_QUIC_PROVIDER_ROOT}/target/release/flynes_nearby_quic_provider.lib")
@@ -470,10 +502,91 @@ if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
     message(STATUS "nearby QUIC provider: linked from ${FLYNES_QUIC_PROVIDER_LIBRARY}")
 endif()
 
+if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+    flynes_add_runtime_library()
+    add_library(flynes_lan_mvp STATIC
+        src/session/lan_mvp/invite.cpp
+        src/session/lan_mvp/lockstep.cpp
+        src/session/lan_mvp/wire.cpp
+        src/session/lan_mvp/session.cpp)
+    target_include_directories(flynes_lan_mvp PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(flynes_lan_mvp PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_link_libraries(flynes_lan_mvp PUBLIC
+        flynes_nearby_quic_provider flynes_session_codec flynes_runtime)
+    add_dependencies(flynes_lan_mvp flynes_nearby_quic_provider_build)
+    target_compile_features(flynes_lan_mvp PUBLIC cxx_std_17)
+    set_target_properties(flynes_lan_mvp PROPERTIES
+        CXX_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES)
+    flynes_enable_strict_warnings(flynes_lan_mvp)
+endif()
+
 if(FLYNES_BUILD_TESTS)
     enable_language(C)
     enable_testing()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    if(FLYNES_ENABLE_RUST_QUIC_PROVIDER)
+        add_executable(flynes_lan_mvp_protocol_test
+            tests/nearby/mvp/test_lan_mvp_protocol.cpp)
+        target_include_directories(flynes_lan_mvp_protocol_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+        target_link_libraries(flynes_lan_mvp_protocol_test PRIVATE flynes_lan_mvp)
+        target_compile_features(flynes_lan_mvp_protocol_test PRIVATE cxx_std_17)
+        flynes_enable_strict_warnings(flynes_lan_mvp_protocol_test)
+        add_test(NAME flynes_lan_mvp_protocol COMMAND flynes_lan_mvp_protocol_test)
+
+        add_executable(flynes_lan_mvp_session_test
+            tests/nearby/mvp/test_lan_mvp_session.cpp)
+        target_link_libraries(flynes_lan_mvp_session_test PRIVATE flynes_lan_mvp)
+        target_compile_features(flynes_lan_mvp_session_test PRIVATE cxx_std_17)
+        target_compile_definitions(flynes_lan_mvp_session_test PRIVATE
+            _CRT_SECURE_NO_WARNINGS
+            FLYNES_RUNTIME_ROM_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms/thwaite.nes"
+            FLYNES_CONTENT_ROM_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../content/assets/roms")
+        flynes_enable_strict_warnings(flynes_lan_mvp_session_test)
+        add_test(NAME flynes_lan_mvp_session COMMAND flynes_lan_mvp_session_test)
+        add_test(NAME flynes_lan_mvp_session_delayed_join
+                 COMMAND flynes_lan_mvp_session_test --delayed-join)
+        add_test(NAME flynes_lan_mvp_session_idle
+                 COMMAND flynes_lan_mvp_session_test --idle)
+        add_test(NAME flynes_lan_mvp_session_play
+                 COMMAND flynes_lan_mvp_session_test --play)
+        add_test(NAME flynes_lan_mvp_session_invalid_rom
+                 COMMAND flynes_lan_mvp_session_test --invalid-rom)
+        add_test(NAME flynes_lan_mvp_session_rom_mismatch
+                 COMMAND flynes_lan_mvp_session_test --rom-mismatch)
+        add_test(NAME flynes_lan_mvp_session_ready
+                 COMMAND flynes_lan_mvp_session_test --ready)
+        add_test(NAME flynes_lan_mvp_session_stall
+                 COMMAND flynes_lan_mvp_session_test --stall)
+        add_test(NAME flynes_lan_mvp_session_expiry
+                 COMMAND flynes_lan_mvp_session_test --expires)
+        set_tests_properties(flynes_lan_mvp_session PROPERTIES
+            TIMEOUT 35 SKIP_RETURN_CODE 77)
+        set_tests_properties(flynes_lan_mvp_session_delayed_join PROPERTIES
+            TIMEOUT 70 SKIP_RETURN_CODE 77 LABELS "nearby_mvp;slow")
+        set_tests_properties(flynes_lan_mvp_session_idle PROPERTIES
+            TIMEOUT 45 SKIP_RETURN_CODE 77 LABELS "nearby_mvp")
+        set_tests_properties(flynes_lan_mvp_session_play PROPERTIES
+            TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "nearby_mvp;runtime")
+        set_tests_properties(flynes_lan_mvp_session_invalid_rom
+            flynes_lan_mvp_session_rom_mismatch flynes_lan_mvp_session_ready
+            flynes_lan_mvp_session_stall PROPERTIES
+            TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "nearby_mvp;runtime")
+        set_tests_properties(flynes_lan_mvp_session_expiry PROPERTIES
+            TIMEOUT 150 SKIP_RETURN_CODE 77 LABELS "nearby_mvp;slow")
+    endif()
+
+    add_executable(flynes_lan_mvp_invite_test
+        tests/nearby/mvp/test_lan_mvp_invite.cpp
+        src/session/lan_mvp/invite.cpp)
+    target_include_directories(flynes_lan_mvp_invite_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session)
+    target_compile_features(flynes_lan_mvp_invite_test PRIVATE cxx_std_17)
+    flynes_enable_strict_warnings(flynes_lan_mvp_invite_test)
+    add_test(NAME flynes_lan_mvp_invite COMMAND flynes_lan_mvp_invite_test)
 
     # GNU-compatible ELF --wrap is test observation only, unavailable on Apple/MSVC.
     if(UNIX AND NOT APPLE AND NOT ANDROID)

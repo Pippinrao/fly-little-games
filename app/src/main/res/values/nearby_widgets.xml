@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="nearby_play_frame" type="id" />
+    <item name="nearby_play_controls" type="id" />
+    <item name="nearby_play_status" type="id" />
+    <style name="Widget.FlyNes.Nearby.Action" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:minWidth">120dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textAppearance">@style/TextAppearance.FlyNes.Nearby.Action</item>
+        <item name="android:textColor">@color/fly_on_surface</item>
+        <item name="cornerRadius">12dp</item>
+    </style>
+    <style name="Widget.FlyNes.Nearby.Primary" parent="Widget.FlyNes.Nearby.Action">
+        <item name="backgroundTint">@color/fly_primary</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="android:textColor">@color/fly_on_primary</item>
+        <item name="android:textAppearance">@style/TextAppearance.FlyNes.Nearby.PrimaryAction</item>
+    </style>
+</resources>

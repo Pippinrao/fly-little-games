@@ -67,9 +67,7 @@ impl ProductListener {
     }
 
     pub async fn accept(&self) -> Result<ProductConnection> {
-        let incoming = tokio::time::timeout(self.deadline, self.endpoint.accept())
-            .await?
-            .ok_or("listener closed")?;
+        let incoming = self.endpoint.accept().await.ok_or("listener closed")?;
         validate_address(incoming.remote_address(), true)?;
         let connection = tokio::time::timeout(self.deadline, incoming).await??;
         inspect_handshake(&connection)?;

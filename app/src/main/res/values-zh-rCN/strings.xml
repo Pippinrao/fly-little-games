@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="nearby_choose_game">更换游戏</string>
     <string name="app_name">FlyNES</string>
     <string name="open_pause">暂停游戏</string>
     <string name="pause_title">游戏已暂停</string>
@@ -229,8 +230,8 @@
     <string name="nearby_entry_footer">输入配对码 / 扫码 / 附近设备 → 接受请求 → 验证 → 游戏大厅</string>
     <string name="nearby_invite_kicker">HOST · INVITE</string>
     <string name="nearby_invite_headline">让朋友加入</string>
-    <string name="nearby_invite_subtitle">把配对码告诉朋友，或让朋友扫码。</string>
-    <string name="nearby_invite_qrHint">扫描房主二维码</string>
+    <string name="nearby_invite_subtitle">连接同一 Wi-Fi，让朋友扫码加入。</string>
+    <string name="nearby_invite_qrHint">邀请二维码</string>
     <string name="nearby_invite_hostMustAccept">朋友加入时，你仍需接受请求。</string>
     <string name="nearby_invite_footer">正在等待朋友 · 尚未选择游戏</string>
     <string name="nearby_join_kicker">JOIN WITH CODE</string>
@@ -286,9 +287,9 @@
     <string name="nearby_lobby_identity_fingerprint">identity 指纹短码</string>
     <string name="nearby_lobby_authority_capability">authority 候选能力</string>
     <string name="nearby_lobby_resource_risk">资源风险</string>
-    <string name="nearby_lobby_network_owner">当前网络 owner</string>
-    <string name="nearby_lobby_seat">座位（P1/P2）</string>
-    <string name="nearby_lobby_rom_identity">ROM 身份</string>
+    <string name="nearby_lobby_network_owner">房主</string>
+    <string name="nearby_lobby_seat">玩家席位</string>
+    <string name="nearby_lobby_rom_identity">游戏</string>
     <string name="nearby_lobby_rom_local_state">两端是否各自已有该 ROM</string>
     <string name="nearby_lobby_rom_transfer_confirm">ROM 传输确认</string>
     <string name="nearby_lobby_rom_transfer_progress">ROM 传输进度</string>
@@ -395,6 +396,12 @@
     <string name="nearby_action_resetIdentity">重置本机身份</string>
     <string name="nearby_invite_codeLabel">本次六位配对码</string>
     <string name="nearby_invite_qrLabel">邀请二维码</string>
+    <string name="nearby_mvp_status_label">连接状态</string>
+    <string name="nearby_mvp_no_lan">请连接同一 Wi-Fi 或手动开启热点</string>
+    <string name="nearby_mvp_connection_failed">连接失败，请重新建房</string>
+    <string name="nearby_mvp_connected">已连接玩家 2</string>
+    <string name="nearby_mvp_expired">邀请已过期，请重新建房</string>
+    <string name="nearby_mvp_waiting">请朋友扫描二维码加入</string>
     <string name="nearby_invite_validFor">剩余有效期</string>
     <string name="nearby_join_codeLabel">六位配对码</string>
     <string name="nearby_wait_anonymousNote">已发送请求，等待房主接受</string>
@@ -443,4 +450,8 @@
     <string name="nearby_reason_config_changed">本局配置已变更，需要双方重新确认</string>
     <string name="nearby_reason_content_sendDenied">对方未许可发送文件</string>
     <string name="nearby_reason_content_receiveDenied">对方未许可接收文件</string>
+    <string name="nearby_not_supported">暂不支持</string>
+    <string name="nearby_qr_unavailable">暂无有效邀请</string>
+    <string name="nearby_details_previous">上一项</string>
+    <string name="nearby_details_next">下一项</string>
 </resources>

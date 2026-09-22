@@ -204,7 +204,8 @@ public final class HomeActivity extends AppCompatActivity {
         com.google.android.material.switchmaterial.SwitchMaterial multiplayerFilter =
                 findViewById(R.id.multiplayer_filter);
         multiplayerFilter.setOnCheckedChangeListener(null);
-        multiplayerFilter.setChecked(preferences.getBoolean(PREF_MULTIPLAYER_ONLY, false));
+        multiplayerFilter.setChecked(!getIntent().getBooleanExtra("nearby_choose_game", false)
+                && preferences.getBoolean(PREF_MULTIPLAYER_ONLY, false));
         navigation.setMultiplayerOnly(multiplayerFilter.isChecked());
         multiplayerFilter.setOnCheckedChangeListener((buttonView, isChecked) -> {
             navigation.setMultiplayerOnly(isChecked);
@@ -409,7 +410,8 @@ public final class HomeActivity extends AppCompatActivity {
         art.setText(display);
         loadCover(entry.canonicalGame().id(), cover, art);
         launch.setEnabled(!busy && variant != null);
-        launch.setText(entry.isRecent() ? R.string.continue_selected_game : R.string.start_game);
+        launch.setText(getIntent().getBooleanExtra("nearby_choose_game", false)
+                ? R.string.nearby_choose_game : entry.isRecent() ? R.string.continue_selected_game : R.string.start_game);
         launch.setContentDescription(launch.getText() + ", " + display);
         favoriteToggle.setEnabled(!busy);
         favoriteToggle.setIconResource(entry.favorite()
@@ -465,6 +467,29 @@ public final class HomeActivity extends AppCompatActivity {
         GameCatalogEntry entry = entries.get(navigation.selectedCanonicalId());
         GameVariant variant = entry == null ? null : preferredVariant(entry);
         if (variant == null) return;
+        if (getIntent().getBooleanExtra("nearby_choose_game", false)) {
+            setBusy(true);
+            FlyNesApplication app = (FlyNesApplication) getApplication();
+            waiter.execute(() -> {
+                try {
+                    var content = app.catalogRuntime().nearbyContentLoader().load(variant.variantId());
+                    NearbyMvpSession lan = app.nearbyMvpOwner().session();
+                    long deadline = android.os.SystemClock.elapsedRealtime() + 3000;
+                    while (lan != null && lan.snapshot()[0] == NearbyMvpSession.RETURNING &&
+                            android.os.SystemClock.elapsedRealtime() < deadline) android.os.SystemClock.sleep(10);
+                    var bundled = AndroidBuiltinCatalogAdapter.SOURCE.id().equals(variant.sourceId())
+                            ? app.catalogRuntime().builtinGames().byAssetFilename(variant.originalFilename()) : null;
+                    String gameKey = bundled == null ? variant.canonicalGameId() : bundled.canonicalId;
+                    if (lan == null || !lan.selectGame(content.bytes(), gameKey))
+                        throw new java.io.IOException("Game selection failed");
+                    app.nearbyMvpOwner().gameTitle(displayTitle(entry));
+                    runOnUiThread(this::finish);
+                } catch (Exception failure) {
+                    runOnUiThread(() -> { setBusy(false); showStatus(R.string.launch_failed); });
+                }
+            });
+            return;
+        }
         setBusy(true);
         status.setText(getString(R.string.launching_game, displayTitle(entry)));
         ((FlyNesApplication) getApplication()).gameLaunchService().launch(

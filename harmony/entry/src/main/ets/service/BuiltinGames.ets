@@ -97,14 +97,14 @@ export class BuiltinGames {
   }
 
   /** Reads the manifest from the module's rawfile directory. */
-  static async load(context: common.UIAbilityContext): Promise<BuiltinGames> {
+  static async load(context: common.Context): Promise<BuiltinGames> {
     const bytes = await context.resourceManager.getRawFileContent(BuiltinGames.ASSET_NAME);
     const text = util.TextDecoder.create('utf-8', { ignoreBOM: true }).decodeWithStream(bytes);
     return BuiltinGames.parse(text);
   }
 
   /** Synchronous read, for callers that project the catalog on the UI thread. */
-  static loadSync(context: common.UIAbilityContext): BuiltinGames {
+  static loadSync(context: common.Context): BuiltinGames {
     const bytes = context.resourceManager.getRawFileContentSync(BuiltinGames.ASSET_NAME);
     const text = util.TextDecoder.create('utf-8', { ignoreBOM: true }).decodeWithStream(bytes);
     return BuiltinGames.parse(text);

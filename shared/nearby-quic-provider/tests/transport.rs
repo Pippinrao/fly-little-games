@@ -137,6 +137,40 @@ async fn product_runtime_uses_opaque_tls_signer_without_private_key_export() -> 
 }
 
 #[tokio::test]
+async fn listener_wait_does_not_consume_the_handshake_deadline() -> Result<()> {
+    let (certificates, signing, spki) = material();
+    let listener = Arc::new(runtime::listen(
+        local(),
+        certificates,
+        signing,
+        &spki,
+        Duration::from_millis(200),
+    )?);
+    let address = listener.local_addr()?;
+    let server_listener = listener.clone();
+    let server = tokio::spawn(async move {
+        let connection = server_listener.accept().await?;
+        connection.close(0);
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    });
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let client = runtime::connect(
+        local(),
+        address,
+        &pin_hash(&spki),
+        Duration::from_secs(1),
+    )
+    .await?;
+    server.await??;
+    client.close(0);
+    drop(client);
+    let listener = Arc::try_unwrap(listener).map_err(|_| "listener still referenced")?;
+    listener.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn product_alpn_exact_pin_exporter_streams_datagram_and_fin_work() -> Result<()> {
     assert_eq!(PRODUCT_ALPN, b"flynes-nearby/2");
     assert_eq!(EXPORTER_LABEL, b"EXPORTER-flynes-nearby-v1");

@@ -28,7 +28,7 @@ public final class NearbyLobbyConfirmationTest {
                 NearbySessionOwner owner = ((FlyNesApplication) activity.getApplication())
                         .nearbySessionOwner();
                 NearbySessionOwner.Snapshot before = owner.snapshot();
-                assertFalse(confirm.isEnabled());
+                assertTrue(confirm.isEnabled());
                 assertFalse(before.canConfirmGameConfig());
                 confirm.performClick();
                 assertEquals(0, owner.snapshot().pendingConfigLocalConfirmed);
@@ -67,7 +67,7 @@ public final class NearbyLobbyConfirmationTest {
                 NearbySessionOwner owner = ((FlyNesApplication) activity.getApplication())
                         .nearbySessionOwner();
                 assertEquals(owner.snapshot().linkState, activity.boundLinkState());
-                assertFalse(activity.findViewById(R.id.nearby_lobby_confirm).isEnabled());
+                assertTrue(activity.findViewById(R.id.nearby_lobby_confirm).isEnabled());
             });
         }
     }

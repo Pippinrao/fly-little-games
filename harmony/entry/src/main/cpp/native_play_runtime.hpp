@@ -58,6 +58,8 @@ class NativePlayRuntime final
 public:
     static std::unique_ptr<NativePlayRuntime> open(
         const std::uint8_t* rom, std::size_t size);
+    static std::unique_ptr<NativePlayRuntime> open_session(
+        std::unique_ptr<PlaySession> session, SourceTiming timing);
     ~NativePlayRuntime();
     NativePlayRuntime(const NativePlayRuntime&) = delete;
     NativePlayRuntime& operator=(const NativePlayRuntime&) = delete;

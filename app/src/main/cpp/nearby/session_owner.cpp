@@ -38,12 +38,13 @@ std::uint64_t monotonic_ns()
 
 } // namespace
 
-SessionOwner* SessionOwner::create(ContentPort::Callbacks content)
+SessionOwner* SessionOwner::create(ContentPort::Callbacks content, DiscoveryCallbacks discovery)
 {
     auto* owner = new (std::nothrow) SessionOwner();
     if (owner == nullptr)
         return nullptr;
     owner->content_callbacks_ = std::move(content);
+    owner->discovery_callbacks_ = std::move(discovery);
     if (!owner->start())
     {
         delete owner;

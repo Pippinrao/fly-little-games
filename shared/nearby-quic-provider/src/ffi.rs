@@ -287,6 +287,51 @@ pub struct FlynesQuicProvider {
 
 type Completion = (i32, u64, Vec<u8>);
 
+fn diagnostic_failure(error: impl std::fmt::Debug) -> Completion {
+    // Classify locally; never export arbitrary remote close reasons/certificate text.
+    // Preserve nested Quinn causes such as ConnectionLost(TimedOut). Display
+    // collapses these to "connection lost". Only the safe category escapes.
+    let text = format!("{error:?}").to_ascii_lowercase();
+    let category =
+        if text.contains("timed out") || text.contains("deadline") || text.contains("timeout") || text.contains("timedout") {
+            "timeout"
+        } else if text.contains("certificate")
+            || text.contains("cryptographic")
+            || text.contains("pin mismatch")
+        {
+            "tls"
+        } else if text.contains("closed") || text.contains("lost") {
+            "closed"
+        } else if text.contains("reset") || text.contains("stopped") {
+            "reset"
+        } else if text.contains("socket") || text.contains("network") || text.contains("os error") {
+            "io"
+        } else {
+            "transport"
+        };
+    (FLYNES_QUIC_FAILED, 0, category.as_bytes().to_vec())
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn errors_are_classified_without_echoing_peer_text() {
+        for (error, expected) in [
+            ("timed out: private detail", "timeout"),
+            ("connection closed: secret token", "closed"),
+            ("certificate verify failed: private detail", "tls"),
+            ("unknown private detail", "transport"),
+        ] {
+            let value = diagnostic_failure(error);
+            assert_eq!(value.0, FLYNES_QUIC_FAILED);
+            assert_eq!(value.2, expected.as_bytes());
+        }
+        let nested = quinn::ReadError::ConnectionLost(quinn::ConnectionError::TimedOut);
+        assert_eq!(diagnostic_failure(nested).2, b"timeout");
+    }
+}
+
 // Futures own these resources until terminal arbitration commits the entire batch.
 // Dropping a cancelled result therefore cannot leave an unreported table entry.
 enum CreatedResources {
@@ -753,9 +798,9 @@ pub unsafe extern "C" fn flynes_quic_provider_listen(
                     Resource::Listener(Arc::new(listener)),
                     address.to_string().into_bytes(),
                 )),
-                Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+                Err(error) => Err(diagnostic_failure(error)),
             },
-            Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+            Err(error) => Err(diagnostic_failure(error)),
         }
     })
 }
@@ -779,7 +824,7 @@ pub unsafe extern "C" fn flynes_quic_provider_accept(
                 Resource::Connection(Arc::new(connection)),
                 Vec::new(),
             )),
-            Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+            Err(error) => Err(diagnostic_failure(error)),
         }
     })
 }
@@ -822,7 +867,7 @@ pub unsafe extern "C" fn flynes_quic_provider_connect(
                 Resource::Connection(Arc::new(connection)),
                 Vec::new(),
             )),
-            Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+            Err(error) => Err(diagnostic_failure(error)),
         }
     })
 }
@@ -880,7 +925,7 @@ pub unsafe extern "C" fn flynes_quic_provider_exporter(
             };
             match connection.exporter(&context) {
                 Ok(value) => (FLYNES_QUIC_OK, 0, value.to_vec()),
-                Err(_) => (FLYNES_QUIC_FAILED, 0, Vec::new()),
+                Err(error) => diagnostic_failure(error),
             }
         },
     )
@@ -915,7 +960,7 @@ pub unsafe extern "C" fn flynes_quic_provider_open_bidi(
                         stream: Arc::new(AsyncMutex::new(recv)),
                     },
                 )),
-                Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+                Err(error) => Err(diagnostic_failure(error)),
             }
         },
     )
@@ -950,7 +995,7 @@ pub unsafe extern "C" fn flynes_quic_provider_accept_bidi(
                         stream: Arc::new(AsyncMutex::new(recv)),
                     },
                 )),
-                Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+                Err(error) => Err(diagnostic_failure(error)),
             }
         },
     )
@@ -982,7 +1027,7 @@ pub unsafe extern "C" fn flynes_quic_provider_open_uni(
                     },
                     Vec::new(),
                 )),
-                Err(_) => Err((FLYNES_QUIC_FAILED, 0, Vec::new())),
+                Err(error) => Err(diagnostic_failure(error)),
             }
         },
     )
@@ -1015,9 +1060,13 @@ pub unsafe extern "C" fn flynes_quic_provider_write(
                 return (FLYNES_QUIC_INVALID_HANDLE, 0, Vec::new());
             };
             let mut stream = stream.lock().await;
-            if stream.write_all(&bytes).await.is_err() || (finish == 1 && stream.finish().is_err())
-            {
-                return (FLYNES_QUIC_FAILED, 0, Vec::new());
+            if let Err(error) = stream.write_all(&bytes).await {
+                return diagnostic_failure(error);
+            }
+            if finish == 1 {
+                if let Err(error) = stream.finish() {
+                    return diagnostic_failure(error);
+                }
             }
             (FLYNES_QUIC_OK, 0, Vec::new())
         },
@@ -1088,7 +1137,7 @@ pub unsafe extern "C" fn flynes_quic_provider_read(
             match read_result {
                 Ok(Some(value)) => (FLYNES_QUIC_OK, value.offset, value.bytes.to_vec()),
                 Ok(None) => (FLYNES_QUIC_OK, 0, Vec::new()),
-                Err(_) => (FLYNES_QUIC_FAILED, 0, Vec::new()),
+                Err(error) => diagnostic_failure(error),
             }
         },
     )
@@ -1129,7 +1178,7 @@ pub unsafe extern "C" fn flynes_quic_provider_send_datagram(
             };
             match connection.send_datagram(Bytes::from(bytes)) {
                 Ok(()) => (FLYNES_QUIC_OK, 0, Vec::new()),
-                Err(_) => (FLYNES_QUIC_FAILED, 0, Vec::new()),
+                Err(error) => diagnostic_failure(error),
             }
         },
     )
@@ -1154,7 +1203,7 @@ pub unsafe extern "C" fn flynes_quic_provider_read_datagram(
             };
             match connection.read_datagram().await {
                 Ok(value) => (FLYNES_QUIC_OK, 0, value.to_vec()),
-                Err(_) => (FLYNES_QUIC_FAILED, 0, Vec::new()),
+                Err(error) => diagnostic_failure(error),
             }
         },
     )

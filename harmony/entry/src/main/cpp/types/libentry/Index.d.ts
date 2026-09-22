@@ -195,6 +195,41 @@ export const nearbyInviteSubmitCode: (attemptId: number, code: string, nowMs: nu
 export const nearbyInviteCancelCode: (attemptId: number) => boolean;
 export const nearbyInviteTick: (nowMs: number) => boolean;
 export const nearbyInviteSnapshot: () => NearbyInviteSnapshotDto;
+export interface NearbyMvpSnapshotDto {
+  paused: boolean;
+  peerGameKey: string;
+  state: number;
+  reason: number;
+  transportResult: number;
+  transportOperation: number;
+  sessionId: string;
+  role: number;
+  localConfigured: number;
+  peerConfigured: number;
+  localReady: number;
+  peerReady: number;
+  completedFrames: number;
+}
+export interface NearbyMvpStepResult {
+  submitted: boolean;
+  state: number;
+  completedFrames: number;
+  frameIndex: number;
+  width: number;
+  height: number;
+  pcmSampleCount: number;
+  rgb565: ArrayBuffer;
+  pcm: ArrayBuffer;
+}
+export const nearbyMvpJoin: (qrText: string) => boolean;
+export const nearbyMvpSnapshot: () => NearbyMvpSnapshotDto;
+export const nearbyMvpSelectRom: (rom: Uint8Array | ArrayBuffer) => boolean;
+export const nearbyMvpConfirm: () => boolean;
+export const nearbyMvpStep: (buttons: number) => NearbyMvpStepResult;
+export const nearbyMvpCancel: () => boolean;
+export const nearbyMvpOpenPlay: () => boolean;
+export const nearbyMvpReturnLobby: () => boolean;
+export const nearbyMvpSetPaused: (paused: boolean) => boolean;
 export const gameCenterFilter: (rows: GameCenterRow[], category: string, query: string) => GameCenterRow[];
 export const controlLayoutRecommended: () => string;
 export const controlLayoutDecodeOrRecommended: (value: string) => string;

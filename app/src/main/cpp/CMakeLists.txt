@@ -19,6 +19,7 @@ add_library(nescore SHARED
     nes_jni.cpp
     flynes_app_jni.cpp
     nearby/session_owner.cpp
+    nearby/nearby_mvp_jni.cpp
     nearby/content_port.cpp
     nearby/prepared_content.cpp
     nearby/content_jni.cpp
@@ -48,6 +49,11 @@ if(TARGET flynes_nearby_quic_provider)
     target_link_libraries(nescore flynes_nearby_quic_provider)
     add_dependencies(nescore flynes_nearby_quic_provider_build)
     target_compile_definitions(nescore PRIVATE FLYNES_ENABLE_RUST_QUIC_PROVIDER=1)
+endif()
+if(TARGET flynes_lan_mvp)
+    target_link_libraries(nescore flynes_lan_mvp)
+else()
+    message(FATAL_ERROR "Android nearby MVP requires the Rust QUIC provider")
 endif()
 
 # Safety net: zlib is required by NstZlib.cpp (compressed save states).

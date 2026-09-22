@@ -9,25 +9,14 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
 
-/**
- * 好友管理 — rename / delete / block / identity reset (spec §8 A1a-5, design §22.1).
- *
- * <p>Reached from the 好友 tab (a real navigation row) and from the 好友管理 row inside Settings
- * (decision D2). All four actions are present and disabled with the specific reason, because the
- * design requires users to find them and this build has no friend store to act on; a working-looking
- * control over no store is the failure mode the spec's truthful-placeholder contract exists to
- * prevent.
- *
- * <p>Each disabled control repeats its reason to accessibility services, so focusing 拉黑 explains
- * that control rather than pointing at a shared note.
- */
+/** Fixed landscape friend actions. Unimplemented actions explain availability on tap. */
 public final class NearbyFriendsManageActivity extends AppCompatActivity {
 
-    private static final int[] DISABLED_CONTROLS = {
+    private static final int[] UNSUPPORTED_CONTROLS = {
             R.id.nearby_manage_rename, R.id.nearby_manage_delete,
             R.id.nearby_manage_block, R.id.nearby_manage_identity_reset,
     };
-    private static final int[] DISABLED_REASONS = {
+    private static final int[] UNSUPPORTED_REASONS = {
             R.id.nearby_manage_rename_reason, R.id.nearby_manage_delete_reason,
             R.id.nearby_manage_block_reason, R.id.nearby_manage_identity_reset_reason,
     };
@@ -51,13 +40,16 @@ public final class NearbyFriendsManageActivity extends AppCompatActivity {
 
         // The two arrays are parallel and the index is the control; a length mismatch would silently
         // pair a control with another control's reason, so it fails loudly instead.
-        if (DISABLED_CONTROLS.length != DISABLED_REASONS.length) {
+        if (UNSUPPORTED_CONTROLS.length != UNSUPPORTED_REASONS.length) {
             throw new IllegalStateException("nearby manage control/reason table mismatch");
         }
-        for (int i = 0; i < DISABLED_CONTROLS.length; i++) {
-            MaterialButton control = findViewById(DISABLED_CONTROLS[i]);
-            TextView reason = findViewById(DISABLED_REASONS[i]);
-            control.setContentDescription(control.getText() + ", " + reason.getText());
+        for (int i = 0; i < UNSUPPORTED_CONTROLS.length; i++) {
+            MaterialButton control = findViewById(UNSUPPORTED_CONTROLS[i]);
+            TextView reason = findViewById(UNSUPPORTED_REASONS[i]);
+            control.setEnabled(true);
+            control.setContentDescription(control.getText() + ", " + getString(R.string.nearby_not_supported));
+            control.setOnClickListener(view -> android.widget.Toast.makeText(
+                    this, R.string.nearby_not_supported, android.widget.Toast.LENGTH_SHORT).show());
         }
     }
 }

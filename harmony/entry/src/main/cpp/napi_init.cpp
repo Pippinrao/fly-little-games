@@ -9,9 +9,11 @@
 
 #include <flynes/flynes_app.h>
 #include <flynes/flynes_session.h>
+#include <flynes/flynes_nearby_mvp.h>
 #include "flynes/product/game_center_state.hpp"
 
 #include "napi/native_api.h"
+#include <hilog/log.h>
 
 #include <array>
 #include <cstddef>
@@ -25,8 +27,50 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 
 namespace {
+void mvp_diagnostic(void*, const char* line) {
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0, "FlyNesNearby", "%{public}s", line);
+}
+
+struct MvpDeleter {
+    void operator()(fly_lan_mvp_session* session) const { fly_lan_mvp_destroy(session); }
+};
+std::unique_ptr<fly_lan_mvp_session, MvpDeleter> g_mvp_session;
+flynes::harmony::SourceTiming g_mvp_timing;
+
+std::string nearby_local_ipv4()
+{
+    ifaddrs* first = nullptr;
+    if (getifaddrs(&first) != 0) return {};
+    std::string chosen;
+    for (ifaddrs* item = first; item != nullptr; item = item->ifa_next)
+    {
+        if (item->ifa_addr == nullptr || item->ifa_addr->sa_family != AF_INET ||
+            item->ifa_name == nullptr || (item->ifa_flags & IFF_UP) == 0) continue;
+        const std::string name(item->ifa_name);
+        if (name.rfind("wlan", 0) != 0 && name.rfind("ap", 0) != 0 &&
+            name.rfind("eth", 0) != 0) continue;
+        const auto* address = reinterpret_cast<const sockaddr_in*>(item->ifa_addr);
+        const std::uint32_t ip = ntohl(address->sin_addr.s_addr);
+        const unsigned first_octet = ip >> 24u;
+        const unsigned second_octet = (ip >> 16u) & 255u;
+        if (first_octet != 10u &&
+            !(first_octet == 172u && second_octet >= 16u && second_octet <= 31u) &&
+            !(first_octet == 192u && second_octet == 168u)) continue;
+        char text[INET_ADDRSTRLEN]{};
+        if (inet_ntop(AF_INET, &address->sin_addr, text, sizeof(text)) != nullptr)
+        {
+            chosen = text;
+            break;
+        }
+    }
+    freeifaddrs(first);
+    return chosen;
+}
 
 [[maybe_unused]] void verify_nearby_v2_composition_contract()
 {
@@ -2656,6 +2700,229 @@ void nearby_arguments(napi_env env, napi_callback_info info, std::size_t expecte
     }
 }
 
+napi_value create_int32(napi_env env, std::int32_t value, const char* step)
+{
+    napi_value result = nullptr;
+    require_napi(napi_create_int32(env, value, &result), step);
+    return result;
+}
+
+napi_value NearbyMvpJoin(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyMvpJoin", [&]() {
+        napi_value argument = nullptr;
+        nearby_arguments(env, info, 1u, &argument, "nearbyMvpJoin");
+        const std::string qr = read_utf8_string(env, argument, "qrText");
+        const std::string local = nearby_local_ipv4();
+        if (local.empty()) return create_bool(env, false, "no LAN address");
+        g_play.reset();
+        g_mvp_session.reset(fly_lan_mvp_create());
+        if (!g_mvp_session) return create_bool(env, false, "create LAN session");
+        fly_lan_mvp_set_diagnostic_sink(g_mvp_session.get(), mvp_diagnostic, nullptr);
+        const bool started = fly_lan_mvp_join(g_mvp_session.get(), local.c_str(),
+                                              qr.data(), qr.size()) == 1;
+        if (!started) g_mvp_session.reset();
+        return create_bool(env, started, "join LAN session");
+    });
+}
+
+napi_value NearbyMvpSnapshot(napi_env env, napi_callback_info)
+{
+    return nearby_call(env, "nearbyMvpSnapshot", [&]() {
+        fly_lan_mvp_snapshot snapshot{};
+        if (g_mvp_session && !fly_lan_mvp_snapshot_read(g_mvp_session.get(), &snapshot))
+            throw NapiCallError("read LAN session", napi_generic_failure);
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create LAN snapshot");
+        require_napi(napi_set_named_property(env, result, "state",
+            create_uint32(env, snapshot.state, "LAN state")), "set LAN state");
+        require_napi(napi_set_named_property(env, result, "reason",
+            create_uint32(env, snapshot.reason, "LAN reason")), "set LAN reason");
+        require_napi(napi_set_named_property(env, result, "transportResult",
+            create_int32(env, snapshot.transport_result, "LAN transport result")),
+            "set LAN transport result");
+        require_napi(napi_set_named_property(env, result, "transportOperation",
+            create_uint32(env, snapshot.transport_operation, "LAN transport operation")),
+            "set LAN transport operation");
+        require_napi(napi_set_named_property(env, result, "sessionId",
+            create_string(env, uuid_to_hex(snapshot.session_id), "LAN session id")),
+            "set LAN session id");
+        require_napi(napi_set_named_property(env, result, "role",
+            create_uint32(env, snapshot.role, "LAN role")), "set LAN role");
+        require_napi(napi_set_named_property(env, result, "localConfigured",
+            create_uint32(env, snapshot.local_configured, "LAN local configured")),
+            "set LAN local configured");
+        require_napi(napi_set_named_property(env, result, "peerConfigured",
+            create_uint32(env, snapshot.peer_configured, "LAN peer configured")),
+            "set LAN peer configured");
+        require_napi(napi_set_named_property(env, result, "localReady",
+            create_uint32(env, snapshot.local_ready, "LAN local ready")),
+            "set LAN local ready");
+        require_napi(napi_set_named_property(env, result, "peerReady",
+            create_uint32(env, snapshot.peer_ready, "LAN peer ready")),
+            "set LAN peer ready");
+        require_napi(napi_set_named_property(env, result, "paused",
+            create_bool(env, snapshot.paused != 0, "LAN paused")), "set LAN paused");
+        require_napi(napi_set_named_property(env, result, "peerGameKey",
+            create_string(env, snapshot.peer_game_key, "LAN peer game key")), "set LAN peer game key");
+        require_napi(napi_set_named_property(env, result, "completedFrames",
+            create_int64(env, static_cast<std::int64_t>(snapshot.completed_frames),
+                         "LAN completed frames")), "set LAN completed frames");
+        return result;
+    });
+}
+
+napi_value NearbyMvpSelectRom(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyMvpSelectRom", [&]() {
+        napi_value argument = nullptr;
+        nearby_arguments(env, info, 1u, &argument, "nearbyMvpSelectRom");
+        if (!g_mvp_session) return create_bool(env, false, "no LAN session");
+        const std::vector<std::uint8_t> rom = read_buffer(env, argument, "rom");
+        g_mvp_timing = flynes::harmony::detect_source_timing(rom.data(), rom.size());
+        return create_bool(env, fly_lan_mvp_select_rom(
+            g_mvp_session.get(), rom.data(), rom.size()) == 1, "select LAN ROM");
+    });
+}
+
+napi_value NearbyMvpConfirm(napi_env env, napi_callback_info)
+{
+    return nearby_call(env, "nearbyMvpConfirm", [&]() {
+        return create_bool(env, g_mvp_session &&
+            fly_lan_mvp_confirm(g_mvp_session.get()) == 1, "confirm LAN session");
+    });
+}
+
+napi_value NearbyMvpStep(napi_env env, napi_callback_info info)
+{
+    return nearby_call(env, "nearbyMvpStep", [&]() {
+        napi_value argument = nullptr;
+        nearby_arguments(env, info, 1u, &argument, "nearbyMvpStep");
+        std::uint32_t buttons = 0;
+        require_napi(napi_get_value_uint32(env, argument, &buttons), "read LAN button mask");
+
+        const bool submitted = g_mvp_session &&
+            fly_lan_mvp_submit_input(g_mvp_session.get(), buttons) == 1;
+        fly_lan_mvp_snapshot snapshot{};
+        if (g_mvp_session) fly_lan_mvp_snapshot_read(g_mvp_session.get(), &snapshot);
+
+        std::vector<std::uint8_t> rgb565(FLY_RUNTIME_RGB565_BYTES);
+        fly_latest_frame_v1 frame{};
+        frame.struct_size = FLY_LATEST_FRAME_V1_SIZE;
+        frame.version = FLY_LATEST_FRAME_VERSION_1;
+        const bool has_frame = g_mvp_session && fly_lan_mvp_copy_latest_frame(
+            g_mvp_session.get(), rgb565.data(), rgb565.size(), &frame) == 1;
+        if (!has_frame) rgb565.clear();
+
+        std::vector<std::int16_t> pcm(4096u);
+        fly_pcm_block_v1 block{};
+        block.struct_size = FLY_PCM_BLOCK_V1_SIZE;
+        block.version = FLY_PCM_BLOCK_VERSION_1;
+        const bool has_pcm = g_mvp_session && fly_lan_mvp_pull_pcm(
+            g_mvp_session.get(), pcm.data(), static_cast<std::uint32_t>(pcm.size()), &block) == 1;
+        pcm.resize(has_pcm ? block.sample_count : 0u);
+
+        napi_value result = nullptr;
+        require_napi(napi_create_object(env, &result), "create LAN step result");
+        require_napi(napi_set_named_property(env, result, "submitted",
+            create_bool(env, submitted, "LAN input submitted")), "set LAN input submitted");
+        require_napi(napi_set_named_property(env, result, "state",
+            create_uint32(env, snapshot.state, "LAN step state")), "set LAN step state");
+        require_napi(napi_set_named_property(env, result, "completedFrames",
+            create_int64(env, static_cast<std::int64_t>(snapshot.completed_frames),
+                         "LAN step completed frames")), "set LAN step completed frames");
+        require_napi(napi_set_named_property(env, result, "frameIndex",
+            create_int64(env, has_frame ? static_cast<std::int64_t>(frame.frame_index) : -1,
+                         "LAN step frame index")), "set LAN step frame index");
+        require_napi(napi_set_named_property(env, result, "width",
+            create_uint32(env, has_frame ? frame.width : 0u, "LAN frame width")),
+            "set LAN frame width");
+        require_napi(napi_set_named_property(env, result, "height",
+            create_uint32(env, has_frame ? frame.height : 0u, "LAN frame height")),
+            "set LAN frame height");
+        require_napi(napi_set_named_property(env, result, "pcmSampleCount",
+            create_uint32(env, has_pcm ? block.sample_count : 0u, "LAN PCM sample count")),
+            "set LAN PCM sample count");
+        require_napi(napi_set_named_property(env, result, "rgb565",
+            create_arraybuffer(env, rgb565.data(), rgb565.size(), "create LAN rgb565")),
+            "set LAN rgb565");
+        require_napi(napi_set_named_property(env, result, "pcm",
+            create_arraybuffer(env, pcm.data(), pcm.size() * sizeof(std::int16_t),
+                               "create LAN pcm")), "set LAN pcm");
+        return result;
+    });
+}
+
+napi_value NearbyMvpOpenPlay(napi_env env, napi_callback_info)
+{
+    return nearby_call(env, "nearbyMvpOpenPlay", [&]() {
+        fly_lan_mvp_snapshot snapshot{};
+        auto* session = g_mvp_session.get();
+        if (!session || !fly_lan_mvp_snapshot_read(session, &snapshot) ||
+            snapshot.state != FLY_LAN_MVP_RUNNING)
+            throw std::runtime_error("LAN session is not running");
+        g_play.reset();
+        auto source = flynes::harmony::PlaySession::from_frame_source(
+            [session](std::uint32_t buttons) {
+                (void)fly_lan_mvp_submit_input(session, buttons);
+                fly_lan_mvp_snapshot state{};
+                if (!fly_lan_mvp_snapshot_read(session, &state) ||
+                    state.state != FLY_LAN_MVP_RUNNING)
+                    throw std::runtime_error("LAN session ended");
+                flynes::harmony::PlayStepResult result{};
+                result.rgb565.resize(FLY_RUNTIME_RGB565_BYTES);
+                fly_latest_frame_v1 meta{};
+                meta.struct_size = FLY_LATEST_FRAME_V1_SIZE;
+                meta.version = FLY_LATEST_FRAME_VERSION_1;
+                if (!fly_lan_mvp_copy_latest_frame(session, result.rgb565.data(),
+                                                  result.rgb565.size(), &meta))
+                    throw std::runtime_error("LAN frame unavailable");
+                result.frame_index = meta.frame_index;
+                result.width = meta.width;
+                result.height = meta.height;
+                result.format = meta.format;
+                result.bytes_written = meta.bytes_written;
+                result.applied_buttons = state.applied_buttons[1];
+                result.pcm.resize(4096);
+                fly_pcm_block_v1 block{};
+                block.struct_size = FLY_PCM_BLOCK_V1_SIZE;
+                block.version = FLY_PCM_BLOCK_VERSION_1;
+                if (!fly_lan_mvp_pull_pcm(session, result.pcm.data(), 4096, &block))
+                    throw std::runtime_error("LAN PCM unavailable");
+                result.pcm.resize(block.sample_count);
+                result.pcm_sample_count = block.sample_count;
+                return result;
+            });
+        g_play = flynes::harmony::NativePlayRuntime::open_session(std::move(source), g_mvp_timing);
+        return create_bool(env, true, "open LAN play runtime");
+    });
+}
+
+napi_value NearbyMvpCancel(napi_env env, napi_callback_info)
+{
+    return nearby_call(env, "nearbyMvpCancel", [&]() {
+        g_play.reset(); // Stop the frame consumer before destroying its LAN owner.
+        g_mvp_session.reset();
+        return create_bool(env, true, "cancel LAN session");
+    });
+}
+
+napi_value NearbyMvpReturnLobby(napi_env env, napi_callback_info) {
+    return nearby_call(env, "nearbyMvpReturnLobby", [&]() {
+        g_play.reset();
+        return create_bool(env, g_mvp_session && fly_lan_mvp_return_lobby(g_mvp_session.get()), "return LAN lobby");
+    });
+}
+napi_value NearbyMvpSetPaused(napi_env env, napi_callback_info info) {
+    return nearby_call(env, "nearbyMvpSetPaused", [&]() {
+        napi_value argument = nullptr;
+        nearby_arguments(env, info, 1, &argument, "nearbyMvpSetPaused");
+        bool paused = false;
+        require_napi(napi_get_value_bool(env, argument, &paused), "read paused");
+        return create_bool(env, g_mvp_session && fly_lan_mvp_set_paused(g_mvp_session.get(), paused), "pause LAN");
+    });
+}
+
 napi_value NearbyInviteHostPublish(napi_env env, napi_callback_info info)
 {
     return nearby_call(env, "nearbyInviteHostPublish", [&]() {
@@ -2854,6 +3121,24 @@ napi_value Init(napi_env env, napi_value exports)
              nullptr},
             {"nearbyInviteSnapshot", nullptr, NearbyInviteSnapshot, nullptr, nullptr, nullptr,
              napi_default, nullptr},
+            {"nearbyMvpJoin", nullptr, NearbyMvpJoin, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpSnapshot", nullptr, NearbyMvpSnapshot, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpSelectRom", nullptr, NearbyMvpSelectRom, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpConfirm", nullptr, NearbyMvpConfirm, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpStep", nullptr, NearbyMvpStep, nullptr, nullptr, nullptr,
+             napi_default, nullptr},
+            {"nearbyMvpCancel", nullptr, NearbyMvpCancel, nullptr, nullptr, nullptr,
+                napi_default, nullptr},
+            {"nearbyMvpOpenPlay", nullptr, NearbyMvpOpenPlay, nullptr, nullptr, nullptr,
+                napi_default, nullptr},
+            {"nearbyMvpReturnLobby", nullptr, NearbyMvpReturnLobby, nullptr, nullptr, nullptr,
+                napi_default, nullptr},
+            {"nearbyMvpSetPaused", nullptr, NearbyMvpSetPaused, nullptr, nullptr, nullptr,
+                napi_default, nullptr},
             {"gameCenterFilter", nullptr, GameCenterFilter, nullptr, nullptr, nullptr, napi_default,
              nullptr},
             {"controlLayoutRecommended", nullptr, ControlLayoutRecommended, nullptr, nullptr, nullptr,

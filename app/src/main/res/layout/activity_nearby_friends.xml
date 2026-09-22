@@ -1,113 +1,236 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<!--
-  N00 nearby() from docs/archive/nearby-2026-09-21/docs/superpowers/specs/assets/nearby-ui-parity-review.html
-  and design U06/U07: left kicker/headline/subtitle + 创建联机/输入配对码/扫码加入;
-  right 附近设备/好友 tabs and 寻找设备. Pairing stages are N07/N10, not this page.
-  Review-only sample friends/devices stay out of the product (design §4).
--->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/nearby_root" android:layout_width="match_parent" android:layout_height="match_parent"
-    android:background="@color/fly_background" android:orientation="vertical">
-    <LinearLayout android:id="@+id/nearby_toolbar_row" android:layout_width="match_parent" android:layout_height="64dp"
-        android:background="@color/fly_background" android:gravity="center_vertical" android:orientation="horizontal">
-        <com.google.android.material.appbar.MaterialToolbar android:id="@+id/nearby_toolbar"
-            android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
-            android:background="@color/fly_background" android:minHeight="48dp"
-            app:navigationIcon="@drawable/ic_back" app:navigationIconTint="@color/fly_on_surface"
-            app:title="@string/nearby_title" app:titleTextAppearance="@style/TextAppearance.FlyNes.Nearby.PageTitle"
-            app:titleTextColor="@color/fly_on_surface" />
-        <TextView android:id="@+id/nearby_entry_stage_hint" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:gravity="center_vertical" android:includeFontPadding="false" android:minHeight="48dp" android:paddingEnd="16dp"
-            android:text="@string/nearby_entry_stageHint" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
-            android:textColor="@color/fly_on_surface_muted" />
-    </LinearLayout>
-    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
-        <LinearLayout android:id="@+id/nearby_device_columns" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:baselineAligned="false" android:orientation="horizontal" android:padding="16dp">
-            <LinearLayout android:id="@+id/nearby_action_column" android:layout_width="224dp" android:layout_height="wrap_content"
-                android:minWidth="0dp" android:orientation="vertical">
-                <TextView android:id="@+id/nearby_entry_kicker" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:includeFontPadding="false" android:text="@string/nearby_entry_kicker" android:textAllCaps="true"
-                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Kicker" android:textColor="@color/fly_primary" />
-                <TextView android:id="@+id/nearby_entry_headline" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_entry_headline"
-                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PaneTitle" android:textColor="@color/fly_on_surface" />
-                <TextView android:id="@+id/nearby_entry_subtitle" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_entry_subtitle"
-                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
-                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_create" style="@style/Widget.Material3.Button"
-                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
-                    android:minHeight="48dp" android:text="@string/nearby_action_create"
-                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PrimaryAction"
-                    android:textColor="@color/fly_on_primary" app:backgroundTint="@color/fly_primary"
-                    />
-                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_enter_code" style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
-                    android:minHeight="48dp" android:text="@string/nearby_action_enterCode"
-                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
-                    />
-                <com.google.android.material.button.MaterialButton android:id="@+id/nearby_action_scan_qr" style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
-                    android:minHeight="48dp" android:text="@string/nearby_action_scanQr"
-                    android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action" android:textColor="@color/fly_on_surface"
-                    />
-                <TextView android:id="@+id/nearby_scan_denied_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
-                    android:textColor="@color/fly_error" android:visibility="gone" />
-            </LinearLayout>
-            <LinearLayout android:id="@+id/nearby_status_column" android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_marginStart="18dp" android:layout_weight="1" android:minWidth="0dp" android:orientation="vertical">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical"
-                    android:minHeight="48dp" android:orientation="horizontal">
-                    <com.google.android.material.button.MaterialButtonToggleGroup android:id="@+id/nearby_tabs" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" app:selectionRequired="true" app:singleSelection="true">
-                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_tab_devices" style="@style/Widget.Material3.Button.TextButton"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="96dp"
-                            android:text="@string/nearby_tab_devices" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
-                            android:textColor="@color/fly_on_surface" />
-                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_tab_friends" style="@style/Widget.Material3.Button.TextButton"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:minWidth="96dp"
-                            android:text="@string/nearby_tab_friends" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
-                            android:textColor="@color/fly_on_surface" />
-                    </com.google.android.material.button.MaterialButtonToggleGroup>
-                    <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/nearby_friends_manage" style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="48dp" android:layout_height="48dp" android:contentDescription="@string/nearby_friends_manage"
-                        app:icon="@drawable/ic_settings" app:iconTint="@color/fly_on_surface" />
-                </LinearLayout>
-                <FrameLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp">
-                    <LinearLayout android:id="@+id/nearby_friends_panel" android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="vertical" android:visibility="gone">
-                        <TextView android:id="@+id/nearby_friends_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:includeFontPadding="false" android:text="@string/nearby_friends_empty"
-                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body" android:textColor="@color/fly_on_surface" />
-                        <TextView android:id="@+id/nearby_friends_blocked" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_blocked_friend_store"
-                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
-                        <TextView android:id="@+id/nearby_friends_saved_after_auth" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp" android:includeFontPadding="false" android:text="@string/nearby_friends_saved_after_auth"
-                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
-                    </LinearLayout>
-                    <LinearLayout android:id="@+id/nearby_devices_panel" android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="vertical">
-                        <TextView android:id="@+id/nearby_devices_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:includeFontPadding="false" android:text="@string/nearby_devices_empty"
-                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
-                        <com.google.android.material.button.MaterialButton android:id="@+id/nearby_find_devices" style="@style/Widget.Material3.Button.OutlinedButton"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp"
-                            android:enabled="false" android:minHeight="48dp" android:minWidth="160dp"
-                            android:text="@string/nearby_find_devices" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Action"
-                            android:textColor="@color/fly_on_surface" />
-                        <TextView android:id="@+id/nearby_find_devices_reason" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp" android:includeFontPadding="false" android:text="@string/nearby_blocked_discovery"
-                            android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted" android:textColor="@color/fly_on_surface_muted" />
-                    </LinearLayout>
-                </FrameLayout>
-            </LinearLayout>
+<?xml version="1.0" encoding="utf-8"?>
+<com.flynes.emu.NearbyFixedPage
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nearby_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/fly_background">
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/nearby_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:background="@color/fly_background"
+        app:navigationIcon="@drawable/ic_back"
+        app:navigationIconTint="@color/fly_on_surface"
+        app:title="@string/nearby_title"
+        app:titleTextAppearance="@style/TextAppearance.FlyNes.Nearby.PageTitle"
+        app:titleTextColor="@color/fly_on_surface" />
+    <LinearLayout
+        android:id="@+id/nearby_device_columns"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:baselineAligned="false"
+        android:padding="16dp">
+        <LinearLayout
+            android:id="@+id/nearby_action_column"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight=".44"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/nearby_entry_headline"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:text="@string/nearby_entry_headline"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.PaneTitle"
+                android:textColor="@color/fly_on_surface" />
+            <TextView
+                android:id="@+id/nearby_entry_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:text="@string/nearby_entry_subtitle"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+                android:textColor="@color/fly_on_surface_muted"
+                android:layout_marginTop="4dp" />
+            <Space
+                android:layout_width="1dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/nearby_action_create"
+                style="@style/Widget.FlyNes.Nearby.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/nearby_action_create" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/nearby_action_enter_code"
+                style="@style/Widget.FlyNes.Nearby.Action"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/nearby_action_enterCode"
+                android:layout_marginTop="8dp" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/nearby_action_scan_qr"
+                style="@style/Widget.FlyNes.Nearby.Action"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/nearby_action_scanQr"
+                android:layout_marginTop="8dp" />
+            <TextView
+                android:id="@+id/nearby_scan_denied_reason"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:text="@string/nearby_reason_permission_cameraDenied"
+                android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+                android:textColor="@color/fly_on_surface_muted"
+                android:visibility="gone" />
         </LinearLayout>
-    </ScrollView>
-    <TextView android:id="@+id/nearby_entry_footer" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:gravity="center_vertical" android:includeFontPadding="false" android:minHeight="58dp" android:padding="16dp"
-        android:text="@string/nearby_entry_footer" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
-        android:textColor="@color/fly_on_surface_muted" />
-</LinearLayout>
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="18dp"
+            android:background="@color/fly_surface_variant" />
+        <LinearLayout
+            android:id="@+id/nearby_status_column"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight=".56"
+            android:orientation="vertical">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/nearby_tabs"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    app:singleSelection="true"
+                    app:selectionRequired="true">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/nearby_tab_devices"
+                        style="@style/Widget.FlyNes.Nearby.Action"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:text="@string/nearby_tab_devices"
+                        android:layout_weight="1" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/nearby_tab_friends"
+                        style="@style/Widget.FlyNes.Nearby.Action"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:text="@string/nearby_tab_friends"
+                        android:layout_weight="1" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/nearby_friends_manage"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:contentDescription="@string/nearby_friends_manage"
+                    app:icon="@drawable/ic_settings"
+                    app:iconTint="@color/fly_on_surface" />
+            </LinearLayout>
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="12dp">
+                <LinearLayout
+                    android:id="@+id/nearby_devices_panel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/nearby_devices_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/nearby_devices_empty"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.SectionTitle"
+                        android:textColor="@color/fly_on_surface" />
+                    <TextView
+                        android:id="@+id/nearby_find_devices_reason"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/nearby_entry_subtitle"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+                        android:textColor="@color/fly_on_surface_muted"
+                        android:layout_marginTop="8dp" />
+                    <Space
+                        android:layout_width="1dp"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/nearby_find_devices"
+                        style="@style/Widget.FlyNes.Nearby.Action"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/nearby_find_devices" />
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/nearby_friends_panel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/nearby_friends_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/nearby_friends_empty"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.SectionTitle"
+                        android:textColor="@color/fly_on_surface" />
+                    <TextView
+                        android:id="@+id/nearby_friends_blocked"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/nearby_not_supported"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+                        android:textColor="@color/fly_on_surface_muted"
+                        android:layout_marginTop="8dp" />
+                    <TextView
+                        android:id="@+id/nearby_friends_saved_after_auth"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/nearby_friends_saved_after_auth"
+                        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+                        android:textColor="@color/fly_on_surface_muted"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </FrameLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <TextView
+        android:id="@+id/nearby_entry_footer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:text="@string/nearby_entry_footer"
+        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+        android:textColor="@color/fly_on_surface_muted"
+        android:visibility="gone" />
+    <TextView
+        android:id="@+id/nearby_entry_kicker"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:text="@string/nearby_entry_kicker"
+        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+        android:textColor="@color/fly_on_surface_muted"
+        android:visibility="gone" />
+    <TextView
+        android:id="@+id/nearby_entry_stage_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:text="@string/nearby_entry_stageHint"
+        android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+        android:textColor="@color/fly_on_surface_muted"
+        android:visibility="gone" />
+</com.flynes.emu.NearbyFixedPage>

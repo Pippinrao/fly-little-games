@@ -54,6 +54,8 @@ PlaySessionError::PlaySessionError(const char* step, int result)
 struct PlaySession::Impl final
 {
     RuntimeHandle runtime;
+    std::function<PlayStepResult(std::uint32_t)> frame_source;
+    PlayStepResult latest;
     std::uint32_t port0_buttons = 0;
     std::uint64_t timeline_epoch = 1;
     std::uint64_t next_frame_index = 0;
@@ -96,6 +98,15 @@ PlaySession::PlaySession() : impl_(std::make_unique<Impl>()) {}
 
 PlaySession::~PlaySession() = default;
 
+std::unique_ptr<PlaySession> PlaySession::from_frame_source(
+    std::function<PlayStepResult(std::uint32_t)> source)
+{
+    if (!source) throw PlaySessionError("frame source", FLY_RESULT_INVALID_ARGUMENT);
+    auto session = std::unique_ptr<PlaySession>(new PlaySession());
+    session->impl_->frame_source = std::move(source);
+    return session;
+}
+
 std::unique_ptr<PlaySession> PlaySession::open(const std::uint8_t* rom, std::size_t size)
 {
     if (rom == nullptr || size == 0)
@@ -129,6 +140,13 @@ void PlaySession::set_port0_buttons(std::uint32_t buttons)
 
 PlayStepResult PlaySession::step()
 {
+    if (impl_->frame_source) {
+        auto result = impl_->frame_source(impl_->port0_buttons);
+        impl_->latest = result;
+        impl_->latest.pcm.clear();
+        impl_->latest.pcm_sample_count = 0;
+        return result;
+    }
     const fly_frame_input_v1 input = make_input(impl_->timeline_epoch, impl_->next_frame_index,
                                                 impl_->port0_buttons, impl_->input_sequence);
     fly_frame_result_v1 frame{};
@@ -145,6 +163,7 @@ PlayStepResult PlaySession::step()
 
 PlayStepResult PlaySession::copy_latest_frame()
 {
+    if (impl_->frame_source) return impl_->latest;
     PlayStepResult result = impl_->copy_latest_frame(false);
     result.applied_buttons = impl_->port0_buttons;
     return result;

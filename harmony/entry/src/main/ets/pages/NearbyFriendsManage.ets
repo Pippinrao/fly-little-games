@@ -1,111 +1,50 @@
-import { router } from '@kit.ArkUI';
+import { router, promptAction } from '@kit.ArkUI';
+import { NEARBY_TYPE } from '../ui/NearbyTypography';
 import { NearbyManageAction, nearbyManageActions, nearbyString } from '../service/NearbyService';
-import {
-  NEARBY_MIN_TAP_HEIGHT_VP,
-  NEARBY_TYPE
-} from '../ui/NearbyTypography';
-
-// Android/game-center parity: the same shell colors as pages/NearbyFriends.ets.
-const COLOR_SURFACE: string = '#1B1F28';
-const COLOR_ON_SURFACE: string = '#F2F4F7';
-const COLOR_ON_SURFACE_MUTED: string = '#A8B0BD';
 
 @Entry
 @Component
 struct NearbyFriendsManage {
   build() {
     Column() {
-      this.topBar()
-      Scroll() {
+      Row({ space: 8 }) {
+        Button('‹', { type: ButtonType.Normal }).width(48).height(48)
+          .fontFamily('HarmonyOS Sans').fontSize('26vp').fontColor('#F4EFE6').backgroundColor(Color.Transparent)
+          .accessibilityText($r('app.string.nearby_back')).onClick(() => { router.back(); })
+        Text($r('app.string.nearby_friends_manage')).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.pageTitle.size)
+          .fontWeight(FontWeight.Medium).fontColor('#F4EFE6')
+      }.width('100%').constraintSize({ minHeight: 48 })
+      Row({ space: 24 }) {
         Column({ space: 12 }) {
-          Text($r('app.string.nearby_friends_section'))
-            .fontSize(NEARBY_TYPE.sectionTitle.size)
-            .fontWeight(NEARBY_TYPE.sectionTitle.weight)
-            .lineHeight(NEARBY_TYPE.sectionTitle.lineHeight)
-            .fontColor(COLOR_ON_SURFACE)
-            .width('100%')
-          // No friend can be proven to exist without the friend store, so the
-          // list shows its empty state and never a sample row (§4).
-          Text($r('app.string.nearby_friends_empty'))
-            .fontSize(NEARBY_TYPE.body.size)
-            .fontWeight(NEARBY_TYPE.body.weight)
-            .lineHeight(NEARBY_TYPE.body.lineHeight)
-            .fontColor(COLOR_ON_SURFACE)
-            .width('100%')
-            .textAlign(TextAlign.Center)
-          Text($r('app.string.nearby_friends_saved_after_auth'))
-            .fontSize(NEARBY_TYPE.muted.size)
-            .fontWeight(NEARBY_TYPE.muted.weight)
-            .lineHeight(NEARBY_TYPE.muted.lineHeight)
-            .fontColor(COLOR_ON_SURFACE_MUTED)
-            .width('100%')
-            .textAlign(TextAlign.Center)
-
-          // §10 D2: 好友管理 rows live here, reachable from Settings. Every action
-          // needs the local friend store, so each entry is present, disabled, and
-          // carries nearby.blocked.friend_store (§4).
-          ForEach(nearbyManageActions(), (action: NearbyManageAction) => {
-            this.actionRow(action)
-          }, (action: NearbyManageAction) => action.label)
-        }
-        .width('100%')
-        .padding(16)
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('app.color.start_window_background'))
+          Text($r('app.string.nearby_friends_section')).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.paneTitle.size)
+            .fontWeight(FontWeight.Medium).fontColor('#F4EFE6').width('100%')
+          Text($r('app.string.nearby_friends_empty')).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.body.size)
+            .fontColor('#BEB8AE').width('100%')
+          Text($r('app.string.nearby_not_supported')).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.muted.size)
+            .fontColor('#BEB8AE').width('100%')
+        }.width('36%').alignItems(HorizontalAlign.Start)
+        Column({ space: 12 }) {
+          Row({ space: 12 }) {
+            ForEach(nearbyManageActions().slice(0, 2), (action: NearbyManageAction) => {
+              this.action(action)
+            }, (action: NearbyManageAction) => action.label)
+          }.width('100%')
+          Row({ space: 12 }) {
+            ForEach(nearbyManageActions().slice(2), (action: NearbyManageAction) => {
+              this.action(action)
+            }, (action: NearbyManageAction) => action.label)
+          }.width('100%')
+        }.layoutWeight(1)
+      }.width('100%').layoutWeight(1).padding(16)
+    }.id('nearby_page').width('100%').height('100%').backgroundColor('#121316')
   }
 
   @Builder
-  topBar() {
-    Row() {
-      Text('‹')
-        .fontSize(26)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(COLOR_ON_SURFACE)
-        .constraintSize({ minWidth: NEARBY_MIN_TAP_HEIGHT_VP, minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          router.back();
-        })
-      Text($r('app.string.nearby_friends_manage'))
-        .fontSize(NEARBY_TYPE.pageTitle.size)
-        .fontWeight(NEARBY_TYPE.pageTitle.weight)
-        .lineHeight(NEARBY_TYPE.pageTitle.lineHeight)
-        .fontColor(COLOR_ON_SURFACE)
-        .layoutWeight(1)
-    }
-    .width('100%')
-    .constraintSize({ minHeight: 56 })
-    .padding({ left: 4, right: 16 })
-    .backgroundColor(COLOR_SURFACE)
-  }
-
-  @Builder
-  actionRow(action: NearbyManageAction) {
-    Column({ space: 4 }) {
-      Button(nearbyString(action.label))
-        .width('100%')
-        .constraintSize({ minHeight: NEARBY_MIN_TAP_HEIGHT_VP })
-        .fontSize(NEARBY_TYPE.action.size)
-        .fontWeight(NEARBY_TYPE.action.weight)
-        .enabled(false)
-      Text(nearbyString(action.blocked))
-        .fontSize(NEARBY_TYPE.muted.size)
-        .fontWeight(NEARBY_TYPE.muted.weight)
-        .lineHeight(NEARBY_TYPE.muted.lineHeight)
-        .fontColor(COLOR_ON_SURFACE_MUTED)
-        .width('100%')
-        .textAlign(TextAlign.Center)
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(COLOR_SURFACE)
-    .borderRadius(8)
-    .alignItems(HorizontalAlign.Start)
+  action(action: NearbyManageAction) {
+    Button(nearbyString(action.label), { type: ButtonType.Normal })
+      .id(action.label).layoutWeight(1).constraintSize({ minHeight: 64 }).padding(12)
+      .labelStyle({ maxLines: 2 }).fontFamily('HarmonyOS Sans').fontSize(NEARBY_TYPE.action.size).fontColor('#F4EFE6')
+      .backgroundColor('#1B1D22').border({ width: 1, color: '#393B40' }).borderRadius(12)
+      .onClick(() => { promptAction.showToast({ message: $r('app.string.nearby_not_supported') }); })
   }
 }

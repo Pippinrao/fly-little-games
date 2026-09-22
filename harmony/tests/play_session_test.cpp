@@ -175,6 +175,22 @@ void test_checkpoint_restores_pixels_after_later_frames()
 
 int main()
 {
+    std::uint32_t observed = 0;
+    auto external = flynes::harmony::PlaySession::from_frame_source(
+        [&](std::uint32_t buttons) {
+            observed = buttons;
+            flynes::harmony::PlayStepResult frame{};
+            frame.rgb565 = {1, 2};
+            frame.pcm = {123, -456};
+            return frame;
+        });
+    external->set_port0_buttons(0x89);
+    flynes::harmony::PlayStepResult external_frame{};
+    (void)capture_error([&] { external_frame = external->step(); });
+    expect(observed == 0x89, "existing play session forwards local controls to the external session");
+    expect(external_frame.rgb565 == std::vector<std::uint8_t>({1, 2}) &&
+           external_frame.pcm == std::vector<std::int16_t>({123, -456}),
+           "existing play runtime receives external picture AND speaker PCM");
     test_empty_rom_is_rejected();
     test_step_publishes_complete_frame_pcm_and_port0_buttons();
     test_checkpoint_restores_pixels_after_later_frames();

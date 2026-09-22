@@ -74,7 +74,9 @@ target_link_libraries(entry PRIVATE
     flynes_product
     flynes_runtime
     flynes_session
+    flynes_lan_mvp
     libace_napi.z.so
+    libhilog_ndk.z.so
     libace_ndk.z.so
     libEGL.so
     libGLESv3.so

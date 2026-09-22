@@ -63,6 +63,13 @@ public final class NearbyFriendsActivity extends AppCompatActivity
         root.requestApplyInsets();
 
         MaterialButtonToggleGroup tabs = findViewById(R.id.nearby_tabs);
+        for (int id : new int[]{R.id.nearby_tab_devices, R.id.nearby_tab_friends}) {
+            MaterialButton tab = findViewById(id);
+            tab.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT));
+            tab.setStrokeWidth(0);
+            tab.setCornerRadius(0);
+            tab.setMinWidth(0);
+        }
         tabs.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
             if (!isChecked) return;
             showTab(checkedId == R.id.nearby_tab_friends);
@@ -84,9 +91,9 @@ public final class NearbyFriendsActivity extends AppCompatActivity
         // nothing else (C10), and the system prompt is never repeated in one visit.
         findViewById(R.id.nearby_action_create).setOnClickListener(view ->
                 NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_CREATE));
-        findViewById(R.id.nearby_action_enter_code).setOnClickListener(view ->
-                NearbyPairingActivity.start(this, NearbyPairingActivity.MODE_JOIN_CODE));
-        findViewById(R.id.nearby_action_scan_qr).setOnClickListener(view -> onScanClicked());
+        findViewById(R.id.nearby_action_enter_code).setOnClickListener(view -> unsupported());
+        findViewById(R.id.nearby_action_scan_qr).setOnClickListener(view -> unsupported());
+        findViewById(R.id.nearby_find_devices).setOnClickListener(view -> unsupported());
 
         findViewById(R.id.nearby_friends_manage).setOnClickListener(view ->
                 startActivity(new Intent(this, NearbyFriendsManageActivity.class)));
@@ -108,28 +115,19 @@ public final class NearbyFriendsActivity extends AppCompatActivity
 
     private void layoutNearbyColumns() {
         View root = findViewById(R.id.nearby_root);
-        LinearLayout columns = findViewById(R.id.nearby_device_columns);
-        LinearLayout actions = findViewById(R.id.nearby_action_column);
-        LinearLayout statusColumn = findViewById(R.id.nearby_status_column);
         if (root.getWidth() == 0) return;
-        float density = getResources().getDisplayMetrics().density;
-        float contentAfterInsets = (root.getWidth() - root.getPaddingLeft()
-                - root.getPaddingRight()) / density;
-        boolean split = contentAfterInsets > 580f;
-        columns.setOrientation(split ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        // Keep the approved two-pane composition on short landscape screens.
+        boolean largeText = getResources().getConfiguration().fontScale > 1.3f;
+        findViewById(R.id.nearby_entry_headline).setVisibility(largeText ? View.GONE : View.VISIBLE);
+        LinearLayout actions = findViewById(R.id.nearby_action_column);
+        LinearLayout status = findViewById(R.id.nearby_status_column);
+        actions.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.44f));
+        status.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.56f));
+    }
 
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                split ? Math.round(224f * density) : ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        actions.setLayoutParams(actionParams);
-
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                split ? 0 : ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                split ? 1f : 0f);
-        if (split) statusParams.leftMargin = Math.round(18f * density);
-        else statusParams.topMargin = Math.round(18f * density);
-        statusColumn.setLayoutParams(statusParams);
+    private void unsupported() {
+        android.widget.Toast.makeText(this, R.string.nearby_not_supported,
+                android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void onScanClicked() {
@@ -167,6 +165,16 @@ public final class NearbyFriendsActivity extends AppCompatActivity
     }
 
     private void showTab(boolean friends) {
+        int[] tabIds = {R.id.nearby_tab_devices, R.id.nearby_tab_friends};
+        for (int i = 0; i < tabIds.length; i++) {
+            android.graphics.drawable.ColorDrawable line = new android.graphics.drawable.ColorDrawable(
+                    getColor((i == 1) == friends ? R.color.fly_primary : R.color.fly_surface_variant));
+            android.graphics.drawable.LayerDrawable underline = new android.graphics.drawable.LayerDrawable(
+                    new android.graphics.drawable.Drawable[]{line});
+            underline.setLayerGravity(0, android.view.Gravity.BOTTOM);
+            underline.setLayerHeight(0, Math.round(2 * getResources().getDisplayMetrics().density));
+            findViewById(tabIds[i]).setForeground(underline);
+        }
         findViewById(R.id.nearby_friends_panel)
                 .setVisibility(friends ? View.VISIBLE : View.GONE);
         findViewById(R.id.nearby_devices_panel)

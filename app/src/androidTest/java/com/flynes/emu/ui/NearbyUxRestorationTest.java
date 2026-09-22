@@ -32,10 +32,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-/**
- * TYPO-02.A: real TextView reads for Nearby roles, plus PAIR content-width
- * stacking at 320 / 580 / 640 after insets. HeadlineSmall 24sp must fail until
- * local paneTitle 21 is wired.
+/** Native typography and proportional two-column layout after system insets.
+ * Short-height / font-scale coverage lives in NearbyLandscapeTest.
  */
 @RunWith(AndroidJUnit4.class)
 @LargeTest
@@ -73,10 +71,10 @@ public final class NearbyUxRestorationTest {
             try {
                 n01.onActivity(activity -> {
                     TextView code = activity.findViewById(R.id.nearby_invite_code_value);
-                    assertEquals("inviteCode must be 29sp, not HeadlineMedium 28sp",
-                            29f, sp(code), SIZE_EPS);
-                    assertEquals("inviteCode tracking .17em, not 0.12",
-                            0.17f, code.getLetterSpacing(), 0.02f);
+                    assertEquals("connection status uses body text",
+                            14f, sp(code), SIZE_EPS);
+                    assertEquals("connection status uses normal tracking",
+                            0f, code.getLetterSpacing(), 0.02f);
                 });
             } finally {
                 // Closing a display does not cancel its process-scoped invitation.
@@ -87,11 +85,9 @@ public final class NearbyUxRestorationTest {
     }
 
     @Test
-    public void TYPO_A_pair_width320() {
-        assertPairAtContentWidth(320f, true);
-        assertJoinInputAtContentWidth(320f);
-        assertPairAtContentWidth(580f, true);
+    public void pairUsesLandscapeColumnsAfterInsets() {
         assertPairAtContentWidth(640f, false);
+        assertPairAtContentWidth(736f, false);
     }
 
     private static void assertPairAtContentWidth(float widthDp, boolean expectStack) {
@@ -116,7 +112,6 @@ public final class NearbyUxRestorationTest {
                     if (qr == null) {
                         qr = ((ViewGroup) qrWrap).getChildAt(0);
                     }
-                    View footerCopy = activity.findViewById(R.id.nearby_pairing_footer_copy);
                     View cancel = activity.findViewById(R.id.nearby_invite_cancel);
                     float density = activity.getResources().getDisplayMetrics().density;
                     float inner = (columns.getWidth() - columns.getPaddingLeft()
@@ -130,18 +125,16 @@ public final class NearbyUxRestorationTest {
                             hasHorizontalScrollView(root));
                     assertTrue("QR 170 must be fully on-screen at " + why,
                             fullyInside(qr, root));
-                    assertTrue("footer copy must not overflow horizontally at " + why,
-                            fullyInside(footerCopy, root));
                     assertTrue("footer action must not overflow horizontally at " + why,
                             fullyInside(cancel, root));
-                    assertTrue("QR side must stay 170dp", Math.abs(qr.getWidth() / density - 170f) < 2f);
+                    assertTrue("QR remains a square within available height", Math.abs(qr.getWidth() - qr.getHeight()) < 2f);
                     if (expectStack) {
                         assertEquals("<=580 after insets must vertical-stack, " + why,
                                 LinearLayout.VERTICAL, ((LinearLayout) columns).getOrientation());
                     } else {
                         assertEquals(">580 after insets must keep left/right, " + why,
                                 LinearLayout.HORIZONTAL, ((LinearLayout) columns).getOrientation());
-                        assertEquals(224f, leftW, 2f);
+                        assertEquals(.45f, leftW / (inner - 18f), .02f);
                         View right = activity.findViewById(R.id.nearby_pairing_right);
                         assertEquals(18f, (right.getLeft() - left.getRight()) / density, 2f);
                     }

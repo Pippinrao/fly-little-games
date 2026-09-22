@@ -58,10 +58,11 @@ public final class NearbyUiParityTest {
             onView(withId(R.id.nearby_action_create)).perform(click());
             onView(withId(R.id.nearby_pairing_root)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_create_block)).check(matches(isDisplayed()));
+            onView(withId(R.id.nearby_invite_cancel)).perform(click());
         }
     }
 
-    @Test public void wideLayoutUsesTheShared224By18Split() {
+    @Test public void wideLayoutUsesAlignedProportionalColumns() {
         try (ActivityScenario<NearbyFriendsActivity> scenario =
                      ActivityScenario.launch(NearbyFriendsActivity.class)) {
             scenario.onActivity(activity -> {
@@ -71,8 +72,8 @@ public final class NearbyUiParityTest {
                 float density = activity.getResources().getDisplayMetrics().density;
                 assertTrue("test target must be wider than the 580dp breakpoint",
                         columns.getWidth() / density > 580f);
-                assertEquals(224f, left.getWidth() / density, 1f);
-                assertEquals(18f, (right.getLeft() - left.getRight()) / density, 1f);
+                assertEquals(0.44f, (float)left.getWidth() / (left.getWidth() + right.getWidth()), .01f);
+                assertEquals(37f, (right.getLeft() - left.getRight()) / density, 1f);
                 assertEquals(columns.getWidth() - columns.getPaddingRight(), right.getRight());
             });
         }

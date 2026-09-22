@@ -8,11 +8,12 @@
   children, so an inflated list never has duplicate child ids to disambiguate.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+    android:background="@drawable/bg_nearby_card" android:paddingHorizontal="16dp" android:paddingVertical="12dp">
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Body"
+        android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.SectionTitle"
         android:textColor="@color/fly_on_surface" />
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:includeFontPadding="false" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
-        android:textColor="@color/fly_error" />
+        android:includeFontPadding="false" android:layout_marginTop="8dp" android:textAppearance="@style/TextAppearance.FlyNes.Nearby.Muted"
+        android:textColor="@color/fly_on_surface_muted" />
 </LinearLayout>

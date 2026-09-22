@@ -114,6 +114,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String currentGameDisplayTitle() {
+        if (nearbyPlay != null) return ((FlyNesApplication) getApplication()).nearbyMvpOwner().gameTitle();
         return com.flynes.emu.gamecenter.GameTitlePresentation.forLocale(currentGameTitle,
                 getResources().getConfiguration().getLocales().get(0)).primary();
     }
@@ -141,6 +142,7 @@ public class MainActivity extends AppCompatActivity {
     private final InputLatencyTracker inputLatencyTracker =
             new InputLatencyTracker(clockCalibrator);
     private GamepadView gamepad;
+    private NearbyMvpPlayController nearbyPlay;
     private ImageButton pauseButton;
     private HapticController pauseHaptics;
     private InputRouter inputRouter;
@@ -230,6 +232,22 @@ public class MainActivity extends AppCompatActivity {
         saves = new SaveRepository(this);
         settings = SettingsAccess.repository(this);
         appSettings = settings.load();
+        if (getIntent().getBooleanExtra("nearby_mvp", false)) {
+            NearbyMvpSession lan = ((FlyNesApplication) getApplication()).nearbyMvpOwner().session();
+            if (lan == null || lan.snapshot()[0] != NearbyMvpSession.RUNNING) { finish(); return; }
+            nearbyPlay = new NearbyMvpPlayController(this, lan, () -> {
+                startActivity(new Intent(this, NearbyLobbyActivity.class));
+                finish();
+            });
+            gamepad = new GamepadView(this);
+            gamepad.setId(R.id.gamepad);
+            applyHapticSettings();
+            inputRouter = InputRouter.timestamped((bits, time) -> nearbyPlay.setButtons(bits), this::handleAppAction);
+            gamepad.setInputRouter(inputRouter);
+            installPlayPage(nearbyPlay.surface());
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            return;
+        }
         Log.i(TAG, "legacy autosave migration=" + LegacySaveMigrator.migrate(this, saves));
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -383,58 +401,7 @@ public class MainActivity extends AppCompatActivity {
         }, this::handleAppAction);
         gamepad.setInputRouter(inputRouter);
 
-        root = new FrameLayout(this);
-        root.setBackgroundColor(0xFF121316);
-        // Game surface: fixed 4:3 view sized to fit the screen and centered —
-        // a MATCH_PARENT surface would stretch the 1024x960 (hq4x) buffer
-        // non-uniformly on wide screens (the "stretched picture" complaint).
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        ViewportLayout.Size viewport = viewportSize(dm.widthPixels, dm.heightPixels, 0, 0);
-        root.addView(view, new FrameLayout.LayoutParams(
-                viewport.width(), viewport.height(), Gravity.CENTER));
-        root.setOnApplyWindowInsetsListener((container, insets) -> {
-            updateViewport(insets.getSystemWindowInsetLeft(),
-                    insets.getSystemWindowInsetRight());
-            return insets;
-        });
-
-        // Gamepad overlay sits above the game surface and owns all touch input.
-        root.addView(gamepad, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        pauseButton = createPauseButton();
-        pauseHaptics = new HapticController(pauseButton);
-        pauseHaptics.configure(appSettings.hapticLevel(), appSettings.distinctABHaptics());
-        int pauseSize = Math.round(48 * getResources().getDisplayMetrics().density);
-        int pauseMargin = Math.round(16 * getResources().getDisplayMetrics().density);
-        FrameLayout.LayoutParams pauseParams = new FrameLayout.LayoutParams(pauseSize, pauseSize,
-                Gravity.TOP | Gravity.END);
-        pauseParams.setMargins(pauseMargin, pauseMargin, pauseMargin, pauseMargin);
-        root.addView(pauseButton, pauseParams);
-        // The nearby status surface exists only while a nearby session does (D7). Today no session
-        // can exist, so this attaches nothing and local single-player keeps a clean game screen;
-        // the banner is the D6 pinned, non-dismissible element for 冻结 / 重连倒计时 / authority 超时.
-        NearbyInGameStatus.installBanner(this, root);
-        pauseButton.setOnApplyWindowInsetsListener((button, insets) -> {
-            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
-            params.setMargins(pauseMargin,
-                    pauseMargin + insets.getSystemWindowInsetTop(),
-                    pauseMargin + insets.getSystemWindowInsetRight(),
-                    pauseMargin + insets.getSystemWindowInsetBottom());
-            button.setLayoutParams(params);
-            return insets;
-        });
-        pauseButton.requestApplyInsets();
-
-        setContentView(root);
-        root.requestApplyInsets();
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override public void handleOnBackPressed() {
-                if (pauseLayer != null) resumeFromPauseMenu();
-                else showPauseMenu();
-            }
-        });
+        installPlayPage(view);
 
         if (!core.create()) {
             toastAndFinish("Failed to create emulator core");
@@ -487,6 +454,62 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void installPlayPage(View surface) {
+        root = new FrameLayout(this);
+        root.setBackgroundColor(0xFF121316);
+        // Game surface: fixed 4:3 view sized to fit the screen and centered —
+        // a MATCH_PARENT surface would stretch the 1024x960 (hq4x) buffer
+        // non-uniformly on wide screens (the "stretched picture" complaint).
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        ViewportLayout.Size viewport = viewportSize(dm.widthPixels, dm.heightPixels, 0, 0);
+        root.addView(surface, new FrameLayout.LayoutParams(
+                viewport.width(), viewport.height(), Gravity.CENTER));
+        root.setOnApplyWindowInsetsListener((container, insets) -> {
+            if (nearbyPlay == null) updateViewport(insets.getSystemWindowInsetLeft(),
+                    insets.getSystemWindowInsetRight());
+            return insets;
+        });
+
+        // Gamepad overlay sits above the game surface and owns all touch input.
+        root.addView(gamepad, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        pauseButton = createPauseButton();
+        pauseHaptics = new HapticController(pauseButton);
+        pauseHaptics.configure(appSettings.hapticLevel(), appSettings.distinctABHaptics());
+        int pauseSize = Math.round(48 * getResources().getDisplayMetrics().density);
+        int pauseMargin = Math.round(16 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams pauseParams = new FrameLayout.LayoutParams(pauseSize, pauseSize,
+                Gravity.TOP | Gravity.END);
+        pauseParams.setMargins(pauseMargin, pauseMargin, pauseMargin, pauseMargin);
+        root.addView(pauseButton, pauseParams);
+        // The nearby status surface exists only while a nearby session does (D7). Today no session
+        // can exist, so this attaches nothing and local single-player keeps a clean game screen;
+        // the banner is the D6 pinned, non-dismissible element for 冻结 / 重连倒计时 / authority 超时.
+        NearbyInGameStatus.installBanner(this, root);
+        pauseButton.setOnApplyWindowInsetsListener((button, insets) -> {
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
+            params.setMargins(pauseMargin,
+                    pauseMargin + insets.getSystemWindowInsetTop(),
+                    pauseMargin + insets.getSystemWindowInsetRight(),
+                    pauseMargin + insets.getSystemWindowInsetBottom());
+            button.setLayoutParams(params);
+            return insets;
+        });
+        pauseButton.requestApplyInsets();
+
+        setContentView(root);
+        root.requestApplyInsets();
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (pauseLayer != null) resumeFromPauseMenu();
+                else showPauseMenu();
+            }
+        });
+
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -533,6 +556,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (nearbyPlay != null) {
+            appSettings = settings.load();
+            applyHapticSettings();
+            nearbyPlay.start(appSettings.audioEnabled());
+            return;
+        }
         registerDisplayListener();
         if (pauseLayer == null) {
             gamepad.setVisibility(View.VISIBLE);
@@ -573,6 +602,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (nearbyPlay != null) {
+            gamepad.reset();
+            nearbyPlay.pause(true);
+            nearbyPlay.stop();
+            return;
+        }
         unregisterDisplayListener();
         if (session.state() == SessionState.RUNNING) session.pause();
         stopRendering();
@@ -634,6 +669,12 @@ public class MainActivity extends AppCompatActivity {
         qualityProbeExecutor.shutdownNow();
         if (coverCapture != null) framePublisher.removeObserver(coverCapture);
         coverExecutor.shutdownNow();
+        if (nearbyPlay != null) {
+            nearbyPlay.close();
+            gamepad.reset();
+            session.closeExecutor();
+            return;
+        }
         stopRendering();
         if (view != null) view.release();
         gamepad.reset();
@@ -699,13 +740,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void showPauseMenu() {
         if (isFinishing() || gamepad == null || pauseLayer != null) return;
-        beginPauseDisplayClear(surfaceEpoch);
+        if (nearbyPlay == null) beginPauseDisplayClear(surfaceEpoch);
         if (displayMonitor != null) displayMonitor.invalidate();
         inputRouter.cancelAll();
         gamepad.reset();
         if (session.state() == SessionState.RUNNING) session.pause();
         stopRendering();
-        stopAudioForPauseAsync();
+        if (nearbyPlay != null) nearbyPlay.pause(true);
+        else stopAudioForPauseAsync();
         gamepad.setVisibility(View.INVISIBLE);
         pauseButton.setVisibility(View.INVISIBLE);
         pauseLayer = createPauseDrawer();
@@ -774,11 +816,15 @@ public class MainActivity extends AppCompatActivity {
         resume.setOnClickListener(v -> resumeFromPauseMenu());
         drawer.addView(resume, matchHeight(dp(52), dp(12)));
         Button center = drawerButton(R.id.pause_game_center, R.string.game_center_title, false);
-        center.setOnClickListener(v -> closePauseForNavigation(HomeActivity.class));
+        if (nearbyPlay != null) center.setText(R.string.nearby_lobby_title);
+        center.setOnClickListener(v -> {
+            if (nearbyPlay != null) nearbyPlay.returnLobby();
+            else closePauseForNavigation(HomeActivity.class);
+        });
         drawer.addView(center, matchHeight(dp(48), dp(8)));
         Button settingsButton = drawerButton(R.id.pause_settings, R.string.settings, false);
         settingsButton.setOnClickListener(v -> closePauseForNavigation(SettingsActivity.class));
-        drawer.addView(settingsButton, matchHeight(dp(48), 0));
+        if (nearbyPlay == null) drawer.addView(settingsButton, matchHeight(dp(48), 0));
 
         // §22.4's lightweight status rows join the existing drawer rather than a new overlay host
         // (D6). No session means no rows at all, not blocked rows (D7).
@@ -849,6 +895,7 @@ public class MainActivity extends AppCompatActivity {
         inputRouter.cancelAll();
         gamepad.setVisibility(View.VISIBLE);
         pauseButton.setVisibility(View.VISIBLE);
+        if (nearbyPlay != null) { nearbyPlay.pause(false); return; }
         if (session.state() == SessionState.PAUSED) session.resume();
         if (audio == null || !audio.isAlive()) {
             audio = createAudioThread();

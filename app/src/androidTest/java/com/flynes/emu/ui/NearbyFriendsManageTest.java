@@ -25,41 +25,30 @@ import com.flynes.emu.SettingsActivity;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-/**
- * Real emulator evidence for slice A1a-5 and its Settings entry (A1a-6 / decision D2): 好友管理 is
- * reachable from the 好友 tab and from Settings, and every action on it is present but disabled with
- * the specific reason.
- *
- * <p>The two reachability tests are the point of the slice: the page must be findable, and Settings
- * must keep its five sections while gaining this row, so D2's "a row, not a sixth root" is verified
- * by the row opening its own page rather than by a comment.
- */
+/** All management actions fit a fixed landscape grid; entries stay reachable from Settings. */
 @RunWith(AndroidJUnit4.class)
 public final class NearbyFriendsManageTest {
 
     @Test
-    public void allActionsArePresentAndDisabledWithAReason() {
+    public void allActionsFitWithoutScrollingAndExplainUnsupportedState() {
         try (ActivityScenario<com.flynes.emu.NearbyFriendsManageActivity> ignored =
                      ActivityScenario.launch(com.flynes.emu.NearbyFriendsManageActivity.class)) {
-            assertDisabledWithReason(R.id.nearby_manage_rename, R.id.nearby_manage_rename_reason,
+            assertAvailableWithFeedback(R.id.nearby_manage_rename, R.id.nearby_manage_rename_reason,
                     R.string.nearby_friends_rename);
-            assertDisabledWithReason(R.id.nearby_manage_delete, R.id.nearby_manage_delete_reason,
+            assertAvailableWithFeedback(R.id.nearby_manage_delete, R.id.nearby_manage_delete_reason,
                     R.string.nearby_friends_delete);
-            assertDisabledWithReason(R.id.nearby_manage_block, R.id.nearby_manage_block_reason,
+            assertAvailableWithFeedback(R.id.nearby_manage_block, R.id.nearby_manage_block_reason,
                     R.string.nearby_friends_block);
-            assertDisabledWithReason(R.id.nearby_manage_identity_reset,
+            assertAvailableWithFeedback(R.id.nearby_manage_identity_reset,
                     R.id.nearby_manage_identity_reset_reason,
                     R.string.nearby_friends_identity_reset);
 
             // No friend row is ever inflated: the list is empty and says so with its own reason.
             onView(withId(R.id.nearby_manage_empty)).check(matches(isDisplayed()));
             onView(withId(R.id.nearby_manage_blocked))
-                    .check(matches(withText(R.string.nearby_blocked_friend_store)));
+                    .check(matches(withText(R.string.nearby_not_supported)));
 
-            // The last control on the page is really reachable, not merely present in the hierarchy.
-            onView(withId(R.id.nearby_manage_identity_reset_reason))
-                    .perform(scrollTo())
-                    .check(matches(isDisplayed()));
+            onView(withId(R.id.nearby_manage_identity_reset)).check(matches(isDisplayed()));
         }
     }
 
@@ -93,17 +82,13 @@ public final class NearbyFriendsManageTest {
         }
     }
 
-    private static void assertDisabledWithReason(int controlId, int reasonId, int labelId) {
-        // Four controls plus four reasons do not fit a landscape phone, and they are not meant to:
-        // the page scrolls. Visibility here is effective visibility, not on-screen position — a
-        // control scrolled below the fold is still present, still disabled, and still carrying its
-        // reason. The test separately proves the bottom of the page is reachable by scrolling to it.
-        onView(withId(controlId)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
-        onView(withId(controlId)).check(matches(not(isEnabled())));
-        onView(withId(reasonId)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
-        onView(withId(reasonId)).check(matches(withText(R.string.nearby_blocked_friend_store)));
+    private static void assertAvailableWithFeedback(int controlId, int reasonId, int labelId) {
+        onView(withId(controlId)).check(matches(isDisplayed()));
+        onView(withId(controlId)).check(matches(isEnabled()));
+        onView(withId(controlId)).perform(click());
+        onView(withId(R.id.nearby_manage_root)).check(matches(isDisplayed()));
         onView(withId(controlId)).check(matches(withContentDescription(
-                string(labelId) + ", " + string(R.string.nearby_blocked_friend_store))));
+                string(labelId) + ", " + string(R.string.nearby_not_supported))));
     }
 
     private static String string(int id) {
