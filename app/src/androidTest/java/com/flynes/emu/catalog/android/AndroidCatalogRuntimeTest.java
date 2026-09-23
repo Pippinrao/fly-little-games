@@ -2,6 +2,7 @@ package com.flynes.emu.catalog.android;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -24,10 +25,59 @@ import java.nio.file.Files;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RunWith(AndroidJUnit4.class)
 public final class AndroidCatalogRuntimeTest {
+    @Test public void cachedRowsPublishBeforeBlockedNativeCreationAndStartIsIdempotent()
+            throws Exception {
+        try (TwoPhaseFixture fixture = new TwoPhaseFixture()) {
+            int expected = bundledGameCount(fixture);
+            try (AndroidCatalogRuntime first = new AndroidCatalogRuntime(fixture)) {
+                first.bootstrap().get(30, TimeUnit.SECONDS);
+                assertEquals(expected, first.gameCenterSnapshot().rows().size());
+            }
+
+            CountDownLatch opened = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            AtomicInteger opens = new AtomicInteger();
+            AndroidCatalogRuntime.NativeAppFactory slowFactory = (data, cache) -> {
+                opens.incrementAndGet();
+                opened.countDown();
+                try {
+                    if (!release.await(30, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("native factory release timed out");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                return com.flynes.emu.app.FlyNesApp.create(
+                        data.getAbsolutePath(), cache.getAbsolutePath());
+            };
+            try (AndroidCatalogRuntime restarted = new AndroidCatalogRuntime(
+                    fixture, AndroidCatalogRuntime.defaultStateFile(fixture), slowFactory,
+                    Executors.newSingleThreadExecutor())) {
+                AndroidCatalogRuntime.Startup startup = restarted.start();
+                assertSame(startup, restarted.start());
+                assertEquals(AndroidCatalogRuntime.CacheStatus.HIT,
+                        startup.cacheReady().get(2, TimeUnit.SECONDS).status());
+                assertEquals(expected, restarted.gameCenterSnapshot().rows().size());
+                assertFalse("cache phase must not wait for native", startup.nativeReady().isDone());
+                assertTrue(opened.await(2, TimeUnit.SECONDS));
+                assertEquals(1, opens.get());
+                release.countDown();
+                startup.nativeReady().get(30, TimeUnit.SECONDS);
+                assertEquals(expected, restarted.gameCenterSnapshot().rows().size());
+            } finally {
+                release.countDown();
+            }
+        }
+    }
+
     @Test public void nearbyFactoryLoadsRealCatalogContentWithoutLaunchSideEffects() throws Exception {
         try (CatalogFixture fixture = new CatalogFixture();
              AndroidCatalogRuntime runtime = new AndroidCatalogRuntime(fixture, fixture.state)) {
@@ -152,6 +202,46 @@ public final class AndroidCatalogRuntimeTest {
                 } finally {
                     deleteStateFile(backup);
                 }
+            }
+        }
+    }
+
+    private static final class TwoPhaseFixture extends ContextWrapper implements AutoCloseable {
+        private final String namespace = "two-phase-" + UUID.randomUUID();
+        private final File root;
+
+        TwoPhaseFixture() {
+            super(ApplicationProvider.getApplicationContext());
+            root = new File(super.getCacheDir(), namespace);
+            assertTrue(root.mkdirs());
+        }
+
+        @Override public Context getApplicationContext() { return this; }
+        @Override public File getFilesDir() {
+            File value = new File(root, "files");
+            if (!value.isDirectory() && !value.mkdirs()) throw new AssertionError("files dir");
+            return value;
+        }
+        @Override public File getCacheDir() {
+            File value = new File(root, "cache");
+            if (!value.isDirectory() && !value.mkdirs()) throw new AssertionError("cache dir");
+            return value;
+        }
+        @Override public SharedPreferences getSharedPreferences(String name, int mode) {
+            return super.getSharedPreferences(namespace + "-" + name, mode);
+        }
+
+        @Override public void close() throws IOException {
+            for (String name : new String[]{"flynes_source_uuids", "flynes_migration_log",
+                    "flynes_catalog_projection", "catalog_pending_releases", "flynes_settings",
+                    "game_library", "catalog_migration"}) {
+                super.deleteSharedPreferences(namespace + "-" + name);
+            }
+            try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(root.toPath())) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                    try { Files.deleteIfExists(path); }
+                    catch (IOException failure) { throw new java.io.UncheckedIOException(failure); }
+                });
             }
         }
     }

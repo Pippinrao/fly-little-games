@@ -72,10 +72,21 @@ public final class AndroidLargeCatalogPerformanceTest {
             }
             assertEquals(0, app.scanCommit(FlyCatalogCommands.SCAN_FULL));
         }
+        // The synthetic native scan bypasses AndroidCatalogRuntime, so reconcile that new native
+        // generation once and persist the same projection a real explicit import would write.
+        try (var reconciler = new AndroidCatalogRuntime(isolated)) {
+            reconciler.bootstrap().get();
+            assertEquals(expectedGames, reconciler.gameCenterSnapshot().rows().size());
+        }
         for (int run = 0; run < 3; ++run) {
             long start = SystemClock.elapsedRealtime();
             try (var runtime = new AndroidCatalogRuntime(isolated)) {
-                runtime.bootstrap().get();
+                AndroidCatalogRuntime.Startup startup = runtime.start();
+                assertEquals(AndroidCatalogRuntime.CacheStatus.HIT,
+                        startup.cacheReady().get().status());
+                long cacheLoaded = SystemClock.elapsedRealtime();
+                assertEquals(expectedGames, runtime.gameCenterSnapshot().rows().size());
+                startup.nativeReady().get();
                 long loaded = SystemClock.elapsedRealtime();
                 assertEquals(expectedGames, runtime.gameCatalog().canonicalEntries().size());
                 ArrayList<GameCenterItem> rows = new ArrayList<>();
@@ -94,7 +105,8 @@ public final class AndroidLargeCatalogPerformanceTest {
                     assertEquals(expectedGames, state.filtered(rows).size());
                 }
                 long end = SystemClock.elapsedRealtime();
-                Log.i("FlyNesCatalogPerf", "run=" + run + " coldMs=" + (loaded-start)
+                Log.i("FlyNesCatalogPerf", "run=" + run + " cacheMs=" + (cacheLoaded-start)
+                        + " nativeMs=" + (loaded-cacheLoaded) + " coldMs=" + (loaded-start)
                         + " firstSortMs=" + (firstEnd-firstStart)
                         + " navigation20Ms=" + (end-firstEnd));
                 // Allow emulator scheduling jitter; the old 5.6–6.0 s path still fails this budget.
@@ -108,10 +120,14 @@ public final class AndroidLargeCatalogPerformanceTest {
         }
         failBuiltin.set(false);
         try (var runtime = new AndroidCatalogRuntime(isolated)) {
-            // Let construction read the shared manifest, then fail the actual bundled-ROM copy.
+            // Let construction read the shared manifest, then prove an unchanged restart never
+            // opens or copies bundled ROM assets.
             failBuiltin.set(true);
-            assertThrows(java.util.concurrent.ExecutionException.class, () -> runtime.bootstrap().get());
-            assertEquals("builtin copy failure must not hide persisted external games", expectedGames,
+            AndroidCatalogRuntime.Startup startup = runtime.start();
+            assertEquals(AndroidCatalogRuntime.CacheStatus.HIT,
+                    startup.cacheReady().get().status());
+            startup.nativeReady().get();
+            assertEquals("unchanged startup must keep the cached external library", expectedGames,
                     runtime.gameCatalog().canonicalEntries().size());
         } finally {
             failBuiltin.set(false);

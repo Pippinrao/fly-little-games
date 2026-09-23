@@ -9,6 +9,7 @@ import android.util.Log;
 import com.flynes.emu.app.FlyCatalogCommands;
 import com.flynes.emu.app.FlyNesApp;
 import com.flynes.emu.app.NativeCatalogEntry;
+import com.flynes.emu.app.NativeCatalogSnapshot;
 import com.flynes.emu.catalog.BuiltinGames;
 import com.flynes.emu.catalog.GameCatalog;
 import com.flynes.emu.catalog.PhysicalPackage;
@@ -36,16 +37,22 @@ import com.flynes.emu.settings.DualSettingsStore;
 import com.flynes.emu.settings.NativeSettingsStore;
 import com.flynes.emu.settings.SettingsRepository;
 import com.flynes.emu.settings.SharedPreferencesSettingsStore;
+import com.flynes.emu.gamecenter.GameCenterSnapshot;
+import com.flynes.emu.gamecenter.GameCenterSnapshotCodec;
+import com.flynes.emu.gamecenter.GameCenterSnapshotProjector;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -54,10 +61,13 @@ import java.util.concurrent.Future;
 public final class AndroidCatalogRuntime implements AutoCloseable {
     private static final String UUID_PREFS = "flynes_source_uuids";
     private static final String MIGRATION_PREFS = "flynes_migration_log";
+    private static final String PROJECTION_PREFS = "flynes_catalog_projection";
+    private static final String SOURCE_EPOCH_KEY = "source_epoch";
 
     private final Context context;
     private final boolean nativeCatalog;
     private final AndroidAtomicCatalogStateStore store;
+    private final AndroidAtomicGameCenterSnapshotStore snapshotStore;
     private final GameCatalog catalog;
     private final CatalogRepository repository;
     private final RomPackageScanner scanner;
@@ -66,25 +76,45 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     private final ExecutorService executor;
     private final AndroidBuiltinCatalogAdapter builtin;
     private final BuiltinGames builtinGames;
-    private final FlyNesApp nativeApp;
+    private volatile FlyNesApp nativeApp;
+    private final NativeAppFactory nativeFactory;
     private final AndroidUuidSafMap uuidMap;
     private final AndroidRetryableMigrationLog migrationLog;
     private final AndroidPackageLocatorMap locators;
     private final SettingsRepository settingsRepository;
+    private final ControlLayoutRepository.Backend controlLayoutBackend;
     private final File dataRoot;
     private final File cacheRoot;
+    private final SharedPreferences projectionPreferences;
+    private final String builtinManifestSha256;
+    private volatile GameCenterSnapshot gameCenterSnapshot;
+    private Startup startup;
+
+    interface NativeAppFactory {
+        FlyNesApp open(File dataRoot, File cacheRoot);
+    }
 
     public BuiltinGames builtinGames() { return builtinGames; }
 
     public AndroidCatalogRuntime(Context context) {
-        this(context, defaultStateFile(context), true);
+        this(context, defaultStateFile(context), true,
+                (data, cache) -> FlyNesApp.create(data.getAbsolutePath(), cache.getAbsolutePath()),
+                null);
     }
 
     public AndroidCatalogRuntime(Context context, File stateFile) {
-        this(context, stateFile, false);
+        this(context, stateFile, false,
+                (data, cache) -> FlyNesApp.create(data.getAbsolutePath(), cache.getAbsolutePath()),
+                null);
     }
 
-    private AndroidCatalogRuntime(Context context, File stateFile, boolean nativeCatalog) {
+    AndroidCatalogRuntime(Context context, File stateFile, NativeAppFactory nativeFactory,
+            ExecutorService executor) {
+        this(context, stateFile, true, nativeFactory, executor);
+    }
+
+    private AndroidCatalogRuntime(Context context, File stateFile, boolean nativeCatalog,
+            NativeAppFactory nativeFactory, ExecutorService suppliedExecutor) {
         if (context == null || stateFile == null) throw new NullPointerException();
         this.context = context.getApplicationContext();
         this.nativeCatalog = nativeCatalog;
@@ -95,11 +125,13 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         catalog = new GameCatalog();
         scanner = new RomPackageScanner(ScanLimits.defaults());
         permissions = new PersistedReadPermissionGateway(this.context.getContentResolver());
-        executor = Executors.newSingleThreadExecutor(runnable -> {
+        executor = suppliedExecutor != null ? suppliedExecutor
+                : Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "flynes-catalog");
             thread.setDaemon(true);
             return thread;
         });
+        this.nativeFactory = nativeFactory;
         // The bundled game list comes from the shared manifest. A missing or
         // broken manifest must not take the whole library down: the builtin
         // source simply ends up with nothing to show.
@@ -111,9 +143,16 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             games = BuiltinGames.empty();
         }
         builtinGames = games;
+        builtinManifestSha256 = manifestSha256(this.context);
         builtin = new AndroidBuiltinCatalogAdapter(
                 builtinGames, assetPath -> this.context.getAssets().open(assetPath));
         locators = new AndroidPackageLocatorMap();
+        projectionPreferences = this.context.getSharedPreferences(
+                PROJECTION_PREFS, Context.MODE_PRIVATE);
+        snapshotStore = new AndroidAtomicGameCenterSnapshotStore(
+                defaultSnapshotFile(this.context));
+        gameCenterSnapshot = emptyGameCenterSnapshot(
+                builtinManifestSha256, sourceEpoch());
         if (nativeCatalog) {
             dataRoot = nativeDataRoot(this.context);
             cacheRoot = nativeCacheRoot(this.context);
@@ -126,7 +165,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             store = new AndroidAtomicCatalogStateStore(stateFile);
             repository = new CatalogRepository(
                     CatalogState.empty(AndroidBuiltinCatalogAdapter.SOURCE), new MemoryStore(), catalog);
-            nativeApp = FlyNesApp.create(dataRoot.getAbsolutePath(), cacheRoot.getAbsolutePath());
+            nativeApp = null;
             SharedPreferences uuidPrefs = this.context.getSharedPreferences(
                     UUID_PREFS, Context.MODE_PRIVATE);
             uuidMap = new AndroidUuidSafMap(
@@ -138,9 +177,11 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             migrationLog = new AndroidRetryableMigrationLog(
                     key -> logPrefs.getString(key, null),
                     (key, value) -> logPrefs.edit().putString(key, value).commit());
+            DeferredNativeBackend deferred = new DeferredNativeBackend();
             settingsRepository = new SettingsRepository(new DualSettingsStore(
-                    new NativeSettingsStore(nativeApp),
+                    new NativeSettingsStore(deferred),
                     new SharedPreferencesSettingsStore(this.context)));
+            controlLayoutBackend = deferred;
         } else {
             dataRoot = null;
             cacheRoot = null;
@@ -152,6 +193,7 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             migrationLog = null;
             settingsRepository = new SettingsRepository(
                     new SharedPreferencesSettingsStore(this.context));
+            controlLayoutBackend = null;
         }
         sources = new SourceRegistry(
                 repository, permissions, new AndroidPendingReleaseStore(this.context));
@@ -162,14 +204,68 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     }
 
     public ControlLayoutRepository.Backend controlLayoutBackend() {
-        return nativeApp;
+        return controlLayoutBackend;
     }
 
     public Future<BootstrapResult> bootstrap() {
-        return submit(this::bootstrapOnCatalogThread);
+        return start().nativeReady();
+    }
+
+    public synchronized Startup start() {
+        if (startup != null) return startup;
+        CompletableFuture<FastResult> cacheReady = new CompletableFuture<>();
+        CompletableFuture<BootstrapResult> nativeReady = new CompletableFuture<>();
+        startup = new Startup(cacheReady, nativeReady);
+        executor.execute(() -> {
+            GameCenterSnapshot cached = null;
+            CacheStatus status;
+            if (!nativeCatalog) {
+                status = CacheStatus.MISS;
+            } else {
+                try {
+                    byte[] encoded = snapshotStore.read();
+                    if (encoded == null) {
+                        status = CacheStatus.MISS;
+                    } else {
+                        cached = GameCenterSnapshotCodec.decode(encoded);
+                        gameCenterSnapshot = cached;
+                        status = CacheStatus.HIT;
+                    }
+                } catch (IOException | GameCenterSnapshotCodec.CodecException failure) {
+                    status = CacheStatus.RECOVERY_NEEDED;
+                }
+            }
+            cacheReady.complete(new FastResult(status));
+            final GameCenterSnapshot fastSnapshot = cached;
+            final CacheStatus fastStatus = status;
+            executor.execute(() -> {
+                try {
+                    BootstrapResult result = nativeCatalog
+                            ? bootstrapNative(fastSnapshot, fastStatus)
+                            : bootstrapLegacy();
+                    nativeReady.complete(result);
+                } catch (Throwable failure) {
+                    nativeReady.completeExceptionally(failure);
+                }
+            });
+        });
+        return startup;
+    }
+
+    public synchronized Startup startup() {
+        return start();
+    }
+
+    public GameCenterSnapshot gameCenterSnapshot() {
+        return gameCenterSnapshot;
+    }
+
+    public CompletableFuture<BootstrapResult> nativeReady() {
+        return start().nativeReady();
     }
 
     public Future<RomSource> addOrReauthorizeTree(String locator, int resultFlags) {
+        if (nativeCatalog) start();
         return submit(() -> {
             RomSource source = sources.addOrReauthorize(locator, resultFlags);
             if (nativeCatalog) {
@@ -198,13 +294,15 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                         throw new IOException("source registration commit failed: " + committed);
                     }
                 }
-                refreshNativeView();
+                incrementSourceEpoch();
+                rebuildProjectionAndCache();
             }
             return source;
         });
     }
 
     public Future<Void> removeSource(String sourceId) {
+        if (nativeCatalog) start();
         return submit(() -> {
             if (nativeCatalog) {
                 SourceCatalogState existing = repository.state().sources().get(sourceId);
@@ -223,20 +321,32 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 }
             }
             sources.remove(sourceId);
-            if (nativeCatalog) refreshNativeView();
+            if (nativeCatalog) {
+                incrementSourceEpoch();
+                rebuildProjectionAndCache();
+            }
             return null;
         });
     }
 
     public Future<SourceScanResult> scanSource(String sourceId) {
-        return submit(() -> scanSourceOnCatalogThread(sourceId));
+        if (nativeCatalog) start();
+        return submit(() -> {
+            SourceScanResult result = scanSourceOnCatalogThread(sourceId);
+            if (nativeCatalog) {
+                incrementSourceEpoch();
+                rebuildProjectionAndCache();
+            }
+            return result;
+        });
     }
 
     public Future<Boolean> setFavorite(String canonicalId, boolean favorite) {
+        if (nativeCatalog) start();
         return submit(() -> {
             if (nativeCatalog) {
                 int result = nativeApp.favoriteSet(canonicalId, favorite);
-                refreshNativeView();
+                rebuildProjectionAndCache();
                 return result == FlyCatalogCommands.OK && repository.state()
                         .userStates().getOrDefault(canonicalId, CanonicalUserState.EMPTY).favorite()
                         == favorite;
@@ -246,10 +356,11 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     }
 
     public Future<Boolean> recordSuccessfulLaunch(String canonicalId) {
+        if (nativeCatalog) start();
         return submit(() -> {
             if (nativeCatalog) {
                 int result = nativeApp.markPlayed(canonicalId);
-                refreshNativeView();
+                rebuildProjectionAndCache();
                 return result == FlyCatalogCommands.OK;
             }
             return repository.recordSuccessfulLaunch(canonicalId);
@@ -271,12 +382,39 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 catalog, new com.flynes.emu.launch.ExactRomLoader(opener), opener::validateAccess);
     }
 
-    private BootstrapResult bootstrapOnCatalogThread() throws Exception {
-        if (nativeCatalog) {
-            migrateSettingsIfNeeded();
-            migrateFncaIfNeeded();
-            // Commit the bundled source before projecting the complete native catalog once.
-            // Previously both sides of this scan rebuilt every external game on each startup.
+    private BootstrapResult bootstrapNative(
+            GameCenterSnapshot cached, CacheStatus cacheStatus) throws Exception {
+        nativeApp = nativeFactory.open(dataRoot, cacheRoot);
+        migrateSettingsIfNeeded();
+        migrateFncaIfNeeded();
+
+        long nativeGeneration = nativeApp.catalogGeneration();
+        CatalogStartupPolicy.CacheFacts cacheFacts = new CatalogStartupPolicy.CacheFacts(
+                cacheStatus == CacheStatus.HIT && cached != null,
+                cached == null ? 0L : cached.nativeGeneration(),
+                cached == null ? builtinManifestSha256 : cached.builtinManifestSha256(),
+                cached == null ? 0L : cached.sourceEpoch());
+        CatalogStartupPolicy.NativeFacts nativeFacts = new CatalogStartupPolicy.NativeFacts(
+                nativeGeneration, builtinManifestSha256, sourceEpoch());
+        CatalogStartupPolicy.NativeAction action = CatalogStartupPolicy.decide(
+                cacheFacts, nativeFacts);
+        CatalogRepository.LoadResult load;
+        if (action == CatalogStartupPolicy.NativeAction.HYDRATE_CACHED_STATE) {
+            try {
+                CatalogState decoded = CatalogStateCodec.decode(cached.catalogStateBytes());
+                load = repository.loadProjection(decoded);
+            } catch (CatalogStateCodec.CodecException corruptEmbeddedState) {
+                load = new CatalogRepository.LoadResult(
+                        CatalogRepository.LoadStatus.RECOVERY_NEEDED, repository.state(),
+                        corruptEmbeddedState.code());
+            }
+            if (load.status() != CatalogRepository.LoadStatus.LOADED) {
+                scanBuiltinNative();
+                load = rebuildProjectionAndCache();
+            }
+        } else if (action == CatalogStartupPolicy.NativeAction.REBUILD_PROJECTION) {
+            load = rebuildProjectionAndCache();
+        } else {
             Exception builtinFailure = null;
             try {
                 scanBuiltinNative();
@@ -284,17 +422,27 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
                 nativeApp.scanAbort();
                 builtinFailure = failure;
             }
-            CatalogRepository.LoadResult load = refreshNativeView();
-            try {
-                sources.retryPendingReleases();
-            } catch (SourceRegistry.PendingReleaseException ignored) {
+            if (builtinFailure != null) {
+                // Publish the still-valid native library, but preserve corrupt/missing cache bytes.
+                load = rebuildProjection(false);
+                throw builtinFailure;
             }
-            sources.verifyPersistedPermissions();
-            // A bundled-asset/cache failure must still leave the existing library usable.
-            // Preserve the failure for the UI after publishing and checking source permissions.
-            if (builtinFailure != null) throw builtinFailure;
-            return new BootstrapResult(load, null);
+            load = rebuildProjectionAndCache();
         }
+        try {
+            sources.retryPendingReleases();
+        } catch (SourceRegistry.PendingReleaseException ignored) {
+        }
+        CatalogState beforePermissions = repository.state();
+        sources.verifyPersistedPermissions();
+        if (repository.state() != beforePermissions) {
+            incrementSourceEpoch();
+            publishRepositoryStateAndCache(nativeApp.catalogGeneration());
+        }
+        return new BootstrapResult(load, null);
+    }
+
+    private BootstrapResult bootstrapLegacy() throws Exception {
         boolean storeExisted = store.baseFile().exists()
                 || new File(store.baseFile().getPath() + ".bak").exists();
         CatalogRepository.LoadResult load = repository.load();
@@ -332,7 +480,10 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             return;
         }
         try {
-            boolean saved = settingsRepository.save(
+            SettingsRepository nativeSettings = new SettingsRepository(new DualSettingsStore(
+                    new NativeSettingsStore(nativeApp),
+                    new SharedPreferencesSettingsStore(context)));
+            boolean saved = nativeSettings.save(
                     new SettingsRepository(new SharedPreferencesSettingsStore(context)).load());
             migrationLog.record(AndroidRetryableMigrationLog.Kind.SETTINGS_SCHEMA4, saved,
                     saved ? "applied schema 4" : "native apply failed");
@@ -390,11 +541,14 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         } else {
             Log.i("FlyNES", "bundled scan committed " + builtinGames.all().size() + " game(s)");
         }
-        refreshNativeView();
     }
 
-    private CatalogRepository.LoadResult refreshNativeView() throws Exception {
-        com.flynes.emu.app.NativeCatalogSnapshot snapshot = nativeApp.catalogSnapshot();
+    private CatalogRepository.LoadResult rebuildProjectionAndCache() throws Exception {
+        return rebuildProjection(true);
+    }
+
+    private CatalogRepository.LoadResult rebuildProjection(boolean writeCache) throws Exception {
+        NativeCatalogSnapshot snapshot = nativeApp.catalogSnapshot();
         List<NativeCatalogEntry> entries = snapshot.entries();
         LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>(snapshot.userStates());
         long sequence = 0;
@@ -404,8 +558,24 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         CatalogState projected = NativeCatalogProjector.project(
                 entries, snapshot.sources(), users, sequence, uuidMap, locators,
                 AndroidDocumentLocators::documentUriFor, builtinGames);
-        // The repository owns durability; a second atomic write here would race it.
-        return repository.loadProjection(projected);
+        CatalogRepository.LoadResult loaded = repository.loadProjection(projected);
+        if (loaded.status() != CatalogRepository.LoadStatus.LOADED) {
+            throw new IOException("native catalog projection was rejected");
+        }
+        GameCenterSnapshot next = new GameCenterSnapshotProjector().project(
+                snapshot.generation(), builtinManifestSha256, sourceEpoch(), projected);
+        if (writeCache) {
+            snapshotStore.writeAtomically(GameCenterSnapshotCodec.encode(next));
+            gameCenterSnapshot = next;
+        }
+        return loaded;
+    }
+
+    private void publishRepositoryStateAndCache(long nativeGeneration) throws Exception {
+        GameCenterSnapshot next = new GameCenterSnapshotProjector().project(
+                nativeGeneration, builtinManifestSha256, sourceEpoch(), repository.state());
+        snapshotStore.writeAtomically(GameCenterSnapshotCodec.encode(next));
+        gameCenterSnapshot = next;
     }
 
     private LegacyLibraryMigrator.Result migrateLegacyIfEligible(boolean newStoreAbsent)
@@ -524,7 +694,6 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         if (committed != FlyCatalogCommands.OK && committed != FlyCatalogCommands.CONFLICT) {
             throw new IOException("fly_scan_commit failed: " + committed);
         }
-        refreshNativeView();
         ArrayList<PhysicalPackage> packages = new ArrayList<>();
         SourceCatalogState refreshed = repository.state().sources().get(source.id());
         if (refreshed != null && completeness != FlyCatalogCommands.SCAN_FATAL) {
@@ -610,6 +779,18 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
         return executor.submit(operation);
     }
 
+    private long sourceEpoch() {
+        return projectionPreferences.getLong(SOURCE_EPOCH_KEY, 0L);
+    }
+
+    private long incrementSourceEpoch() {
+        long next = Math.addExact(sourceEpoch(), 1L);
+        if (!projectionPreferences.edit().putLong(SOURCE_EPOCH_KEY, next).commit()) {
+            throw new IllegalStateException("source epoch persistence failed");
+        }
+        return next;
+    }
+
     @Override public void close() {
         executor.shutdownNow();
         if (nativeApp != null) nativeApp.close();
@@ -618,6 +799,11 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     public static File defaultStateFile(Context context) {
         return new File(new File(context.getApplicationContext().getFilesDir(), "catalog"),
                 "catalog-state.bin");
+    }
+
+    public static File defaultSnapshotFile(Context context) {
+        return new File(new File(context.getApplicationContext().getFilesDir(), "catalog"),
+                "game-center-snapshot.bin");
     }
 
     static File nativeDataRoot(Context context) {
@@ -633,6 +819,14 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             LegacyLibraryMigrator.Result migrationResult) {
     }
 
+    public enum CacheStatus { HIT, MISS, RECOVERY_NEEDED }
+
+    public record FastResult(CacheStatus status) { }
+
+    public record Startup(
+            CompletableFuture<FastResult> cacheReady,
+            CompletableFuture<BootstrapResult> nativeReady) { }
+
     private static byte[] randomUuid() {
         java.util.UUID value = java.util.UUID.randomUUID();
         byte[] bytes = new byte[16];
@@ -643,6 +837,39 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
             bytes[8 + index] = (byte) (low >>> (8 * (7 - index)));
         }
         return bytes;
+    }
+
+    private static String manifestSha256(Context context) {
+        try (InputStream input = context.getAssets().open(BuiltinGames.ASSET_NAME)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (count > 0) digest.update(buffer, 0, count);
+            }
+            StringBuilder hex = new StringBuilder(64);
+            for (byte value : digest.digest()) hex.append(String.format("%02x", value & 0xff));
+            return hex.toString();
+        } catch (IOException | NoSuchAlgorithmException failure) {
+            try {
+                byte[] empty = MessageDigest.getInstance("SHA-256").digest(new byte[0]);
+                StringBuilder hex = new StringBuilder(64);
+                for (byte value : empty) hex.append(String.format("%02x", value & 0xff));
+                return hex.toString();
+            } catch (NoSuchAlgorithmException impossible) {
+                throw new AssertionError(impossible);
+            }
+        }
+    }
+
+    private static GameCenterSnapshot emptyGameCenterSnapshot(String manifestSha256, long epoch) {
+        try {
+            return new GameCenterSnapshotProjector().project(
+                    0L, manifestSha256, epoch,
+                    CatalogState.empty(AndroidBuiltinCatalogAdapter.SOURCE));
+        } catch (CatalogStateCodec.CodecException failure) {
+            throw new IllegalStateException("empty catalog snapshot encoding failed", failure);
+        }
     }
 
     private static byte[] shaBytes(String hex) {
@@ -697,6 +924,32 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
 
         @Override public void writeAtomically(byte[] encoded) {
             bytes = encoded.clone();
+        }
+    }
+
+    private final class DeferredNativeBackend implements NativeSettingsStore.Backend,
+            ControlLayoutRepository.Backend {
+        private FlyNesApp app() {
+            nativeReady().join();
+            FlyNesApp value = nativeApp;
+            if (value == null) throw new IllegalStateException("native app unavailable");
+            return value;
+        }
+
+        @Override public com.flynes.emu.settings.FlySettingsSnapshot get() {
+            return app().get();
+        }
+
+        @Override public boolean apply(com.flynes.emu.settings.FlySettingsSnapshot snapshot) {
+            return app().apply(snapshot);
+        }
+
+        @Override public String controlLayoutGet() {
+            return app().controlLayoutGet();
+        }
+
+        @Override public boolean controlLayoutApply(String utf8) {
+            return app().controlLayoutApply(utf8);
         }
     }
 }

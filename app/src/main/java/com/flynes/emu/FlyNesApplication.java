@@ -17,6 +17,7 @@ public final class FlyNesApplication extends Application {
     @Override public void onCreate() {
         super.onCreate();
         catalogRuntime = new AndroidCatalogRuntime(this);
+        catalogRuntime.start();
         gameLaunchService = new AndroidGameLaunchService(catalogRuntime);
         nearbyAvailability = new NearbyAvailability<>(NearbyAvailability.fromIllegalState(
                 () -> NearbySessionOwner.create(catalogRuntime), "nearby_blocked_session_read"));
