@@ -100,6 +100,11 @@ public record GameCenterSnapshot(
                 throw new IllegalArgumentException("popularity score is invalid");
             }
         }
+
+        public GameCenterItem item() {
+            return new GameCenterItem(canonicalId, titleEn, titleZhHans, builtin, favorite,
+                    lastPlayedSequence, originalFilename, popularityScore, searchText);
+        }
     }
 
     public record SourceRow(

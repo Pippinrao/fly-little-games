@@ -148,7 +148,8 @@ public final class GameCenterState {
         ArrayList<GameCenterItem> result = new ArrayList<>();
         for (GameCenterItem item : categoryItems) {
             if (contains(item.titleEn(), needle) || contains(item.titleZhHans(), needle)
-                    || contains(item.originalFilename(), needle)) result.add(item);
+                    || contains(item.originalFilename(), needle)
+                    || contains(item.searchText(), needle)) result.add(item);
         }
         return Collections.unmodifiableList(result);
     }
