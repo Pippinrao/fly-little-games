@@ -11,6 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -747,6 +749,162 @@ Java_com_flynes_emu_app_FlyNesApp_nativeSourceGet(
         env->SetIntArrayRegion(fields, 0, 3, values);
     }
     return FLY_RESULT_OK;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_flynes_emu_app_FlyNesApp_nativeCatalogSnapshot(
+    JNIEnv* env, jclass clazz, jlong app)
+{
+    fly_catalog_snapshot_t* captured = nullptr;
+    if (fly_catalog_snapshot(app_from(app), &captured) != FLY_RESULT_OK || captured == nullptr)
+    {
+        return nullptr;
+    }
+    std::unique_ptr<fly_catalog_snapshot_t, decltype(&fly_catalog_snapshot_release)> snapshot(
+        captured, fly_catalog_snapshot_release);
+    uint64_t generation = 0u;
+    uint64_t entry_count = 0u;
+    uint64_t user_count = 0u;
+    uint64_t source_count = 0u;
+    if (fly_catalog_snapshot_generation(snapshot.get(), &generation) != FLY_RESULT_OK ||
+        fly_catalog_snapshot_count(snapshot.get(), &entry_count) != FLY_RESULT_OK ||
+        fly_catalog_snapshot_user_count(snapshot.get(), &user_count) != FLY_RESULT_OK ||
+        fly_source_status_count(app_from(app), &source_count) != FLY_RESULT_OK ||
+        entry_count > static_cast<uint64_t>(std::numeric_limits<jsize>::max()) ||
+        user_count > static_cast<uint64_t>(std::numeric_limits<jsize>::max()) ||
+        source_count > static_cast<uint64_t>(std::numeric_limits<jsize>::max()))
+    {
+        return nullptr;
+    }
+
+    jclass object_class = env->FindClass("java/lang/Object");
+    if (object_class == nullptr) return nullptr;
+    jobjectArray root = env->NewObjectArray(4, object_class, nullptr);
+    jobjectArray entries = env->NewObjectArray(static_cast<jsize>(entry_count), object_class, nullptr);
+    jobjectArray users = env->NewObjectArray(static_cast<jsize>(user_count), object_class, nullptr);
+    jobjectArray sources = env->NewObjectArray(static_cast<jsize>(source_count), object_class, nullptr);
+    jlongArray generation_array = env->NewLongArray(1);
+    if (root == nullptr || entries == nullptr || users == nullptr || sources == nullptr ||
+        generation_array == nullptr)
+    {
+        env->DeleteLocalRef(object_class);
+        return nullptr;
+    }
+    const jlong java_generation = static_cast<jlong>(generation);
+    env->SetLongArrayRegion(generation_array, 0, 1, &java_generation);
+
+    for (uint64_t index = 0u; index < entry_count; ++index)
+    {
+        if (env->PushLocalFrame(32) < 0) return nullptr;
+        jobjectArray row = env->NewObjectArray(5, object_class, nullptr);
+        jobjectArray uuid_and_hashes = env->NewObjectArray(6, object_class, nullptr);
+        jlongArray sizes = env->NewLongArray(6);
+        jintArray enums = env->NewIntArray(10);
+        jobjectArray texts = env->NewObjectArray(4, object_class, nullptr);
+        if (row == nullptr || uuid_and_hashes == nullptr || sizes == nullptr || enums == nullptr ||
+            texts == nullptr ||
+            Java_com_flynes_emu_app_FlyNesApp_nativeCatalogGet(
+                env, clazz, reinterpret_cast<jlong>(snapshot.get()), static_cast<jlong>(index),
+                uuid_and_hashes, sizes, enums, texts) != FLY_RESULT_OK)
+        {
+            env->PopLocalFrame(nullptr);
+            return nullptr;
+        }
+        jobjectArray title = Java_com_flynes_emu_app_FlyNesApp_nativeCatalogTitleGet(
+            env, clazz, reinterpret_cast<jlong>(snapshot.get()), static_cast<jlong>(index));
+        if (title == nullptr || env->ExceptionCheck())
+        {
+            env->PopLocalFrame(nullptr);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(row, 0, uuid_and_hashes);
+        env->SetObjectArrayElement(row, 1, sizes);
+        env->SetObjectArrayElement(row, 2, enums);
+        env->SetObjectArrayElement(row, 3, texts);
+        env->SetObjectArrayElement(row, 4, title);
+        jobject kept = env->PopLocalFrame(row);
+        if (kept == nullptr || env->ExceptionCheck()) return nullptr;
+        env->SetObjectArrayElement(entries, static_cast<jsize>(index), kept);
+        env->DeleteLocalRef(kept);
+        if (env->ExceptionCheck()) return nullptr;
+    }
+
+    for (uint64_t index = 0u; index < user_count; ++index)
+    {
+        if (env->PushLocalFrame(8) < 0) return nullptr;
+        fly_catalog_user_state state{};
+        state.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE;
+        state.version = FLY_CATALOG_USER_STATE_VERSION_1;
+        uint32_t required = 0u;
+        if (fly_catalog_snapshot_user_get(snapshot.get(), index, nullptr, 0u, &required, &state) !=
+                FLY_RESULT_BUFFER_TOO_SMALL || required == 0u)
+        {
+            env->PopLocalFrame(nullptr);
+            return nullptr;
+        }
+        std::vector<char> canonical(required);
+        if (fly_catalog_snapshot_user_get(snapshot.get(), index, canonical.data(), required,
+                                          &required, &state) != FLY_RESULT_OK)
+        {
+            env->PopLocalFrame(nullptr);
+            return nullptr;
+        }
+        jobjectArray row = env->NewObjectArray(2, object_class, nullptr);
+        jstring canonical_id = utf8_string(env, canonical.data());
+        jlongArray fields = env->NewLongArray(4);
+        const jlong values[] = {
+            static_cast<jlong>(state.favorite),
+            static_cast<jlong>(state.play_count),
+            static_cast<jlong>(state.favorite_revision),
+            static_cast<jlong>(state.last_played_sequence),
+        };
+        if (row == nullptr || canonical_id == nullptr || fields == nullptr)
+        {
+            env->PopLocalFrame(nullptr);
+            return nullptr;
+        }
+        env->SetLongArrayRegion(fields, 0, 4, values);
+        env->SetObjectArrayElement(row, 0, canonical_id);
+        env->SetObjectArrayElement(row, 1, fields);
+        jobject kept = env->PopLocalFrame(row);
+        if (kept == nullptr || env->ExceptionCheck()) return nullptr;
+        env->SetObjectArrayElement(users, static_cast<jsize>(index), kept);
+        env->DeleteLocalRef(kept);
+        if (env->ExceptionCheck()) return nullptr;
+    }
+
+    for (uint64_t index = 0u; index < source_count; ++index)
+    {
+        if (env->PushLocalFrame(8) < 0) return nullptr;
+        jobjectArray row = env->NewObjectArray(2, object_class, nullptr);
+        jbyteArray uuid = env->NewByteArray(16);
+        jintArray fields = env->NewIntArray(3);
+        if (row == nullptr || uuid == nullptr || fields == nullptr ||
+            Java_com_flynes_emu_app_FlyNesApp_nativeSourceGet(
+                env, clazz, app, static_cast<jlong>(index), uuid, fields) != FLY_RESULT_OK)
+        {
+            env->PopLocalFrame(nullptr);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(row, 0, uuid);
+        env->SetObjectArrayElement(row, 1, fields);
+        jobject kept = env->PopLocalFrame(row);
+        if (kept == nullptr || env->ExceptionCheck()) return nullptr;
+        env->SetObjectArrayElement(sources, static_cast<jsize>(index), kept);
+        env->DeleteLocalRef(kept);
+        if (env->ExceptionCheck()) return nullptr;
+    }
+
+    env->SetObjectArrayElement(root, 0, generation_array);
+    env->SetObjectArrayElement(root, 1, entries);
+    env->SetObjectArrayElement(root, 2, users);
+    env->SetObjectArrayElement(root, 3, sources);
+    env->DeleteLocalRef(generation_array);
+    env->DeleteLocalRef(entries);
+    env->DeleteLocalRef(users);
+    env->DeleteLocalRef(sources);
+    env->DeleteLocalRef(object_class);
+    return env->ExceptionCheck() ? nullptr : root;
 }
 
 JNIEXPORT jint JNICALL

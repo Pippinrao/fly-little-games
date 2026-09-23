@@ -212,6 +212,70 @@ void test_favorite_and_played_persist()
     fly_app_destroy(app);
 }
 
+void test_snapshot_user_rows_are_generation_owned()
+{
+    TempRoot root;
+    fly_app_t* app = make_app(root.utf8());
+    const char* id = "game:SNAPSHOT-USER";
+    const std::uint32_t id_len = static_cast<std::uint32_t>(std::strlen(id));
+    check(fly_catalog_favorite_set(app, id, id_len, 1u) == FLY_RESULT_OK,
+          "snapshot user setup sets favorite");
+
+    fly_catalog_snapshot_t* snapshot = nullptr;
+    check(fly_catalog_snapshot(app, &snapshot) == FLY_RESULT_OK && snapshot != nullptr,
+          "snapshot user test captures catalog generation");
+    std::uint64_t count = 99u;
+    check(fly_catalog_snapshot_user_count(snapshot, &count) == FLY_RESULT_OK && count == 1u,
+          "snapshot exposes one user row");
+
+    fly_catalog_user_state state = empty_user_state();
+    state.favorite = 7u;
+    std::uint32_t required = 0u;
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, nullptr, 0u, &required, &state) ==
+              FLY_RESULT_BUFFER_TOO_SMALL,
+          "snapshot user sizes canonical id");
+    check(required == id_len + 1u, "snapshot user reports NUL-inclusive canonical id size");
+    check(state.favorite == 7u, "size query does not partially write user state");
+
+    std::vector<char> canonical(required, '\0');
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, canonical.data(), required,
+                                        &required, &state) == FLY_RESULT_OK,
+          "snapshot user row is readable");
+    check(std::strcmp(canonical.data(), id) == 0, "snapshot user returns canonical id");
+    check(state.favorite == 1u && state.favorite_revision == 1u &&
+              state.play_count == 0u && state.last_played_sequence == 0u,
+          "snapshot user returns captured counters");
+
+    check(fly_catalog_mark_played(app, id, id_len) == FLY_RESULT_OK,
+          "live catalog advances after snapshot");
+    check(fly_catalog_favorite_set(app, id, id_len, 0u) == FLY_RESULT_OK,
+          "live favorite changes after snapshot");
+    state = empty_user_state();
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, canonical.data(),
+                                        static_cast<std::uint32_t>(canonical.size()),
+                                        &required, &state) == FLY_RESULT_OK,
+          "captured snapshot user remains readable after mutation");
+    check(state.favorite == 1u && state.favorite_revision == 1u &&
+              state.play_count == 0u && state.last_played_sequence == 0u,
+          "captured snapshot user remains immutable");
+
+    fly_catalog_snapshot_t* current = nullptr;
+    check(fly_catalog_snapshot(app, &current) == FLY_RESULT_OK && current != nullptr,
+          "snapshot user test captures current generation");
+    state = empty_user_state();
+    check(fly_catalog_snapshot_user_get(current, 0u, canonical.data(),
+                                        static_cast<std::uint32_t>(canonical.size()),
+                                        &required, &state) == FLY_RESULT_OK,
+          "current snapshot user is readable");
+    check(state.favorite == 0u && state.favorite_revision == 2u &&
+              state.play_count == 1u && state.last_played_sequence == 1u,
+          "current snapshot observes later user mutation");
+
+    fly_catalog_snapshot_release(current);
+    fly_catalog_snapshot_release(snapshot);
+    fly_app_destroy(app);
+}
+
 void test_source_status_has_no_locator_and_survives_reload()
 {
     TempRoot root;
@@ -266,6 +330,7 @@ int main()
     test_abi_layout();
     test_unknown_id_reads_empty_and_rejects_invalid_args();
     test_favorite_and_played_persist();
+    test_snapshot_user_rows_are_generation_owned();
     test_source_status_has_no_locator_and_survives_reload();
     if (failures == 0)
     {

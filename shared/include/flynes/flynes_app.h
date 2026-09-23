@@ -518,6 +518,23 @@ FLYNES_API fly_result fly_catalog_snapshot_generation(
 FLYNES_API fly_result fly_catalog_snapshot_count(const fly_catalog_snapshot_t* snapshot,
                                                  uint64_t* count_out);
 
+/* Enumerates the user records owned by this immutable catalog generation. */
+FLYNES_API fly_result fly_catalog_snapshot_user_count(
+    const fly_catalog_snapshot_t* snapshot,
+    uint64_t* count_out);
+
+/* Retrieves one snapshot-owned user row. canonical_id_required includes the
+ * trailing NUL. BUFFER_TOO_SMALL writes only canonical_id_required; every
+ * other failure leaves all outputs unchanged.
+ */
+FLYNES_API fly_result fly_catalog_snapshot_user_get(
+    const fly_catalog_snapshot_t* snapshot,
+    uint64_t index,
+    char* canonical_id_utf8,
+    uint32_t canonical_id_capacity,
+    uint32_t* canonical_id_required,
+    fly_catalog_user_state* state_out);
+
 /* Additive display metadata; existing catalog entry and identity ABI is unchanged.
  * Strings are NUL-terminated UTF-8, library-owned and valid for process lifetime.
  * aliases_utf8 contains newline-separated aliases. Unknown results have empty

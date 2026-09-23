@@ -394,18 +394,15 @@ public final class AndroidCatalogRuntime implements AutoCloseable {
     }
 
     private CatalogRepository.LoadResult refreshNativeView() throws Exception {
-        List<NativeCatalogEntry> entries = nativeApp.catalogEntries();
-        LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>();
+        com.flynes.emu.app.NativeCatalogSnapshot snapshot = nativeApp.catalogSnapshot();
+        List<NativeCatalogEntry> entries = snapshot.entries();
+        LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>(snapshot.userStates());
         long sequence = 0;
-        HashSet<String> seen = new HashSet<>();
-        for (NativeCatalogEntry entry : entries) {
-            if (!seen.add(entry.canonicalId())) continue;
-            CanonicalUserState user = nativeApp.userState(entry.canonicalId());
-            if (!user.equals(CanonicalUserState.EMPTY)) users.put(entry.canonicalId(), user);
+        for (CanonicalUserState user : users.values()) {
             sequence = Math.max(sequence, user.lastPlayedSequence());
         }
         CatalogState projected = NativeCatalogProjector.project(
-                entries, nativeApp.sourceStatuses(), users, sequence, uuidMap, locators,
+                entries, snapshot.sources(), users, sequence, uuidMap, locators,
                 AndroidDocumentLocators::documentUriFor, builtinGames);
         // The repository owns durability; a second atomic write here would race it.
         return repository.loadProjection(projected);

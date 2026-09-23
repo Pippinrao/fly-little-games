@@ -7,6 +7,7 @@ import com.flynes.emu.settings.NativeSettingsStore;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 
@@ -163,6 +164,49 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
         }
     }
 
+    public NativeCatalogSnapshot catalogSnapshot() {
+        Object[] raw = nativeCatalogSnapshot(app);
+        if (raw == null || raw.length != 4) {
+            throw new IllegalStateException("native catalog snapshot failed");
+        }
+        long generation = ((long[]) raw[0])[0];
+        Object[] nativeEntries = (Object[]) raw[1];
+        ArrayList<NativeCatalogEntry> entries = new ArrayList<>(nativeEntries.length);
+        for (Object item : nativeEntries) {
+            Object[] row = (Object[]) item;
+            Object[] uuidAndHashes = (Object[]) row[0];
+            long[] sizes = (long[]) row[1];
+            int[] enums = (int[]) row[2];
+            Object[] texts = (Object[]) row[3];
+            entries.add(new NativeCatalogEntry(
+                    (byte[]) uuidAndHashes[0], sizes[0], sizes[1], sizes[2], sizes[3], sizes[4],
+                    enums[0], enums[1], enums[2],
+                    (byte[]) uuidAndHashes[1], (byte[]) uuidAndHashes[2],
+                    (byte[]) uuidAndHashes[3], (byte[]) uuidAndHashes[4],
+                    enums[3], enums[4], enums[5], enums[6], enums[7], enums[8], enums[9],
+                    (String) texts[0], (String) texts[1], (String) texts[2], (String) texts[3],
+                    (byte[]) uuidAndHashes[5],
+                    Math.toIntExact(sizes[5]), decodeTitle((String[]) row[4])));
+        }
+        Object[] nativeUsers = (Object[]) raw[2];
+        LinkedHashMap<String, CanonicalUserState> users = new LinkedHashMap<>();
+        for (Object item : nativeUsers) {
+            Object[] row = (Object[]) item;
+            long[] fields = (long[]) row[1];
+            CanonicalUserState state = new CanonicalUserState(
+                    fields[0] != 0L, fields[2], fields[3], Math.toIntExact(fields[1]));
+            users.put((String) row[0], state);
+        }
+        Object[] nativeSources = (Object[]) raw[3];
+        ArrayList<NativeSourceStatus> sources = new ArrayList<>(nativeSources.length);
+        for (Object item : nativeSources) {
+            Object[] row = (Object[]) item;
+            int[] fields = (int[]) row[1];
+            sources.add(new NativeSourceStatus((byte[]) row[0], fields[0], fields[1], fields[2]));
+        }
+        return new NativeCatalogSnapshot(generation, entries, users, sources);
+    }
+
     public long catalogGeneration() {
         long[] snapshotOut = new long[1];
         int captured = nativeCatalogCapture(app, snapshotOut);
@@ -285,6 +329,7 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
     private static native int nativeCatalogGet(
             long snapshot, long index, Object[] uuidAndHashes, long[] sizes, int[] enums,
             Object[] texts);
+    private static native Object[] nativeCatalogSnapshot(long app);
     private static native void nativeCatalogRelease(long snapshot);
     private static native int nativeSourceCount(long app, long[] out);
     private static native int nativeSourceGet(long app, long index, byte[] uuid, int[] fields);

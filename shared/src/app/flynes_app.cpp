@@ -1484,6 +1484,57 @@ extern "C" fly_result fly_catalog_snapshot_count(const fly_catalog_snapshot_t* s
     return FLY_RESULT_OK;
 }
 
+extern "C" fly_result fly_catalog_snapshot_user_count(
+    const fly_catalog_snapshot_t* snapshot,
+    std::uint64_t* count_out)
+{
+    if (snapshot == nullptr || count_out == nullptr) return FLY_RESULT_INVALID_ARGUMENT;
+    *count_out = static_cast<std::uint64_t>(snapshot->catalog->users.size());
+    return FLY_RESULT_OK;
+}
+
+extern "C" fly_result fly_catalog_snapshot_user_get(
+    const fly_catalog_snapshot_t* snapshot,
+    std::uint64_t index,
+    char* canonical_id_utf8,
+    std::uint32_t canonical_id_capacity,
+    std::uint32_t* canonical_id_required,
+    fly_catalog_user_state* state_out)
+{
+    if (snapshot == nullptr || canonical_id_required == nullptr || state_out == nullptr ||
+        !valid_output_buffer(canonical_id_utf8, canonical_id_capacity))
+    {
+        return FLY_RESULT_INVALID_ARGUMENT;
+    }
+    if (state_out->struct_size < FLY_CATALOG_USER_STATE_V1_SIZE)
+    {
+        return FLY_RESULT_STRUCT_TOO_SMALL;
+    }
+    if (state_out->version != FLY_CATALOG_USER_STATE_VERSION_1)
+    {
+        return FLY_RESULT_UNSUPPORTED_VERSION;
+    }
+    if (index >= snapshot->catalog->users.size()) return FLY_RESULT_OUT_OF_RANGE;
+
+    const UserRecord& user = snapshot->catalog->users[static_cast<std::size_t>(index)];
+    const std::uint32_t required = required_string_size(user.canonical_id);
+    if (canonical_id_capacity < required)
+    {
+        *canonical_id_required = required;
+        return FLY_RESULT_BUFFER_TOO_SMALL;
+    }
+
+    fly_catalog_user_state output = *state_out;
+    output.favorite = user.favorite ? 1u : 0u;
+    output.play_count = user.play_count;
+    output.favorite_revision = user.favorite_revision;
+    output.last_played_sequence = user.last_played_sequence;
+    copy_string(canonical_id_utf8, user.canonical_id);
+    *canonical_id_required = required;
+    *state_out = output;
+    return FLY_RESULT_OK;
+}
+
 extern "C" fly_result fly_catalog_snapshot_get(const fly_catalog_snapshot_t* snapshot,
                                                  std::uint64_t index,
                                                  fly_catalog_entry* entry_out)

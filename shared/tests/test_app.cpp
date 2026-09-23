@@ -427,6 +427,71 @@ int main()
           "count query succeeds");
     check(count == 0, "new app snapshot is empty");
 
+    std::uint64_t user_count = 99;
+    check(fly_catalog_snapshot_user_count(nullptr, &user_count) == FLY_RESULT_INVALID_ARGUMENT,
+          "snapshot user count rejects a null snapshot");
+    check(user_count == 99, "failed snapshot user count preserves output");
+    check(fly_catalog_snapshot_user_count(snapshot, nullptr) == FLY_RESULT_INVALID_ARGUMENT,
+          "snapshot user count rejects a null output pointer");
+    check(fly_catalog_snapshot_user_count(snapshot, &user_count) == FLY_RESULT_OK,
+          "snapshot user count succeeds");
+    check(user_count == 0, "new app snapshot has no user rows");
+
+    fly_catalog_user_state snapshot_user{};
+    snapshot_user.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE;
+    snapshot_user.version = FLY_CATALOG_USER_STATE_VERSION_1;
+    snapshot_user.favorite = 7u;
+    std::uint32_t canonical_required = 77u;
+    char snapshot_canonical[8];
+    std::memset(snapshot_canonical, 0x44, sizeof(snapshot_canonical));
+    check(fly_catalog_snapshot_user_get(nullptr, 0u, snapshot_canonical,
+                                        static_cast<std::uint32_t>(sizeof(snapshot_canonical)),
+                                        &canonical_required, &snapshot_user) ==
+              FLY_RESULT_INVALID_ARGUMENT,
+          "snapshot user get rejects a null snapshot");
+    check(snapshot_user.favorite == 7u && canonical_required == 77u,
+          "invalid snapshot user get preserves outputs");
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, snapshot_canonical,
+                                        static_cast<std::uint32_t>(sizeof(snapshot_canonical)),
+                                        nullptr, &snapshot_user) == FLY_RESULT_INVALID_ARGUMENT,
+          "snapshot user get rejects a null required pointer");
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, snapshot_canonical,
+                                        static_cast<std::uint32_t>(sizeof(snapshot_canonical)),
+                                        &canonical_required, nullptr) == FLY_RESULT_INVALID_ARGUMENT,
+          "snapshot user get rejects a null state pointer");
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, nullptr, 1u,
+                                        &canonical_required, &snapshot_user) ==
+              FLY_RESULT_INVALID_ARGUMENT,
+          "snapshot user get rejects a null non-empty buffer");
+
+    fly_catalog_user_state short_snapshot_user = snapshot_user;
+    short_snapshot_user.struct_size = FLY_CATALOG_USER_STATE_V1_SIZE - 1u;
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, snapshot_canonical,
+                                        static_cast<std::uint32_t>(sizeof(snapshot_canonical)),
+                                        &canonical_required, &short_snapshot_user) ==
+              FLY_RESULT_STRUCT_TOO_SMALL,
+          "snapshot user get rejects a short state output");
+    check(short_snapshot_user.favorite == 7u && canonical_required == 77u,
+          "short snapshot user state preserves outputs");
+
+    fly_catalog_user_state future_snapshot_user = snapshot_user;
+    future_snapshot_user.version = FLY_CATALOG_USER_STATE_VERSION_1 + 1u;
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, snapshot_canonical,
+                                        static_cast<std::uint32_t>(sizeof(snapshot_canonical)),
+                                        &canonical_required, &future_snapshot_user) ==
+              FLY_RESULT_UNSUPPORTED_VERSION,
+          "snapshot user get rejects an unknown state version");
+    check(future_snapshot_user.favorite == 7u && canonical_required == 77u,
+          "unknown snapshot user version preserves outputs");
+
+    check(fly_catalog_snapshot_user_get(snapshot, 0u, snapshot_canonical,
+                                        static_cast<std::uint32_t>(sizeof(snapshot_canonical)),
+                                        &canonical_required, &snapshot_user) ==
+              FLY_RESULT_OUT_OF_RANGE,
+          "snapshot user get rejects an out-of-range index");
+    check(snapshot_user.favorite == 7u && canonical_required == 77u,
+          "out-of-range snapshot user get preserves outputs");
+
     char canonical_id[8];
     char variant_id[8];
     char display_name[8];
