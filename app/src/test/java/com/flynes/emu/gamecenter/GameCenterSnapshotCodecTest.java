@@ -16,6 +16,37 @@ import java.util.Arrays;
 import java.util.List;
 
 public final class GameCenterSnapshotCodecTest {
+    @Test public void projectionDecodeValidatesEnvelopeButDefersEmbeddedCatalogBytes()
+            throws Exception {
+        GameCenterSnapshot base = synthetic(2_224, 9L, "99".repeat(32), 10L);
+        GameCenterSnapshot value = new GameCenterSnapshot(
+                base.schemaVersion(), base.nativeGeneration(), base.builtinManifestSha256(),
+                base.sourceEpoch(), base.rows(), base.sources(), new byte[1_000_000]);
+        byte[] encoded = GameCenterSnapshotCodec.encode(value);
+
+        GameCenterSnapshot projected = GameCenterSnapshotCodec.decodeProjection(encoded);
+
+        assertEquals(value.schemaVersion(), projected.schemaVersion());
+        assertEquals(value.nativeGeneration(), projected.nativeGeneration());
+        assertEquals(value.rows(), projected.rows());
+        assertEquals(value.sources(), projected.sources());
+        assertArrayEquals(new byte[0], projected.catalogStateBytes());
+    }
+
+    @Test public void startupEnvelopeCarriesTotalCountButOnlyDecodesTheVisibleWindow()
+            throws Exception {
+        GameCenterSnapshot value = synthetic(2_224, 11L, "aa".repeat(32), 12L);
+
+        byte[] encoded = GameCenterSnapshotCodec.encodeStartup(value, 20);
+        GameCenterSnapshot startup = GameCenterSnapshotCodec.decodeStartup(encoded);
+
+        assertEquals(2_224, startup.rows().size());
+        assertEquals(value.rows().get(0), startup.rows().get(0));
+        assertEquals(value.rows().get(19), startup.rows().get(19));
+        assertEquals("deferred-20", startup.rows().get(20).canonicalId());
+        assertEquals(0, startup.catalogStateBytes().length);
+    }
+
     @Test public void roundTrips2224RowsDeterministically() throws Exception {
         GameCenterSnapshot value = synthetic(2224, 41L, "00".repeat(32), 7L);
 

@@ -27,15 +27,19 @@ public record GameCenterSnapshot(
         if (!isLowerSha256(builtinManifestSha256)) {
             throw new IllegalArgumentException("builtin manifest fingerprint is invalid");
         }
-        rows = List.copyOf(Objects.requireNonNull(rows, "rows"));
+        rows = Objects.requireNonNull(rows, "rows");
+        boolean trustedLazyRows = rows instanceof LazyRows;
+        if (!trustedLazyRows) rows = List.copyOf(rows);
         sources = List.copyOf(Objects.requireNonNull(sources, "sources"));
         catalogStateBytes = Objects.requireNonNull(
                 catalogStateBytes, "catalog state bytes").clone();
-        HashSet<String> rowIds = new HashSet<>();
-        for (Row row : rows) {
-            Objects.requireNonNull(row, "row");
-            if (!rowIds.add(row.canonicalId())) {
-                throw new IllegalArgumentException("duplicate canonical id");
+        if (!trustedLazyRows) {
+            HashSet<String> rowIds = new HashSet<>();
+            for (Row row : rows) {
+                Objects.requireNonNull(row, "row");
+                if (!rowIds.add(row.canonicalId())) {
+                    throw new IllegalArgumentException("duplicate canonical id");
+                }
             }
         }
         HashSet<String> sourceIds = new HashSet<>();
@@ -46,6 +50,9 @@ public record GameCenterSnapshot(
             }
         }
     }
+
+    /** Marker for checksum-validated, immutable row lists decoded on first access. */
+    interface LazyRows { }
 
     @Override public byte[] catalogStateBytes() {
         return catalogStateBytes.clone();

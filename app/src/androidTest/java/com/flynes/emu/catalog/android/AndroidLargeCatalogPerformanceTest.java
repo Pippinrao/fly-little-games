@@ -28,6 +28,56 @@ import static org.junit.Assert.*;
 /** Synthetic private library only: no device ROM directory or user library is modified. */
 @RunWith(AndroidJUnit4.class)
 public final class AndroidLargeCatalogPerformanceTest {
+    @Test public void seedDisposable2224GameSnapshot() throws Exception {
+        org.junit.Assume.assumeTrue(
+                "performance seeding is disabled without the explicit disposable-fixture flag",
+                "true".equals(InstrumentationRegistry.getArguments().getString(
+                        "flynes.disposablePerformanceFixture", "false")));
+        Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        com.flynes.emu.FlyNesApplication application =
+                (com.flynes.emu.FlyNesApplication) target.getApplicationContext();
+        application.catalogRuntime().nativeReady().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        application.catalogRuntime().close();
+
+        final int syntheticGames = 2224;
+        final int expectedGames = syntheticGames
+                + com.flynes.emu.catalog.BuiltinGames.fromAssets(target).all().size();
+        byte[] uuid = new byte[16];
+        uuid[0] = 77;
+        var preferences = target.getSharedPreferences("flynes_source_uuids", 0);
+        new AndroidUuidSafMap(key -> preferences.getString(key, null),
+                (key, value) -> preferences.edit().putString(key, value).commit(),
+                key -> preferences.edit().remove(key).commit())
+                .put(uuid, "content://synthetic.performance/tree/library");
+
+        byte[] rom = new byte[16 + 16384 + 8192];
+        rom[0] = 'N'; rom[1] = 'E'; rom[2] = 'S'; rom[3] = 0x1a; rom[4] = 1; rom[5] = 1;
+        File input = new File(target.getCacheDir(), "synthetic-performance.nes");
+        try (var app = FlyNesApp.create(AndroidCatalogRuntime.nativeDataRoot(target).getPath(),
+                AndroidCatalogRuntime.nativeCacheRoot(target).getPath())) {
+            assertEquals(0, app.scanBegin(uuid, FlyCatalogCommands.SOURCE_SCOPE_USER_DIRECTORY));
+            for (int index = 0; index < syntheticGames; ++index) {
+                rom[16] = (byte) index;
+                rom[17] = (byte) (index >> 8);
+                try (var output = new FileOutputStream(input)) { output.write(rom); }
+                try (var descriptor = ParcelFileDescriptor.open(
+                        input, ParcelFileDescriptor.MODE_READ_ONLY)) {
+                    String name = (index % 2 == 0 ? "魂斗罗 " : "Unknown ") + index + ".nes";
+                    assertEquals(0, app.scanAddFile(name, name, descriptor.getFd(), null));
+                }
+            }
+            assertEquals(0, app.scanCommit(FlyCatalogCommands.SCAN_FULL));
+        }
+        assertTrue(input.delete() || !input.exists());
+
+        try (var reconciler = new AndroidCatalogRuntime(target)) {
+            reconciler.nativeReady().get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(expectedGames, reconciler.gameCenterSnapshot().rows().size());
+            assertTrue(AndroidCatalogRuntime.defaultSnapshotFile(target).isFile());
+        }
+        Log.i("FlyNesCatalogPerf", "seeded count=" + expectedGames);
+    }
+
     @Test public void coldLibraryAndRepeatedNavigationWith2224Games() throws Exception {
         Context base = ApplicationProvider.getApplicationContext();
         String prefix = "catalog-perf-" + UUID.randomUUID();

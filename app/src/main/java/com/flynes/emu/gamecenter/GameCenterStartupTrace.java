@@ -60,6 +60,25 @@ public final class GameCenterStartupTrace {
         };
     }
 
+    public static ViewTreeObserver.OnPreDrawListener visibleOnNextPreDraw(
+            View content, int expectedCount, AndroidCatalogRuntime.CacheStatus cacheStatus) {
+        return new ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                Rect bounds = new Rect();
+                if (expectedCount == 0 || !content.getGlobalVisibleRect(bounds) || bounds.isEmpty()) {
+                    return true;
+                }
+                if (content.getViewTreeObserver().isAlive()) {
+                    content.getViewTreeObserver().removeOnPreDrawListener(this);
+                }
+                if (LIST_LOGGED.compareAndSet(false, true)) {
+                    event("GAME_CENTER_VISIBLE", "count=" + expectedCount + " cache=" + cacheStatus);
+                }
+                return true;
+            }
+        };
+    }
+
     private static long elapsed() {
         return Math.max(0L, android.os.SystemClock.elapsedRealtime() - ORIGIN);
     }

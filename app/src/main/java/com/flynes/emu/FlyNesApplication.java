@@ -3,6 +3,7 @@ package com.flynes.emu;
 import android.app.Application;
 
 import com.flynes.emu.catalog.android.AndroidCatalogRuntime;
+import com.flynes.emu.gamecenter.GameCenterStartupTrace;
 import com.flynes.emu.settings.ControlLayoutRepository;
 import com.flynes.emu.settings.SettingsRepository;
 
@@ -16,12 +17,16 @@ public final class FlyNesApplication extends Application {
 
     @Override public void onCreate() {
         super.onCreate();
+        GameCenterStartupTrace.event("APPLICATION_CREATE", "phase=begin");
         catalogRuntime = new AndroidCatalogRuntime(this);
+        GameCenterStartupTrace.event("APPLICATION_CREATE", "phase=catalog-constructed");
         catalogRuntime.start();
+        GameCenterStartupTrace.event("APPLICATION_CREATE", "phase=catalog-started");
         gameLaunchService = new AndroidGameLaunchService(catalogRuntime);
         nearbyAvailability = new NearbyAvailability<>(NearbyAvailability.fromIllegalState(
                 () -> NearbySessionOwner.create(catalogRuntime), "nearby_blocked_session_read"));
         nearbyMvpOwner = new NearbyMvpOwner();
+        GameCenterStartupTrace.event("APPLICATION_CREATE", "phase=done");
     }
 
     public AndroidCatalogRuntime catalogRuntime() { return catalogRuntime; }

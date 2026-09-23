@@ -10,10 +10,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** JNI owner of one fly_app_t. Unit tests use fakes; production loads libnescore. */
 public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.Backend,
         ControlLayoutRepository.Backend, AutoCloseable {
+    private static final AtomicInteger USER_STATE_CALLS = new AtomicInteger();
     static {
         System.loadLibrary("nescore");
     }
@@ -81,12 +83,17 @@ public final class FlyNesApp implements FlyCatalogCommands, NativeSettingsStore.
     }
 
     public CanonicalUserState userState(String canonicalId) {
+        USER_STATE_CALLS.incrementAndGet();
         long[] out = new long[4];
         int result = nativeUserStateGet(app, utf8(canonicalId), out);
         if (result != RESULT_OK) {
             throw new IllegalStateException("fly_catalog_user_state_get failed: " + result);
         }
         return new CanonicalUserState(out[0] != 0, out[2], out[3], Math.toIntExact(out[1]));
+    }
+
+    public static int userStateCallCount() {
+        return USER_STATE_CALLS.get();
     }
 
     @Override public FlySettingsSnapshot get() {

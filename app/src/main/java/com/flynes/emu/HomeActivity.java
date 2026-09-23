@@ -1,13 +1,17 @@
 package com.flynes.emu;
 
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.LocaleList;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
@@ -15,10 +19,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.activity.OnBackPressedCallback;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.view.ViewCompat;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.DiffUtil;
@@ -55,7 +59,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /** Unified, landscape-first Game Center and source manager. */
-public final class HomeActivity extends AppCompatActivity {
+public final class HomeActivity extends android.app.Activity {
     public static final String ACTION_SHOW_SOURCES = "com.flynes.emu.action.SHOW_SOURCES";
     private static final int REQUEST_TREE = 4101;
     private static final String UI_PREFS = "game_center_ui";
@@ -86,66 +90,124 @@ public final class HomeActivity extends AppCompatActivity {
     private boolean largeText;
     private GameCenterState.MultiplayerCapabilityRegistry multiplayerRegistry;
     private GameCenterSnapshot currentSnapshot;
+    private LinearLayout startupList;
+    private boolean fullUiInstalled;
+    private String appliedLocaleTags;
+    private String systemLocaleTags;
+    private Resources localizedResources;
+    private final Runnable localeMonitor = new Runnable() {
+        @Override public void run() {
+            if (isDestroyed()) return;
+            String requested = AppCompatDelegate.getApplicationLocales().toLanguageTags();
+            if (!requested.equals(appliedLocaleTags)) {
+                GameCenterStartupTrace.event("LOCALE_CHANGE", "requested=" + requested);
+                applyLocaleInPlace(requested);
+                return;
+            }
+            main.postDelayed(this, 50L);
+        }
+    };
+
+    @Override protected void attachBaseContext(Context base) {
+        String tags = AppCompatDelegate.getApplicationLocales().toLanguageTags();
+        if (tags.isEmpty()) {
+            super.attachBaseContext(base);
+            return;
+        }
+        Configuration localized = new Configuration(base.getResources().getConfiguration());
+        localized.setLocales(LocaleList.forLanguageTags(tags));
+        super.attachBaseContext(base.createConfigurationContext(localized));
+    }
+
+    @Override public Resources getResources() {
+        return localizedResources == null ? super.getResources() : localizedResources;
+    }
     private AndroidCatalogRuntime.CacheStatus displayedCacheStatus =
             AndroidCatalogRuntime.CacheStatus.MISS;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_home);
-        findViewById(R.id.home_root).getViewTreeObserver().addOnPreDrawListener(
-                GameCenterStartupTrace.shellVisibleOnNextPreDraw(findViewById(R.id.home_root)));
+        systemLocaleTags = android.content.res.Resources.getSystem()
+                .getConfiguration().getLocales().toLanguageTags();
+        appliedLocaleTags = AppCompatDelegate.getApplicationLocales().toLanguageTags();
+        GameCenterStartupTrace.event("ACTIVITY_CREATE", "phase=begin");
         runtime = ((FlyNesApplication) getApplication()).catalogRuntime();
-        multiplayerRegistry = BuiltinMultiplayerCapabilities.from(runtime.builtinGames());
-        covers = new AndroidCoverRepository(this);
         preferences = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
         navigation = restoreNavigation(savedInstanceState);
-        bindViews();
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override public void handleOnBackPressed() {
-                if (sourceContent.getVisibility() == View.VISIBLE) { showSources(false); return; }
-                if (findViewById(R.id.search_bar).getVisibility() == View.VISIBLE) {
-                    closeSearch(); return;
-                }
-                setEnabled(false);
-                getOnBackPressedDispatcher().onBackPressed();
-            }
-        });
-        applyInsets();
-        showStatus(R.string.loading_game_center);
-        setBusy(true);
+        showFastLobby();
         AndroidCatalogRuntime.Startup startup = runtime.start();
-        await(startup.cacheReady(), fast -> {
-            setBusy(false);
-            displayedCacheStatus = fast.status();
-            GameCenterStartupTrace.event("CACHE_READ", "status=" + fast.status());
-            if (fast.status() == AndroidCatalogRuntime.CacheStatus.RECOVERY_NEEDED) {
-                showStatus(R.string.source_recovery_needed);
-            }
-            applySnapshot(runtime.gameCenterSnapshot());
-            if (ACTION_SHOW_SOURCES.equals(getIntent().getAction())) showSources(true);
-        }, failure -> {
-            setBusy(false);
-            showStatus(R.string.source_scan_error);
-            applySnapshot(runtime.gameCenterSnapshot());
-        });
+        AndroidCatalogRuntime.FastResult immediate = startup.cacheReady().getNow(null);
+        if (immediate != null) {
+            showFastResult(immediate);
+        } else {
+            startup.cacheReady().whenComplete((fast, failure) -> main.post(() -> {
+                if (isDestroyed()) return;
+                if (failure == null) showFastResult(fast);
+                else renderFastSnapshot(runtime.gameCenterSnapshot(),
+                        AndroidCatalogRuntime.CacheStatus.RECOVERY_NEEDED);
+            }));
+        }
+        startup.projectionReady().whenComplete((projection, failure) -> main.post(() -> {
+            if (!isDestroyed() && fullUiInstalled && failure == null) applySnapshot(projection);
+        }));
         await(startup.nativeReady(), result -> {
             GameCenterStartupTrace.event("NATIVE_READY", "status=OK");
-            refreshSnapshot();
+            multiplayerRegistry = BuiltinMultiplayerCapabilities.from(runtime.builtinGames());
+            if (fullUiInstalled) refreshSnapshot();
         }, failure -> {
             GameCenterStartupTrace.event("NATIVE_READY", "status=FAILED");
-            if (runtime.gameCenterSnapshot().rows().isEmpty()) showStatus(R.string.source_scan_error);
+            if (fullUiInstalled && runtime.gameCenterSnapshot().rows().isEmpty()) {
+                showStatus(R.string.source_scan_error);
+            }
         });
+    }
+
+    private void installFullHome() {
+        if (fullUiInstalled || isDestroyed()) return;
+        fullUiInstalled = true;
+        setContentView(R.layout.activity_home);
+        GameCenterStartupTrace.event("ACTIVITY_CREATE", "phase=full-layout-inflated");
+        covers = new AndroidCoverRepository(this);
+        multiplayerRegistry = BuiltinMultiplayerCapabilities.from(runtime.builtinGames());
+        bindViews();
+        applyInsets();
+        showStatus(R.string.loading_game_center);
+        applySnapshot(runtime.gameCenterSnapshot());
+        setBusy(false);
+        if (displayedCacheStatus == AndroidCatalogRuntime.CacheStatus.RECOVERY_NEEDED) {
+            showStatus(R.string.source_recovery_needed);
+        }
+        if (runtime.nativeReady().isDone()) refreshSnapshot();
+        if (ACTION_SHOW_SOURCES.equals(getIntent().getAction())) showSources(true);
+        main.removeCallbacks(localeMonitor);
+        main.post(localeMonitor);
+    }
+
+    private void applyLocaleInPlace(String requestedTags) {
+        Configuration configuration = new Configuration(super.getResources().getConfiguration());
+        configuration.setLocales(LocaleList.forLanguageTags(
+                requestedTags.isEmpty() ? systemLocaleTags : requestedTags));
+        localizedResources = createConfigurationContext(configuration).getResources();
+        appliedLocaleTags = requestedTags;
+        if (covers != null) covers.close();
+        fullUiInstalled = false;
+        installFullHome();
     }
 
     @Override protected void onResume() {
         super.onResume();
-        if (runtime != null && !busy && runtime.nativeReady().isDone()) refreshSnapshot();
+        if (fullUiInstalled && runtime != null && !busy && runtime.nativeReady().isDone()) {
+            refreshSnapshot();
+        }
     }
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (ACTION_SHOW_SOURCES.equals(intent.getAction())) showSources(true);
+        if (ACTION_SHOW_SOURCES.equals(intent.getAction())) {
+            if (!fullUiInstalled) installFullHome();
+            showSources(true);
+        }
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
@@ -161,9 +223,92 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     @Override protected void onDestroy() {
+        main.removeCallbacks(localeMonitor);
         waiter.shutdownNow();
         if (covers != null) covers.close();
         super.onDestroy();
+    }
+
+    @Override public void onBackPressed() {
+        if (fullUiInstalled && sourceContent.getVisibility() == View.VISIBLE) {
+            showSources(false);
+            return;
+        }
+        if (fullUiInstalled && findViewById(R.id.search_bar).getVisibility() == View.VISIBLE) {
+            closeSearch();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    private void showFastLobby() {
+        LinearLayout root = new LinearLayout(this);
+        root.setId(R.id.home_root);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(getColor(R.color.fly_background));
+        TextView heading = new TextView(this);
+        heading.setText(R.string.game_center_title);
+        heading.setTextColor(getColor(R.color.fly_on_surface));
+        heading.setTextSize(22);
+        heading.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        heading.setPadding(dp(12), 0, dp(12), 0);
+        root.addView(heading, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+        startupList = new LinearLayout(this);
+        startupList.setOrientation(LinearLayout.HORIZONTAL);
+        startupList.setContentDescription(getString(R.string.game_list));
+        root.addView(startupList, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        setContentView(root);
+        GameCenterStartupTrace.event("ACTIVITY_CREATE", "phase=fast-layout-inflated");
+        root.getViewTreeObserver().addOnPreDrawListener(
+                GameCenterStartupTrace.shellVisibleOnNextPreDraw(root));
+    }
+
+    private void renderFastSnapshot(
+            GameCenterSnapshot snapshot, AndroidCatalogRuntime.CacheStatus statusValue) {
+        List<GameCenterSnapshot.Row> fastRows = snapshot.rows();
+        startupList.removeAllViews();
+        int visibleCount = Math.min(4, fastRows.size());
+        for (int index = 0; index < visibleCount; index++) {
+            TextView title = new TextView(this);
+            String text = titlePresentation(fastRows.get(index)).primary();
+            title.setText(text);
+            title.setContentDescription(text);
+            title.setBackgroundResource(R.drawable.bg_cartridge);
+            title.setGravity(android.view.Gravity.CENTER);
+            title.setPadding(dp(12), dp(8), dp(12), dp(8));
+            title.setTextColor(getColor(R.color.fly_on_surface));
+            title.setMaxLines(2);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            startupList.addView(title, new LinearLayout.LayoutParams(
+                    dp(168), ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        GameCenterStartupTrace.event("LIST_SUBMIT", "count=" + fastRows.size());
+        if (fastRows.isEmpty()) {
+            startupList.postOnAnimation(this::installFullHome);
+            return;
+        }
+        startupList.getViewTreeObserver().addOnPreDrawListener(
+                GameCenterStartupTrace.visibleOnNextPreDraw(
+                        startupList, fastRows.size(), statusValue));
+        startupList.getViewTreeObserver().addOnPreDrawListener(
+                new android.view.ViewTreeObserver.OnPreDrawListener() {
+                    @Override public boolean onPreDraw() {
+                        if (startupList.getChildCount() == 0) return true;
+                        if (startupList.getViewTreeObserver().isAlive()) {
+                            startupList.getViewTreeObserver().removeOnPreDrawListener(this);
+                        }
+                        startupList.postOnAnimation(HomeActivity.this::installFullHome);
+                        return true;
+                    }
+                });
+    }
+
+    private void showFastResult(AndroidCatalogRuntime.FastResult fast) {
+        displayedCacheStatus = fast.status();
+        GameCenterStartupTrace.event("CACHE_READ", "status=" + fast.status());
+        renderFastSnapshot(runtime.gameCenterSnapshot(), fast.status());
     }
 
     private void bindViews() {
@@ -334,7 +479,6 @@ public final class HomeActivity extends AppCompatActivity {
         currentSnapshot = snapshot;
         allRows = snapshot.rows();
         rows.clear();
-        for (GameCenterSnapshot.Row row : allRows) rows.put(row.canonicalId(), row);
         renderGames();
     }
 
@@ -349,8 +493,15 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     private List<GameCenterSnapshot.Row> visibleRows() {
+        if (navigation.category() == GameCenterState.Category.ALL
+                && navigation.query().isEmpty() && !navigation.multiplayerOnly()) {
+            return allRows;
+        }
         ArrayList<GameCenterItem> items = new ArrayList<>(allRows.size());
-        for (GameCenterSnapshot.Row row : allRows) items.add(row.item());
+        for (GameCenterSnapshot.Row row : allRows) {
+            rows.put(row.canonicalId(), row);
+            items.add(row.item());
+        }
         List<GameCenterItem> visible = applyMultiplayerFilter(navigation.filtered(items));
         ArrayList<GameCenterSnapshot.Row> result = new ArrayList<>(visible.size());
         for (GameCenterItem item : visible) {
@@ -374,7 +525,14 @@ public final class HomeActivity extends AppCompatActivity {
     private void renderGames() {
         if (gameAdapter == null) return;
         List<GameCenterSnapshot.Row> visible = visibleRows();
-        navigation.reconcile(visible.stream().map(GameCenterSnapshot.Row::item).toList());
+        GameCenterSnapshot.Row selected = rows.get(navigation.selectedCanonicalId());
+        if (selected == null && !visible.isEmpty()) {
+            selected = visible.get(0);
+            rows.put(selected.canonicalId(), selected);
+            navigation.select(selected.canonicalId());
+        } else if (visible.isEmpty()) {
+            navigation.select(null);
+        }
         GameCenterStartupTrace.event("LIST_SUBMIT", "count=" + visible.size());
         gameAdapter.submit(visible, navigation.selectedCanonicalId(), () -> {
             RecyclerView grid = findViewById(R.id.game_grid);
@@ -392,7 +550,7 @@ public final class HomeActivity extends AppCompatActivity {
                     ? getString(R.string.game_count_continuous, visible.size())
                     : getString(largeText ? R.string.no_external_sources_large_text
                     : R.string.no_external_sources));
-            renderDetail(rows.get(navigation.selectedCanonicalId()));
+            renderDetail(selected);
         }
     }
 
@@ -682,7 +840,7 @@ public final class HomeActivity extends AppCompatActivity {
         void submit(List<GameCenterSnapshot.Row> values, String selectedId, Runnable committed) {
             String previous = selected;
             selected = selectedId;
-            submitList(List.copyOf(values), () -> {
+            submitList(Collections.unmodifiableList(values), () -> {
                 notifySelection(previous, selectedId);
                 committed.run();
             });
@@ -695,9 +853,13 @@ public final class HomeActivity extends AppCompatActivity {
         }
         private void notifySelection(String previous, String selectedId) {
             if (java.util.Objects.equals(previous, selectedId)) return;
+            int remaining = (previous == null ? 0 : 1) + (selectedId == null ? 0 : 1);
             for (int index = 0; index < getCurrentList().size(); ++index) {
                 String id = getCurrentList().get(index).canonicalId();
-                if (id.equals(previous) || id.equals(selectedId)) notifyItemChanged(index, "selection");
+                if (id.equals(previous) || id.equals(selectedId)) {
+                    notifyItemChanged(index, "selection");
+                    if (--remaining == 0) break;
+                }
             }
         }
         @Override public long getItemId(int position) {
@@ -727,6 +889,7 @@ public final class HomeActivity extends AppCompatActivity {
         }
         @Override public void onBindViewHolder(GameCardHolder holder, int position) {
             GameCenterSnapshot.Row item = getItem(position);
+            rows.put(item.canonicalId(), item);
             GameTitlePresentation.Title presentation = titlePresentation(item);
             String title = presentation.primary();
             holder.title.setText(title); holder.art.setText(title);

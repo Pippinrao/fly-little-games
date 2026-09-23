@@ -11,6 +11,9 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import android.app.LocaleManager;
+import android.os.Build;
+import android.os.LocaleList;
 import android.os.SystemClock;
 
 import org.junit.Test;
@@ -22,18 +25,28 @@ public final class AppLanguageTest {
         try (ActivityScenario<HomeActivity> ignored =
                      ActivityScenario.launch(HomeActivity.class)) {
             try {
-                InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
-                        AppCompatDelegate.setApplicationLocales(
-                                LocaleListCompat.forLanguageTags("zh-CN")));
+                setApplicationLocales("zh-CN");
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync();
                 SystemClock.sleep(300L);
                 onView(withText("游戏中心")).check(matches(isDisplayed()));
                 onView(withText("内置")).check(matches(isDisplayed()));
             } finally {
-                InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
-                        AppCompatDelegate.setApplicationLocales(
-                                LocaleListCompat.getEmptyLocaleList()));
+                setApplicationLocales("");
             }
         }
+    }
+
+    private static void setApplicationLocales(String tags) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            if (Build.VERSION.SDK_INT >= 33) {
+                InstrumentationRegistry.getInstrumentation().getTargetContext()
+                        .getSystemService(LocaleManager.class)
+                        .setApplicationLocales(LocaleList.forLanguageTags(tags));
+            } else {
+                AppCompatDelegate.setApplicationLocales(
+                        tags.isEmpty() ? LocaleListCompat.getEmptyLocaleList()
+                                : LocaleListCompat.forLanguageTags(tags));
+            }
+        });
     }
 }
