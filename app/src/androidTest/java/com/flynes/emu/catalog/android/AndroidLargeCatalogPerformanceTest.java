@@ -141,8 +141,33 @@ public final class AndroidLargeCatalogPerformanceTest {
         try (var scenario = ActivityScenario.launch(HomeActivity.class)) {
             ((com.flynes.emu.FlyNesApplication) base).catalogRuntime().bootstrap().get();
             instrumentation.waitForIdleSync();
+            java.util.concurrent.CountDownLatch projectionApplied =
+                    new java.util.concurrent.CountDownLatch(1);
             scenario.onActivity(activity -> {
                 try {
+                    RecyclerView grid = activity.findViewById(R.id.game_grid);
+                    grid.getAdapter().registerAdapterDataObserver(
+                            new RecyclerView.AdapterDataObserver() {
+                                private void signalWhenApplied() {
+                                    if (grid.getAdapter().getItemCount() == expectedGames) {
+                                        projectionApplied.countDown();
+                                    }
+                                }
+
+                                @Override public void onChanged() { signalWhenApplied(); }
+                                @Override public void onItemRangeChanged(
+                                        int positionStart, int itemCount) {
+                                    signalWhenApplied();
+                                }
+                                @Override public void onItemRangeInserted(
+                                        int positionStart, int itemCount) {
+                                    signalWhenApplied();
+                                }
+                                @Override public void onItemRangeRemoved(
+                                        int positionStart, int itemCount) {
+                                    signalWhenApplied();
+                                }
+                            });
                     var runtimeField = HomeActivity.class.getDeclaredField("runtime");
                     runtimeField.setAccessible(true);
                     runtimeField.set(activity, fixture);
@@ -152,15 +177,33 @@ public final class AndroidLargeCatalogPerformanceTest {
                     var refresh = HomeActivity.class.getDeclaredMethod("refreshSnapshot");
                     refresh.setAccessible(true);
                     refresh.invoke(activity);
+                    if (grid.getAdapter().getItemCount() == expectedGames) {
+                        projectionApplied.countDown();
+                    }
                 } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
             });
+            assertTrue("ListAdapter must commit the 2,000+ row projection",
+                    projectionApplied.await(5, java.util.concurrent.TimeUnit.SECONDS));
             instrumentation.waitForIdleSync();
+            java.util.concurrent.CountDownLatch initialLayout =
+                    new java.util.concurrent.CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                RecyclerView grid = activity.findViewById(R.id.game_grid);
+                grid.scrollToPosition(0);
+                grid.postOnAnimation(() -> grid.postOnAnimation(initialLayout::countDown));
+            });
+            assertTrue("top-ranked cards must be laid out after the async diff",
+                    initialLayout.await(5, java.util.concurrent.TimeUnit.SECONDS));
             scenario.onActivity(activity -> {
                 RecyclerView grid = activity.findViewById(R.id.game_grid);
                 assertEquals(expectedGames, grid.getAdapter().getItemCount());
                 assertTrue(grid.getChildCount() > 1);
+                assertTrue("RecyclerView must keep only a small visible window",
+                        grid.getChildCount() < 40);
+                RecyclerView.ViewHolder first = grid.findViewHolderForAdapterPosition(0);
+                assertNotNull("top-ranked card must be laid out", first);
                 assertTrue("highest popularity must be visible first",
-                        grid.getChildAt(0).getContentDescription().toString().contains("魂斗罗"));
+                        first.itemView.getContentDescription().toString().contains("魂斗罗"));
                 java.util.concurrent.atomic.AtomicInteger fullRefresh = new java.util.concurrent.atomic.AtomicInteger();
                 grid.getAdapter().registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
                     @Override public void onChanged() { fullRefresh.incrementAndGet(); }

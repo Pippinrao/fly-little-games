@@ -36,6 +36,14 @@ public final class LaunchResult {
                         ? "unexpected launch failure" : message);
     }
 
+    /** Cached lobby identity no longer resolves to a live, launchable catalog entry. */
+    public static LaunchResult catalogChanged(String message) {
+        return new LaunchResult(
+                Code.CATALOG_CHANGED, null,
+                message == null || message.trim().isEmpty()
+                        ? "cached game is no longer launchable" : message);
+    }
+
     public Code code() {
         return code;
     }

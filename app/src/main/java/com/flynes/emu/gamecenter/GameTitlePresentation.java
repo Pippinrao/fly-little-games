@@ -28,6 +28,19 @@ public final class GameTitlePresentation {
         return new Title(chinese ? "未命名游戏" : "Untitled game", "", false);
     }
 
+    public static Title forLocale(GameCenterSnapshot.Row row, Locale locale) {
+        if (row == null) throw new NullPointerException("game center row");
+        boolean chinese = locale != null && "zh".equals(locale.getLanguage());
+        String preferred = chinese ? row.titleZhHans() : row.titleEn();
+        String secondary = chinese ? row.titleEn() : row.titleZhHans();
+        if (!preferred.isEmpty()) {
+            return new Title(preferred, distinct(secondary, preferred), false);
+        }
+        if (!secondary.isEmpty()) return new Title(secondary, "", false);
+        if (!row.fallbackTitle().isEmpty()) return new Title(row.fallbackTitle(), "", true);
+        return new Title(chinese ? "未命名游戏" : "Untitled game", "", false);
+    }
+
     private static String unclassifiedTitle(CanonicalGame game) {
         for (TitleCandidate candidate : game.titleCandidates()) {
             if (candidate.language() == TitleCandidate.Language.UNKNOWN) {

@@ -24,10 +24,12 @@ public final class AndroidCoverRepository implements CoverCaptureCoordinator.Sin
     private static final int COVER_HEIGHT = 240;
     private final File directory;
     private final LruCache<String, Bitmap> memory = new LruCache<>(24);
+    private final CoverLoadCoordinator<Bitmap> loader;
 
     public AndroidCoverRepository(Context context) {
         if (context == null) throw new IllegalArgumentException("context must not be null");
         directory = new File(context.getNoBackupFilesDir(), "covers/v1");
+        loader = new CoverLoadCoordinator<>(this::memoryHit, this::loadFromDisk);
     }
 
     @Override public synchronized void store(CoverFrame frame) {
@@ -61,8 +63,25 @@ public final class AndroidCoverRepository implements CoverCaptureCoordinator.Sin
     }
 
     public Bitmap load(String canonicalId) {
+        Bitmap cached = memoryHit(canonicalId);
+        if (cached != null) return cached;
+        return loadFromDisk(canonicalId);
+    }
+
+    public java.util.concurrent.CompletionStage<Bitmap> loadAsync(String canonicalId) {
+        return loader.load(canonicalId);
+    }
+
+    public void close() {
+        loader.close();
+    }
+
+    private Bitmap memoryHit(String canonicalId) {
         Bitmap cached = memory.get(canonicalId);
-        if (cached != null && !cached.isRecycled()) return cached;
+        return cached != null && !cached.isRecycled() ? cached : null;
+    }
+
+    private Bitmap loadFromDisk(String canonicalId) {
         File stored = file(canonicalId);
         if (!stored.isFile()) return null;
         Bitmap decoded = BitmapFactory.decodeFile(stored.getAbsolutePath());

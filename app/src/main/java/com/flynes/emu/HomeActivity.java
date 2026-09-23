@@ -21,7 +21,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.view.ViewCompat;
 import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.ListAdapter;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.flynes.emu.catalog.GameCatalogEntry;
@@ -34,7 +36,9 @@ import com.flynes.emu.catalog.persistence.SourceCatalogState;
 import com.flynes.emu.catalog.persistence.SourceScanResult;
 import com.flynes.emu.cover.AndroidCoverRepository;
 import com.flynes.emu.gamecenter.GameCenterItem;
+import com.flynes.emu.gamecenter.GameCenterSnapshot;
 import com.flynes.emu.gamecenter.GameCenterState;
+import com.flynes.emu.gamecenter.GameCenterStartupTrace;
 import com.flynes.emu.gamecenter.BuiltinMultiplayerCapabilities;
 import com.flynes.emu.gamecenter.GameTitlePresentation;
 import com.flynes.emu.gamecenter.HomeHeaderLayoutPolicy;
@@ -49,7 +53,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
 
 /** Unified, landscape-first Game Center and source manager. */
 public final class HomeActivity extends AppCompatActivity {
@@ -68,7 +71,8 @@ public final class HomeActivity extends AppCompatActivity {
     private AndroidCoverRepository covers;
     private GameCenterState navigation;
     private SharedPreferences preferences;
-    private final ArrayList<GameCenterItem> allItems = new ArrayList<>();
+    private List<GameCenterSnapshot.Row> allRows = Collections.emptyList();
+    private final Map<String, GameCenterSnapshot.Row> rows = new HashMap<>();
     private final Map<String, GameCatalogEntry> entries = new HashMap<>();
     private GameCardAdapter gameAdapter;
     private SourceAdapter sourceAdapter;
@@ -81,15 +85,15 @@ public final class HomeActivity extends AppCompatActivity {
     private boolean busy;
     private boolean largeText;
     private GameCenterState.MultiplayerCapabilityRegistry multiplayerRegistry;
-    private final ExecutorService coverLoader = Executors.newFixedThreadPool(2, runnable -> {
-        Thread thread = new Thread(runnable, "flynes-cover-loader");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private GameCenterSnapshot currentSnapshot;
+    private AndroidCatalogRuntime.CacheStatus displayedCacheStatus =
+            AndroidCatalogRuntime.CacheStatus.MISS;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
+        findViewById(R.id.home_root).getViewTreeObserver().addOnPreDrawListener(
+                GameCenterStartupTrace.shellVisibleOnNextPreDraw(findViewById(R.id.home_root)));
         runtime = ((FlyNesApplication) getApplication()).catalogRuntime();
         multiplayerRegistry = BuiltinMultiplayerCapabilities.from(runtime.builtinGames());
         covers = new AndroidCoverRepository(this);
@@ -109,24 +113,33 @@ public final class HomeActivity extends AppCompatActivity {
         applyInsets();
         showStatus(R.string.loading_game_center);
         setBusy(true);
-        await(runtime.bootstrap(), result -> {
+        AndroidCatalogRuntime.Startup startup = runtime.start();
+        await(startup.cacheReady(), fast -> {
             setBusy(false);
-            if (result.loadResult().status()
-                    == com.flynes.emu.catalog.persistence.CatalogRepository.LoadStatus.RECOVERY_NEEDED) {
+            displayedCacheStatus = fast.status();
+            GameCenterStartupTrace.event("CACHE_READ", "status=" + fast.status());
+            if (fast.status() == AndroidCatalogRuntime.CacheStatus.RECOVERY_NEEDED) {
                 showStatus(R.string.source_recovery_needed);
             }
-            refreshSnapshot();
+            applySnapshot(runtime.gameCenterSnapshot());
             if (ACTION_SHOW_SOURCES.equals(getIntent().getAction())) showSources(true);
         }, failure -> {
             setBusy(false);
             showStatus(R.string.source_scan_error);
+            applySnapshot(runtime.gameCenterSnapshot());
+        });
+        await(startup.nativeReady(), result -> {
+            GameCenterStartupTrace.event("NATIVE_READY", "status=OK");
             refreshSnapshot();
+        }, failure -> {
+            GameCenterStartupTrace.event("NATIVE_READY", "status=FAILED");
+            if (runtime.gameCenterSnapshot().rows().isEmpty()) showStatus(R.string.source_scan_error);
         });
     }
 
     @Override protected void onResume() {
         super.onResume();
-        if (runtime != null && !busy) refreshSnapshot();
+        if (runtime != null && !busy && runtime.nativeReady().isDone()) refreshSnapshot();
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -149,7 +162,7 @@ public final class HomeActivity extends AppCompatActivity {
 
     @Override protected void onDestroy() {
         waiter.shutdownNow();
-        coverLoader.shutdownNow();
+        if (covers != null) covers.close();
         super.onDestroy();
     }
 
@@ -309,25 +322,20 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     private void refreshSnapshot() {
-        allItems.clear();
         entries.clear();
         for (GameCatalogEntry entry : runtime.gameCatalog().canonicalEntries()) {
             entries.put(entry.canonicalGame().id(), entry);
-            boolean builtin = false;
-            String filename = "";
-            int popularity = 0;
-            for (GameVariant variant : entry.variants()) {
-                builtin |= AndroidBuiltinCatalogAdapter.SOURCE.id().equals(variant.sourceId());
-                if (filename.isEmpty()) filename = variant.originalFilename();
-                popularity = Math.max(popularity, Popularity.scorePackage(
-                        variant.originalFilename(), variant.entryPath()));
-            }
-            allItems.add(new GameCenterItem(entry.canonicalGame().id(),
-                    entry.canonicalGame().englishTitle(), entry.canonicalGame().zhHansTitle(),
-                    builtin, entry.favorite(), entry.lastPlayedSequence(), filename, popularity));
         }
-        renderGames();
+        applySnapshot(runtime.gameCenterSnapshot());
         sourceAdapter.submit(new ArrayList<>(runtime.stateSnapshot().sources().values()));
+    }
+
+    private void applySnapshot(GameCenterSnapshot snapshot) {
+        currentSnapshot = snapshot;
+        allRows = snapshot.rows();
+        rows.clear();
+        for (GameCenterSnapshot.Row row : allRows) rows.put(row.canonicalId(), row);
+        renderGames();
     }
 
     /** Locale-correct text for the projected entry status (UI contract key). */
@@ -340,15 +348,16 @@ public final class HomeActivity extends AppCompatActivity {
         }
     }
 
-    private List<GameCenterItem> visibleItems() {
-        if (navigation.query().isEmpty()) return applyMultiplayerFilter(navigation.filtered(allItems));
-        ArrayList<GameCenterItem> searched = new ArrayList<>();
-        for (GameCatalogEntry entry : runtime.gameCatalog().search(navigation.query())) {
-            for (GameCenterItem item : allItems) {
-                if (item.canonicalId().equals(entry.canonicalGame().id())) searched.add(item);
-            }
+    private List<GameCenterSnapshot.Row> visibleRows() {
+        ArrayList<GameCenterItem> items = new ArrayList<>(allRows.size());
+        for (GameCenterSnapshot.Row row : allRows) items.add(row.item());
+        List<GameCenterItem> visible = applyMultiplayerFilter(navigation.filtered(items));
+        ArrayList<GameCenterSnapshot.Row> result = new ArrayList<>(visible.size());
+        for (GameCenterItem item : visible) {
+            GameCenterSnapshot.Row row = rows.get(item.canonicalId());
+            if (row != null) result.add(row);
         }
-        return applyMultiplayerFilter(navigation.itemsFor(navigation.category(), searched));
+        return result;
     }
 
     /** Stable post-filter: removes non-SUPPORTED rows only, never re-sorts. */
@@ -364,9 +373,15 @@ public final class HomeActivity extends AppCompatActivity {
 
     private void renderGames() {
         if (gameAdapter == null) return;
-        List<GameCenterItem> visible = visibleItems();
-        navigation.reconcile(visible);
-        gameAdapter.submit(visible, navigation.selectedCanonicalId());
+        List<GameCenterSnapshot.Row> visible = visibleRows();
+        navigation.reconcile(visible.stream().map(GameCenterSnapshot.Row::item).toList());
+        GameCenterStartupTrace.event("LIST_SUBMIT", "count=" + visible.size());
+        gameAdapter.submit(visible, navigation.selectedCanonicalId(), () -> {
+            RecyclerView grid = findViewById(R.id.game_grid);
+            grid.getViewTreeObserver().addOnPreDrawListener(
+                    GameCenterStartupTrace.visibleOnNextPreDraw(
+                            grid, visible.size(), displayedCacheStatus));
+        });
         findViewById(R.id.disable_multiplayer_filter).setVisibility(
                 visible.isEmpty() && navigation.multiplayerOnly() ? View.VISIBLE : View.GONE);
         if (visible.isEmpty()) {
@@ -377,17 +392,17 @@ public final class HomeActivity extends AppCompatActivity {
                     ? getString(R.string.game_count_continuous, visible.size())
                     : getString(largeText ? R.string.no_external_sources_large_text
                     : R.string.no_external_sources));
-            renderDetail(entries.get(navigation.selectedCanonicalId()));
+            renderDetail(rows.get(navigation.selectedCanonicalId()));
         }
     }
 
-    private void renderDetail(GameCatalogEntry entry) {
+    private void renderDetail(GameCenterSnapshot.Row row) {
         TextView title = findViewById(R.id.detail_title);
         TextView subtitle = findViewById(R.id.detail_subtitle);
         TextView meta = findViewById(R.id.detail_meta);
         TextView art = findViewById(R.id.detail_art_label);
         ImageView cover = findViewById(R.id.detail_cover);
-        if (entry == null) {
+        if (row == null) {
             title.setText(R.string.empty_category); subtitle.setText(""); meta.setText("");
             art.setText(R.string.app_name);
             launch.setEnabled(false);
@@ -397,47 +412,48 @@ public final class HomeActivity extends AppCompatActivity {
             cover.setVisibility(View.GONE);
             return;
         }
-        GameTitlePresentation.Title presentation = titlePresentation(entry);
+        GameTitlePresentation.Title presentation = titlePresentation(row);
         String display = presentation.primary();
         title.setText(display);
         subtitle.setText(presentation.secondary());
-        GameVariant variant = preferredVariant(entry);
-        meta.setText(variant == null
+        GameCatalogEntry entry = entries.get(row.canonicalId());
+        GameVariant variant = entry == null ? null : preferredVariant(entry);
+        meta.setText(!row.launchable()
                 ? getString(R.string.game_unavailable)
                 : getResources().getQuantityString(
-                        R.plurals.game_variant_count, entry.variants().size(),
-                        entry.variants().size()));
+                        R.plurals.game_variant_count, row.variantCount(), row.variantCount()));
         art.setText(display);
-        loadCover(entry.canonicalGame().id(), cover, art);
-        launch.setEnabled(!busy && variant != null);
+        loadCover(row.canonicalId(), cover, art);
+        launch.setEnabled(!busy && row.launchable());
         launch.setText(getIntent().getBooleanExtra("nearby_choose_game", false)
-                ? R.string.nearby_choose_game : entry.isRecent() ? R.string.continue_selected_game : R.string.start_game);
+                ? R.string.nearby_choose_game : row.lastPlayedSequence() > 0
+                ? R.string.continue_selected_game : R.string.start_game);
         launch.setContentDescription(launch.getText() + ", " + display);
         favoriteToggle.setEnabled(!busy);
-        favoriteToggle.setIconResource(entry.favorite()
+        favoriteToggle.setIconResource(row.favorite()
                 ? R.drawable.ic_favorite_filled : R.drawable.ic_favorite_outline);
-        favoriteToggle.setContentDescription(getString(entry.favorite()
+        favoriteToggle.setContentDescription(getString(row.favorite()
                 ? R.string.remove_favorite : R.string.add_favorite));
     }
 
     private void toggleFavorite() {
-        GameCatalogEntry entry = entries.get(navigation.selectedCanonicalId());
-        if (entry == null || busy) return;
-        boolean next = !entry.favorite();
+        GameCenterSnapshot.Row row = rows.get(navigation.selectedCanonicalId());
+        if (row == null || busy || !runtime.nativeReady().isDone()) return;
+        boolean next = !row.favorite();
         setBusy(true);
-        await(runtime.setFavorite(entry.canonicalGame().id(), next), changed -> {
+        await(runtime.setFavorite(row.canonicalId(), next), changed -> {
             setBusy(false);
             if (Boolean.TRUE.equals(changed)) {
                 status.setText(next ? R.string.favorite_added : R.string.favorite_removed);
                 refreshSnapshot();
             } else {
                 showStatus(R.string.favorite_failed);
-                renderDetail(entry);
+                renderDetail(row);
             }
         }, failure -> {
             setBusy(false);
             showStatus(R.string.favorite_failed);
-            renderDetail(entry);
+            renderDetail(row);
         });
     }
 
@@ -447,31 +463,28 @@ public final class HomeActivity extends AppCompatActivity {
         image.setVisibility(View.GONE);
         fallback.setVisibility(View.VISIBLE);
         if (isDestroyed()) return;
-        try {
-            coverLoader.execute(() -> {
-                Bitmap bitmap = covers.load(canonicalId);
-                main.post(() -> {
-                    if (isDestroyed() || !canonicalId.equals(image.getTag())) return;
-                    if (bitmap == null) return;
-                    image.setImageBitmap(bitmap);
-                    image.setVisibility(View.VISIBLE);
-                    fallback.setVisibility(View.GONE);
-                });
-            });
-        } catch (RejectedExecutionException shutdownRace) {
-            if (!isDestroyed()) throw shutdownRace;
-        }
+        covers.loadAsync(canonicalId).whenComplete((bitmap, failure) -> main.post(() -> {
+            if (isDestroyed() || !canonicalId.equals(image.getTag())) return;
+            if (failure != null || bitmap == null) return;
+            image.setImageBitmap(bitmap);
+            image.setVisibility(View.VISIBLE);
+            fallback.setVisibility(View.GONE);
+        }));
     }
 
     private void launchSelected() {
-        GameCatalogEntry entry = entries.get(navigation.selectedCanonicalId());
-        GameVariant variant = entry == null ? null : preferredVariant(entry);
-        if (variant == null) return;
+        GameCenterSnapshot.Row row = rows.get(navigation.selectedCanonicalId());
+        if (row == null || !row.launchable()) return;
+        String canonicalId = row.canonicalId();
         if (getIntent().getBooleanExtra("nearby_choose_game", false)) {
             setBusy(true);
             FlyNesApplication app = (FlyNesApplication) getApplication();
             waiter.execute(() -> {
                 try {
+                    app.catalogRuntime().nativeReady().get();
+                    GameCatalogEntry entry = liveEntry(canonicalId);
+                    GameVariant variant = entry == null ? null : preferredVariant(entry);
+                    if (variant == null) throw new java.io.IOException("Game is no longer available");
                     var content = app.catalogRuntime().nearbyContentLoader().load(variant.variantId());
                     NearbyMvpSession lan = app.nearbyMvpOwner().session();
                     long deadline = android.os.SystemClock.elapsedRealtime() + 3000;
@@ -491,9 +504,9 @@ public final class HomeActivity extends AppCompatActivity {
             return;
         }
         setBusy(true);
-        status.setText(getString(R.string.launching_game, displayTitle(entry)));
-        ((FlyNesApplication) getApplication()).gameLaunchService().launch(
-                variant.variantId(), result -> {
+        status.setText(getString(R.string.launching_game, titlePresentation(row).primary()));
+        ((FlyNesApplication) getApplication()).gameLaunchService().launchCanonical(
+                canonicalId, result -> {
                     setBusy(false);
                     if (result.sessionCommitted()) {
                         startActivity(new Intent(this, MainActivity.class));
@@ -509,6 +522,13 @@ public final class HomeActivity extends AppCompatActivity {
         return null;
     }
 
+    private GameCatalogEntry liveEntry(String canonicalId) {
+        for (GameCatalogEntry entry : runtime.gameCatalog().canonicalEntries()) {
+            if (entry.canonicalGame().id().equals(canonicalId)) return entry;
+        }
+        return null;
+    }
+
     private String displayTitle(GameCatalogEntry entry) {
         return titlePresentation(entry).primary();
     }
@@ -519,9 +539,15 @@ public final class HomeActivity extends AppCompatActivity {
                 getResources().getConfiguration().getLocales().get(0));
     }
 
+    private GameTitlePresentation.Title titlePresentation(GameCenterSnapshot.Row row) {
+        return GameTitlePresentation.forLocale(
+                row, getResources().getConfiguration().getLocales().get(0));
+    }
+
     private boolean hasExternalSource() {
-        for (SourceCatalogState source : runtime.stateSnapshot().sources().values()) {
-            if (source.source().type() == RomSource.Type.SAF_TREE) return true;
+        if (currentSnapshot == null) return false;
+        for (GameCenterSnapshot.SourceRow source : currentSnapshot.sources()) {
+            if (source.type() == RomSource.Type.SAF_TREE) return true;
         }
         return false;
     }
@@ -610,8 +636,11 @@ public final class HomeActivity extends AppCompatActivity {
         busy = value;
         findViewById(R.id.add_source).setEnabled(!value);
         findViewById(R.id.open_sources).setEnabled(!value);
-        GameCatalogEntry entry = entries.get(navigation == null ? null : navigation.selectedCanonicalId());
-        launch.setEnabled(!value && entry != null && preferredVariant(entry) != null);
+        GameCenterSnapshot.Row row = rows.get(
+                navigation == null ? null : navigation.selectedCanonicalId());
+        GameCatalogEntry entry = entries.get(
+                navigation == null ? null : navigation.selectedCanonicalId());
+        launch.setEnabled(!value && row != null && row.launchable());
         favoriteToggle.setEnabled(!value && entry != null);
     }
 
@@ -633,24 +662,56 @@ public final class HomeActivity extends AppCompatActivity {
         return GameCenterState.Category.ALL;
     }
 
-    private final class GameCardAdapter extends RecyclerView.Adapter<GameCardHolder> {
-        private List<GameCenterItem> items = Collections.emptyList();
+    private final class GameCardAdapter extends ListAdapter<GameCenterSnapshot.Row, GameCardHolder> {
         private String selected;
-        void submit(List<GameCenterItem> values, String selectedId) {
-            items = new ArrayList<>(values); selected = selectedId; notifyDataSetChanged();
+
+        GameCardAdapter() {
+            super(new DiffUtil.ItemCallback<>() {
+                @Override public boolean areItemsTheSame(
+                        GameCenterSnapshot.Row oldItem, GameCenterSnapshot.Row newItem) {
+                    return oldItem.canonicalId().equals(newItem.canonicalId());
+                }
+                @Override public boolean areContentsTheSame(
+                        GameCenterSnapshot.Row oldItem, GameCenterSnapshot.Row newItem) {
+                    return oldItem.equals(newItem);
+                }
+            });
+            setHasStableIds(true);
+        }
+
+        void submit(List<GameCenterSnapshot.Row> values, String selectedId, Runnable committed) {
+            String previous = selected;
+            selected = selectedId;
+            submitList(List.copyOf(values), () -> {
+                notifySelection(previous, selectedId);
+                committed.run();
+            });
         }
         void select(String selectedId) {
             String previous = selected;
             selected = selectedId;
             if (java.util.Objects.equals(previous, selectedId)) return;
-            for (int index = 0; index < items.size(); ++index) {
-                String id = items.get(index).canonicalId();
+            notifySelection(previous, selectedId);
+        }
+        private void notifySelection(String previous, String selectedId) {
+            if (java.util.Objects.equals(previous, selectedId)) return;
+            for (int index = 0; index < getCurrentList().size(); ++index) {
+                String id = getCurrentList().get(index).canonicalId();
                 if (id.equals(previous) || id.equals(selectedId)) notifyItemChanged(index, "selection");
             }
         }
+        @Override public long getItemId(int position) {
+            long hash = 0xcbf29ce484222325L;
+            String id = getItem(position).canonicalId();
+            for (int index = 0; index < id.length(); index++) {
+                hash ^= id.charAt(index);
+                hash *= 0x100000001b3L;
+            }
+            return hash;
+        }
         @Override public void onBindViewHolder(GameCardHolder holder, int position, List<Object> payloads) {
             if (!payloads.isEmpty() && payloads.contains("selection")) {
-                holder.itemView.setSelected(items.get(position).canonicalId().equals(selected));
+                holder.itemView.setSelected(getItem(position).canonicalId().equals(selected));
                 holder.itemView.setContentDescription(holder.title.getText() + (holder.itemView.isSelected()
                         ? ", " + getString(R.string.game_ready) : ""));
             } else {
@@ -665,11 +726,8 @@ public final class HomeActivity extends AppCompatActivity {
             return new GameCardHolder(view);
         }
         @Override public void onBindViewHolder(GameCardHolder holder, int position) {
-            GameCenterItem item = items.get(position);
-            GameCatalogEntry entry = entries.get(item.canonicalId());
-            GameTitlePresentation.Title presentation = entry == null
-                    ? new GameTitlePresentation.Title(item.titleEn(), item.titleZhHans(), false)
-                    : titlePresentation(entry);
+            GameCenterSnapshot.Row item = getItem(position);
+            GameTitlePresentation.Title presentation = titlePresentation(item);
             String title = presentation.primary();
             holder.title.setText(title); holder.art.setText(title);
             holder.art.setVisibility(largeText ? View.GONE : View.VISIBLE);
@@ -685,10 +743,9 @@ public final class HomeActivity extends AppCompatActivity {
             holder.itemView.setOnClickListener(view -> {
                 navigation.select(item.canonicalId());
                 gameAdapter.select(item.canonicalId());
-                renderDetail(entries.get(item.canonicalId()));
+                renderDetail(item);
             });
         }
-        @Override public int getItemCount() { return items.size(); }
     }
 
     private static final class GameCardHolder extends RecyclerView.ViewHolder {
